@@ -70,6 +70,7 @@ try {
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SKILL_PATHS: explicitSkills,
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
   assert.deepEqual(loadWorkspaceSkills(disabledConfig, projectRoot).skills, []);
@@ -79,6 +80,7 @@ try {
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SKILL_PATHS: explicitSkills,
     DEVSPACE_SKILLS: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
   const loaded = loadWorkspaceSkills(config, projectRoot);

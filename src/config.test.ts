@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 
 const baseEnv = {
   DEVSPACE_ALLOWED_ROOTS: process.cwd(),
+  DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
 assert.equal(loadConfig(baseEnv).widgets, "changes");
@@ -56,4 +57,47 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_LOG_FORMAT: "color" }),
   /Invalid DEVSPACE_LOG_FORMAT: color/,
+);
+
+assert.equal(loadConfig(baseEnv).oauth.ownerToken, "test-owner-token-that-is-long-enough");
+assert.deepEqual(loadConfig(baseEnv).oauth.scopes, ["devspace"]);
+assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
+  "chatgpt.com",
+  "localhost",
+  "127.0.0.1",
+]);
+assert.equal(loadConfig(baseEnv).oauth.accessTokenTtlSeconds, 3600);
+assert.equal(loadConfig(baseEnv).oauth.refreshTokenTtlSeconds, 2592000);
+
+assert.deepEqual(
+  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_SCOPES: "devspace,admin" }).oauth.scopes,
+  ["devspace", "admin"],
+);
+assert.deepEqual(
+  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth
+    .allowedRedirectHosts,
+  ["chatgpt.com", "example.com"],
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "120" }).oauth
+    .accessTokenTtlSeconds,
+  120,
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS: "240" }).oauth
+    .refreshTokenTtlSeconds,
+  240,
+);
+
+assert.throws(
+  () => loadConfig({ DEVSPACE_ALLOWED_ROOTS: process.cwd() }),
+  /DEVSPACE_OAUTH_OWNER_TOKEN is required/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_OAUTH_OWNER_TOKEN: "too-short" }),
+  /DEVSPACE_OAUTH_OWNER_TOKEN must be at least 16 characters long/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "0" }),
+  /Invalid DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: 0/,
 );

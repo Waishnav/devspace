@@ -128,7 +128,7 @@ npm install --include=dev
 npm run typecheck
 npm run build
 
-DEVSPACE_TOKEN="change-me" \
+DEVSPACE_OAUTH_OWNER_TOKEN="$(openssl rand -base64 32)" \
 DEVSPACE_ALLOWED_ROOTS="/home/waishnav/personal,/home/waishnav/work" \
 DEVSPACE_ALLOWED_HOSTS="localhost,127.0.0.1,agent.gitcms.blog" \
 DEVSPACE_PUBLIC_BASE_URL="https://agent.gitcms.blog" \
@@ -199,7 +199,7 @@ Use release builds for long-running MCP server processes:
 npm run release:build
 
 env \
-  DEVSPACE_TOKEN="change-me" \
+  DEVSPACE_OAUTH_OWNER_TOKEN="your-long-random-owner-token" \
   DEVSPACE_ALLOWED_ROOTS="/home/waishnav/personal,/home/waishnav/work" \
   DEVSPACE_ALLOWED_HOSTS="localhost,127.0.0.1,agent.gitcms.blog" \
   DEVSPACE_PUBLIC_BASE_URL="https://agent.gitcms.blog" \
@@ -229,7 +229,19 @@ The MCP endpoint is:
 http://127.0.0.1:7676/mcp
 ```
 
-Send `Authorization: Bearer <DEVSPACE_TOKEN>` when `DEVSPACE_TOKEN` is set.
+DevSpace now uses an embedded single-user OAuth flow instead of the old static
+`DEVSPACE_TOKEN` bearer-token check. MCP clients discover OAuth metadata from:
+
+```text
+/.well-known/oauth-protected-resource/mcp
+/.well-known/oauth-authorization-server
+```
+
+When ChatGPT opens the authorization URL, DevSpace shows a local owner-token
+approval screen. Enter `DEVSPACE_OAUTH_OWNER_TOKEN` there to approve the
+connection. The issued OAuth access token is short-lived, resource-bound to the
+configured `/mcp` endpoint, and must be sent by the MCP client as a normal
+`Authorization: Bearer <oauth-access-token>` header.
 
 ## Cloudflare Tunnel
 
@@ -250,9 +262,9 @@ https://your-tunnel-hostname.example.com/mcp
 This server exposes local filesystem and shell capabilities. Treat it like
 remote code execution on this machine.
 
-- Always use `DEVSPACE_TOKEN` outside purely local smoke tests.
+- Always set a long random `DEVSPACE_OAUTH_OWNER_TOKEN`; generate one with `openssl rand -base64 32`.
 - Keep `DEVSPACE_ALLOWED_ROOTS` narrow.
 - If you expose the server through a tunnel, add the tunnel hostname to `DEVSPACE_ALLOWED_HOSTS`.
-- Put Cloudflare Access or equivalent in front of the tunnel before exposing it.
+- Put Cloudflare Access or equivalent in front of the tunnel before exposing it when possible; OAuth still protects the MCP endpoint if the tunnel URL leaks.
 - The shell tool can escape filesystem allowlists by design; shell access relies
   on authentication and client trust, not path containment.

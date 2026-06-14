@@ -4,8 +4,11 @@ import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import {
   registerAppResource,
   registerAppTool,
@@ -32,6 +35,7 @@ import {
   runShellTool,
   writeFileTool,
 } from "./pi-tools.js";
+import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
@@ -238,13 +242,6 @@ const reviewSummaryOutputSchema = z.object({
   removals: z.number(),
 });
 
-function isAuthorized(req: Request, config: ServerConfig): boolean {
-  if (!config.authToken) return true;
-
-  const authorization = req.header("authorization");
-  return authorization === `Bearer ${config.authToken}`;
-}
-
 function sendJsonRpcError(
   res: Response,
   status: number,
@@ -267,10 +264,6 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
     referer: req.header("referer"),
     contentLength: req.header("content-length"),
   };
-}
-
-function authFailureReason(req: Request): "missing_bearer_token" | "invalid_bearer_token" {
-  return req.header("authorization") ? "invalid_bearer_token" : "missing_bearer_token";
 }
 
 function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
@@ -1310,6 +1303,14 @@ export function createServer(config = loadConfig()): RunningServer {
     allowedHosts: Array.from(new Set([config.host, ...config.allowedHosts])),
   });
   const transports = new Map<string, Transport>();
+  const mcpUrl = new URL("/mcp", config.publicBaseUrl);
+  const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
+  const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
+  const bearerAuth = requireBearerAuth({
+    verifier: oauthProvider,
+    requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
+    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
+  });
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const autoCommit = createAutoCommitManager({ config: config.autocommit });
@@ -1342,6 +1343,17 @@ export function createServer(config = loadConfig()): RunningServer {
     next();
   });
 
+  app.use(
+    mcpAuthRouter({
+      provider: oauthProvider,
+      issuerUrl: new URL(config.publicBaseUrl),
+      baseUrl: new URL(config.publicBaseUrl),
+      resourceServerUrl,
+      scopesSupported: config.oauth.scopes,
+      resourceName: "DevSpace",
+    }),
+  );
+
   app.options("/mcp-app-assets/{*asset}", (_req, res) => {
     setAssetHeaders(res);
     res.sendStatus(204);
@@ -1366,12 +1378,20 @@ export function createServer(config = loadConfig()): RunningServer {
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
 
-    if (!isAuthorized(req, config)) {
+    await new Promise<void>((resolve, reject) => {
+      bearerAuth(req, res, (error?: unknown) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+    if (res.headersSent) return;
+
+    if (!req.auth?.resource || !checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl })) {
       logEvent(config.logging, "warn", "auth_denied", {
         requestId,
         method: req.method,
         path: requestPath(req),
-        reason: authFailureReason(req),
+        reason: "invalid_oauth_resource",
         ...requestLogFields(req, config),
       });
       sendJsonRpcError(res, 401, -32001, "Unauthorized");
@@ -1455,9 +1475,7 @@ if (await isMainModule()) {
       `devspace listening on http://${config.host}:${config.port}/mcp`,
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
-    console.log(
-      config.authToken ? "auth: bearer token required" : "auth: disabled",
-    );
+    console.log("auth: oauth owner-token flow required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);

@@ -25,6 +25,7 @@ try {
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
   const registry = new WorkspaceRegistry(config);

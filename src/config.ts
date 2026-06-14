@@ -3,16 +3,19 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { AutoCommitConfig, AutoCommitProviderId } from "./autocommit/types.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
+import type { OAuthConfig } from "./oauth-provider.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_AUTOCOMMIT_MODEL = "gpt-5.3-codex-spark";
+const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
+const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_AUTOCOMMIT_CODEX_REASONING_EFFORT = "low";
 
 export interface ServerConfig {
   host: string;
   port: number;
-  authToken?: string;
+  oauth: OAuthConfig;
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
@@ -82,7 +85,7 @@ function parseLogFormat(value: string | undefined): LogFormat {
   throw new Error(`Invalid DEVSPACE_LOG_FORMAT: ${value}`);
 }
 
-function parseList(value: string | undefined): string[] {
+function parsePathList(value: string | undefined): string[] {
   return (
     value
       ?.split(",")
@@ -90,6 +93,15 @@ function parseList(value: string | undefined): string[] {
       .filter(Boolean)
       .map((entry) => resolve(expandHomePath(entry))) ?? []
   );
+}
+
+function parseStringList(value: string | undefined, fallback: string[]): string[] {
+  const entries = value
+    ?.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return entries && entries.length > 0 ? entries : fallback;
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -165,6 +177,39 @@ function parseWidgetMode(value: string | undefined): WidgetMode {
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
 }
 
+function parseRequiredSecret(value: string | undefined, name: string): string {
+  const secret = value?.trim();
+  if (!secret) {
+    throw new Error(`${name} is required for DevSpace OAuth. Generate one with: openssl rand -base64 32`);
+  }
+  if (secret.length < 16) {
+    throw new Error(`${name} must be at least 16 characters long.`);
+  }
+  return secret;
+}
+
+function parseOAuthConfig(env: NodeJS.ProcessEnv): OAuthConfig {
+  return {
+    ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN, "DEVSPACE_OAUTH_OWNER_TOKEN"),
+    accessTokenTtlSeconds: parsePositiveInteger(
+      env.DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      "DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS",
+    ),
+    refreshTokenTtlSeconds: parsePositiveInteger(
+      env.DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+      DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+      "DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
+    ),
+    scopes: parseStringList(env.DEVSPACE_OAUTH_SCOPES, ["devspace"]),
+    allowedRedirectHosts: parseStringList(env.DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS, [
+      "chatgpt.com",
+      "localhost",
+      "127.0.0.1",
+    ]),
+  };
+}
+
 function defaultStateDir(): string {
   return join(homedir(), ".local", "share", "devspace");
 }
@@ -181,7 +226,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host: env.HOST ?? "127.0.0.1",
     port: parsePort(env.PORT),
-    authToken: env.DEVSPACE_TOKEN,
+    oauth: parseOAuthConfig(env),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS),
     publicBaseUrl: env.DEVSPACE_PUBLIC_BASE_URL ?? "https://agent.gitcms.blog",
@@ -191,7 +236,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     stateDir: resolve(env.DEVSPACE_STATE_DIR ?? defaultStateDir()),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? defaultWorktreeRoot())),
     skillsEnabled: parseBoolean(env.DEVSPACE_SKILLS),
-    skillPaths: parseList(env.DEVSPACE_SKILL_PATHS),
+    skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
     autocommit: parseAutoCommitConfig(env),
