@@ -180,7 +180,8 @@ body {
   color: var(--color-danger-text, #ee7676);
 }
 
-.pierre-diff {
+.pierre-diff,
+.pierre-file {
   --diffs-bg: var(--color-background-primary, #18191d);
   --diffs-light-bg: var(--color-background-primary, #ffffff);
   --diffs-dark-bg: var(--color-background-primary, #18191d);

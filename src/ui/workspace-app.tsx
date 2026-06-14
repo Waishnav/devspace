@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { PatchDiff } from "@pierre/diffs/react";
+import { File, PatchDiff } from "@pierre/diffs/react";
 import {
   App,
   applyDocumentTheme,
@@ -150,6 +150,19 @@ function AppRoot() {
   const themeType: "light" | "dark" =
     hostContext?.theme === "light" ? "light" : "dark";
 
+  const fileOptions = useMemo(
+    () => ({
+      theme: {
+        light: "pierre-light",
+        dark: "pierre-dark",
+      },
+      themeType,
+      overflow: "scroll" as const,
+      disableFileHeader: true,
+    }),
+    [themeType],
+  );
+
   const diffOptions = useMemo(
     () => ({
       theme: {
@@ -248,6 +261,7 @@ function AppRoot() {
               payload={payload}
               loadState={loadState}
               errorMessage={errorMessage}
+              fileOptions={fileOptions}
               diffOptions={diffOptions}
             />
           </div>
@@ -262,12 +276,14 @@ function ToolPayloadView({
   payload,
   loadState,
   errorMessage,
+  fileOptions,
   diffOptions,
 }: {
   card: ToolResultCard;
   payload: ToolPayload | null;
   loadState: LoadState;
   errorMessage: string | null;
+  fileOptions: React.ComponentProps<typeof File>["options"];
   diffOptions: React.ComponentProps<typeof PatchDiff>["options"];
 }) {
   if (loadState === "loading") return <StatusLine message="Loading details..." />;
@@ -285,7 +301,43 @@ function ToolPayloadView({
   const text = payloadText(payload);
   if (!text) return <StatusLine message="No details available." />;
 
+  if (card.tool === "read_file") {
+    return (
+      <FilePayload
+        path={card.path ?? card.label ?? "file"}
+        resultId={card.resultId}
+        text={text}
+        fileOptions={fileOptions}
+      />
+    );
+  }
+
   return <pre className={`text-payload ${card.tool}`}>{text}</pre>;
+}
+
+function FilePayload({
+  path,
+  resultId,
+  text,
+  fileOptions,
+}: {
+  path: string;
+  resultId: string;
+  text: string;
+  fileOptions: React.ComponentProps<typeof File>["options"];
+}) {
+  return (
+    <File
+      file={{
+        name: path,
+        contents: text,
+        cacheKey: `${resultId}:${path}`,
+      }}
+      options={fileOptions}
+      className="pierre-file"
+      disableWorkerPool
+    />
+  );
 }
 
 function DiffPayload({
