@@ -101,10 +101,10 @@ function cardOutputSchema<TTool extends string>(
     path: z.string().optional(),
     label: z.string(),
     summary,
-    modelText: z
+    result: z
       .string()
       .describe(
-        "Model-readable text result. Mirrors the important tool output so hosts that prioritize structuredContent do not hide it behind the UI card.",
+        "Model-readable result text. Mirrors the important tool output for hosts that prioritize structuredContent over content blocks.",
       ),
     ui: uiCardSchema,
     ...extra,
@@ -403,7 +403,7 @@ function createMcpServer(
         summary: z.object({
           agentsFiles: z.number().int().nonnegative(),
         }),
-        modelText: z.string(),
+        result: z.string(),
         ui: uiCardSchema,
       },
       _meta: {
@@ -472,7 +472,7 @@ function createMcpServer(
           root: workspace.root,
           label: workspace.root,
           summary,
-          modelText: contentText(resultContent),
+          result: contentText(resultContent),
           ui: {
             card: "workspace",
             expandable: agentsFiles.length > 0,
@@ -564,7 +564,7 @@ function createMcpServer(
           path: input.path,
           label: input.path,
           summary,
-          modelText: contentText(response.content),
+          result: contentText(response.content),
           ui: {
             card: "text",
             expandable: true,
@@ -650,7 +650,7 @@ function createMcpServer(
           path: input.path,
           label: input.path,
           summary,
-          modelText: contentText(response.content),
+          result: contentText(response.content),
           ui: {
             card: "write",
             expandable: true,
@@ -758,7 +758,7 @@ function createMcpServer(
           path: input.path,
           label: input.path,
           summary: storedResult.summary,
-          modelText: contentText(editContent),
+          result: contentText(editContent),
           ui: {
             card: "file-diff",
             expandable: true,
@@ -846,7 +846,7 @@ function createMcpServer(
             path: input.path,
             label: input.pattern,
             summary,
-            modelText: contentText(response.content),
+            result: contentText(response.content),
             ui: {
               card: "search",
               expandable: true,
@@ -930,7 +930,7 @@ function createMcpServer(
             path: input.path,
             label: input.pattern,
             summary,
-            modelText: contentText(response.content),
+            result: contentText(response.content),
             ui: {
               card: "search",
               expandable: true,
@@ -1006,7 +1006,7 @@ function createMcpServer(
             path: input.path,
             label: input.path,
             summary,
-            modelText: contentText(response.content),
+            result: contentText(response.content),
             ui: {
               card: "directory",
               expandable: true,
@@ -1105,7 +1105,7 @@ function createMcpServer(
           path: workingDirectory,
           label: input.command,
           summary,
-          modelText: contentText(response.content),
+          result: contentText(response.content),
           ui: {
             card: "shell",
             expandable: true,
