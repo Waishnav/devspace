@@ -23,7 +23,7 @@ import {
   runShellTool,
   writeFileTool,
 } from "./pi-tools.js";
-import { countDiffStats, ResultStore } from "./result-store.js";
+import { countDiffStats, createResultStore, type ToolResultStore } from "./result-store.js";
 import { formatAgentsNotice, WorkspaceRegistry } from "./workspaces.js";
 
 type Transport = StreamableHTTPServerTransport;
@@ -223,7 +223,7 @@ async function assertWorkspaceAppAssets(): Promise<void> {
 function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
-  results: ResultStore,
+  results: ToolResultStore,
 ): McpServer {
   const server = new McpServer(
     {
@@ -1051,7 +1051,11 @@ export function createServer(config = loadConfig()): RunningServer {
   });
   const transports = new Map<string, Transport>();
   const workspaces = new WorkspaceRegistry(config);
-  const results = new ResultStore();
+  const results = createResultStore({
+    persistResults: config.persistResults,
+    resultTtlMs: config.resultTtlMs,
+    stateDir: config.stateDir,
+  });
 
   app.options("/mcp-app-assets/{*asset}", (_req, res) => {
     setAssetHeaders(res);
