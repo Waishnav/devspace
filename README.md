@@ -132,15 +132,9 @@ For working on DevSpace itself:
 
 ```bash
 npm install --include=dev
+npm run dev
 npm run typecheck
 npm test
 npm run build
 npm run start
-```
-
-For long-running local server processes, build an immutable release copy:
-
-```bash
-npm run release:build
-npm run release:start
 ```

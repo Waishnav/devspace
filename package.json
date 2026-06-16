@@ -23,10 +23,8 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
-    "dev": "tsx watch src/cli.ts serve",
+    "dev": "node scripts/dev-server.mjs",
     "start": "node dist/cli.js serve",
-    "release:build": "node scripts/build-release.mjs",
-    "release:start": "node scripts/ensure-native-deps.mjs && node releases/current/dist/cli.js serve",
     "test": "tsx src/config.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
