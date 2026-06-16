@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
 import * as prompts from "@clack/prompts";
+import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
@@ -205,6 +206,8 @@ async function runDoctor(): Promise<void> {
   console.log(`Node: ${process.version} (${nodeVersionStatus()})`);
   console.log(`Node ABI: ${process.versions.modules}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
+  console.log(`Git: ${checkGitAvailable()}`);
+  console.log(`Bash shell: ${checkBashShell()}`);
   console.log(`SQLite native dependency: ${checkSqliteNative()}`);
 
   try {
@@ -350,6 +353,26 @@ function checkSqliteNative(): string {
     return "ok";
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function checkGitAvailable(): string {
+  try {
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    return execFileSync("git", ["--version"], { encoding: "utf8" }).trim();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `unavailable (${message})`;
+  }
+}
+
+function checkBashShell(): string {
+  try {
+    const { shell, args } = getShellConfig();
+    return `${shell} ${args.join(" ")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `unavailable (${message})`;
   }
 }
 
