@@ -3,3 +3,4 @@ dist/
 releases/
 .env
 *.log
+WORKING/
