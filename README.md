@@ -57,11 +57,7 @@ Use the public origin without `/mcp` during setup:
 https://your-tunnel-host.example.com
 ```
 
-Then configure your MCP client with:
-
-```text
-https://your-tunnel-host.example.com/mcp
-```
+You will configure your MCP client with the public `/mcp` URL after setup.
 
 When the client connects, DevSpace opens an Owner password approval page. Enter
 the Owner password printed by `devspace init`. It is also stored in:
@@ -72,20 +68,7 @@ the Owner password printed by `devspace init`. It is also stored in:
 
 Keep that password private.
 
-## What ChatGPT Gets
-
-After the MCP client connects, ChatGPT can open a project with
-`open_workspace` and then reuse the returned `workspaceId` for later calls.
-
-DevSpace provides tools for:
-
-- reading, writing, and editing files inside the opened workspace
-- running shell-backed search and directory inspection in the default minimal tool mode
-- running shell commands for tests, builds, git, and package scripts
-- opening isolated Git worktrees when you want parallel work
-- loading `AGENTS.md` and `CLAUDE.md` instructions
-- exposing local agent skills from your skill folders
-- showing ChatGPT Apps tool cards, with an opt-in aggregate `show_changes` card
+## Connect Your MCP Client
 
 The default local endpoint is:
 
@@ -98,6 +81,22 @@ Most users should connect through a public HTTPS tunnel:
 ```text
 https://your-tunnel-host.example.com/mcp
 ```
+
+## What ChatGPT Can Do
+
+Once connected, ChatGPT can open one of your approved project folders as a
+workspace. From there, it can inspect the repo, make scoped edits, run commands,
+and show you what changed.
+
+DevSpace gives ChatGPT tools to:
+
+- read, write, and edit files inside the opened workspace
+- search code and inspect directories
+- run shell commands for tests, builds, git, and package scripts
+- use isolated Git worktrees for parallel coding sessions
+- follow project instructions from `AGENTS.md` and `CLAUDE.md`
+- discover local agent skills from your skill folders
+- show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
 
 ## Mental Model
 
