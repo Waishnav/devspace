@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { readdirSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const require = createRequire(import.meta.url);
+const tsxCliPath = require.resolve("tsx/cli");
 const watchRoots = ["src"].map((entry) => join(repoRoot, entry));
 const restartDelayMs = 750;
 const crashDelayMs = 1500;
@@ -19,7 +22,7 @@ function log(message) {
 
 function start() {
   stoppingForRestart = false;
-  child = spawn("npx", ["tsx", "src/cli.ts", "serve"], {
+  child = spawn(process.execPath, [tsxCliPath, "src/cli.ts", "serve"], {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
