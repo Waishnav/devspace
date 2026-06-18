@@ -92,6 +92,17 @@ assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
 ]);
 assert.equal(loadConfig(baseEnv).oauth.accessTokenTtlSeconds, 3600);
 assert.equal(loadConfig(baseEnv).oauth.refreshTokenTtlSeconds, 2592000);
+assert.equal(loadConfig(baseEnv).staticBearerToken, undefined);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_STATIC_BEARER_TOKEN: "  static-bearer-token-long-enough  " })
+    .staticBearerToken,
+  "static-bearer-token-long-enough",
+);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_STATIC_BEARER_TOKEN: "   " }).staticBearerToken, undefined);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_STATIC_BEARER_TOKEN: "too-short" }),
+  /DEVSPACE_STATIC_BEARER_TOKEN must be at least 16 characters long/,
+);
 
 assert.deepEqual(
   loadConfig({ ...baseEnv, DEVSPACE_OAUTH_SCOPES: "devspace,admin" }).oauth.scopes,

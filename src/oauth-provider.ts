@@ -188,8 +188,10 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !checkResourceAllowed({ requestedResource: params.resource, configuredResource: this.resourceServerUrl })) {
-      throw new InvalidRequestError("Invalid or missing OAuth resource");
+    const requestedResource = params.resource ?? this.resourceServerUrl;
+    const authorizationParams: AuthorizationParams = { ...params, resource: requestedResource };
+    if (!checkResourceAllowed({ requestedResource, configuredResource: this.resourceServerUrl })) {
+      throw new InvalidRequestError("Invalid OAuth resource");
     }
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
       throw new InvalidRequestError("Requested scope is not supported");
@@ -201,8 +203,8 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
         formHtml({
           clientName: client.client_name ?? client.client_id,
           scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
+          resource: requestedResource,
+          fields: authorizationFormFields(client, authorizationParams),
         }),
       );
       return;
@@ -216,8 +218,8 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
           error: "The Owner password was not accepted.",
           clientName: client.client_name ?? client.client_id,
           scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
+          resource: requestedResource,
+          fields: authorizationFormFields(client, authorizationParams),
         }),
       );
       return;
@@ -226,7 +228,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const code = `code-${randomUUID()}`;
     this.codes.set(code, {
       clientId: client.client_id,
-      params,
+      params: authorizationParams,
       expiresAtMs: Date.now() + CODE_TTL_MS,
     });
 

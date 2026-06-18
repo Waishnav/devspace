@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -6,6 +6,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
@@ -78,6 +80,60 @@ interface WorkspaceAppManifestEntry {
 }
 
 type WorkspaceAppManifest = Record<string, WorkspaceAppManifestEntry>;
+
+type BearerAuthMiddleware = ReturnType<typeof requireBearerAuth>;
+
+interface BearerVerifierOptions {
+  oauthProvider: SingleUserOAuthProvider;
+  staticBearerToken?: string;
+  scopes: string[];
+  resourceServerUrl: URL;
+}
+
+function createBearerVerifier(options: BearerVerifierOptions): OAuthTokenVerifier {
+  return {
+    async verifyAccessToken(token: string): Promise<AuthInfo> {
+      if (options.staticBearerToken && safeTokenEquals(token, options.staticBearerToken)) {
+        return {
+          token,
+          clientId: "devspace-static-bearer",
+          scopes: options.scopes,
+          expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+          resource: options.resourceServerUrl,
+        };
+      }
+
+      return options.oauthProvider.verifyAccessToken(token);
+    },
+  };
+}
+
+function safeTokenEquals(received: string, expected: string): boolean {
+  const receivedBuffer = Buffer.from(received);
+  const expectedBuffer = Buffer.from(expected);
+  return receivedBuffer.length === expectedBuffer.length && timingSafeEqual(receivedBuffer, expectedBuffer);
+}
+
+async function applyBearerAuth(
+  req: Request,
+  res: Response,
+  bearerAuth: BearerAuthMiddleware,
+): Promise<boolean> {
+  await new Promise<void>((resolve, reject) => {
+    bearerAuth(req, res, (error?: unknown) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  return !res.headersSent;
+}
+
+function requestHasAllowedResource(req: Request, resourceServerUrl: URL): boolean {
+  return Boolean(
+    req.auth?.resource &&
+      checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl }),
+  );
+}
 
 interface DiffStats {
   additions: number;
@@ -1276,8 +1332,14 @@ export function createServer(config = loadConfig()): RunningServer {
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
+  const bearerVerifier = createBearerVerifier({
+    oauthProvider,
+    staticBearerToken: config.staticBearerToken,
+    scopes: config.oauth.scopes,
+    resourceServerUrl,
+  });
   const bearerAuth = requireBearerAuth({
-    verifier: oauthProvider,
+    verifier: bearerVerifier,
     requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
@@ -1286,7 +1348,9 @@ export function createServer(config = loadConfig()): RunningServer {
   const reviewCheckpoints = createReviewCheckpointManager();
 
   if (config.logging.trustProxy) {
-    app.set("trust proxy", true);
+    // Cloudflare Tunnel is one trusted hop. Avoid Express' overly-permissive
+    // `true` mode, which can break rate-limit middleware and spoofing checks.
+    app.set("trust proxy", 1);
   }
 
   app.use((req, res, next) => {
@@ -1342,20 +1406,25 @@ export function createServer(config = loadConfig()): RunningServer {
     res.json({ ok: true, name: "devspace" });
   });
 
+  app.head("/mcp", async (req, res) => {
+    if (!(await applyBearerAuth(req, res, bearerAuth))) return;
+
+    if (!requestHasAllowedResource(req, resourceServerUrl)) {
+      res.sendStatus(401);
+      return;
+    }
+
+    res.sendStatus(204);
+  });
+
   app.all("/mcp", async (req, res) => {
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
 
-    await new Promise<void>((resolve, reject) => {
-      bearerAuth(req, res, (error?: unknown) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-    if (res.headersSent) return;
+    if (!(await applyBearerAuth(req, res, bearerAuth))) return;
 
-    if (!req.auth?.resource || !checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl })) {
+    if (!requestHasAllowedResource(req, resourceServerUrl)) {
       logEvent(config.logging, "warn", "auth_denied", {
         requestId,
         method: req.method,

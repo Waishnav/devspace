@@ -187,7 +187,11 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
-    console.log("auth: Owner password approval required");
+    console.log(
+      config.staticBearerToken
+        ? "auth: Owner password approval required; static bearer token enabled"
+        : "auth: Owner password approval required",
+    );
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
   });
 

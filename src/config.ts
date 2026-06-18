@@ -14,6 +14,7 @@ export interface ServerConfig {
   host: string;
   port: number;
   oauth: OAuthConfig;
+  staticBearerToken?: string;
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
@@ -170,6 +171,15 @@ function parseRequiredSecret(value: string | undefined, name: string): string {
   return secret;
 }
 
+function parseOptionalSecret(value: string | undefined, name: string): string | undefined {
+  const secret = value?.trim();
+  if (!secret) return undefined;
+  if (secret.length < 16) {
+    throw new Error(`${name} must be at least 16 characters long.`);
+  }
+  return secret;
+}
+
 function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken, "DEVSPACE_OAUTH_OWNER_TOKEN"),
@@ -224,6 +234,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     host,
     port,
     oauth: parseOAuthConfig(env, files.auth.ownerToken),
+    staticBearerToken: parseOptionalSecret(env.DEVSPACE_STATIC_BEARER_TOKEN, "DEVSPACE_STATIC_BEARER_TOKEN"),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
