@@ -1,9 +1,13 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { readdirSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const scriptPath = fileURLToPath(import.meta.url);
+export const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const require = createRequire(import.meta.url);
+const tsxCliPath = require.resolve("tsx/cli");
 const watchRoots = ["src"].map((entry) => join(repoRoot, entry));
 const restartDelayMs = 750;
 const crashDelayMs = 1500;
@@ -17,9 +21,17 @@ function log(message) {
   console.error(`[devspace:dev] ${message}`);
 }
 
+export function createServerCommand() {
+  return {
+    command: process.execPath,
+    args: [tsxCliPath, "src/cli.ts", "serve"],
+  };
+}
+
 function start() {
   stoppingForRestart = false;
-  child = spawn("npx", ["tsx", "src/cli.ts", "serve"], {
+  const { command, args } = createServerCommand();
+  child = spawn(command, args, {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
@@ -108,13 +120,19 @@ function shutdown() {
   setTimeout(() => process.exit(1), 3000).unref();
 }
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, shutdown);
+function main() {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, shutdown);
+  }
+
+  for (const root of watchRoots) {
+    watchDirectory(root);
+  }
+
+  log("watching src; server restarts on changes and after crashes");
+  start();
 }
 
-for (const root of watchRoots) {
-  watchDirectory(root);
+if (resolve(process.argv[1] ?? "") === scriptPath) {
+  main();
 }
-
-log("watching src; server restarts on changes and after crashes");
-start();
