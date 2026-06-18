@@ -137,6 +137,7 @@ devspace doctor
 - [Setup Guide](docs/setup.md)
 - [ChatGPT Coding Workflow](docs/chatgpt-coding-workflow.md)
 - [Configuration Reference](docs/configuration.md)
+- [Multi-Platform MCP Connectors](docs/multi-platform-connectors.md)
 - [Security Model](docs/security.md)
 - [Troubleshooting Gotchas](docs/gotchas.md)
 

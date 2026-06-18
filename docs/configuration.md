@@ -36,6 +36,7 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_PUBLIC_BASE_URL` | Public origin for the server, without `/mcp`. |
 | `DEVSPACE_ALLOWED_HOSTS` | Optional Host header allowlist override. |
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
+| `DEVSPACE_STATIC_BEARER_TOKEN` | Optional bearer token for header-based MCP clients. Must be at least 16 characters when set. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
 
@@ -56,6 +57,21 @@ MCP clients discover metadata from:
 /.well-known/oauth-protected-resource/mcp
 /.well-known/oauth-authorization-server
 ```
+
+## Header-Based Authentication
+
+OAuth is the default. For MCP clients that support API-key or bearer-token
+authentication instead, set:
+
+```bash
+DEVSPACE_STATIC_BEARER_TOKEN="$(openssl rand -base64 32)" npx @waishnav/devspace serve
+```
+
+Configure the client with bearer-token auth against your public `/mcp` URL. If
+the client asks for a raw header, use `Authorization: Bearer <token>`.
+
+See [Multi-Platform MCP Connectors](multi-platform-connectors.md) for platform
+notes.
 
 ## Tool Modes
 
