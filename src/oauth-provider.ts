@@ -60,9 +60,18 @@ interface StoredRefreshTokenRecord {
   resource?: string;
 }
 
+interface StoredAccessTokenRecord {
+  tokenHash: string;
+  clientId: string;
+  scopes: string[];
+  expiresAt: number;
+  resource?: string;
+}
+
 interface StoredOAuthState {
   version: number;
   clients: OAuthClientInformationFull[];
+  accessTokens: StoredAccessTokenRecord[];
   refreshTokens: StoredRefreshTokenRecord[];
 }
 
@@ -167,6 +176,7 @@ function emptyOAuthState(): StoredOAuthState {
   return {
     version: 1,
     clients: [],
+    accessTokens: [],
     refreshTokens: [],
   };
 }
@@ -176,6 +186,7 @@ function parseOAuthState(raw: string): StoredOAuthState {
   return {
     version: 1,
     clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+    accessTokens: Array.isArray(parsed.accessTokens) ? parsed.accessTokens : [],
     refreshTokens: Array.isArray(parsed.refreshTokens) ? parsed.refreshTokens : [],
   };
 }
@@ -200,6 +211,7 @@ function ensurePrivateDirectory(directory: string): void {
 function writeOAuthState(
   statePath: string | undefined,
   clients: OAuthClientInformationFull[],
+  accessTokens: Iterable<[string, AccessTokenRecord]>,
   refreshTokens: Iterable<[string, RefreshTokenRecord]>,
 ): void {
   if (!statePath) return;
@@ -210,6 +222,13 @@ function writeOAuthState(
   const state: StoredOAuthState = {
     version: 1,
     clients,
+    accessTokens: Array.from(accessTokens, ([tokenHash, record]) => ({
+      tokenHash,
+      clientId: record.clientId,
+      scopes: record.scopes,
+      expiresAt: record.expiresAt,
+      resource: record.resource?.href,
+    })),
     refreshTokens: Array.from(refreshTokens, ([tokenHash, record]) => ({
       tokenHash,
       clientId: record.clientId,
@@ -303,6 +322,26 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     );
 
     const now = Math.floor(Date.now() / 1000);
+    for (const record of state.accessTokens) {
+      if (
+        typeof record?.tokenHash !== "string" ||
+        typeof record?.clientId !== "string" ||
+        !Array.isArray(record?.scopes) ||
+        typeof record?.expiresAt !== "number" ||
+        record.expiresAt < now
+      ) {
+        continue;
+      }
+
+      this.accessTokens.set(record.tokenHash, {
+        token: record.tokenHash,
+        clientId: record.clientId,
+        scopes: record.scopes,
+        expiresAt: record.expiresAt,
+        resource: parseStoredResource(record.resource),
+      });
+    }
+
     for (const record of state.refreshTokens) {
       if (
         typeof record?.tokenHash !== "string" ||
@@ -414,6 +453,10 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   ): Promise<OAuthTokens> {
     const record = this.refreshTokens.get(hashToken(refreshToken));
     if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
+      if (record) {
+        this.refreshTokens.delete(hashToken(refreshToken));
+        this.saveOAuthState();
+      }
       throw new InvalidGrantError("Invalid refresh token");
     }
     if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
@@ -430,8 +473,14 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const record = this.accessTokens.get(hashToken(token));
-    if (!record || record.expiresAt < Math.floor(Date.now() / 1000)) {
+    const hashed = hashToken(token);
+    const record = this.accessTokens.get(hashed);
+    if (!record) {
+      throw new InvalidTokenError("Invalid or expired access token");
+    }
+    if (record.expiresAt < Math.floor(Date.now() / 1000)) {
+      this.accessTokens.delete(hashed);
+      this.saveOAuthState();
       throw new InvalidTokenError("Invalid or expired access token");
     }
 
@@ -498,6 +547,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     writeOAuthState(
       this.config.statePath,
       this.clientsStore.dumpClients(),
+      this.accessTokens.entries(),
       this.refreshTokens.entries(),
     );
   }
