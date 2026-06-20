@@ -1,4 +1,7 @@
 import { timingSafeEqual, randomBytes, randomUUID, createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { Response } from "express";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
@@ -17,6 +20,8 @@ export interface OAuthConfig {
   refreshTokenTtlSeconds: number;
   scopes: string[];
   allowedRedirectHosts: string[];
+  clientsStorePath?: string;
+  refreshTokensPath?: string;
 }
 
 interface AuthorizationCodeRecord {
@@ -39,6 +44,14 @@ interface RefreshTokenRecord {
   scopes: string[];
   expiresAt: number;
   resource?: URL;
+}
+
+interface StoredRefreshTokenRecord {
+  key: string;
+  clientId: string;
+  scopes: string[];
+  expiresAt: number;
+  resource?: string;
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -138,10 +151,15 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   return allowedHosts.includes(parsed.hostname);
 }
 
-export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
+export class PersistentOAuthClientsStore implements OAuthRegisteredClientsStore {
   private readonly clients = new Map<string, OAuthClientInformationFull>();
 
-  constructor(private readonly allowedRedirectHosts: string[]) {}
+  constructor(
+    private readonly allowedRedirectHosts: string[],
+    private readonly filePath = join(homedir(), ".devspace", "oauth-clients.json"),
+  ) {
+    this.load();
+  }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
     return this.clients.get(clientId);
@@ -164,7 +182,32 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
       response_types: client.response_types ?? ["code"],
     };
     this.clients.set(registered.client_id, registered);
+    this.save();
     return registered;
+  }
+
+  private load(): void {
+    if (!existsSync(this.filePath)) return;
+
+    const parsed: unknown = JSON.parse(readFileSync(this.filePath, "utf8"));
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Invalid OAuth clients file: ${this.filePath}`);
+    }
+
+    for (const client of parsed) {
+      if (!isStoredClient(client)) continue;
+      if (!client.redirect_uris.every((uri) => redirectHostAllowed(uri, this.allowedRedirectHosts))) continue;
+      this.clients.set(client.client_id, client);
+    }
+  }
+
+  private save(): void {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const tmpPath = join(dirname(this.filePath), `.oauth-clients.${process.pid}.${randomUUID()}.tmp`);
+    // ponytail: one JSON file fits this single-user server; use SQLite if multi-process writes matter.
+    writeFileSync(tmpPath, `${JSON.stringify(Array.from(this.clients.values()), null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmpPath, this.filePath);
+    chmodSync(this.filePath, 0o600);
   }
 }
 
@@ -174,13 +217,16 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   private readonly accessTokens = new Map<string, AccessTokenRecord>();
   private readonly refreshTokens = new Map<string, RefreshTokenRecord>();
   private readonly resourceServerUrl: URL;
+  private readonly refreshTokensPath: string;
 
   constructor(
     private readonly config: OAuthConfig,
     resourceServerUrl: URL,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
-    this.clientsStore = new InMemoryOAuthClientsStore(config.allowedRedirectHosts);
+    this.clientsStore = new PersistentOAuthClientsStore(config.allowedRedirectHosts, config.clientsStorePath);
+    this.refreshTokensPath = config.refreshTokensPath ?? join(homedir(), ".devspace", "oauth-refresh-tokens.json");
+    this.loadRefreshTokens();
   }
 
   async authorize(
@@ -304,7 +350,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   async revokeToken(_client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
     const hashed = hashToken(request.token);
     this.accessTokens.delete(hashed);
-    this.refreshTokens.delete(hashed);
+    if (this.refreshTokens.delete(hashed)) this.saveRefreshTokens();
   }
 
   private validCodeRecord(
@@ -339,6 +385,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       expiresAt: refreshExpiresAt,
       resource,
     });
+    this.saveRefreshTokens();
 
     return {
       access_token: accessToken,
@@ -347,6 +394,51 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       refresh_token: refreshToken,
       scope: scopes.join(" "),
     };
+  }
+
+  private loadRefreshTokens(): void {
+    if (!existsSync(this.refreshTokensPath)) return;
+
+    const parsed: unknown = JSON.parse(readFileSync(this.refreshTokensPath, "utf8"));
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Invalid OAuth refresh tokens file: ${this.refreshTokensPath}`);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    for (const record of parsed) {
+      if (!isStoredRefreshTokenRecord(record) || record.expiresAt < now) continue;
+
+      const resource = record.resource ? parseUrl(record.resource) : undefined;
+      if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) continue;
+
+      this.refreshTokens.set(record.key, {
+        token: "",
+        clientId: record.clientId,
+        scopes: record.scopes,
+        expiresAt: record.expiresAt,
+        resource,
+      });
+    }
+  }
+
+  private saveRefreshTokens(): void {
+    const now = Math.floor(Date.now() / 1000);
+    const records = Array.from(this.refreshTokens.entries())
+      .filter(([, record]) => record.expiresAt >= now)
+      .map(([key, record]): StoredRefreshTokenRecord => ({
+        key,
+        clientId: record.clientId,
+        scopes: record.scopes,
+        expiresAt: record.expiresAt,
+        resource: record.resource?.href,
+      }));
+
+    // ponytail: hashed refresh-token JSON is enough for one local user; move to encrypted keychain if this becomes multi-user.
+    mkdirSync(dirname(this.refreshTokensPath), { recursive: true });
+    const tmpPath = join(dirname(this.refreshTokensPath), `.oauth-refresh-tokens.${process.pid}.${randomUUID()}.tmp`);
+    writeFileSync(tmpPath, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmpPath, this.refreshTokensPath);
+    chmodSync(this.refreshTokensPath, 0o600);
   }
 }
 
@@ -368,4 +460,40 @@ function authorizationFormFields(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
+}
+
+function isStoredClient(value: unknown): value is OAuthClientInformationFull {
+  if (!value || typeof value !== "object") return false;
+
+  const client = value as Partial<OAuthClientInformationFull>;
+  return (
+    typeof client.client_id === "string" &&
+    client.client_id.startsWith("devspace-") &&
+    typeof client.client_id_issued_at === "number" &&
+    Array.isArray(client.redirect_uris) &&
+    client.redirect_uris.every((uri) => typeof uri === "string")
+  );
+}
+
+function isStoredRefreshTokenRecord(value: unknown): value is StoredRefreshTokenRecord {
+  if (!value || typeof value !== "object") return false;
+
+  const record = value as Partial<StoredRefreshTokenRecord>;
+  return (
+    typeof record.key === "string" &&
+    typeof record.clientId === "string" &&
+    record.clientId.startsWith("devspace-") &&
+    Array.isArray(record.scopes) &&
+    record.scopes.every((scope) => typeof scope === "string") &&
+    typeof record.expiresAt === "number" &&
+    (record.resource === undefined || typeof record.resource === "string")
+  );
+}
+
+function parseUrl(value: string): URL | undefined {
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
 }

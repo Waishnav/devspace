@@ -170,7 +170,7 @@ function parseRequiredSecret(value: string | undefined, name: string): string {
   return secret;
 }
 
-function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
+function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined, configDir: string): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken, "DEVSPACE_OAUTH_OWNER_TOKEN"),
     accessTokenTtlSeconds: parsePositiveInteger(
@@ -189,6 +189,8 @@ function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined
       "localhost",
       "127.0.0.1",
     ]),
+    clientsStorePath: join(configDir, "oauth-clients.json"),
+    refreshTokensPath: join(configDir, "oauth-refresh-tokens.json"),
   };
 }
 
@@ -223,7 +225,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken, files.dir),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
