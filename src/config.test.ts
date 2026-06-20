@@ -84,6 +84,7 @@ assert.throws(
 );
 
 assert.equal(loadConfig(baseEnv).oauth.ownerToken, "test-owner-token-that-is-long-enough");
+assert.match(loadConfig(baseEnv).oauth.statePath ?? "", /oauth\.json$/);
 assert.deepEqual(loadConfig(baseEnv).oauth.scopes, ["devspace"]);
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
   "chatgpt.com",

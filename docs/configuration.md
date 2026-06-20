@@ -50,6 +50,11 @@ DevSpace uses a single-user OAuth approval flow.
 | `DEVSPACE_OAUTH_SCOPES` | `devspace` |
 | `DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,localhost,127.0.0.1` |
 
+Registered OAuth clients and refresh tokens are persisted in
+`$DEVSPACE_STATE_DIR/oauth.json`. Access tokens and authorization codes
+remain in memory only. After a restart, clients can use their refresh token
+to obtain a new access token without re-registering.
+
 MCP clients discover metadata from:
 
 ```text

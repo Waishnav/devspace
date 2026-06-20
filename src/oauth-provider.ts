@@ -1,4 +1,6 @@
 import { timingSafeEqual, randomBytes, randomUUID, createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Response } from "express";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
@@ -17,6 +19,7 @@ export interface OAuthConfig {
   refreshTokenTtlSeconds: number;
   scopes: string[];
   allowedRedirectHosts: string[];
+  statePath?: string;
 }
 
 interface AuthorizationCodeRecord {
@@ -39,6 +42,19 @@ interface RefreshTokenRecord {
   scopes: string[];
   expiresAt: number;
   resource?: URL;
+}
+
+interface StoredTokenRecord {
+  tokenHash: string;
+  clientId: string;
+  scopes: string[];
+  expiresAt: number;
+  resource?: string;
+}
+
+interface StoredOAuthState {
+  clients: OAuthClientInformationFull[];
+  refreshTokens: StoredTokenRecord[];
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -138,10 +154,64 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   return allowedHosts.includes(parsed.hostname);
 }
 
+function emptyOAuthState(): StoredOAuthState {
+  return { clients: [], refreshTokens: [] };
+}
+
+function readOAuthState(statePath: string | undefined): StoredOAuthState {
+  if (!statePath || !existsSync(statePath)) return emptyOAuthState();
+
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, "utf8")) as Partial<StoredOAuthState>;
+    return {
+      clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+      refreshTokens: Array.isArray(parsed.refreshTokens) ? parsed.refreshTokens : [],
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to read OAuth state at ${statePath}: ${reason}`);
+  }
+}
+
+function writeOAuthState(
+  statePath: string | undefined,
+  clients: OAuthClientInformationFull[],
+  refreshTokens: Array<[string, RefreshTokenRecord]>,
+): void {
+  if (!statePath) return;
+
+  mkdirSync(dirname(statePath), { recursive: true });
+  const state = {
+    version: 1,
+    clients,
+    refreshTokens: refreshTokens.map(([tokenHash, record]) => ({
+      tokenHash,
+      clientId: record.clientId,
+      scopes: record.scopes,
+      expiresAt: record.expiresAt,
+      resource: record.resource?.href,
+    })),
+  };
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(statePath, 0o600);
+}
+
+function parseStoredResource(resource: string | undefined): URL | undefined {
+  return resource ? new URL(resource) : undefined;
+}
+
 export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
   private readonly clients = new Map<string, OAuthClientInformationFull>();
 
-  constructor(private readonly allowedRedirectHosts: string[]) {}
+  constructor(
+    private readonly allowedRedirectHosts: string[],
+    initialClients: OAuthClientInformationFull[] = [],
+    private readonly onChange: () => void = () => {},
+  ) {
+    for (const client of initialClients) {
+      this.clients.set(client.client_id, client);
+    }
+  }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
     return this.clients.get(clientId);
@@ -164,12 +234,17 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
       response_types: client.response_types ?? ["code"],
     };
     this.clients.set(registered.client_id, registered);
+    this.onChange();
     return registered;
+  }
+
+  dumpClients(): OAuthClientInformationFull[] {
+    return Array.from(this.clients.values());
   }
 }
 
 export class SingleUserOAuthProvider implements OAuthServerProvider {
-  readonly clientsStore: OAuthRegisteredClientsStore;
+  readonly clientsStore: InMemoryOAuthClientsStore;
   private readonly codes = new Map<string, AuthorizationCodeRecord>();
   private readonly accessTokens = new Map<string, AccessTokenRecord>();
   private readonly refreshTokens = new Map<string, RefreshTokenRecord>();
@@ -180,7 +255,25 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     resourceServerUrl: URL,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
-    this.clientsStore = new InMemoryOAuthClientsStore(config.allowedRedirectHosts);
+    const state = readOAuthState(config.statePath);
+    this.clientsStore = new InMemoryOAuthClientsStore(config.allowedRedirectHosts, state.clients, () => {
+      this.saveOAuthState();
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    for (const record of state.refreshTokens) {
+      if (!record.tokenHash || !record.clientId || !Array.isArray(record.scopes) || !record.expiresAt) continue;
+      if (record.expiresAt < now) continue;
+
+      this.refreshTokens.set(record.tokenHash, {
+        token: record.tokenHash,
+        clientId: record.clientId,
+        scopes: record.scopes,
+        expiresAt: record.expiresAt,
+        resource: parseStoredResource(record.resource),
+      });
+    }
+    this.saveOAuthState();
   }
 
   async authorize(
@@ -305,6 +398,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const hashed = hashToken(request.token);
     this.accessTokens.delete(hashed);
     this.refreshTokens.delete(hashed);
+    this.saveOAuthState();
   }
 
   private validCodeRecord(
@@ -339,6 +433,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       expiresAt: refreshExpiresAt,
       resource,
     });
+    this.saveOAuthState();
 
     return {
       access_token: accessToken,
@@ -347,6 +442,14 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       refresh_token: refreshToken,
       scope: scopes.join(" "),
     };
+  }
+
+  private saveOAuthState(): void {
+    writeOAuthState(
+      this.config.statePath,
+      this.clientsStore.dumpClients(),
+      Array.from(this.refreshTokens.entries()),
+    );
   }
 }
 
