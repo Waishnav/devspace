@@ -17,7 +17,6 @@ try {
   const explicitSkills = join(root, "explicit-skills");
   await mkdir(join(projectRoot, "skills", "local", "project-skill"), { recursive: true });
   await mkdir(join(projectRoot, "skills", "installed", "installed-skill"), { recursive: true });
-  await mkdir(join(projectRoot, ".pi", "skills", "legacy-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
@@ -45,17 +44,6 @@ try {
     ].join("\n"),
   );
   await writeFile(
-    join(projectRoot, ".pi", "skills", "legacy-skill", "SKILL.md"),
-    [
-      "---",
-      "name: legacy-skill",
-      "description: Legacy skill description.",
-      "---",
-      "",
-      "# Legacy Skill",
-    ].join("\n"),
-  );
-  await writeFile(
     join(agentDir, "skills", "global-skill", "SKILL.md"),
     [
       "---",
@@ -79,7 +67,6 @@ try {
   );
   await mkdir(join(projectRoot, "skills", "local", "duplicate-local"), { recursive: true });
   await mkdir(join(projectRoot, "skills", "installed", "duplicate-installed"), { recursive: true });
-  await mkdir(join(projectRoot, ".pi", "skills", "duplicate-legacy"), { recursive: true });
   await writeFile(
     join(projectRoot, "skills", "local", "duplicate-local", "SKILL.md"),
     [
@@ -100,17 +87,6 @@ try {
       "---",
       "",
       "# Duplicate Installed",
-    ].join("\n"),
-  );
-  await writeFile(
-    join(projectRoot, ".pi", "skills", "duplicate-legacy", "SKILL.md"),
-    [
-      "---",
-      "name: duplicate-priority-skill",
-      "description: Legacy loses to local and installed.",
-      "---",
-      "",
-      "# Duplicate Legacy",
     ].join("\n"),
   );
   await writeFile(
@@ -146,7 +122,6 @@ try {
   const loaded = loadWorkspaceSkills(config, projectRoot);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "installed-skill"), true);
-  assert.equal(loaded.skills.some((skill) => skill.name === "legacy-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "devspace-workflow"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "senior-architect-lite"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "skill-authoring-lite"), true);

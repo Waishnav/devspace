@@ -85,7 +85,6 @@ DevSpace discovers skills from:
 - workspace-local skills in `skills/local`
 - workspace-installed skills in `skills/installed`
 - `DEVSPACE_AGENT_DIR`, which defaults to `~/.codex`
-- legacy project `.pi/skills`
 - optional paths from `DEVSPACE_SKILL_PATHS`
 
 When `open_workspace` returns matching skills, the model should read the

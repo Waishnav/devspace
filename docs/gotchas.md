@@ -196,7 +196,9 @@ DEVSPACE_SKILLS=1 npx @waishnav/devspace serve
 DevSpace looks in:
 
 - `DEVSPACE_AGENT_DIR`, defaulting to `~/.codex`
-- project `.pi/skills`
+- `skills/local`
+- `skills/installed`
+- `skills/core`
 - `DEVSPACE_SKILL_PATHS`
 
 If a skill appears in `open_workspace`, the model must read that skill's

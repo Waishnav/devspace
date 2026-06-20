@@ -45,12 +45,6 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     loadSkills({
       cwd,
       agentDir: config.agentDir,
-      skillPaths: [workspaceLegacySkillPath(cwd)],
-      includeDefaults: false,
-    }),
-    loadSkills({
-      cwd,
-      agentDir: config.agentDir,
       skillPaths: [],
       includeDefaults: true,
     }),
@@ -119,10 +113,6 @@ function workspaceLocalSkillPath(cwd: string): string {
 
 function workspaceInstalledSkillPath(cwd: string): string {
   return resolve(cwd, "skills", "installed");
-}
-
-function workspaceLegacySkillPath(cwd: string): string {
-  return resolve(cwd, ".pi", "skills");
 }
 
 function mergeLoadedSkills(batches: LoadedSkills[]): LoadedSkills {
