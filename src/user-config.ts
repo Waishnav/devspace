@@ -9,6 +9,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 
+export type TunnelMode = "cloudflare";
+
 export interface DevspaceUserConfig {
   host?: string;
   port?: number;
@@ -18,6 +20,8 @@ export interface DevspaceUserConfig {
   stateDir?: string;
   worktreeRoot?: string;
   agentDir?: string;
+  /** When set, `devspace serve` opens a public tunnel automatically. */
+  tunnel?: TunnelMode;
 }
 
 export interface DevspaceAuthConfig {
