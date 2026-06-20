@@ -46,3 +46,32 @@ Expected behavior:
 - If there is no open workspace, open one first.
 - If there is no pending user input, do not pretend the answer was accepted.
 - If the compact answer is incomplete or invalid, return the specific validation error.
+
+## Batch File Changes
+
+Inputs:
+
+- "Modify these files ..."
+- "Apply this patch ..."
+- "Do the same change across the project ..."
+
+Expected behavior:
+
+1. Inspect the files first.
+2. Use `apply_workspace_patch` for coordinated multi-file changes.
+3. Avoid `bash` redirection, heredocs, `sed -i`, `perl -i`, or generated scripts for project writes.
+4. Call `show_changes` after the related change set when available.
+
+## Git Push
+
+Inputs:
+
+- "Push this branch"
+- "git push"
+- "Push origin main"
+
+Expected behavior:
+
+1. Use `git status` or the git inspection tools to verify what will be pushed.
+2. Use `git_push` with structured arguments.
+3. Do not use generic `bash` for raw `git push` unless `git_push` is unavailable.

@@ -47,6 +47,7 @@ import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { serverInstructions as buildServerInstructions, workspaceInstruction } from "./prompting.js";
 import { parseAnswerTextOrThrow, parseWorkspaceCommand } from "./workspace-commands.js";
+import { applyWorkspacePatch, gitPush } from "./workspace-operations.js";
 import type {
   WorkspaceStore,
   WorkspacePlanStep,
@@ -105,6 +106,7 @@ type ToolWidgetKind =
   | "search"
   | "directory"
   | "shell"
+  | "safe_operation"
   | "show_changes";
 
 interface ToolDefinitionMeta extends Record<string, unknown> {
@@ -1787,6 +1789,159 @@ function createMcpServer(
           result: contentText(editContent),
         },
       };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "apply_workspace_patch",
+    {
+      title: "Apply workspace patch",
+      description:
+        `Apply a unified diff patch inside an open workspace. Use this for multi-file or batch file modifications instead of ${toolNames.shell}, shell redirection, heredocs, generated scripts, or ad-hoc write commands. All changed paths must stay inside the workspace root. Call open_workspace first and pass workspaceId.`,
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .describe("Workspace identifier returned by open_workspace."),
+        patch: z
+          .string()
+          .describe("Unified diff patch containing diff --git file headers."),
+      },
+      outputSchema: resultOutputSchema({
+        status: z.literal("applied"),
+        files: z.array(z.string()),
+      }),
+      ...toolWidgetDescriptorMeta(config, "safe_operation"),
+      annotations: WRITE_TOOL_ANNOTATIONS,
+    },
+    async ({ workspaceId, patch }) => {
+      const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
+
+      try {
+        const result = await applyWorkspacePatch({ patch }, { root: workspace.root });
+        const stats = countDiffStats(patch);
+        const message = `Applied patch to ${result.files.length} file${result.files.length === 1 ? "" : "s"} (+${stats.additions} -${stats.removals}).`;
+        const content = [textBlock(message)];
+
+        logToolCall(config, {
+          tool: "apply_workspace_patch",
+          workspaceId,
+          success: true,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+
+        return {
+          content,
+          _meta: {
+            tool: "apply_workspace_patch",
+            card: {
+              workspaceId,
+              summary: {
+                files: result.files.length,
+                ...stats,
+              },
+              payload: {
+                patch,
+                stdout: result.stdout,
+                stderr: result.stderr,
+              },
+            },
+          },
+          structuredContent: {
+            status: "applied" as const,
+            files: result.files,
+            result: contentText(content),
+          },
+        };
+      } catch (error) {
+        const response = toolError(error instanceof Error ? error.message : String(error));
+        logFailedToolResponse(config, {
+          tool: "apply_workspace_patch",
+          workspaceId,
+        }, response.content, startedAt);
+        return response;
+      }
+    },
+  );
+
+  registerAppTool(
+    server,
+    "git_push",
+    {
+      title: "Git push",
+      description:
+        "Push the current workspace git branch using structured arguments. Use this instead of running git push through the generic shell tool when the user explicitly asks to push.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .describe("Workspace identifier returned by open_workspace."),
+        remote: z
+          .string()
+          .optional()
+          .describe("Git remote name. Defaults to origin."),
+        branch: z
+          .string()
+          .optional()
+          .describe("Branch or refspec to push. Omit to use git's configured default push target."),
+        setUpstream: z
+          .boolean()
+          .optional()
+          .describe("When true, pass -u to set upstream for the branch."),
+      },
+      outputSchema: resultOutputSchema({
+        remote: z.string(),
+        branch: z.string().optional(),
+      }),
+      ...toolWidgetDescriptorMeta(config, "safe_operation"),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ workspaceId, remote, branch, setUpstream }) => {
+      const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
+
+      try {
+        const result = await gitPush({ remote, branch, setUpstream }, { root: workspace.root });
+        const text = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+        const content = [textBlock(text || `Pushed to ${result.remote}${result.branch ? ` ${result.branch}` : ""}.`)];
+
+        logToolCall(config, {
+          tool: "git_push",
+          workspaceId,
+          success: true,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+
+        return {
+          content,
+          _meta: {
+            tool: "git_push",
+            card: {
+              workspaceId,
+              summary: {
+                remote: result.remote,
+                branch: result.branch,
+              },
+              payload: {
+                stdout: result.stdout,
+                stderr: result.stderr,
+              },
+            },
+          },
+          structuredContent: {
+            remote: result.remote,
+            branch: result.branch,
+            result: contentText(content),
+          },
+        };
+      } catch (error) {
+        const response = toolError(error instanceof Error ? error.message : String(error));
+        logFailedToolResponse(config, {
+          tool: "git_push",
+          workspaceId,
+        }, response.content, startedAt);
+        return response;
+      }
     },
   );
 

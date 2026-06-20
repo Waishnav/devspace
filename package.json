@@ -25,7 +25,7 @@
     "build:app": "vite build",
     "dev": "node scripts/dev-server.mjs",
     "start": "node dist/cli.js serve",
-    "test": "node scripts/dev-server.test.mjs && node --import tsx src/config.test.ts && node --import tsx src/oauth-provider.test.ts && node --import tsx src/cloudflare-tunnel.test.ts && node --import tsx src/shell-policy.test.ts && node --import tsx src/tool-result.test.ts && node --import tsx src/roots.test.ts && node --import tsx src/skills.test.ts && node --import tsx src/prompting.test.ts && node --import tsx src/workspace-commands.test.ts && node --import tsx src/workspaces.test.ts && node --import tsx src/review-checkpoints.test.ts",
+    "test": "node scripts/dev-server.test.mjs && node --import tsx src/config.test.ts && node --import tsx src/oauth-provider.test.ts && node --import tsx src/cloudflare-tunnel.test.ts && node --import tsx src/shell-policy.test.ts && node --import tsx src/tool-result.test.ts && node --import tsx src/roots.test.ts && node --import tsx src/skills.test.ts && node --import tsx src/prompting.test.ts && node --import tsx src/workspace-commands.test.ts && node --import tsx src/workspace-operations.test.ts && node --import tsx src/workspaces.test.ts && node --import tsx src/review-checkpoints.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],

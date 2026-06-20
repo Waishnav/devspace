@@ -48,6 +48,14 @@ Trigger when there is pending `request_user_input` state and the user replies wi
 
 Prefer passing the raw reply through `handle_workspace_command` or `answer_user_input(text)` instead of paraphrasing it.
 
+### Batch File Changes
+
+When the user asks for broad or multi-file modifications, prefer `apply_workspace_patch` with a unified diff patch instead of shell redirection, heredocs, generated scripts, or ad-hoc write commands.
+
+### Git Push
+
+When the user explicitly asks to push commits, prefer `git_push` with structured `remote`, `branch`, and `setUpstream` arguments instead of `bash` with a raw `git push` command.
+
 ## Response Standard
 
 - Bottom line first.
