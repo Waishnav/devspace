@@ -36,7 +36,9 @@ import {
 } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
+import { validateShellCommand } from "./shell-policy.js";
 import { formatPathForPrompt } from "./skills.js";
+import { contentStats, contentText, toolError, type ToolContent } from "./tool-result.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 
@@ -66,10 +68,6 @@ interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
 }
-
-type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
 
 interface WorkspaceAppManifestEntry {
   file: string;
@@ -275,15 +273,6 @@ function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
   });
 }
 
-function contentText(content: ToolContent[]): string {
-  return content
-    .filter(
-      (item): item is { type: "text"; text: string } => item.type === "text",
-    )
-    .map((item) => item.text)
-    .join("\n");
-}
-
 function toolErrorPreview(content: ToolContent[]): string | undefined {
   const text = contentText(content).replace(/\s+/g, " ").trim();
   if (!text) return undefined;
@@ -306,17 +295,6 @@ function logFailedToolResponse(
 
 function textBlock(text: string): ToolContent {
   return { type: "text", text };
-}
-
-function textSummary(content: ToolContent[]): {
-  lines: number;
-  characters: number;
-} {
-  const text = contentText(content);
-  return {
-    lines: text.length === 0 ? 0 : text.split("\n").length,
-    characters: text.length,
-  };
 }
 
 function contentLineCount(content: string): number {
@@ -702,7 +680,7 @@ function createMcpServer(
       workspaces.markReadPathLoaded(workspace, readPath);
 
       const summary = {
-        ...textSummary(response.content),
+        ...contentStats(response.content),
         offset: input.offset ?? 1,
         limited: input.limit !== undefined,
       };
@@ -1006,7 +984,7 @@ function createMcpServer(
         const summary = {
           pattern: input.pattern,
           scope: input.path ?? ".",
-          ...textSummary(response.content),
+          ...contentStats(response.content),
         };
         logToolCall(config, {
           tool: toolNames.grep,
@@ -1076,7 +1054,7 @@ function createMcpServer(
         const summary = {
           pattern: input.pattern,
           scope: input.path ?? ".",
-          ...textSummary(response.content),
+          ...contentStats(response.content),
         };
         logToolCall(config, {
           tool: toolNames.glob,
@@ -1143,7 +1121,7 @@ function createMcpServer(
           return response;
         }
 
-        const summary = textSummary(response.content);
+        const summary = contentStats(response.content);
         logToolCall(config, {
           tool: toolNames.ls,
           workspaceId,
@@ -1212,6 +1190,18 @@ function createMcpServer(
         workspace,
         workingDirectory,
       );
+      const shellPolicy = validateShellCommand(config.shellMode, input.command);
+      if (!shellPolicy.allowed) {
+        const response = toolError(shellPolicy.reason ?? "Shell command blocked.");
+        logFailedToolResponse(config, {
+          tool: toolNames.shell,
+          workspaceId,
+          workingDirectory: workingDirectory ?? ".",
+          command: input.command,
+          commandLength: input.command.length,
+        }, response.content, startedAt);
+        return response;
+      }
       const response = await runShellTool(input, {
         cwd,
         root: workspace.root,
@@ -1231,7 +1221,7 @@ function createMcpServer(
       const summary = {
         command: input.command,
         workingDirectory: workingDirectory ?? ".",
-        ...textSummary(response.content),
+        ...contentStats(response.content),
       };
       logToolCall(config, {
         tool: toolNames.shell,

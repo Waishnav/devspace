@@ -34,6 +34,7 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `PORT` | Local port. Defaults to `7676`. |
 | `DEVSPACE_ALLOWED_ROOTS` | Comma-separated local roots that workspaces may open. |
 | `DEVSPACE_PUBLIC_BASE_URL` | Public origin for the server, without `/mcp`. |
+| `DEVSPACE_TUNNEL` | Optional automatic tunnel mode. Currently supports `cloudflare` when explicitly enabled. |
 | `DEVSPACE_ALLOWED_HOSTS` | Optional Host header allowlist override. |
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
@@ -49,6 +50,11 @@ DevSpace uses a single-user OAuth approval flow.
 | `DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
 | `DEVSPACE_OAUTH_SCOPES` | `devspace` |
 | `DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,localhost,127.0.0.1` |
+| `DEVSPACE_OAUTH_STATE_PATH` | `$DEVSPACE_STATE_DIR/oauth.json` |
+
+Registered OAuth clients and refresh token hashes are persisted in
+`$DEVSPACE_STATE_DIR/oauth.json` by default. Access tokens and authorization
+codes remain in memory only.
 
 MCP clients discover metadata from:
 
@@ -72,6 +78,30 @@ MCP clients discover metadata from:
 | --- | --- |
 | `minimal` | Default. Disables dedicated search and list tools. Clients use the shell tool with `rg`, `grep`, `find`, `ls`, or `tree` for inspection. |
 | `full` | Enables dedicated `grep`, `glob`, and `ls` tools. |
+
+`DEVSPACE_SHELL_MODE` controls shell execution policy.
+
+| Value | Behavior |
+| --- | --- |
+| `full` | Default. Preserves the current shell behavior. |
+| `read-only` | Allows only single-command inspection workflows such as `rg`, `git status`, `find`, or `ls`. Blocks shell control operators and mutating commands. |
+| `off` | Disables shell execution entirely. |
+
+## Tunnel Modes
+
+DevSpace keeps the existing manual `publicBaseUrl` flow by default. Automatic
+Cloudflare quick tunnel mode is opt-in only.
+
+Enable it explicitly with one of:
+
+```bash
+npx @waishnav/devspace serve --tunnel
+DEVSPACE_TUNNEL=cloudflare npx @waishnav/devspace serve
+```
+
+Or set `"tunnel": "cloudflare"` in `~/.devspace/config.json`.
+
+Use `--no-tunnel` to override configured tunnel mode for one run.
 
 ## Widgets
 

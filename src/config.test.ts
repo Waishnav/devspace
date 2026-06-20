@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig } from "./config.js";
 
 const emptyConfigDir = mkdtempSync(join(tmpdir(), "devspace-empty-config-test-"));
@@ -23,6 +24,9 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).minimalTo
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).minimalTools, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).minimalTools, true);
+assert.equal(loadConfig(baseEnv).shellMode, "full");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL_MODE: "read-only" }).shellMode, "read-only");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL_MODE: "off" }).shellMode, "off");
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
@@ -42,6 +46,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_SHELL_MODE: "invalid" }),
+  /Invalid DEVSPACE_SHELL_MODE: invalid/,
 );
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_NAMING: "invalid" }),
@@ -84,6 +92,7 @@ assert.throws(
 );
 
 assert.equal(loadConfig(baseEnv).oauth.ownerToken, "test-owner-token-that-is-long-enough");
+assert.match(loadConfig(baseEnv).oauth.statePath ?? "", /oauth\.json$/);
 assert.deepEqual(loadConfig(baseEnv).oauth.scopes, ["devspace"]);
 assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
   "chatgpt.com",
@@ -111,6 +120,10 @@ assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS: "240" }).oauth
     .refreshTokenTtlSeconds,
   240,
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_STATE_PATH: "~/custom-devspace-oauth.json" }).oauth.statePath,
+  resolve(homedir(), "custom-devspace-oauth.json"),
 );
 
 assert.throws(
@@ -161,6 +174,7 @@ writeFileSync(
 const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
 assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
+assert.match(fileConfig.oauth.statePath ?? "", /oauth\.json$/);
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",

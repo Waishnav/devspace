@@ -25,7 +25,7 @@
     "build:app": "vite build",
     "dev": "node scripts/dev-server.mjs",
     "start": "node dist/cli.js serve",
-    "test": "tsx src/config.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts",
+    "test": "node scripts/dev-server.test.mjs && node --import tsx src/config.test.ts && node --import tsx src/oauth-provider.test.ts && node --import tsx src/cloudflare-tunnel.test.ts && node --import tsx src/shell-policy.test.ts && node --import tsx src/tool-result.test.ts && node --import tsx src/roots.test.ts && node --import tsx src/skills.test.ts && node --import tsx src/workspaces.test.ts && node --import tsx src/review-checkpoints.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
@@ -33,7 +33,7 @@
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.5.1",
-    "@earendil-works/pi-coding-agent": "^0.79.4",
+    "@earendil-works/pi-coding-agent": "^0.79.8",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@pierre/diffs": "^1.2.5",
@@ -59,6 +59,7 @@
   },
   "overrides": {
     "protobufjs": "7.6.4",
-    "ws": "8.21.0"
+    "ws": "8.21.0",
+    "undici": "8.5.0"
   }
 }

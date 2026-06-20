@@ -7,6 +7,7 @@ import { loadDevspaceFiles } from "./user-config.js";
 
 export type ToolNamingMode = "legacy" | "short";
 export type WidgetMode = "off" | "changes" | "full";
+export type ShellMode = "full" | "read-only" | "off";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -18,6 +19,7 @@ export interface ServerConfig {
   allowedHosts: string[];
   publicBaseUrl: string;
   minimalTools: boolean;
+  shellMode: ShellMode;
   toolNaming: ToolNamingMode;
   widgets: WidgetMode;
   stateDir: string;
@@ -87,6 +89,13 @@ function parseMinimalTools(env: NodeJS.ProcessEnv): boolean {
   }
   if (env.DEVSPACE_MINIMAL_TOOLS !== undefined) return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS);
   return true;
+}
+
+function parseShellMode(value: string | undefined): ShellMode {
+  if (!value || value === "full") return "full";
+  if (value === "read-only" || value === "off") return value;
+
+  throw new Error(`Invalid DEVSPACE_SHELL_MODE: ${value}`);
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -170,7 +179,15 @@ function parseRequiredSecret(value: string | undefined, name: string): string {
   return secret;
 }
 
-function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
+function defaultOAuthStatePath(stateDir: string): string {
+  return join(stateDir, "oauth.json");
+}
+
+function parseOAuthConfig(
+  env: NodeJS.ProcessEnv,
+  ownerToken: string | undefined,
+  stateDir: string,
+): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken, "DEVSPACE_OAUTH_OWNER_TOKEN"),
     accessTokenTtlSeconds: parsePositiveInteger(
@@ -189,6 +206,7 @@ function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined
       "localhost",
       "127.0.0.1",
     ]),
+    statePath: resolve(expandHomePath(env.DEVSPACE_OAUTH_STATE_PATH ?? defaultOAuthStatePath(stateDir))),
   };
 }
 
@@ -208,6 +226,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
   const port = parsePort(env.PORT ?? files.config.port);
+  const stateDir = resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir()));
   const publicBaseUrl = parsePublicBaseUrl(
     env.DEVSPACE_PUBLIC_BASE_URL ?? files.config.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
@@ -223,14 +242,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken, stateDir),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
     minimalTools: parseMinimalTools(env),
+    shellMode: parseShellMode(env.DEVSPACE_SHELL_MODE),
     toolNaming: parseToolNaming(env.DEVSPACE_TOOL_NAMING),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
-    stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
+    stateDir,
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),

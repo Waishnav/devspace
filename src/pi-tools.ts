@@ -17,13 +17,7 @@ import {
   type AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import { resolveAllowedPath } from "./roots.js";
-
-type McpContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
-export type ToolResponse<TDetails = unknown> = {
-  content: McpContent[];
-  details?: TDetails;
-  isError?: boolean;
-};
+import { toolError, type ToolContent, type ToolResponse } from "./tool-result.js";
 
 interface ToolContext {
   cwd: string;
@@ -31,7 +25,7 @@ interface ToolContext {
   readRoots?: string[];
 }
 
-function toMcpContent(result: AgentToolResult<unknown>): McpContent[] {
+function toMcpContent(result: AgentToolResult<unknown>): ToolContent[] {
   return result.content.map((content) => {
     if (content.type === "text") {
       return { type: "text", text: content.text };
@@ -43,11 +37,6 @@ function toMcpContent(result: AgentToolResult<unknown>): McpContent[] {
       mimeType: content.mimeType,
     };
   });
-}
-
-function formatToolError(error: unknown): McpContent[] {
-  const message = error instanceof Error ? error.message : String(error);
-  return [{ type: "text", text: message }];
 }
 
 async function runTool<TInput, TDetails = unknown>(
@@ -62,7 +51,8 @@ async function runTool<TInput, TDetails = unknown>(
       details: result.details,
     };
   } catch (error) {
-    return { content: formatToolError(error), isError: true };
+    const message = error instanceof Error ? error.message : String(error);
+    return toolError(message);
   }
 }
 

@@ -11,8 +11,8 @@ projects through DevSpace.
 - Bash, including Git Bash or WSL on Windows
 - a public HTTPS URL that forwards to the local DevSpace server
 
-DevSpace does not create the public tunnel for you. Use Cloudflare Tunnel,
-ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
+DevSpace does not create the public tunnel for you by default. Use Cloudflare
+Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
 
 ## Install And Configure
 
@@ -94,6 +94,22 @@ For a stable public URL, persist it:
 npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 npx @waishnav/devspace serve
 ```
+
+If you explicitly want DevSpace to open a Cloudflare quick tunnel for a single
+run, opt in with:
+
+```bash
+npx @waishnav/devspace serve --tunnel
+```
+
+Or:
+
+```bash
+DEVSPACE_TUNNEL=cloudflare npx @waishnav/devspace serve
+```
+
+This mode requires an existing `cloudflared` binary and does not replace the
+default manual public URL workflow.
 
 ## Approve The Client
 

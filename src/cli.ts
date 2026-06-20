@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
+import { resolveTunnelMode, startQuickTunnel, type QuickTunnel } from "./cloudflare-tunnel.js";
 import { loadConfig } from "./config.js";
 import {
   generateOwnerToken,
@@ -28,7 +29,7 @@ async function main(argv: string[]): Promise<void> {
   switch (command) {
     case "serve":
       await ensureConfigured();
-      await serve();
+      await serve(args);
       return;
     case "init":
       await runInit({ force: args.includes("--force") });
@@ -162,7 +163,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
   }
 }
 
-async function serve(): Promise<void> {
+async function serve(args: string[] = []): Promise<void> {
   const sqliteStatus = checkSqliteNative();
   if (sqliteStatus !== "ok") {
     throw new Error(
@@ -176,6 +177,23 @@ async function serve(): Promise<void> {
     );
   }
 
+  let tunnel: QuickTunnel | undefined;
+  const configuredTunnel = resolveTunnelMode({
+    args,
+    env: process.env,
+    configuredTunnel: loadDevspaceFiles().config.tunnel,
+  });
+  if (configuredTunnel === "cloudflare") {
+    const files = loadDevspaceFiles();
+    const host = process.env.HOST ?? files.config.host ?? "127.0.0.1";
+    const port = Number(process.env.PORT ?? files.config.port ?? 7676);
+    const tunnelHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+    const localBaseUrl = `http://${tunnelHost}:${port}`;
+
+    tunnel = await startQuickTunnel(localBaseUrl, { quiet: true });
+    process.env.DEVSPACE_PUBLIC_BASE_URL = tunnel.publicBaseUrl;
+  }
+
   const { createServer } = await import("./server.js");
   const config = loadConfig();
   const { app } = createServer(config);
@@ -187,11 +205,15 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
+    if (tunnel) {
+      console.log(`cloudflare tunnel: ${tunnel.publicBaseUrl}`);
+    }
     console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
   });
 
   const shutdown = () => {
+    tunnel?.stop();
     httpServer.close(() => process.exit(0));
   };
   process.once("SIGINT", shutdown);
@@ -257,10 +279,16 @@ function printHelp(): void {
       "Usage:",
       "  devspace                 Run first-time setup if needed, then start the server",
       "  devspace serve           Start the server",
+      "  devspace serve --tunnel  Start the server with an explicit Cloudflare quick tunnel",
+      "  devspace serve --no-tunnel  Disable a configured Cloudflare quick tunnel for this run",
       "  devspace init            Create or update ~/.devspace/config.json and auth.json",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "",
+      "Optional Cloudflare quick tunnel:",
+      "  DEVSPACE_TUNNEL=cloudflare devspace serve",
+      "  or set { \"tunnel\": \"cloudflare\" } in ~/.devspace/config.json",
       "",
       "For temporary tunnels:",
       "  DEVSPACE_PUBLIC_BASE_URL=https://example.trycloudflare.com devspace serve",
