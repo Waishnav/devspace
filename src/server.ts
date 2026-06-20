@@ -65,6 +65,7 @@ const SHELL_TOOL_ANNOTATIONS = {
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
+  close(): void;
 }
 
 type ToolContent =
@@ -1275,7 +1276,7 @@ export function createServer(config = loadConfig()): RunningServer {
   const transports = new Map<string, Transport>();
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
-  const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl);
+  const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
@@ -1426,7 +1427,14 @@ export function createServer(config = loadConfig()): RunningServer {
     }
   });
 
-  return { app, config };
+  return {
+    app,
+    config,
+    close: () => {
+      oauthProvider.close();
+      workspaceStore.close?.();
+    },
+  };
 }
 
 async function isMainModule(): Promise<boolean> {
@@ -1438,8 +1446,8 @@ async function isMainModule(): Promise<boolean> {
 }
 
 if (await isMainModule()) {
-  const { app, config } = createServer();
-  app.listen(config.port, config.host, () => {
+  const { app, config, close } = createServer();
+  const httpServer = app.listen(config.port, config.host, () => {
     console.log(
       `devspace listening on http://${config.host}:${config.port}/mcp`,
     );
@@ -1450,4 +1458,13 @@ if (await isMainModule()) {
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
   });
+
+  const shutdown = () => {
+    httpServer.close(() => {
+      close();
+      process.exit(0);
+    });
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }

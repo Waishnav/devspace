@@ -90,7 +90,8 @@ export function generateOwnerToken(): string {
 
 function readJsonFile<T>(filePath: string): T {
   try {
-    return JSON.parse(readFileSync(filePath, "utf8")) as T;
+    const content = readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+    return JSON.parse(content) as T;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Unable to read ${filePath}: ${reason}`);

@@ -168,3 +168,24 @@ assert.deepEqual(fileConfig.allowedHosts, [
   "::1",
   "devspace.example.com",
 ]);
+
+const bomConfigDir = mkdtempSync(join(tmpdir(), "devspace-bom-config-test-"));
+writeFileSync(
+  join(bomConfigDir, "config.json"),
+  `\uFEFF${JSON.stringify({
+    port: 8989,
+    allowedRoots: [process.cwd()],
+    publicBaseUrl: "https://bom.example.com",
+  })}`,
+  "utf8",
+);
+writeFileSync(
+  join(bomConfigDir, "auth.json"),
+  `\uFEFF${JSON.stringify({ ownerToken: "bom-owner-password-long-enough" })}`,
+  "utf8",
+);
+
+const bomConfig = loadConfig({ DEVSPACE_CONFIG_DIR: bomConfigDir });
+assert.equal(bomConfig.port, 8989);
+assert.equal(bomConfig.oauth.ownerToken, "bom-owner-password-long-enough");
+assert.equal(bomConfig.publicBaseUrl, "https://bom.example.com");

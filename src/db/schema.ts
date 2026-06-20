@@ -1,4 +1,4 @@
-import { index, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const workspaceSessions = sqliteTable(
   "workspace_sessions",
@@ -40,5 +40,42 @@ export const loadedAgentFiles = sqliteTable(
 
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
+export const oauthClients = sqliteTable("oauth_clients", {
+  clientId: text("client_id").primaryKey(),
+  clientJson: text("client_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const oauthAuthorizationCodes = sqliteTable(
+  "oauth_authorization_codes",
+  {
+    codeHash: text("code_hash").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    paramsJson: text("params_json").notNull(),
+    expiresAtMs: integer("expires_at_ms").notNull(),
+  },
+  (table) => [index("oauth_authorization_codes_expiry_idx").on(table.expiresAtMs)],
+);
+
+export const oauthTokens = sqliteTable(
+  "oauth_tokens",
+  {
+    tokenHash: text("token_hash").notNull(),
+    tokenKind: text("token_kind").notNull(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    scopesJson: text("scopes_json").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    resource: text("resource"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tokenHash, table.tokenKind] }),
+    index("oauth_tokens_expiry_idx").on(table.expiresAt),
+  ],
+);
+
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
