@@ -68,11 +68,20 @@ interface StoredAccessTokenRecord {
   resource?: string;
 }
 
+interface StoredOAuthConsentRecord {
+  clientId: string;
+  redirectUri: string;
+  resource: string;
+  scopes: string[];
+  approvedAt: number;
+}
+
 interface StoredOAuthState {
   version: number;
   clients: OAuthClientInformationFull[];
   accessTokens: StoredAccessTokenRecord[];
   refreshTokens: StoredRefreshTokenRecord[];
+  approvedConsents: StoredOAuthConsentRecord[];
 }
 
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -178,6 +187,7 @@ function emptyOAuthState(): StoredOAuthState {
     clients: [],
     accessTokens: [],
     refreshTokens: [],
+    approvedConsents: [],
   };
 }
 
@@ -188,6 +198,7 @@ function parseOAuthState(raw: string): StoredOAuthState {
     clients: Array.isArray(parsed.clients) ? parsed.clients : [],
     accessTokens: Array.isArray(parsed.accessTokens) ? parsed.accessTokens : [],
     refreshTokens: Array.isArray(parsed.refreshTokens) ? parsed.refreshTokens : [],
+    approvedConsents: Array.isArray(parsed.approvedConsents) ? parsed.approvedConsents : [],
   };
 }
 
@@ -213,6 +224,7 @@ function writeOAuthState(
   clients: OAuthClientInformationFull[],
   accessTokens: Iterable<[string, AccessTokenRecord]>,
   refreshTokens: Iterable<[string, RefreshTokenRecord]>,
+  approvedConsents: Iterable<StoredOAuthConsentRecord>,
 ): void {
   if (!statePath) return;
 
@@ -235,6 +247,13 @@ function writeOAuthState(
       scopes: record.scopes,
       expiresAt: record.expiresAt,
       resource: record.resource?.href,
+    })),
+    approvedConsents: Array.from(approvedConsents, (record) => ({
+      clientId: record.clientId,
+      redirectUri: record.redirectUri,
+      resource: record.resource,
+      scopes: record.scopes,
+      approvedAt: record.approvedAt,
     })),
   };
   const tempPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -307,6 +326,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   private readonly codes = new Map<string, AuthorizationCodeRecord>();
   private readonly accessTokens = new Map<string, AccessTokenRecord>();
   private readonly refreshTokens = new Map<string, RefreshTokenRecord>();
+  private readonly approvedConsents = new Map<string, StoredOAuthConsentRecord>();
   private readonly resourceServerUrl: URL;
 
   constructor(
@@ -362,6 +382,31 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       });
     }
 
+    for (const record of state.approvedConsents) {
+      if (
+        typeof record?.clientId !== "string" ||
+        typeof record?.redirectUri !== "string" ||
+        typeof record?.resource !== "string" ||
+        !Array.isArray(record?.scopes) ||
+        typeof record?.approvedAt !== "number"
+      ) {
+        continue;
+      }
+
+      const client = this.clientsStore.getClient(record.clientId);
+      if (!client || !client.redirect_uris.includes(record.redirectUri)) {
+        continue;
+      }
+
+      this.approvedConsents.set(consentKey(record.clientId, record.redirectUri, record.resource, record.scopes), {
+        clientId: record.clientId,
+        redirectUri: record.redirectUri,
+        resource: record.resource,
+        scopes: normalizeScopes(record.scopes),
+        approvedAt: record.approvedAt,
+      });
+    }
+
     this.saveOAuthState();
   }
 
@@ -370,19 +415,34 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    const registeredClient = this.clientsStore.getClient(client.client_id);
+    if (!registeredClient) {
+      throw new InvalidRequestError("OAuth client is not registered");
+    }
     if (!params.resource || !checkResourceAllowed({ requestedResource: params.resource, configuredResource: this.resourceServerUrl })) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
       throw new InvalidRequestError("Requested scope is not supported");
     }
+    if (!registeredClient.redirect_uris.includes(params.redirectUri)) {
+      throw new InvalidRequestError("redirect_uri is not registered for this client");
+    }
+
+    const scopes = normalizeScopes(params.scopes ?? this.config.scopes);
+    const currentConsentKey = consentKey(client.client_id, params.redirectUri, params.resource.href, scopes);
 
     if (res.req.method !== "POST") {
+      if (this.approvedConsents.has(currentConsentKey)) {
+        this.redirectWithAuthorizationCode(client, params, res);
+        return;
+      }
+
       res.status(200).setHeader("Content-Type", "text/html; charset=utf-8");
       res.send(
         formHtml({
           clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
+          scopes,
           resource: params.resource,
           fields: authorizationFormFields(client, params),
         }),
@@ -397,7 +457,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
         formHtml({
           error: "The Owner password was not accepted.",
           clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
+          scopes,
           resource: params.resource,
           fields: authorizationFormFields(client, params),
         }),
@@ -405,6 +465,32 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       return;
     }
 
+    this.approvedConsents.set(currentConsentKey, {
+      clientId: client.client_id,
+      redirectUri: params.redirectUri,
+      resource: params.resource.href,
+      scopes,
+      approvedAt: Math.floor(Date.now() / 1000),
+    });
+    this.saveOAuthState();
+    this.redirectWithAuthorizationCode(client, params, res);
+  }
+
+  revokeClientConsent(clientId: string): void {
+    let changed = false;
+    for (const [key, record] of this.approvedConsents.entries()) {
+      if (record.clientId !== clientId) continue;
+      this.approvedConsents.delete(key);
+      changed = true;
+    }
+    if (changed) this.saveOAuthState();
+  }
+
+  private redirectWithAuthorizationCode(
+    client: OAuthClientInformationFull,
+    params: AuthorizationParams,
+    res: Response,
+  ): void {
     const code = `code-${randomUUID()}`;
     this.codes.set(code, {
       clientId: client.client_id,
@@ -549,6 +635,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       this.clientsStore.dumpClients(),
       this.accessTokens.entries(),
       this.refreshTokens.entries(),
+      this.approvedConsents.values(),
     );
   }
 }
@@ -571,4 +658,12 @@ function authorizationFormFields(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
+}
+
+function normalizeScopes(scopes: string[]): string[] {
+  return [...scopes].sort();
+}
+
+function consentKey(clientId: string, redirectUri: string, resource: string, scopes: string[]): string {
+  return `${clientId}\n${redirectUri}\n${resource}\n${normalizeScopes(scopes).join(" ")}`;
 }
