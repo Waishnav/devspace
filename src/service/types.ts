@@ -5,10 +5,6 @@ export type ServiceManagerKind =
   | "wsl-task-scheduler-fallback"
   | "unsupported";
 
-export interface ServiceInstallOptions {
-  autostart?: boolean;
-}
-
 export interface ServiceResult {
   ok: boolean;
   manager: ServiceManagerKind;
@@ -41,9 +37,7 @@ export interface ServiceManager {
   readonly serviceName: string;
 
   isSupported(): Promise<boolean>;
-  install(options?: ServiceInstallOptions): Promise<ServiceResult>;
   uninstall(): Promise<ServiceResult>;
-  enable(): Promise<ServiceResult>;
   disable(): Promise<ServiceResult>;
   start(): Promise<ServiceResult>;
   stop(): Promise<ServiceResult>;

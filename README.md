@@ -133,14 +133,19 @@ until you explicitly add an allowed path.
 
 ## Service Management
 
-DevSpace service management only manages DevSpace itself. It does not manage
-arbitrary system services.
+DevSpace service management only manages DevSpace itself. `devspace service start`
+acts as the single entrypoint: if the background service is missing, DevSpace
+creates it for the current platform and starts it; if it already exists, it
+just starts it. It does not manage arbitrary system services.
 
 ```bash
-devspace service install --autostart
+devspace service start
 devspace service status
-devspace service logs --tail 100
+devspace service logs
 devspace service restart
+devspace service stop
+devspace service disable
+devspace service uninstall
 devspace service doctor
 ```
 
@@ -219,8 +224,8 @@ For a normal ChatGPT coding session:
 ## Platform Support
 
 DevSpace supports Linux, macOS, and Windows environments with a Bash-compatible
-shell for the main CLI, and supports native per-user service installation on
-macOS, Linux, Windows, and WSL.
+shell for the main CLI, and supports native per-user service control on macOS,
+Linux, Windows, and WSL.
 
 | Platform                                          | Status            | Notes                                          |
 | ------------------------------------------------- | ----------------- | ---------------------------------------------- |

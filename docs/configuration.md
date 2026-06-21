@@ -29,9 +29,9 @@ npx @waishnav/devspace config domain devspace.example.com
 npx @waishnav/devspace config key
 npx @waishnav/devspace workspace add ~/workspace/project-a --default
 npx @waishnav/devspace workspace list
-npx @waishnav/devspace service install --autostart
+npx @waishnav/devspace service start
 npx @waishnav/devspace service status
-npx @waishnav/devspace service logs --tail 100
+npx @waishnav/devspace service logs
 npx @waishnav/devspace config get
 ```
 
@@ -83,13 +83,18 @@ starts in a safe blocked state with no authorized workspace roots.
 
 ## Service Management
 
-DevSpace only manages its own background service:
+DevSpace only manages its own background service. `devspace service start`
+installs the service on first use for the current platform, and starts it on
+later runs:
 
 ```bash
-devspace service install --autostart
+devspace service start
 devspace service status
 devspace service restart
-devspace service logs --tail 200
+devspace service stop
+devspace service disable
+devspace service uninstall
+devspace service logs
 devspace service doctor
 ```
 

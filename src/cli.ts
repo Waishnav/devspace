@@ -415,14 +415,8 @@ async function runServiceCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
 
   switch (subcommand) {
-    case "install":
-      console.log((await manager.install({ autostart: rest.includes("--autostart") })).message);
-      return;
     case "uninstall":
       console.log((await manager.uninstall()).message);
-      return;
-    case "enable":
-      console.log((await manager.enable()).message);
       return;
     case "disable":
       console.log((await manager.disable()).message);
@@ -438,10 +432,6 @@ async function runServiceCommand(args: string[]): Promise<void> {
       return;
     case "status": {
       const status = await manager.status();
-      if (rest.includes("--json")) {
-        console.log(JSON.stringify(status, null, 2));
-        return;
-      }
       console.log([
         `manager: ${status.manager}`,
         `service: ${status.serviceName}`,
@@ -454,9 +444,11 @@ async function runServiceCommand(args: string[]): Promise<void> {
       ].join("\n"));
       return;
     }
-    case "logs":
-      console.log(await manager.logs({ tail: parseTailArgument(rest) }));
+    case "logs": {
+      const tail = parseTailArgument(rest);
+      console.log(await manager.logs(tail === undefined ? undefined : { tail }));
       return;
+    }
     case "doctor": {
       const doctor = await manager.doctor();
       console.log([
@@ -577,10 +569,12 @@ function printHelp(): void {
       "  devspace skills remove -g <skill-name>",
       "    install expects the target path to point at one standard skill directory with a SKILL.md file",
       "    plugin roots, command folders, and agent-rules directories are rejected",
-      "  devspace service install [--autostart]",
+      "  devspace service start",
       "  devspace service uninstall",
-      "  devspace service enable|disable|start|stop|restart",
-      "  devspace service status [--json]",
+      "  devspace service disable",
+      "  devspace service stop",
+      "  devspace service restart",
+      "  devspace service status",
       "  devspace service logs [--tail N]",
       "  devspace service doctor",
       "",
@@ -594,11 +588,11 @@ function printHelp(): void {
   );
 }
 
-function parseTailArgument(args: string[]): number {
+function parseTailArgument(args: string[]): number | undefined {
   const index = args.indexOf("--tail");
-  if (index === -1) return 200;
+  if (index === -1) return undefined;
   const value = Number(args[index + 1]);
-  return Number.isInteger(value) && value > 0 ? value : 200;
+  return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function extractServeArgs(args: string[]): { additionalRoots: string[]; workspace?: string } {

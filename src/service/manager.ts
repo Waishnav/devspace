@@ -2,13 +2,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { ServerConfig } from "../config.js";
-import type { DevspaceUserConfig } from "../user-config.js";
-import { writeDevspaceConfig } from "../user-config.js";
 import { defaultCommandRunner, type CommandRunner } from "./runner.js";
-import { buildLaunchAgentPlist, buildSystemdUnit, buildServiceCommand, devspaceLogDir } from "./templates.js";
+import { buildLaunchAgentPlist, buildServiceCommand, buildSystemdUnit, devspaceLogDir } from "./templates.js";
 import type {
   ServiceDoctorResult,
-  ServiceInstallOptions,
   ServiceManager,
   ServiceManagerKind,
   ServiceResult,
@@ -73,22 +70,6 @@ export async function restartServiceIfRunning(
   return { restarted: true };
 }
 
-export function updateServiceConfigMetadata(
-  config: DevspaceUserConfig,
-  manager: ServiceManager,
-  autostart: boolean,
-): DevspaceUserConfig {
-  writeDevspaceConfig({
-    ...config,
-    service: {
-      ...(config.service ?? {}),
-      manager: manager.kind,
-      autostart,
-    },
-  });
-  return config;
-}
-
 export function detectServiceManagerKind(options: DetectServiceManagerOptions = {}): ServiceManagerKind {
   const currentPlatform = options.platform ?? platform();
   const env = options.env ?? process.env;
@@ -115,13 +96,7 @@ function createUnsupportedManager(config: ServerConfig): ServiceManager {
     async isSupported() {
       return false;
     },
-    async install() {
-      return { ok: false, manager: "unsupported", message: unsupportedMessage() };
-    },
     async uninstall() {
-      return { ok: false, manager: "unsupported", message: unsupportedMessage() };
-    },
-    async enable() {
       return { ok: false, manager: "unsupported", message: unsupportedMessage() };
     },
     async disable() {
@@ -160,21 +135,6 @@ function createSystemdUserManager(context: Required<ManagerContext>): ServiceMan
       const result = await context.runner.exec("systemctl", ["--user", "--version"]);
       return result.exitCode === 0;
     },
-    async install(options) {
-      mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
-      mkdirSync(devspaceLogDir(), { recursive: true });
-      writeFileSync(unitPath, buildSystemdUnit({ cliEntrypoint: context.cliEntrypoint, config: context.config }), "utf8");
-      await context.runner.exec("systemctl", ["--user", "daemon-reload"]);
-      if (options?.autostart) {
-        await context.runner.exec("systemctl", ["--user", "enable", SYSTEMD_SERVICE_NAME]);
-        await context.runner.exec("systemctl", ["--user", "restart", SYSTEMD_SERVICE_NAME]);
-      }
-      return {
-        ok: true,
-        manager: "systemd-user",
-        message: `Installed ${SYSTEMD_SERVICE_NAME} at ${unitPath}`,
-      };
-    },
     async uninstall() {
       await context.runner.exec("systemctl", ["--user", "disable", SYSTEMD_SERVICE_NAME]);
       await context.runner.exec("systemctl", ["--user", "stop", SYSTEMD_SERVICE_NAME]);
@@ -188,13 +148,19 @@ function createSystemdUserManager(context: Required<ManagerContext>): ServiceMan
         message: `Uninstalled ${SYSTEMD_SERVICE_NAME}`,
       };
     },
-    async enable() {
-      return execServiceResult(context.runner, "systemd-user", "systemctl", ["--user", "enable", SYSTEMD_SERVICE_NAME], "Enabled service");
-    },
     async disable() {
       return execServiceResult(context.runner, "systemd-user", "systemctl", ["--user", "disable", SYSTEMD_SERVICE_NAME], "Disabled service");
     },
     async start() {
+      const installed = existsSync(unitPath);
+      if (!installed) {
+        mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
+        mkdirSync(devspaceLogDir(), { recursive: true });
+        writeFileSync(unitPath, buildSystemdUnit({ cliEntrypoint: context.cliEntrypoint, config: context.config }), "utf8");
+        await context.runner.exec("systemctl", ["--user", "daemon-reload"]);
+        await context.runner.exec("systemctl", ["--user", "enable", SYSTEMD_SERVICE_NAME]);
+        return execServiceResult(context.runner, "systemd-user", "systemctl", ["--user", "restart", SYSTEMD_SERVICE_NAME], "Installed and started service");
+      }
       return execServiceResult(context.runner, "systemd-user", "systemctl", ["--user", "start", SYSTEMD_SERVICE_NAME], "Started service");
     },
     async stop() {
@@ -217,7 +183,7 @@ function createSystemdUserManager(context: Required<ManagerContext>): ServiceMan
     },
     async logs(options) {
       const logPath = join(devspaceLogDir(), "devspace.out.log");
-      return readTail(logPath, options?.tail ?? 200);
+      return readLog(logPath, options?.tail);
     },
     async doctor() {
       const status = await this.status();
@@ -250,23 +216,6 @@ function createLaunchdManager(context: Required<ManagerContext>): ServiceManager
     async isSupported() {
       return true;
     },
-    async install() {
-      mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
-      mkdirSync(devspaceLogDir(), { recursive: true });
-      writeFileSync(plistPath, buildLaunchAgentPlist({ cliEntrypoint: context.cliEntrypoint, config: context.config }), "utf8");
-      const bootstrap = await context.runner.exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath]);
-      if (bootstrap.exitCode !== 0 && !bootstrap.stderr.includes("already bootstrapped")) {
-        return {
-          ok: false,
-          manager: "launchd",
-          message: [
-            "LaunchAgent file was written, but launchctl could not start it.",
-            bootstrap.stderr.trim() || bootstrap.stdout.trim() || "Failed to bootstrap LaunchAgent.",
-          ].filter(Boolean).join(" "),
-        };
-      }
-      return { ok: true, manager: "launchd", message: `Installed LaunchAgent at ${plistPath}` };
-    },
     async uninstall() {
       await context.runner.exec("launchctl", ["bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]);
       if (existsSync(plistPath)) {
@@ -274,18 +223,26 @@ function createLaunchdManager(context: Required<ManagerContext>): ServiceManager
       }
       return { ok: true, manager: "launchd", message: "Uninstalled service" };
     },
-    async enable() {
-      if (!existsSync(plistPath)) {
-        return { ok: false, manager: "launchd", message: "LaunchAgent is not installed" };
-      }
-      return execServiceResult(context.runner, "launchd", "launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath], "Enabled service");
-    },
     async disable() {
       return execServiceResult(context.runner, "launchd", "launchctl", ["bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`], "Disabled service");
     },
     async start() {
       if (!existsSync(plistPath)) {
-        return { ok: false, manager: "launchd", message: "LaunchAgent is not installed" };
+        mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
+        mkdirSync(devspaceLogDir(), { recursive: true });
+        writeFileSync(plistPath, buildLaunchAgentPlist({ cliEntrypoint: context.cliEntrypoint, config: context.config }), "utf8");
+        const bootstrap = await context.runner.exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath]);
+        if (bootstrap.exitCode !== 0 && !bootstrap.stderr.includes("already bootstrapped")) {
+          return {
+            ok: false,
+            manager: "launchd",
+            message: [
+              "LaunchAgent file was written, but launchctl could not start it.",
+              bootstrap.stderr.trim() || bootstrap.stdout.trim() || "Failed to bootstrap LaunchAgent.",
+            ].filter(Boolean).join(" "),
+          };
+        }
+        return { ok: true, manager: "launchd", message: "Installed and started service" };
       }
       const kickstart = await context.runner.exec("launchctl", ["kickstart", "-k", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]);
       if (kickstart.exitCode === 0) {
@@ -321,7 +278,7 @@ function createLaunchdManager(context: Required<ManagerContext>): ServiceManager
       };
     },
     async logs(options) {
-      return readTail(join(devspaceLogDir(), "devspace.out.log"), options?.tail ?? 200);
+      return readLog(join(devspaceLogDir(), "devspace.out.log"), options?.tail);
     },
     async doctor() {
       const status = await this.status();
@@ -358,27 +315,27 @@ function createWindowsTaskManager(
       const result = await context.runner.exec("schtasks.exe", ["/Query", "/TN", WINDOWS_TASK_NAME]);
       return result.exitCode === 0 || result.exitCode === 1;
     },
-    async install() {
-      const spec = buildServiceCommand(context.cliEntrypoint);
-      const taskCommand = `"${spec.command}" ${spec.args.map(windowsQuote).join(" ")}`;
-      return execServiceResult(
-        context.runner,
-        kind,
-        "schtasks.exe",
-        ["/Create", "/F", "/SC", "ONLOGON", "/TN", WINDOWS_TASK_NAME, "/TR", taskCommand],
-        `Installed task ${WINDOWS_TASK_NAME}`,
-      );
-    },
     async uninstall() {
       return execServiceResult(context.runner, kind, "schtasks.exe", ["/Delete", "/F", "/TN", WINDOWS_TASK_NAME], `Deleted task ${WINDOWS_TASK_NAME}`);
-    },
-    async enable() {
-      return { ok: true, manager: kind, message: "Task Scheduler autostart is configured during install" };
     },
     async disable() {
       return execServiceResult(context.runner, kind, "schtasks.exe", ["/Change", "/TN", WINDOWS_TASK_NAME, "/DISABLE"], "Disabled task");
     },
     async start() {
+      const installed = (await context.runner.exec("schtasks.exe", ["/Query", "/TN", WINDOWS_TASK_NAME])).exitCode === 0;
+      if (!installed) {
+        const spec = buildServiceCommand(context.cliEntrypoint);
+        const taskCommand = `"${spec.command}" ${spec.args.map(windowsQuote).join(" ")}`;
+        const created = await execServiceResult(
+          context.runner,
+          kind,
+          "schtasks.exe",
+          ["/Create", "/F", "/SC", "ONLOGON", "/TN", WINDOWS_TASK_NAME, "/TR", taskCommand],
+          `Installed task ${WINDOWS_TASK_NAME}`,
+        );
+        if (!created.ok) return created;
+        return execServiceResult(context.runner, kind, "schtasks.exe", ["/Run", "/TN", WINDOWS_TASK_NAME], "Installed and started task");
+      }
       return execServiceResult(context.runner, kind, "schtasks.exe", ["/Run", "/TN", WINDOWS_TASK_NAME], "Started task");
     },
     async stop() {
@@ -402,7 +359,7 @@ function createWindowsTaskManager(
       };
     },
     async logs(options) {
-      return readTail(join(devspaceLogDir(), "devspace.out.log"), options?.tail ?? 200);
+      return readLog(join(devspaceLogDir(), "devspace.out.log"), options?.tail);
     },
     async doctor() {
       const status = await this.status();
@@ -448,9 +405,11 @@ async function execServiceResult(
     : { ok: false, manager, message: result.stderr.trim() || result.stdout.trim() || successMessage };
 }
 
-async function readTail(path: string, tail: number): Promise<string> {
+async function readLog(path: string, tail?: number): Promise<string> {
   if (!existsSync(path)) return "";
-  const lines = readFileSync(path, "utf8").split(/\r?\n/);
+  const content = readFileSync(path, "utf8");
+  if (tail === undefined) return content;
+  const lines = content.split(/\r?\n/);
   return lines.slice(Math.max(0, lines.length - tail)).join("\n");
 }
 
@@ -459,5 +418,6 @@ function unsupportedMessage(): string {
 }
 
 function windowsQuote(value: string): string {
-  return `"${value.replaceAll('"', '\\"')}"`;
+  if (!/[\s"]/u.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
 }
