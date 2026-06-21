@@ -3,12 +3,14 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = mkdtempSync(join(tmpdir(), "devspace-cli-skills-test-"));
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 try {
   const help = execFileSync("node", ["--import", "tsx", "src/cli.ts", "help"], {
-    cwd: "/Users/thinkook/workspace/open_source/devspace",
+    cwd: repoRoot,
     encoding: "utf8",
   });
   assert.match(help, /devspace skills install/);
