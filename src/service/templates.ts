@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ServerConfig } from "../config.js";
+import { devspaceConfigDir } from "../user-config.js";
 
 export interface ServiceCommandSpec {
   command: string;
@@ -8,7 +9,7 @@ export interface ServiceCommandSpec {
 }
 
 export function devspaceLogDir(): string {
-  return join(homedir(), ".devspace", "logs");
+  return join(devspaceConfigDir(), "logs");
 }
 
 export function buildServiceCommand(cliEntrypoint: string): ServiceCommandSpec {

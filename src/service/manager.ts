@@ -25,6 +25,11 @@ interface ManagerContext {
   runner?: CommandRunner;
 }
 
+interface DetectServiceManagerOptions {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+}
+
 export function createServiceManager(context: ManagerContext): ServiceManager {
   const kind = detectServiceManagerKind();
   const runner = context.runner ?? defaultCommandRunner;
@@ -84,16 +89,23 @@ export function updateServiceConfigMetadata(
   return config;
 }
 
-export function detectServiceManagerKind(): ServiceManagerKind {
-  if (platform() === "darwin") return "launchd";
-  if (platform() === "win32") return "windows-task-scheduler";
-  if (process.env.WSL_DISTRO_NAME) {
-    return process.env.SYSTEMD_EXEC_PID ? "systemd-user" : "wsl-task-scheduler-fallback";
+export function detectServiceManagerKind(options: DetectServiceManagerOptions = {}): ServiceManagerKind {
+  const currentPlatform = options.platform ?? platform();
+  const env = options.env ?? process.env;
+
+  if (currentPlatform === "darwin") return "launchd";
+  if (currentPlatform === "win32") return "windows-task-scheduler";
+  if (env.WSL_DISTRO_NAME) {
+    return hasSystemdUserSession(env) ? "systemd-user" : "wsl-task-scheduler-fallback";
   }
-  if (platform() === "linux") {
-    return process.env.SYSTEMD_EXEC_PID ? "systemd-user" : "unsupported";
+  if (currentPlatform === "linux") {
+    return hasSystemdUserSession(env) ? "systemd-user" : "unsupported";
   }
   return "unsupported";
+}
+
+function hasSystemdUserSession(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.SYSTEMD_EXEC_PID || env.XDG_RUNTIME_DIR || env.DBUS_SESSION_BUS_ADDRESS);
 }
 
 function createUnsupportedManager(config: ServerConfig): ServiceManager {
