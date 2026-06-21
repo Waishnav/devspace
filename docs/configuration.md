@@ -77,6 +77,18 @@ Codex-mode commands run without a PTY by default. Set `tty: true` on
 `node-pty` dependency; `write_stdin` can send input, poll output, and resize PTY
 sessions.
 
+## Read Tool Limits
+
+Text file reads default to up to 20,000 lines or 1 MiB, whichever is hit first.
+Use `offset` to continue when a file is still truncated.
+
+| Variable | Default |
+| --- | --- |
+| `DEVSPACE_READ_MAX_LINES` | `20000` |
+| `DEVSPACE_READ_MAX_BYTES` | `1048576` |
+
+Image reads still use the upstream image handling path.
+
 ## Widgets
 
 `DEVSPACE_WIDGETS` controls ChatGPT Apps iframe usage.

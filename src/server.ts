@@ -849,7 +849,7 @@ function createMcpServer(
           .int()
           .positive()
           .optional()
-          .describe("Maximum number of lines to read."),
+          .describe("Maximum number of lines to read. Defaults to up to 20,000 lines / 1 MiB for text files unless DEVSPACE_READ_MAX_LINES or DEVSPACE_READ_MAX_BYTES is configured."),
       },
       outputSchema: resultOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "read"),
