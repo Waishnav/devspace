@@ -96,7 +96,7 @@ function createUnsupportedManager(config: ServerConfig): ServiceManager {
     async isSupported() {
       return false;
     },
-    async uninstall() {
+    async remove() {
       return { ok: false, manager: "unsupported", message: unsupportedMessage() };
     },
     async disable() {
@@ -135,7 +135,7 @@ function createSystemdUserManager(context: Required<ManagerContext>): ServiceMan
       const result = await context.runner.exec("systemctl", ["--user", "--version"]);
       return result.exitCode === 0;
     },
-    async uninstall() {
+    async remove() {
       await context.runner.exec("systemctl", ["--user", "disable", SYSTEMD_SERVICE_NAME]);
       await context.runner.exec("systemctl", ["--user", "stop", SYSTEMD_SERVICE_NAME]);
       if (existsSync(unitPath)) {
@@ -216,7 +216,7 @@ function createLaunchdManager(context: Required<ManagerContext>): ServiceManager
     async isSupported() {
       return true;
     },
-    async uninstall() {
+    async remove() {
       await context.runner.exec("launchctl", ["bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]);
       if (existsSync(plistPath)) {
         rmSync(plistPath, { force: true });
@@ -315,7 +315,7 @@ function createWindowsTaskManager(
       const result = await context.runner.exec("schtasks.exe", ["/Query", "/TN", WINDOWS_TASK_NAME]);
       return result.exitCode === 0 || result.exitCode === 1;
     },
-    async uninstall() {
+    async remove() {
       return execServiceResult(context.runner, kind, "schtasks.exe", ["/Delete", "/F", "/TN", WINDOWS_TASK_NAME], `Deleted task ${WINDOWS_TASK_NAME}`);
     },
     async disable() {

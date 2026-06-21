@@ -27,7 +27,7 @@ const testManager: ServiceManager = {
   async isSupported() {
     return false;
   },
-  async uninstall() {
+  async remove() {
     return { ok: false, manager: "unsupported", message: "unsupported" };
   },
   async disable() {

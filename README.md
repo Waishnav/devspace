@@ -145,7 +145,7 @@ devspace service logs
 devspace service restart
 devspace service stop
 devspace service disable
-devspace service uninstall
+devspace service remove
 devspace service doctor
 ```
 

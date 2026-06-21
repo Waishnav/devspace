@@ -415,8 +415,8 @@ async function runServiceCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
 
   switch (subcommand) {
-    case "uninstall":
-      console.log((await manager.uninstall()).message);
+    case "remove":
+      console.log((await manager.remove()).message);
       return;
     case "disable":
       console.log((await manager.disable()).message);
@@ -570,7 +570,7 @@ function printHelp(): void {
       "    install expects the target path to point at one standard skill directory with a SKILL.md file",
       "    plugin roots, command folders, and agent-rules directories are rejected",
       "  devspace service start",
-      "  devspace service uninstall",
+      "  devspace service remove",
       "  devspace service disable",
       "  devspace service stop",
       "  devspace service restart",

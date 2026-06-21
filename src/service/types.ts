@@ -37,7 +37,7 @@ export interface ServiceManager {
   readonly serviceName: string;
 
   isSupported(): Promise<boolean>;
-  uninstall(): Promise<ServiceResult>;
+  remove(): Promise<ServiceResult>;
   disable(): Promise<ServiceResult>;
   start(): Promise<ServiceResult>;
   stop(): Promise<ServiceResult>;
