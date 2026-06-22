@@ -91,10 +91,19 @@ https://your-tunnel-host.example.com/mcp
 Update the local server config with short commands:
 
 ```bash
+# Show the effective runtime configuration
 devspace config show
+
+# Change the local listening port
 devspace config port 7676
+
+# Change the local bind host
 devspace config host 127.0.0.1
+
+# Set the public domain or URL
 devspace config domain devspace.example.com
+
+# Rotate the Owner password
 devspace config key
 ```
 

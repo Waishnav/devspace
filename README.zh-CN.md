@@ -89,10 +89,19 @@ https://your-tunnel-host.example.com/mcp
 你可以用这些简短命令更新本地服务配置：
 
 ```bash
+# 查看当前生效配置
 devspace config show
+
+# 修改本地监听端口
 devspace config port 7676
+
+# 修改本地绑定地址
 devspace config host 127.0.0.1
+
+# 设置公网域名或 URL
 devspace config domain devspace.example.com
+
+# 轮换 Owner 密码
 devspace config key
 ```
 
