@@ -115,10 +115,19 @@ OAuth approvals and tokens, and forces connected clients to reauthorize.
 Persist the workspace roots DevSpace is allowed to open:
 
 ```bash
+# Add a workspace and mark it as the default one
 devspace workspace add ~/workspace/project-a --default
+
+# Add another workspace without changing the default
 devspace workspace add ~/workspace/project-b
+
+# Show configured workspaces
 devspace workspace list
+
+# Switch the default workspace
 devspace workspace default ~/workspace/project-b
+
+# Remove a workspace from the allowlist
 devspace workspace remove ~/workspace/project-a
 ```
 
@@ -143,13 +152,28 @@ creates it for the current platform and starts it; if it already exists, it
 just starts it. It does not manage arbitrary system services.
 
 ```bash
+# Start the managed DevSpace background service
 devspace service start
+
+# Show whether the service is installed and running
 devspace service status
+
+# Read the service log output
 devspace service logs
+
+# Restart the running service
 devspace service restart
+
+# Stop the running service
 devspace service stop
+
+# Disable automatic service startup
 devspace service disable
+
+# Remove the installed DevSpace background service
 devspace service remove
+
+# Check service-manager support and current health
 devspace service doctor
 ```
 
@@ -194,15 +218,31 @@ ChatGPT Plus on the web cannot natively install or register Codex Skills. DevSpa
 Manage installed skills with:
 
 ```bash
+# Install a skill for the current context
 devspace skills install --repo openai/skills --path skills/.curated/research
+
+# Install a skill for one specific workspace
 devspace skills install --workspace /path/to/project --repo openai/skills --path skills/.curated/research
+
+# List skills for the current context
 devspace skills list
+
+# List skills for one specific workspace
 devspace skills list --workspace /path/to/project
+
+# Remove a skill from the current context
 devspace skills remove research
+
+# Remove a skill from one specific workspace
 devspace skills remove --workspace /path/to/project research
 
+# Install a global skill
 devspace skills install -g --repo openai/skills --path skills/.curated/research
+
+# List global skills
 devspace skills list -g
+
+# Remove a global skill
 devspace skills remove -g research
 ```
 
