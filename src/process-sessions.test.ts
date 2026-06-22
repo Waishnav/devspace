@@ -64,6 +64,26 @@ const inputResult = await manager.write({
 assert.equal(inputResult.running, false);
 assert.match(inputResult.output, /input:hello/);
 
+const interruptible = await manager.start({
+  workspaceId: "workspace-a",
+  cwd: process.cwd(),
+  command: `${node} -e "setInterval(() => console.log('tick'), 10)"`,
+  yieldTimeMs: 100,
+});
+assert.equal(interruptible.running, true);
+assert.ok(interruptible.sessionId);
+
+await new Promise((resolve) => setTimeout(resolve, 50));
+const interrupted = await manager.write({
+  workspaceId: "workspace-a",
+  sessionId: interruptible.sessionId,
+  chars: "\u0003",
+  yieldTimeMs: 2_000,
+});
+assert.equal(interrupted.running, false);
+assert.equal(interrupted.signal, "SIGINT");
+assert.match(interrupted.output, /tick/);
+
 const buffered = await manager.start({
   workspaceId: "workspace-a",
   cwd: process.cwd(),

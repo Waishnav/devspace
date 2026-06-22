@@ -164,14 +164,15 @@ export class ProcessSessionManager {
       session.process.resize(session.columns, session.rows);
     }
 
-    if (chars.includes("\u0003") && session.running) {
+    const interruptRequested = chars.includes("\u0003") && session.running;
+    if (interruptRequested) {
       session.process?.kill("SIGINT");
     }
     const writableChars = chars.replaceAll("\u0003", "");
     if (writableChars && session.running) session.process?.write(writableChars);
 
     const hasUnreadOutput = session.consumedThrough < session.bufferStart + session.buffer.length;
-    if (!hasUnreadOutput && session.running) {
+    if ((interruptRequested || !hasUnreadOutput) && session.running) {
       const yieldTimeMs = boundedInteger(input.yieldTimeMs, DEFAULT_YIELD_MS, 30_000);
       await Promise.race([
         session.exitPromise,
