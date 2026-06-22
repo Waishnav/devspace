@@ -369,7 +369,11 @@ function renderSummaryBadge(card: ToolResultCard): HTMLElement {
   }
 
   if (isShellTool(card.tool)) {
-    return element("span", { className: "badge", text: `ran · ${String(summary.lines ?? 0)} lines` });
+    const state = summary.running === true ? "running" : "ran";
+    return element("span", {
+      className: "badge",
+      text: `${state} · ${String(summary.lines ?? 0)} lines`,
+    });
   }
 
   if (isSearchTool(card.tool)) {
@@ -501,6 +505,8 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
     case "edit_file":
     case "edit":
       return { icon: editIcon(), title: "Edit File", label, tone: "edit" };
+    case "apply_patch":
+      return { icon: editIcon(), title: "Apply Patch", label, tone: "edit" };
     case "grep_files":
     case "grep":
       return { icon: searchIcon(), title: "Grep", label, tone: "search" };
@@ -513,6 +519,10 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
     case "run_shell":
     case "bash":
       return { icon: terminalIcon(), title: "Bash", label, tone: "shell" };
+    case "exec_command":
+      return { icon: terminalIcon(), title: "Exec Command", label, tone: "shell" };
+    case "write_stdin":
+      return { icon: terminalIcon(), title: "Process Session", label, tone: "shell" };
     case "show_changes":
       return { icon: reviewIcon(), title: "Show Changes", label, tone: "review" };
   }
@@ -520,7 +530,7 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
 
 function getToolLabel(card: ToolResultCard): string {
   if (isShellTool(card.tool)) {
-    return String(card.summary?.command ?? card.path ?? card.tool);
+    return String(card.summary?.command ?? card.summary?.sessionId ?? card.path ?? card.tool);
   }
   if (isReviewTool(card.tool)) {
     const count = Number(card.summary?.files ?? card.files?.length ?? 0);

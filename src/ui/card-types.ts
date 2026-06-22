@@ -10,6 +10,9 @@ export type ToolName =
   | "list_directory"
   | "run_shell"
   | "show_changes"
+  | "apply_patch"
+  | "exec_command"
+  | "write_stdin"
   | "read"
   | "write"
   | "edit"
@@ -75,6 +78,9 @@ export function isToolName(value: unknown): value is ToolName {
     value === "list_directory" ||
     value === "run_shell" ||
     value === "show_changes" ||
+    value === "apply_patch" ||
+    value === "exec_command" ||
+    value === "write_stdin" ||
     value === "read" ||
     value === "write" ||
     value === "edit" ||
@@ -94,7 +100,7 @@ export function isWriteTool(tool: ToolName): boolean {
 }
 
 export function isEditTool(tool: ToolName): boolean {
-  return tool === "edit_file" || tool === "edit";
+  return tool === "edit_file" || tool === "edit" || tool === "apply_patch";
 }
 
 export function isSearchTool(tool: ToolName): boolean {
@@ -102,7 +108,12 @@ export function isSearchTool(tool: ToolName): boolean {
 }
 
 export function isShellTool(tool: ToolName): boolean {
-  return tool === "run_shell" || tool === "bash";
+  return (
+    tool === "run_shell" ||
+    tool === "bash" ||
+    tool === "exec_command" ||
+    tool === "write_stdin"
+  );
 }
 
 export function isReviewTool(tool: ToolName): boolean {
