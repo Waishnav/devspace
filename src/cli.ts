@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
+import { isIP } from "node:net";
 import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
 import * as prompts from "@clack/prompts";
@@ -105,24 +106,51 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
     const port = Number(portAnswer);
 
-    prompts.note(
-      [
-        "DevSpace needs a public base URL so ChatGPT or Claude can reach this MCP server.",
-        "Create a tunnel or reverse proxy with Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS proxy.",
-        "Paste the public origin here, without /mcp.",
-        "",
-        "Example: https://your-tunnel-host.example.com",
-      ].join("\n"),
-      "Public URL required",
-    );
-    const publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-      message: files.config.publicBaseUrl
-        ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
-        : "What is the public base URL?",
-      placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-      defaultValue: files.config.publicBaseUrl ?? "",
-      validate: validateRequiredPublicBaseUrl,
-    }));
+    const existingPublicUrl = files.config.publicBaseUrl ?? "";
+    const publicUrlMode = await prompts.select({
+      message: "How should clients reach this DevSpace server?",
+      options: [
+        {
+          value: "localhost",
+          label: "1. Localhost",
+          hint: "http://localhost:" + port,
+        },
+        {
+          value: "custom",
+          label: "2. Custom URL",
+          hint: "Tunnel, reverse proxy, or network URL",
+        },
+      ],
+      initialValue: isLocalPublicBaseUrl(existingPublicUrl) ? "localhost" : "custom",
+    });
+    if (prompts.isCancel(publicUrlMode)) throw new SetupCancelledError();
+
+    let publicBaseUrl: string;
+    if (publicUrlMode === "localhost") {
+      publicBaseUrl = "http://localhost:" + port;
+    } else {
+      prompts.note(
+        [
+          "Enter the origin clients will use, without /mcp.",
+          "Examples:",
+          "  https://your-tunnel-host.example.com",
+          "  http://100.64.0.2:7676",
+        ].join("\n"),
+        "Custom URL",
+      );
+      publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
+        message: existingPublicUrl && !isLocalPublicBaseUrl(existingPublicUrl)
+          ? "What is the custom URL? Press Enter to keep " + existingPublicUrl
+          : "What is the custom URL?",
+        placeholder: existingPublicUrl && !isLocalPublicBaseUrl(existingPublicUrl)
+          ? existingPublicUrl
+          : "https://your-tunnel-host.example.com",
+        defaultValue: existingPublicUrl && !isLocalPublicBaseUrl(existingPublicUrl)
+          ? existingPublicUrl
+          : "",
+        validate: validateRequiredPublicBaseUrl,
+      }));
+    }
 
     const config: DevspaceUserConfig = {
       host: files.config.host ?? "127.0.0.1",
@@ -233,19 +261,27 @@ function runConfigCommand(args: string[]): void {
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
-  if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
-  }
-
   const value = rest.join(" ").trim();
   if (!value) {
-    throw new Error("Missing publicBaseUrl value.");
+    throw new Error("Missing config value.");
   }
 
-  writeDevspaceConfig({
-    ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
+  let update: Partial<DevspaceUserConfig>;
+  switch (key) {
+    case "host": {
+      const validationError = validateHost(value);
+      if (validationError) throw new Error(validationError);
+      update = { host: value };
+      break;
+    }
+    case "publicBaseUrl":
+      update = { publicBaseUrl: normalizeOptionalPublicBaseUrl(value) };
+      break;
+    default:
+      throw new Error("Supported config keys: host, publicBaseUrl.");
+  }
+
+  writeDevspaceConfig({ ...files.config, ...update });
   console.log(`Updated ${files.configPath}`);
 }
 
@@ -260,6 +296,7 @@ function printHelp(): void {
       "  devspace init            Create or update ~/.devspace/config.json and auth.json",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
+      "  devspace config set host <address>",
       "  devspace config set publicBaseUrl <url|null>",
       "",
       "For temporary tunnels:",
@@ -284,6 +321,16 @@ function normalizePublicBaseUrl(value: string): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
+function isLocalPublicBaseUrl(value: string): boolean {
+  if (!value) return true;
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 type TextPromptOptions = Omit<Parameters<typeof prompts.text>[0], "validate"> & {
   defaultValue: string;
   validate?: (value: string | undefined) => string | Error | undefined;
@@ -304,6 +351,20 @@ function validatePort(value: string | undefined): string | undefined {
   return Number.isInteger(port) && port >= 1 && port <= 65535
     ? undefined
     : "Enter a port between 1 and 65535.";
+}
+
+function validateHost(value: string | undefined): string | undefined {
+  const host = value?.trim() ?? "";
+  if (!host) return "Enter a bind address such as 127.0.0.1, 0.0.0.0, or ::.";
+  if (isIP(host)) return undefined;
+  if (
+    host.length <= 253
+    && /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host)
+    && host.split(".").every((label) => label.length <= 63 && !label.startsWith("-") && !label.endsWith("-"))
+  ) {
+    return undefined;
+  }
+  return "Enter an IP address or hostname without a protocol, port, or path.";
 }
 
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {

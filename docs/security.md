@@ -43,6 +43,11 @@ reach.
 When an MCP client connects, DevSpace shows an approval page. Enter the Owner
 password only when you intentionally want that client to access this server.
 
+The Owner password is entered only on the DevSpace authorization page. It is not
+the bearer token attached to every MCP request. DevSpace issues short-lived
+access tokens and longer-lived refresh tokens after approval, and stores only
+their hashes in the SQLite state database.
+
 For env-driven deployments, set a long random value:
 
 ```bash

@@ -55,14 +55,14 @@ http://127.0.0.1:7676/mcp
 
 ### Public Base URL
 
-Start your tunnel or reverse proxy before entering this value. Point the tunnel
-at:
+`devspace init` asks how clients should reach the server:
 
-```text
-http://127.0.0.1:7676
-```
+- **Localhost** uses `http://localhost:<port>` and needs no additional URL input.
+- **Custom URL** waits for a tunnel, reverse proxy, Tailscale, or other network
+  origin.
 
-Enter the public origin without `/mcp`:
+For a custom URL, point the tunnel or reverse proxy at the local server and
+enter the client-facing origin without `/mcp`:
 
 ```text
 https://your-tunnel-host.example.com

@@ -100,6 +100,25 @@ Use this only for intentional local debugging:
 DEVSPACE_ALLOWED_HOSTS="*" npx @waishnav/devspace serve
 ```
 
+## ChatGPT Posts To `/`
+
+Configure the ChatGPT app with the full MCP endpoint:
+
+```text
+https://your-host.example.com/mcp
+```
+
+The public base URL stored by DevSpace is the origin without `/mcp`, but MCP
+clients must connect to `/mcp`. A `POST /` request will not create an MCP
+session.
+
+## OAuth `invalid_client` After Restart
+
+DevSpace persists dynamically registered OAuth clients and hashed access and
+refresh tokens in its SQLite state database. If upgrading from a version that
+kept OAuth state only in memory, remove and add the ChatGPT app one final time
+to obtain a persisted client ID. Later DevSpace restarts should reuse it.
+
 ## OAuth Redirect Host Rejected
 
 By default, DevSpace allows redirects for:

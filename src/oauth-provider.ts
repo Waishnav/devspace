@@ -10,6 +10,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { openDatabase, type DatabaseHandle } from "./db/client.js";
 
 export interface OAuthConfig {
   ownerToken: string;
@@ -25,16 +26,7 @@ interface AuthorizationCodeRecord {
   expiresAtMs: number;
 }
 
-interface AccessTokenRecord {
-  token: string;
-  clientId: string;
-  scopes: string[];
-  expiresAt: number;
-  resource?: URL;
-}
-
-interface RefreshTokenRecord {
-  token: string;
+export interface OAuthTokenRecord {
   clientId: string;
   scopes: string[];
   expiresAt: number;
@@ -138,13 +130,39 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   return allowedHosts.includes(parsed.hostname);
 }
 
-export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
-  private readonly clients = new Map<string, OAuthClientInformationFull>();
+export class SqliteOAuthStore implements OAuthRegisteredClientsStore {
+  private readonly database: DatabaseHandle;
 
-  constructor(private readonly allowedRedirectHosts: string[]) {}
+  constructor(
+    stateDir: string,
+    private readonly allowedRedirectHosts: string[],
+  ) {
+    this.database = openDatabase(stateDir);
+    this.database.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        client_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        token_hash TEXT PRIMARY KEY,
+        token_type TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        scopes_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        resource TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS oauth_tokens_expiry_idx
+        ON oauth_tokens (expires_at);
+    `);
+  }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
-    return this.clients.get(clientId);
+    const row = this.database.sqlite
+      .prepare("SELECT client_json FROM oauth_clients WHERE client_id = ?")
+      .get(clientId) as { client_json: string } | undefined;
+    return row ? JSON.parse(row.client_json) as OAuthClientInformationFull : undefined;
   }
 
   registerClient(
@@ -163,24 +181,85 @@ export class InMemoryOAuthClientsStore implements OAuthRegisteredClientsStore {
       grant_types: client.grant_types ?? ["authorization_code", "refresh_token"],
       response_types: client.response_types ?? ["code"],
     };
-    this.clients.set(registered.client_id, registered);
+    this.database.sqlite
+      .prepare(`
+        INSERT INTO oauth_clients (client_id, client_json, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(client_id) DO UPDATE SET client_json = excluded.client_json
+      `)
+      .run(registered.client_id, JSON.stringify(registered), now);
     return registered;
+  }
+
+  getToken(token: string, tokenType: "access" | "refresh"): OAuthTokenRecord | undefined {
+    const row = this.database.sqlite
+      .prepare(`
+        SELECT client_id, scopes_json, expires_at, resource
+        FROM oauth_tokens
+        WHERE token_hash = ? AND token_type = ? AND expires_at >= ?
+      `)
+      .get(hashToken(token), tokenType, Math.floor(Date.now() / 1000)) as {
+        client_id: string;
+        scopes_json: string;
+        expires_at: number;
+        resource: string | null;
+      } | undefined;
+    if (!row) return undefined;
+    return {
+      clientId: row.client_id,
+      scopes: JSON.parse(row.scopes_json) as string[],
+      expiresAt: row.expires_at,
+      resource: row.resource ? new URL(row.resource) : undefined,
+    };
+  }
+
+  saveToken(
+    token: string,
+    tokenType: "access" | "refresh",
+    record: OAuthTokenRecord,
+  ): void {
+    this.database.sqlite
+      .prepare(`
+        INSERT INTO oauth_tokens (
+          token_hash, token_type, client_id, scopes_json, expires_at, resource, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        hashToken(token),
+        tokenType,
+        record.clientId,
+        JSON.stringify(record.scopes),
+        record.expiresAt,
+        record.resource?.href ?? null,
+        Math.floor(Date.now() / 1000),
+      );
+  }
+
+  deleteToken(token: string): void {
+    this.database.sqlite
+      .prepare("DELETE FROM oauth_tokens WHERE token_hash = ?")
+      .run(hashToken(token));
+  }
+
+  close(): void {
+    this.database.close();
   }
 }
 
 export class SingleUserOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: OAuthRegisteredClientsStore;
   private readonly codes = new Map<string, AuthorizationCodeRecord>();
-  private readonly accessTokens = new Map<string, AccessTokenRecord>();
-  private readonly refreshTokens = new Map<string, RefreshTokenRecord>();
+  private readonly store: SqliteOAuthStore;
   private readonly resourceServerUrl: URL;
 
   constructor(
     private readonly config: OAuthConfig,
     resourceServerUrl: URL,
+    stateDir: string,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
-    this.clientsStore = new InMemoryOAuthClientsStore(config.allowedRedirectHosts);
+    this.store = new SqliteOAuthStore(stateDir, config.allowedRedirectHosts);
+    this.clientsStore = this.store;
   }
 
   async authorize(
@@ -269,8 +348,8 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL,
   ): Promise<OAuthTokens> {
-    const record = this.refreshTokens.get(hashToken(refreshToken));
-    if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
+    const record = this.store.getToken(refreshToken, "refresh");
+    if (!record || record.clientId !== client.client_id) {
       throw new InvalidGrantError("Invalid refresh token");
     }
     if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
@@ -282,13 +361,13 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       throw new AccessDeniedError("Refresh token cannot grant requested scopes");
     }
 
-    this.refreshTokens.delete(hashToken(refreshToken));
+    this.store.deleteToken(refreshToken);
     return this.issueTokens(client.client_id, requestedScopes, resource ?? record.resource);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const record = this.accessTokens.get(hashToken(token));
-    if (!record || record.expiresAt < Math.floor(Date.now() / 1000)) {
+    const record = this.store.getToken(token, "access");
+    if (!record) {
       throw new InvalidTokenError("Invalid or expired access token");
     }
 
@@ -302,9 +381,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   }
 
   async revokeToken(_client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
-    const hashed = hashToken(request.token);
-    this.accessTokens.delete(hashed);
-    this.refreshTokens.delete(hashed);
+    this.store.deleteToken(request.token);
   }
 
   private validCodeRecord(
@@ -325,15 +402,13 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const accessExpiresAt = now + this.config.accessTokenTtlSeconds;
     const refreshExpiresAt = now + this.config.refreshTokenTtlSeconds;
 
-    this.accessTokens.set(hashToken(accessToken), {
-      token: accessToken,
+    this.store.saveToken(accessToken, "access", {
       clientId,
       scopes,
       expiresAt: accessExpiresAt,
       resource,
     });
-    this.refreshTokens.set(hashToken(refreshToken), {
-      token: refreshToken,
+    this.store.saveToken(refreshToken, "refresh", {
       clientId,
       scopes,
       expiresAt: refreshExpiresAt,

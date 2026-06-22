@@ -23,8 +23,17 @@ npx @waishnav/devspace init
 npx @waishnav/devspace serve
 npx @waishnav/devspace doctor
 npx @waishnav/devspace config get
+npx @waishnav/devspace config set host 0.0.0.0
 npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 ```
+
+Changing `host` takes effect after restarting `devspace serve`. Use a specific
+interface address when possible. `0.0.0.0` exposes the service on every IPv4
+interface, so firewall access should be restricted accordingly.
+
+During `devspace init`, the URL step offers Localhost or Custom URL. Localhost
+uses `http://localhost:<port>` automatically. Custom URL waits for an explicit
+tunnel, reverse proxy, or network origin.
 
 ## Core Environment Variables
 

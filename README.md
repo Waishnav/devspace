@@ -82,6 +82,14 @@ Most users should connect through a public HTTPS tunnel:
 https://your-tunnel-host.example.com/mcp
 ```
 
+To accept direct connections from another interface, set the bind address and
+restart DevSpace:
+
+```bash
+devspace config set host 100.64.0.2
+devspace serve
+```
+
 ## What ChatGPT Can Do
 
 Once connected, ChatGPT can open one of your approved project folders as a
