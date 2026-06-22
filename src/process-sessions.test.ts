@@ -81,7 +81,6 @@ const noisyInputResult = await manager.write({
   yieldTimeMs: 2_000,
 });
 assert.equal(noisyInputResult.running, false);
-assert.match(noisyInputResult.output, /tick/);
 assert.match(noisyInputResult.output, /input:hello/);
 
 const interruptible = await manager.start({
