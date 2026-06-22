@@ -126,7 +126,7 @@ try {
   const pty = await manager.start({
     workspaceId: "workspace-a",
     cwd: process.cwd(),
-    command: `${node} -e "process.stdin.once('data', () => { console.log('columns:' + process.stdout.columns); process.exit(0); })"`,
+    command: `${node} -e "setTimeout(() => console.log('columns:' + process.stdout.columns), 250)"`,
     tty: true,
     columns: 80,
     rows: 24,
@@ -138,7 +138,6 @@ try {
   const resizedPty = await manager.write({
     workspaceId: "workspace-a",
     sessionId: pty.sessionId,
-    chars: "continue\r",
     columns: 120,
     rows: 30,
     yieldTimeMs: 2_000,
