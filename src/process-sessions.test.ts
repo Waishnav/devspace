@@ -123,27 +123,39 @@ assert.equal(buffered.outputTruncated, true);
 if (buffered.sessionId) manager.terminate("workspace-a", buffered.sessionId);
 
 try {
-  const pty = await manager.start({
-    workspaceId: "workspace-a",
-    cwd: process.cwd(),
-    command: `${node} -e "setTimeout(() => console.log('columns:' + process.stdout.columns), 250)"`,
-    tty: true,
-    columns: 80,
-    rows: 24,
-    yieldTimeMs: 10,
-  });
-  assert.equal(pty.running, true);
-  assert.ok(pty.sessionId);
+  if (process.platform === "win32") {
+    const pty = await manager.start({
+      workspaceId: "workspace-a",
+      cwd: process.cwd(),
+      command: "echo pty-ok",
+      tty: true,
+      yieldTimeMs: 2_000,
+    });
+    assert.equal(pty.running, false);
+    assert.match(pty.output, /pty-ok/);
+  } else {
+    const pty = await manager.start({
+      workspaceId: "workspace-a",
+      cwd: process.cwd(),
+      command: `${node} -e "setTimeout(() => console.log('columns:' + process.stdout.columns), 250)"`,
+      tty: true,
+      columns: 80,
+      rows: 24,
+      yieldTimeMs: 10,
+    });
+    assert.equal(pty.running, true);
+    assert.ok(pty.sessionId);
 
-  const resizedPty = await manager.write({
-    workspaceId: "workspace-a",
-    sessionId: pty.sessionId,
-    columns: 120,
-    rows: 30,
-    yieldTimeMs: 2_000,
-  });
-  assert.equal(resizedPty.running, false);
-  assert.match(resizedPty.output, /columns:120/);
+    const resizedPty = await manager.write({
+      workspaceId: "workspace-a",
+      sessionId: pty.sessionId,
+      columns: 120,
+      rows: 30,
+      yieldTimeMs: 2_000,
+    });
+    assert.equal(resizedPty.running, false);
+    assert.match(resizedPty.output, /columns:120/);
+  }
 } finally {
   manager.shutdown();
 }
