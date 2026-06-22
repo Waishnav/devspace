@@ -6,6 +6,7 @@ import type { OAuthConfig } from "./oauth-provider.js";
 import { loadDevspaceFiles } from "./user-config.js";
 
 export type ToolNamingMode = "legacy" | "short";
+export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -17,7 +18,7 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
-  minimalTools: boolean;
+  toolMode: ToolMode;
   toolNaming: ToolNamingMode;
   widgets: WidgetMode;
   stateDir: string;
@@ -79,14 +80,15 @@ function parseBoolean(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
 }
 
-function parseMinimalTools(env: NodeJS.ProcessEnv): boolean {
-  if (env.DEVSPACE_TOOL_MODE === "minimal") return true;
-  if (env.DEVSPACE_TOOL_MODE === "full") return false;
-  if (env.DEVSPACE_TOOL_MODE) {
-    throw new Error(`Invalid DEVSPACE_TOOL_MODE: ${env.DEVSPACE_TOOL_MODE}`);
+function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
+  const mode = env.DEVSPACE_TOOL_MODE;
+  if (mode === "minimal" || mode === "full" || mode === "codex") return mode;
+  if (mode) throw new Error(`Invalid DEVSPACE_TOOL_MODE: ${mode}`);
+
+  if (env.DEVSPACE_MINIMAL_TOOLS !== undefined) {
+    return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
   }
-  if (env.DEVSPACE_MINIMAL_TOOLS !== undefined) return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS);
-  return true;
+  return "minimal";
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -227,7 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
-    minimalTools: parseMinimalTools(env),
+    toolMode: parseToolMode(env),
     toolNaming: parseToolNaming(env.DEVSPACE_TOOL_NAMING),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),

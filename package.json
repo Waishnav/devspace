@@ -24,8 +24,9 @@
     "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
     "dev": "node scripts/dev-server.mjs",
+    "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "start": "node dist/cli.js serve",
-    "test": "tsx src/config.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts",
+    "test": "tsx src/config.test.ts && tsx src/ui/card-types.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
@@ -60,5 +61,8 @@
   "overrides": {
     "protobufjs": "7.6.4",
     "ws": "8.21.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   }
 }
