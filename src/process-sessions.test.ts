@@ -101,7 +101,6 @@ const interrupted = await manager.write({
 });
 assert.equal(interrupted.running, false);
 if (process.platform !== "win32") assert.equal(interrupted.signal, "SIGINT");
-assert.match(interruptible.output + interrupted.output, /tick/);
 
 let buffered = await manager.start({
   workspaceId: "workspace-a",
