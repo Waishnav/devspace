@@ -100,7 +100,7 @@ Use this only for intentional local debugging:
 DEVSPACE_ALLOWED_HOSTS="*" npx @waishnav/devspace serve
 ```
 
-## ChatGPT Posts To `/`
+## OAuth Request Paths In Logs
 
 Configure the ChatGPT app with the full MCP endpoint:
 
@@ -108,9 +108,11 @@ Configure the ChatGPT app with the full MCP endpoint:
 https://your-host.example.com/mcp
 ```
 
-The public base URL stored by DevSpace is the origin without `/mcp`, but MCP
-clients must connect to `/mcp`. A `POST /` request will not create an MCP
-session.
+The public base URL stored by DevSpace is the origin without `/mcp`, while MCP
+clients connect to `/mcp`. Older DevSpace versions could log OAuth router
+requests such as `/register` or `/token` as `/` because Express rewrote the
+mounted router path before the response log was emitted. Current versions log
+the original request path.
 
 ## OAuth `invalid_client` After Restart
 
