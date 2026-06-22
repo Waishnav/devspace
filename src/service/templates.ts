@@ -21,19 +21,7 @@ export function buildServiceCommand(cliEntrypoint: string): ServiceCommandSpec {
 
 export function buildServiceEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {};
-  const allowed = [
-    "DEVSPACE_CONFIG_DIR",
-    "DEVSPACE_PUBLIC_BASE_URL",
-    "DEVSPACE_ALLOWED_HOSTS",
-    "DEVSPACE_LOG_LEVEL",
-    "DEVSPACE_LOG_FORMAT",
-    "DEVSPACE_LOG_REQUESTS",
-    "DEVSPACE_LOG_ASSETS",
-    "DEVSPACE_LOG_TOOL_CALLS",
-    "DEVSPACE_LOG_SHELL_COMMANDS",
-    "DEVSPACE_TRUST_PROXY",
-    "PATH",
-  ];
+  const allowed = ["DEVSPACE_CONFIG_DIR", "PATH"];
 
   for (const key of allowed) {
     const value = process.env[key];
@@ -122,7 +110,7 @@ function xmlEscape(value: string): string {
 }
 
 function escapeEnvValue(value: string): string {
-  return value.replaceAll(" ", "\\ ");
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 function escapeSystemdArg(value: string): string {

@@ -27,7 +27,7 @@ export interface ServiceStatus {
 export interface ServiceDoctorResult {
   manager: ServiceManagerKind;
   checks: Array<{
-    level: "pass" | "warn" | "info";
+    level: "pass" | "warn" | "info" | "error";
     message: string;
   }>;
 }
