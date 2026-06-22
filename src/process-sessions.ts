@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { resolveShellCommand } from "./process-platform.js";
+import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
 
 const DEFAULT_YIELD_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
@@ -229,17 +229,7 @@ export class ProcessSessionManager {
 
     session.process = {
       write: (data) => child.stdin.write(data),
-      kill: (signal) => {
-        if (detached && child.pid) {
-          try {
-            process.kill(-child.pid, signal);
-            return;
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
-          }
-        }
-        child.kill(signal);
-      },
+      kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
     };
     child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
     child.stderr.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
