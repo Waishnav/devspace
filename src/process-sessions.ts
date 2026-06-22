@@ -256,7 +256,7 @@ export class ProcessSessionManager {
       command = join(scriptDirectory, "command.cmd");
       await writeFile(
         command,
-        `@ping 127.0.0.1 -n 2 > nul\r\n@echo off\r\n${input.command}\r\n`,
+        `@ping 127.0.0.1 -n 2 > nul\r\n@echo off\r\n${input.command}\r\n@exit /b %errorlevel%\r\n`,
         "utf8",
       );
     }
