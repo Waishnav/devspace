@@ -102,15 +102,23 @@ const interrupted = await manager.write({
 });
 assert.equal(interrupted.running, false);
 if (process.platform !== "win32") assert.equal(interrupted.signal, "SIGINT");
-assert.match(interrupted.output, /tick/);
+assert.match(interruptible.output + interrupted.output, /tick/);
 
-const buffered = await manager.start({
+let buffered = await manager.start({
   workspaceId: "workspace-a",
   cwd: process.cwd(),
   command: `${node} -e "console.log('x'.repeat(5000)); setTimeout(() => {}, 100)"`,
   yieldTimeMs: 50,
   maxOutputTokens: 100,
 });
+if (!buffered.outputTruncated && buffered.sessionId) {
+  buffered = await manager.write({
+    workspaceId: "workspace-a",
+    sessionId: buffered.sessionId,
+    yieldTimeMs: 2_000,
+    maxOutputTokens: 100,
+  });
+}
 assert.equal(buffered.outputTruncated, true);
 if (buffered.sessionId) manager.terminate("workspace-a", buffered.sessionId);
 

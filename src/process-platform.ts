@@ -40,7 +40,7 @@ export function resolveShellCommand(
   if (platform === "win32") {
     return {
       executable: environment.ComSpec ?? environment.COMSPEC ?? "cmd.exe",
-      args: ["/d", "/s", "/c", command],
+      args: ["/d", "/s", "/c", `"${command}"`],
     };
   }
 
