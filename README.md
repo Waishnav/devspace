@@ -48,13 +48,16 @@ During setup, DevSpace asks for:
 
 - the local project folders ChatGPT is allowed to open through DevSpace
 - the local port, usually `7676`
-- whether clients connect through localhost or a custom URL
+- the local listen address, such as `127.0.0.1`, `100.64.0.2`, or `0.0.0.0`
+- whether clients connect through localhost or a custom HTTPS URL
 
 Choose **Localhost** to use `http://localhost:<port>` automatically. Choose
-**Custom URL** to enter a Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel,
+**Custom HTTPS URL** to enter a Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel,
 reverse proxy, or other network origin.
 
-When choosing **Custom URL**, enter the public origin without `/mcp`:
+When an HTTPS URL already exists, `devspace init --force` defaults to keeping it
+unchanged. Choose **Custom HTTPS URL** only when intentionally changing it. Enter
+the public origin without `/mcp`:
 
 ```text
 https://your-tunnel-host.example.com

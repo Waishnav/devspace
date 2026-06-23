@@ -106,37 +106,55 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
     const port = Number(portAnswer);
 
+    const defaultHost = files.config.host ?? "127.0.0.1";
+    const host = await textPrompt({
+      message: `Which local address should DevSpace listen on? Press Enter to use ${defaultHost}`,
+      placeholder: defaultHost,
+      defaultValue: defaultHost,
+      validate: validateHost,
+    });
+
     const existingPublicUrl = files.config.publicBaseUrl ?? "";
+    const publicUrlOptions = [
+      ...(existingPublicUrl
+        ? [{
+            value: "keep",
+            label: `Keep existing: ${existingPublicUrl}`,
+            hint: "Recommended when only changing the listen address",
+          }]
+        : []),
+      {
+        value: "localhost",
+        label: "1. Localhost",
+        hint: "http://localhost:" + port,
+      },
+      {
+        value: "custom",
+        label: "2. Custom HTTPS URL",
+        hint: "Public HTTPS origin for OAuth and MCP",
+      },
+    ];
     const publicUrlMode = await prompts.select({
-      message: "How should clients reach this DevSpace server?",
-      options: [
-        {
-          value: "localhost",
-          label: "1. Localhost",
-          hint: "http://localhost:" + port,
-        },
-        {
-          value: "custom",
-          label: "2. Custom URL",
-          hint: "Tunnel, reverse proxy, or network URL",
-        },
-      ],
-      initialValue: isLocalPublicBaseUrl(existingPublicUrl) ? "localhost" : "custom",
+      message: "Which public URL should OAuth and MCP clients use?",
+      options: publicUrlOptions,
+      initialValue: existingPublicUrl ? "keep" : "localhost",
     });
     if (prompts.isCancel(publicUrlMode)) throw new SetupCancelledError();
 
     let publicBaseUrl: string;
-    if (publicUrlMode === "localhost") {
+    if (publicUrlMode === "keep") {
+      publicBaseUrl = existingPublicUrl;
+    } else if (publicUrlMode === "localhost") {
       publicBaseUrl = "http://localhost:" + port;
     } else {
       prompts.note(
         [
-          "Enter the origin clients will use, without /mcp.",
-          "Examples:",
+          "Enter the public HTTPS origin clients will use, without /mcp.",
+          "Set LAN, Tailscale, or 0.0.0.0 binding in the local listen-address step.",
+          "Example:",
           "  https://your-tunnel-host.example.com",
-          `  http://your-host:${port}`,
         ].join("\n"),
-        "Custom URL",
+        "Custom HTTPS URL",
       );
       publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
         message: existingPublicUrl && !isLocalPublicBaseUrl(existingPublicUrl)
@@ -153,7 +171,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     }
 
     const config: DevspaceUserConfig = {
-      host: files.config.host ?? "127.0.0.1",
+      host,
       port,
       allowedRoots,
       publicBaseUrl,
@@ -377,9 +395,14 @@ function validateRequiredPublicBaseUrl(value: string | undefined): string | unde
 function validatePublicBaseUrl(value: string): string | undefined {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? undefined
-      : "Use an http or https URL.";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "Use an http or https URL.";
+    }
+    const localHost = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+    if (parsed.protocol !== "https:" && !localHost) {
+      return "Non-local public URLs must use https. Set the local listen address in the previous step.";
+    }
+    return undefined;
   } catch {
     return "Enter a valid URL, for example https://your-tunnel-host.example.com.";
   }

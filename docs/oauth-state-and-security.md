@@ -126,11 +126,18 @@ obtain a new access token. Refresh tokens are rotated when used.
 
 ## URL Selection In `devspace init`
 
-The setup flow offers:
+When a public URL already exists, the setup flow first offers:
+
+```text
+Keep existing: https://your-current-host.example.com
+```
+
+Selecting it preserves the HTTPS/OAuth address while allowing the local bind
+address or port to change. New setups and intentional URL changes offer:
 
 ```text
 1. Localhost
-2. Custom URL
+2. Custom HTTPS URL
 ```
 
 Localhost automatically sets:
@@ -139,13 +146,11 @@ Localhost automatically sets:
 http://localhost:<port>
 ```
 
-Custom URL always opens a text input and waits for the user. The displayed URLs
-are examples only. The user can enter a tunnel, reverse proxy, Tailscale, LAN,
-or other reachable origin, for example:
+Custom HTTPS URL always opens a text input and waits for the user. The displayed URLs
+are examples only. The user enters a tunnel or reverse-proxy HTTPS origin, for example:
 
 ```text
 https://devspace.example.com
-http://your-host:7676
 ```
 
 The stored public base URL is an origin without `/mcp`. The URL configured in
@@ -155,7 +160,8 @@ ChatGPT must include the MCP path:
 https://devspace.example.com/mcp
 ```
 
-The bind host and public URL are separate settings. A server may bind to
+The local listen address is requested immediately after the port. The bind host
+and public URL are separate settings. A server may bind to
 `100.64.0.2`, for example, while clients connect through an HTTPS domain.
 
 ## Logging

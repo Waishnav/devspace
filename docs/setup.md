@@ -53,13 +53,30 @@ The local MCP URL is:
 http://127.0.0.1:7676/mcp
 ```
 
+### Local Listen Address
+
+After the port, `devspace init` asks which local address the server should bind
+to. Examples:
+
+```text
+127.0.0.1    local machine only
+100.64.0.2   a specific Tailscale or network interface
+0.0.0.0      every IPv4 interface
+```
+
+This does not change the public HTTPS/OAuth URL.
+
 ### Public Base URL
 
-`devspace init` asks how clients should reach the server:
+If a public URL is already configured, `devspace init --force` defaults to
+keeping it unchanged. This is the normal choice when only changing the local
+listen address. For a new setup or an intentional URL change, the choices are:
 
 - **Localhost** uses `http://localhost:<port>` and needs no additional URL input.
-- **Custom URL** waits for a tunnel, reverse proxy, Tailscale, or other network
-  origin.
+- **Custom HTTPS URL** waits for a tunnel or reverse-proxy HTTPS origin.
+
+A direct LAN or Tailscale address belongs in the earlier local listen-address
+step, not in the OAuth public URL field.
 
 For a custom URL, point the tunnel or reverse proxy at the local server and
 enter the client-facing origin without `/mcp`:

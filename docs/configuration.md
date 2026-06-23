@@ -31,9 +31,11 @@ Changing `host` takes effect after restarting `devspace serve`. Use a specific
 interface address when possible. `0.0.0.0` exposes the service on every IPv4
 interface, so firewall access should be restricted accordingly.
 
-During `devspace init`, the URL step offers Localhost or Custom URL. Localhost
-uses `http://localhost:<port>` automatically. Custom URL waits for an explicit
-tunnel, reverse proxy, or network origin.
+During `devspace init`, the port is followed by a separate local listen-address
+step. The later URL step first offers to keep an existing URL unchanged, then offers
+Localhost or Custom HTTPS URL. Localhost uses
+`http://localhost:<port>` automatically. Custom HTTPS URL waits for an explicit
+tunnel or reverse-proxy origin.
 
 ## Core Environment Variables
 
