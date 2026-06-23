@@ -84,7 +84,10 @@ try {
   const startResult = await manager.start();
   assert.equal(startResult.ok, true);
   assert.match(startResult.message, /Started service|Installed and started service/);
-  assert.match(readFileSync(systemdPaths.userSystemdUnitPath, "utf8"), new RegExp(escapeRegExp(builtCliPath)));
+  assert.match(
+    readFileSync(systemdPaths.userSystemdUnitPath, "utf8"),
+    new RegExp(escapeRegExp(escapeSystemdUnitArg(builtCliPath))),
+  );
   const status = await manager.status();
   assert.equal(status.installed, true);
   assert.equal(status.endpoint, "https://devspace.example.com/mcp");
@@ -157,6 +160,11 @@ try {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeSystemdUnitArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 function createSystemdPaths(baseRoot: string, label: string) {
