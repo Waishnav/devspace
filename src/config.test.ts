@@ -24,6 +24,10 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "f
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "codex");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).toolMode, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "minimal");
+assert.equal(loadConfig(baseEnv).goalsEnabled, false);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).goalsEnabled, false);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex", DEVSPACE_GOALS: "0" }).goalsEnabled, false);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_GOALS: "1" }).goalsEnabled, true);
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
@@ -150,6 +154,7 @@ writeFileSync(
     port: 8787,
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
+    goalsEnabled: true,
   }),
 );
 writeFileSync(
@@ -161,6 +166,7 @@ writeFileSync(
 
 const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
 assert.equal(fileConfig.port, 8787);
+assert.equal(fileConfig.goalsEnabled, true);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.deepEqual(fileConfig.allowedHosts, [

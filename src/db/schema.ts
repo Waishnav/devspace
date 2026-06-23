@@ -38,6 +38,25 @@ export const loadedAgentFiles = sqliteTable(
   ],
 );
 
+export const workspaceGoals = sqliteTable(
+  "workspace_goals",
+  {
+    workspaceSessionId: text("workspace_session_id")
+      .primaryKey()
+      .references(() => workspaceSessions.id, { onDelete: "cascade" }),
+    goalId: text("goal_id").notNull(),
+    objective: text("objective").notNull(),
+    status: text("status", { enum: ["active", "blocked", "complete"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    index("workspace_goals_goal_id_idx").on(table.goalId),
+    index("workspace_goals_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
 export const oauthClients = sqliteTable(
   "oauth_clients",
   {
@@ -77,3 +96,4 @@ export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+export type WorkspaceGoalRow = typeof workspaceGoals.$inferSelect;

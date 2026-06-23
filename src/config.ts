@@ -23,6 +23,7 @@ export interface ServerConfig {
   widgets: WidgetMode;
   stateDir: string;
   worktreeRoot: string;
+  goalsEnabled: boolean;
   skillsEnabled: boolean;
   skillPaths: string[];
   agentDir: string;
@@ -210,6 +211,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
   const port = parsePort(env.PORT ?? files.config.port);
+  const toolMode = parseToolMode(env);
   const publicBaseUrl = parsePublicBaseUrl(
     env.DEVSPACE_PUBLIC_BASE_URL ?? files.config.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
@@ -229,11 +231,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
-    toolMode: parseToolMode(env),
+    toolMode,
     toolNaming: parseToolNaming(env.DEVSPACE_TOOL_NAMING),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
+    goalsEnabled:
+      env.DEVSPACE_GOALS === undefined
+        ? (files.config.goalsEnabled ?? false)
+        : parseBoolean(env.DEVSPACE_GOALS),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
