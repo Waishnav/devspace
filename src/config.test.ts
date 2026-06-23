@@ -25,7 +25,7 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).toolMode, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "minimal");
 assert.equal(loadConfig(baseEnv).goalsEnabled, false);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).goalsEnabled, true);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).goalsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex", DEVSPACE_GOALS: "0" }).goalsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_GOALS: "1" }).goalsEnabled, true);
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);

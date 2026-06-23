@@ -238,7 +238,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     goalsEnabled:
       env.DEVSPACE_GOALS === undefined
-        ? (files.config.goalsEnabled ?? toolMode === "codex")
+        ? (files.config.goalsEnabled ?? false)
         : parseBoolean(env.DEVSPACE_GOALS),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
