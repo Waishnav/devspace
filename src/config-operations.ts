@@ -137,14 +137,18 @@ export async function resetConfigKey(
 
   const config = loadConfig();
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, new URL(config.mcpPath, config.publicBaseUrl));
-  oauthProvider.resetState();
+  try {
+    oauthProvider.resetState();
 
-  const restartMessage = await applyConfigUpdate(cliEntrypoint, undefined, options);
-  return [
-    "Access key has been reset successfully.",
-    "Existing clients must be reconfigured.",
-    restartMessage,
-  ].filter(Boolean).join("\n");
+    const restartMessage = await applyConfigUpdate(cliEntrypoint, undefined, options);
+    return [
+      "Access key has been reset successfully.",
+      "Existing clients must be reconfigured.",
+      restartMessage,
+    ].filter(Boolean).join("\n");
+  } finally {
+    oauthProvider.close();
+  }
 }
 
 export async function addWorkspace(path: string, options: {
