@@ -41,6 +41,26 @@ try {
     [join(root, "nested", "AGENTS.md")],
   );
 
+  const planSkill = workspace.skills.find((skill) => skill.name === "plan" && skill.source === "devspace_system");
+  assert.ok(planSkill, "expected the bundled plan Skill to be available");
+
+  const planSkillFile = registry.resolveReadPath(workspace, planSkill.locator);
+  assert.equal(planSkillFile.absolutePath, planSkill.filePath);
+  assert.equal(planSkillFile.skillRead?.isSkillFile, true);
+  registry.markReadPathLoaded(workspace, planSkillFile);
+
+  const planReference = registry.resolveReadPath(
+    workspace,
+    "skill://devspace-system/plan/references/state.md",
+  );
+  assert.equal(planReference.absolutePath, join(planSkill.baseDir, "references", "state.md"));
+  assert.equal(planReference.skillRead?.isSkillFile, false);
+
+  await assert.rejects(
+    async () => registry.resolveReadPath(workspace, "skill://devspace-system/unknown/SKILL.md"),
+    /Unknown or unauthorized Skill resource/,
+  );
+
   const missingWorkspaceRoot = join(root, "missing", "workspace");
   const missingWorkspace = await registry.openWorkspace(missingWorkspaceRoot);
   assert.equal(missingWorkspace.workspace.root, missingWorkspaceRoot);

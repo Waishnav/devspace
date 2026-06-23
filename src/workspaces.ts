@@ -141,18 +141,15 @@ export class WorkspaceRegistry {
   }
 
   resolveReadPath(workspace: Workspace, inputPath: string): WorkspaceReadPath {
-    try {
-      return {
-        absolutePath: this.resolvePath(workspace, inputPath),
-        readRoots: [workspace.root],
-      };
-    } catch (workspaceError) {
+    if (inputPath.startsWith("skill://")) {
       const skillRead = resolveSkillReadPath(
         workspace.skills,
         workspace.activatedSkillDirs,
         inputPath,
       );
-      if (!skillRead) throw workspaceError;
+      if (!skillRead) {
+        throw new Error(`Unknown or unauthorized Skill resource: ${inputPath}`);
+      }
 
       return {
         absolutePath: skillRead.absolutePath,
@@ -160,6 +157,11 @@ export class WorkspaceRegistry {
         skillRead,
       };
     }
+
+    return {
+      absolutePath: this.resolvePath(workspace, inputPath),
+      readRoots: [workspace.root],
+    };
   }
 
   markReadPathLoaded(workspace: Workspace, readPath: WorkspaceReadPath): void {

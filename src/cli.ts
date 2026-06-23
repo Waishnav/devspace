@@ -38,8 +38,9 @@ import {
   type SkillScope,
 } from "./skill-manager.js";
 
-type Command = "serve" | "service-run" | "init" | "doctor" | "config" | "workspace" | "service" | "skills" | "help";
+type Command = "serve" | "service-run" | "init" | "doctor" | "config" | "workspace" | "service" | "skills" | "version" | "help";
 const require = createRequire(import.meta.url);
+const PACKAGE_VERSION = (require("../package.json") as { version: string }).version;
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 const CLI_ENTRYPOINT = fileURLToPath(import.meta.url);
 
@@ -75,6 +76,9 @@ async function main(argv: string[]): Promise<void> {
     case "skills":
       await runSkillsCommand(args);
       return;
+    case "version":
+      console.log(PACKAGE_VERSION);
+      return;
     case "help":
       printHelp();
       return;
@@ -84,6 +88,7 @@ async function main(argv: string[]): Promise<void> {
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
   if (command === "service-run" || command === "init" || command === "doctor" || command === "config" || command === "workspace" || command === "service" || command === "skills") return command;
+  if (command === "--version" || command === "-v") return "version";
   if (command === "help" || command === "--help" || command === "-h") return "help";
   throw new Error(`Unknown command: ${command}`);
 }
@@ -544,6 +549,7 @@ function printHelp(): void {
       "",
       "Usage:",
       "  devspace                 Run first-time setup if needed, then start the server",
+      "  devspace -v, --version  Print the installed DevSpace version",
       "  devspace serve           Start the server",
       "  devspace serve --add-dir <path>   Temporarily allow an extra workspace root",
       "  devspace serve --workspace <path> Temporarily set the default workspace for this run",
