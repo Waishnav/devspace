@@ -48,10 +48,12 @@ try {
   assert.equal(JSON.stringify(savedState).includes(assertString(firstTokens.access_token)), false);
   assert.equal(JSON.stringify(savedState).includes(assertString(firstTokens.refresh_token)), false);
 
-  const stateStats = await stat(databasePath(dirname(statePath)));
-  const dirStats = await stat(join(root, "state"));
-  assert.equal(stateStats.mode & 0o777, 0o600);
-  assert.equal(dirStats.mode & 0o777, 0o700);
+  if (process.platform !== "win32") {
+    const stateStats = await stat(databasePath(dirname(statePath)));
+    const dirStats = await stat(join(root, "state"));
+    assert.equal(stateStats.mode & 0o777, 0o600);
+    assert.equal(dirStats.mode & 0o777, 0o700);
+  }
 
   const secondProvider = new SingleUserOAuthProvider(config, resourceServerUrl);
   providers.push(secondProvider);
