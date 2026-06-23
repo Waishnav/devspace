@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -52,6 +53,7 @@ export function loadDevspaceFiles(env: NodeJS.ProcessEnv = process.env): Devspac
   const authPath = join(dir, "auth.json");
   const configExists = existsSync(configPath);
   const authExists = existsSync(authPath);
+  secureExistingConfigFiles(dir, configPath, authPath, configExists, authExists);
 
   return {
     dir,
@@ -69,7 +71,7 @@ export function writeDevspaceConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const filePath = devspaceConfigPath(env);
-  mkdirSync(devspaceConfigDir(env), { recursive: true });
+  ensurePrivateDirectory(devspaceConfigDir(env));
   writeJsonFile(filePath, config, 0o600);
   return filePath;
 }
@@ -79,7 +81,7 @@ export function writeDevspaceAuth(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const filePath = devspaceAuthPath(env);
-  mkdirSync(devspaceConfigDir(env), { recursive: true });
+  ensurePrivateDirectory(devspaceConfigDir(env));
   writeJsonFile(filePath, auth, 0o600);
   return filePath;
 }
@@ -99,4 +101,23 @@ function readJsonFile<T>(filePath: string): T {
 
 function writeJsonFile(filePath: string, value: unknown, mode: number): void {
   writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", { mode });
+  if (process.platform !== "win32") chmodSync(filePath, mode);
+}
+
+function ensurePrivateDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") chmodSync(path, 0o700);
+}
+
+function secureExistingConfigFiles(
+  dir: string,
+  configPath: string,
+  authPath: string,
+  configExists: boolean,
+  authExists: boolean,
+): void {
+  if (process.platform === "win32" || !existsSync(dir)) return;
+  chmodSync(dir, 0o700);
+  if (configExists) chmodSync(configPath, 0o600);
+  if (authExists) chmodSync(authPath, 0o600);
 }

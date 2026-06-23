@@ -15,7 +15,7 @@ If you installed globally, confirm npm's global bin directory is on `PATH`.
 
 ## Unsupported Node Version
 
-DevSpace requires Node `>=20.12 <27`.
+DevSpace requires Node `>=22.19 <27`.
 
 Check:
 
@@ -23,7 +23,7 @@ Check:
 node --version
 ```
 
-Install Node 22 LTS with your preferred version manager such as `nvm`, `fnm`, or
+Install Node 22.19 or newer with your preferred version manager such as `nvm`, `fnm`, or
 `mise`.
 
 ## `better-sqlite3` Could Not Load

@@ -5,7 +5,7 @@ projects through DevSpace.
 
 ## Requirements
 
-- Node `>=20.12 <27`; Node 22 LTS is recommended
+- Node `>=22.19 <27`; Node 22.19 or newer is recommended
 - npm
 - Git
 - Bash, including Git Bash or WSL on Windows

@@ -4,7 +4,7 @@ import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { createOAuthMetadata, mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -1312,16 +1312,21 @@ export function createServer(config = loadConfig()): RunningServer {
     next();
   });
 
-  app.use(
-    mcpAuthRouter({
-      provider: oauthProvider,
-      issuerUrl: new URL(config.publicBaseUrl),
-      baseUrl: new URL(config.publicBaseUrl),
-      resourceServerUrl,
-      scopesSupported: config.oauth.scopes,
-      resourceName: "DevSpace",
-    }),
-  );
+  const authRouterOptions = {
+    provider: oauthProvider,
+    issuerUrl: new URL(config.publicBaseUrl),
+    baseUrl: new URL(config.publicBaseUrl),
+    resourceServerUrl,
+    scopesSupported: config.oauth.scopes,
+    resourceName: "DevSpace",
+  };
+  const oauthMetadata = createOAuthMetadata(authRouterOptions);
+  oauthMetadata.token_endpoint_auth_methods_supported = ["none"];
+  oauthMetadata.revocation_endpoint_auth_methods_supported = ["none"];
+  app.get("/.well-known/oauth-authorization-server", (_req, res) => {
+    res.json(oauthMetadata);
+  });
+  app.use(mcpAuthRouter(authRouterOptions));
 
   app.options("/mcp-app-assets/{*asset}", (_req, res) => {
     setAssetHeaders(res);

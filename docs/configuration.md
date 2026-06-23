@@ -46,7 +46,7 @@ tunnel, reverse proxy, or network origin.
 | `DEVSPACE_ALLOWED_HOSTS` | Optional Host header allowlist override. |
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
-| `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+| `DEVSPACE_STATE_DIR` | Directory for private SQLite state. Defaults to `~/.local/share/devspace`. |
 
 ## OAuth
 

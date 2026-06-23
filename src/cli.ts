@@ -18,7 +18,7 @@ import { expandHomePath } from "./roots.js";
 
 type Command = "serve" | "init" | "doctor" | "config" | "help";
 const require = createRequire(import.meta.url);
-const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+const SUPPORTED_NODE_RANGE = ">=22.19 <27";
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
@@ -134,7 +134,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
           "Enter the origin clients will use, without /mcp.",
           "Examples:",
           "  https://your-tunnel-host.example.com",
-          "  http://100.64.0.2:7676",
+          `  http://your-host:${port}`,
         ].join("\n"),
         "Custom URL",
       );
@@ -393,7 +393,7 @@ function assertSupportedNode(): void {
       `DevSpace requires Node ${SUPPORTED_NODE_RANGE}.`,
       `Current Node: ${process.version}`,
       "",
-      "Install Node 22 LTS or use a version manager such as nvm, fnm, or mise.",
+      "Install Node 22.19 or newer, or use a version manager such as nvm, fnm, or mise.",
     ].join("\n"),
   );
 }

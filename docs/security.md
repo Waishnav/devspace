@@ -103,3 +103,7 @@ By default, DevSpace logs requests and tool calls. Shell command previews are
 disabled unless `DEVSPACE_LOG_SHELL_COMMANDS=1`.
 
 Do not enable shell command logging if commands may contain secrets.
+
+On POSIX systems DevSpace enforces mode `0700` on its config and state
+directories and `0600` on config, auth, SQLite, WAL, and SHM files. See
+[OAuth State, File Permissions, and URL Setup](oauth-state-and-security.md).

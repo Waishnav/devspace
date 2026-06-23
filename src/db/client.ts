@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -18,16 +18,26 @@ export function databasePath(stateDir: string): string {
 }
 
 export function openDatabase(stateDir: string): DatabaseHandle {
-  mkdirSync(stateDir, { recursive: true });
-  const sqlite = new Database(databasePath(stateDir));
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  setPrivateMode(stateDir, 0o700);
+
+  const filePath = databasePath(stateDir);
+  const sqlite = new Database(filePath);
+  setPrivateMode(filePath, 0o600);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  setPrivateMode(filePath + "-wal", 0o600);
+  setPrivateMode(filePath + "-shm", 0o600);
 
   return {
     sqlite,
     db: createDrizzleDatabase(sqlite),
     close: () => sqlite.close(),
   };
+}
+
+function setPrivateMode(path: string, mode: number): void {
+  if (process.platform !== "win32" && existsSync(path)) chmodSync(path, mode);
 }
 
 function createDrizzleDatabase(sqlite: SqliteDatabase) {

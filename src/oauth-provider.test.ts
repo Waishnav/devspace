@@ -13,6 +13,18 @@ try {
     redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
     token_endpoint_auth_method: "none",
   });
+  assert.equal(client.client_secret, undefined);
+  assert.equal(client.client_secret_expires_at, undefined);
+  assert.throws(
+    () => first.registerClient({
+      client_name: "Confidential client",
+      redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      token_endpoint_auth_method: "client_secret_post",
+      client_secret: "must-not-be-stored",
+    }),
+    /only supports public OAuth clients/,
+  );
+
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
   first.saveToken("access-token", "access", {
     clientId: client.client_id,

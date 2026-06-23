@@ -156,6 +156,9 @@ export class SqliteOAuthStore implements OAuthRegisteredClientsStore {
       CREATE INDEX IF NOT EXISTS oauth_tokens_expiry_idx
         ON oauth_tokens (expires_at);
     `);
+    this.database.sqlite
+      .prepare("DELETE FROM oauth_tokens WHERE expires_at < ?")
+      .run(Math.floor(Date.now() / 1000));
   }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
@@ -168,16 +171,20 @@ export class SqliteOAuthStore implements OAuthRegisteredClientsStore {
   registerClient(
     client: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">,
   ): OAuthClientInformationFull {
+    if (client.token_endpoint_auth_method && client.token_endpoint_auth_method !== "none") {
+      throw new InvalidRequestError("DevSpace only supports public OAuth clients");
+    }
     if (!client.redirect_uris.every((uri) => redirectHostAllowed(uri, this.allowedRedirectHosts))) {
       throw new InvalidRequestError("Client redirect_uri is not allowed for this DevSpace server");
     }
 
     const now = Math.floor(Date.now() / 1000);
+    const { client_secret: _clientSecret, client_secret_expires_at: _secretExpiry, ...clientMetadata } = client;
     const registered: OAuthClientInformationFull = {
-      ...client,
+      ...clientMetadata,
       client_id: `devspace-${randomUUID()}`,
       client_id_issued_at: now,
-      token_endpoint_auth_method: client.token_endpoint_auth_method ?? "none",
+      token_endpoint_auth_method: "none",
       grant_types: client.grant_types ?? ["authorization_code", "refresh_token"],
       response_types: client.response_types ?? ["code"],
     };

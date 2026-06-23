@@ -22,7 +22,7 @@ DevSpace is a self-hosted MCP server that lets ChatGPT read, edit, search, and r
 
 ## Installation
 
-DevSpace requires Node `>=20.12 <27`. Node 22 LTS is recommended.
+DevSpace requires Node `>=22.19 <27`. Node 22.19 or newer is required; current Node 22 LTS or Node 24 is recommended.
 
 Install the DevSpace CLI:
 
@@ -169,6 +169,7 @@ devspace doctor
 - [ChatGPT Coding Workflow](docs/chatgpt-coding-workflow.md)
 - [Configuration Reference](docs/configuration.md)
 - [Security Model](docs/security.md)
+- [OAuth State and File Permissions](docs/oauth-state-and-security.md)
 - [Troubleshooting Gotchas](docs/gotchas.md)
 
 ## Philosophy
