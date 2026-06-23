@@ -30,7 +30,7 @@ try {
   assert.deepEqual(extractPatchPaths(patch), ["README.md"]);
   const result = await applyWorkspacePatch({ patch }, { root });
   assert.deepEqual(result.files, ["README.md"]);
-  assert.equal(await readFile(join(root, "README.md"), "utf8"), "hello\nworld\n");
+  assert.equal(normalizeNewlines(await readFile(join(root, "README.md"), "utf8")), "hello\nworld\n");
 
   const escapingPatch = [
     "diff --git a/../escape.txt b/../escape.txt",
@@ -55,4 +55,8 @@ try {
 
 async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
+}
+
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/g, "\n");
 }
