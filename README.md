@@ -48,10 +48,13 @@ During setup, DevSpace asks for:
 
 - the local project folders ChatGPT is allowed to open through DevSpace
 - the local port, usually `7676`
-- your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or
-  another reverse proxy
+- whether clients connect through localhost or a custom URL
 
-Use the public origin without `/mcp` during setup:
+Choose **Localhost** to use `http://localhost:<port>` automatically. Choose
+**Custom URL** to enter a Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel,
+reverse proxy, or other network origin.
+
+When choosing **Custom URL**, enter the public origin without `/mcp`:
 
 ```text
 https://your-tunnel-host.example.com
@@ -67,6 +70,16 @@ the Owner password printed by `devspace init`. It is also stored in:
 ```
 
 Keep that password private.
+
+The Owner password is only entered on the approval page. It is not sent with
+every MCP request. After approval, DevSpace issues short-lived access tokens
+and longer-lived refresh tokens.
+
+OAuth client registrations and hashed access and refresh tokens are persisted
+in the DevSpace SQLite state database. Restarting `devspace serve` therefore
+does not invalidate an already registered ChatGPT app. When upgrading from an
+older build that stored OAuth state only in memory, remove and add the ChatGPT
+app one final time so its client registration can be persisted.
 
 ## Connect Your MCP Client
 
@@ -89,6 +102,16 @@ restart DevSpace:
 devspace config set host 100.64.0.2
 devspace serve
 ```
+
+Always configure the MCP client with the full `/mcp` endpoint. The base URL
+stored by DevSpace does not include `/mcp`, but the client-facing URL does:
+
+```text
+https://your-tunnel-host.example.com/mcp
+```
+
+OAuth request logs preserve their original paths, so requests to `/register`,
+`/authorize`, and `/token` are no longer incorrectly reported as `/`.
 
 ## What ChatGPT Can Do
 
@@ -185,3 +208,17 @@ npm test
 npm run build
 npm run start
 ```
+
+To use the current checkout as the global `devspace` command:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm uninstall -g @waishnav/devspace
+npm install -g .
+hash -r
+```
+
+The global npm entry then links back to this checkout. Future source changes
+only require `npm run build`; reinstalling the global link is unnecessary.
