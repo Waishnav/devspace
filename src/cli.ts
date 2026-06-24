@@ -8,6 +8,7 @@ import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
   buildConfigShowResult,
+  normalizePublicBaseUrlInput,
   setConfigKey,
   setConfigDomain,
   setConfigHost,
@@ -130,13 +131,13 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       [
         "DevSpace needs a public base URL so ChatGPT or Claude can reach this MCP server.",
         "Create a tunnel or reverse proxy with Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS proxy.",
-        "Paste the public origin here, without /mcp.",
+        "Paste the public origin here. A trailing /mcp is accepted.",
         "",
         "Example: https://your-tunnel-host.example.com",
       ].join("\n"),
       "Public URL required",
     );
-    const publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
+    const publicBaseUrl = normalizePublicBaseUrlInput(await textPrompt({
       message: files.config.publicBaseUrl
         ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
         : "What is the public base URL?",
@@ -392,15 +393,6 @@ function printVersion(): void {
   console.log(packageJson.version);
 }
 
-function normalizePublicBaseUrl(value: string): string {
-  const trimmed = value.trim();
-  const parsed = new URL(trimmed);
-  parsed.hash = "";
-  parsed.search = "";
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-  return parsed.toString().replace(/\/$/, "");
-}
-
 type TextPromptOptions = Omit<Parameters<typeof prompts.text>[0], "validate"> & {
   defaultValue: string;
   validate?: (value: string | undefined) => string | Error | undefined;
@@ -426,18 +418,12 @@ function validatePort(value: string | undefined): string | undefined {
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return "Enter the public URL from your tunnel or reverse proxy.";
-  if (trimmed.endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
-  return validatePublicBaseUrl(trimmed);
-}
 
-function validatePublicBaseUrl(value: string): string | undefined {
   try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? undefined
-      : "Use an http or https URL.";
-  } catch {
-    return "Enter a valid URL, for example https://your-tunnel-host.example.com.";
+    normalizePublicBaseUrlInput(trimmed);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Enter a valid public URL.";
   }
 }
 

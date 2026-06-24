@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildConfigShowResult,
+  normalizePublicBaseUrlInput,
   setConfigDomain,
   setConfigHost,
   setConfigKey,
@@ -35,6 +36,8 @@ try {
 
   const domainResult = setConfigDomain("devspace.example.com/mcp");
   assert.equal(loadDevspaceFiles().config.publicBaseUrl, "https://devspace.example.com");
+  assert.equal(normalizePublicBaseUrlInput("localhost:8443"), "https://localhost:8443");
+  assert.equal(normalizePublicBaseUrlInput("https://devspace.example.com/mcp"), "https://devspace.example.com");
   assert.equal(domainResult.warning, undefined);
   assert.match(setConfigDomain("http://devspace.example.com").warning ?? "", /Prefer HTTPS/);
   assert.throws(() => setConfigDomain("https://devspace.example.com/custom-mcp"), /origin/);

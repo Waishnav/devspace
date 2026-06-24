@@ -76,7 +76,7 @@ export function setConfigHost(value: string, env: NodeJS.ProcessEnv = process.en
 }
 
 export function setConfigDomain(value: string, env: NodeJS.ProcessEnv = process.env): ConfigUpdateResult {
-  const publicBaseUrl = normalizeDomainLikeInput(value);
+  const publicBaseUrl = normalizePublicBaseUrlInput(value);
   const files = loadDevspaceFiles(env);
   writeDevspaceConfig({ ...files.config, publicBaseUrl }, env);
 
@@ -157,11 +157,11 @@ function isPublicHost(host: string): boolean {
   return !["127.0.0.1", "localhost", "::1"].includes(host);
 }
 
-function normalizeDomainLikeInput(value: string): string {
+export function normalizePublicBaseUrlInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error("Domain or URL is required.");
 
-  const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
   let parsed: URL;
   try {
     parsed = new URL(withScheme);
