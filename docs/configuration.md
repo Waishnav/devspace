@@ -23,8 +23,8 @@ npx @waishnav/devspace init
 npx @waishnav/devspace serve
 npx @waishnav/devspace doctor
 
-# Show effective settings. Owner passwords are always masked.
-npx @waishnav/devspace config show
+# Show effective settings as JSON. Owner passwords are always masked.
+npx @waishnav/devspace config
 
 # Persist local server settings.
 npx @waishnav/devspace config host 127.0.0.1
@@ -35,10 +35,11 @@ npx @waishnav/devspace config domain devspace.example.com
 npx @waishnav/devspace config key "your-new-owner-password"
 ```
 
-`config host`, `config port`, and `config domain` persist changes in
-`~/.devspace/config.json`. Restart DevSpace after changing them. `config domain`
-accepts a bare domain or an `http`/`https` URL; it also accepts a trailing
-`/mcp` and stores the corresponding origin.
+`config` prints effective settings as JSON. `config host`, `config port`, and
+`config domain` persist changes in `~/.devspace/config.json`. Restart DevSpace
+after changing them. `config domain` accepts a hostname such as
+`devspace.example.com`, stores `https://devspace.example.com`, and DevSpace
+automatically uses `/mcp` as the MCP endpoint.
 
 `config key <key>` stores the supplied Owner password in `auth.json` and
 clears persisted OAuth clients and tokens. The value must be at least 16

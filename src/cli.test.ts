@@ -22,9 +22,9 @@ assert.match(topLevelHelp, /Use `devspace config` to show current settings/);
 assert.match(topLevelHelp, /Use `devspace --help config` for configuration commands/);
 
 const configHelp = runCli(["--help", "config"]);
-assert.match(configHelp, /^usage: devspace config <command> \[<args>]$/m);
-assert.match(configHelp, /inspect effective settings/);
-assert.match(configHelp, /change persistent server settings/);
+assert.match(configHelp, /^usage: devspace config \[<command> \[<args>\]\]$/m);
+assert.match(configHelp, /\(no command\)\s+Print effective settings as JSON/);
+assert.match(configHelp, /domain <domain>\s+Set the public domain; MCP uses \/mcp automatically/);
 assert.match(configHelp, /key <key>\s+Set the Owner password and revoke saved OAuth sessions/);
 assert.equal(runCli(["-h", "config"]), configHelp);
 
@@ -37,22 +37,18 @@ try {
 
   assert.match(runCli(["config", "host", "127.0.0.1"], env), /Updated local bind host/);
   assert.match(runCli(["config", "port", "8787"], env), /Updated local bind port/);
-  assert.match(runCli(["config", "domain", "devspace.example.com/mcp"], env), /public base URL/);
+  assert.match(runCli(["config", "domain", "devspace.example.com"], env), /public domain/);
 
-  const defaultShow = runCli(["config"], env);
-  assert.ok(defaultShow.includes("bind host: 127.0.0.1"));
-  assert.ok(defaultShow.includes("port: 8787"));
-  assert.ok(defaultShow.includes("public MCP URL: https://devspace.example.com/mcp"));
-  assert.ok(defaultShow.includes("Owner password: (not configured)"));
-
-  const shown = JSON.parse(runCli(["config", "show", "--json"], env)) as {
+  const shown = JSON.parse(runCli(["config"], env)) as {
     host: string;
     port: number;
+    publicBaseUrl: string;
     publicUrl: string;
     accessKey: string;
   };
   assert.equal(shown.host, "127.0.0.1");
   assert.equal(shown.port, 8787);
+  assert.equal(shown.publicBaseUrl, "https://devspace.example.com");
   assert.equal(shown.publicUrl, "https://devspace.example.com/mcp");
   assert.equal(shown.accessKey, "(not configured)");
 
@@ -60,7 +56,8 @@ try {
   const keyOutput = runCli(["config", "key", newOwnerPassword], env);
   assert.match(keyOutput, /Owner password updated/);
   assert.ok(!keyOutput.includes(newOwnerPassword));
-  assert.match(runCli(["config", "show"], env), /Owner password: .{3}\*+/);
+  const updated = JSON.parse(runCli(["config"], env)) as { accessKey: string };
+  assert.match(updated.accessKey, /^.{3}\*+/);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildConfigShowResult,
-  normalizePublicBaseUrlInput,
   setConfigDomain,
   setConfigHost,
   setConfigKey,
@@ -34,14 +33,12 @@ try {
   assert.match(hostResult.warning ?? "", /may expose DevSpace/);
   assert.throws(() => setConfigHost("https://example.com"), /Invalid host/);
 
-  const domainResult = setConfigDomain("devspace.example.com/mcp");
+  const domainResult = setConfigDomain("devspace.example.com");
   assert.equal(loadDevspaceFiles().config.publicBaseUrl, "https://devspace.example.com");
-  assert.equal(normalizePublicBaseUrlInput("localhost:8443"), "https://localhost:8443");
-  assert.equal(normalizePublicBaseUrlInput("https://devspace.example.com/mcp"), "https://devspace.example.com");
   assert.equal(domainResult.warning, undefined);
-  assert.match(setConfigDomain("http://devspace.example.com").warning ?? "", /Prefer HTTPS/);
-  assert.throws(() => setConfigDomain("https://devspace.example.com/custom-mcp"), /origin/);
-  assert.throws(() => setConfigDomain("ftp://devspace.example.com"), /http or https/);
+  assert.throws(() => setConfigDomain("devspace.example.com/mcp"), /Domain must be a hostname/);
+  assert.throws(() => setConfigDomain("localhost:8443"), /Domain must be a hostname/);
+  assert.throws(() => setConfigDomain("https://devspace.example.com"), /Domain must be a hostname/);
 
   setConfigPublicBaseUrl("none");
   assert.equal(loadDevspaceFiles().config.publicBaseUrl, null);

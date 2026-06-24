@@ -8,7 +8,6 @@ import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
   buildConfigShowResult,
-  normalizePublicBaseUrlInput,
   setConfigKey,
   setConfigDomain,
   setConfigHost,
@@ -131,13 +130,13 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       [
         "DevSpace needs a public base URL so ChatGPT or Claude can reach this MCP server.",
         "Create a tunnel or reverse proxy with Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS proxy.",
-        "Paste the public origin here. A trailing /mcp is accepted.",
+        "Paste the public origin here, without /mcp.",
         "",
         "Example: https://your-tunnel-host.example.com",
       ].join("\n"),
       "Public URL required",
     );
-    const publicBaseUrl = normalizePublicBaseUrlInput(await textPrompt({
+    const publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
       message: files.config.publicBaseUrl
         ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
         : "What is the public base URL?",
@@ -263,11 +262,6 @@ function runConfigCommand(args: string[]): void {
     return;
   }
 
-  if (subcommand === "show") {
-    printConfigShow(args.includes("--json"));
-    return;
-  }
-
   if (subcommand === "port") {
     printConfigUpdate(setConfigPort(key ?? ""));
     return;
@@ -310,23 +304,8 @@ function runConfigCommand(args: string[]): void {
   printConfigUpdate(setConfigPublicBaseUrl(value));
 }
 
-function printConfigShow(json = false): void {
-  const show = buildConfigShowResult();
-  if (json) {
-    console.log(JSON.stringify(show, null, 2));
-    return;
-  }
-
-  console.log([
-    `bind host: ${show.host}`,
-    `port: ${show.port}`,
-    `public base URL: ${show.publicBaseUrl}`,
-    `public MCP URL: ${show.publicUrl}`,
-    `allowed hosts: ${show.allowedHosts.join(", ")}`,
-    `Owner password: ${show.accessKey}`,
-    `config file: ${show.configPath}`,
-    `auth file: ${show.authPath}`,
-  ].join("\n"));
+function printConfigShow(): void {
+  console.log(JSON.stringify(buildConfigShowResult(), null, 2));
 }
 
 function printConfigUpdate(result: ConfigUpdateResult): void {
@@ -362,19 +341,19 @@ function printHelp(): void {
 function printConfigHelp(): void {
   console.log(
     [
-      "usage: devspace config <command> [<args>]",
+      "usage: devspace config [<command> [<args>]]",
       "",
       "These are common DevSpace configuration commands:",
       "",
       "inspect effective settings",
-      "   show [--json]                 Show effective server settings and masked Owner password",
+      "   (no command)                  Print effective settings as JSON",
       "   get                           Print persisted config JSON (legacy-compatible)",
       "",
       "change persistent server settings",
       "   host <host>                   Set the local bind host",
       "   port <port>                   Set the local bind port",
-      "   domain <domain-or-url>        Set the public origin; a trailing /mcp is accepted",
-      "   key <key>                   Set the Owner password and revoke saved OAuth sessions",
+      "   domain <domain>               Set the public domain; MCP uses /mcp automatically",
+      "   key <key>                      Set the Owner password and revoke saved OAuth sessions",
       "",
       "compatibility command",
       "   set publicBaseUrl <url|null>  Set or clear the persisted public base URL",
@@ -382,6 +361,15 @@ function printConfigHelp(): void {
       "Configuration changes are saved locally. Restart DevSpace for them to take effect.",
     ].join("\n"),
   );
+}
+
+function normalizePublicBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  const parsed = new URL(trimmed);
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/$/, "");
 }
 
 function printVersion(): void {
@@ -418,12 +406,18 @@ function validatePort(value: string | undefined): string | undefined {
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return "Enter the public URL from your tunnel or reverse proxy.";
+  if (trimmed.endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
+  return validatePublicBaseUrl(trimmed);
+}
 
+function validatePublicBaseUrl(value: string): string | undefined {
   try {
-    normalizePublicBaseUrlInput(trimmed);
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : "Enter a valid public URL.";
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? undefined
+      : "Use an http or https URL.";
+  } catch {
+    return "Enter a valid URL, for example https://your-tunnel-host.example.com.";
   }
 }
 

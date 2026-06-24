@@ -62,7 +62,7 @@ at:
 http://127.0.0.1:7676
 ```
 
-Enter the public origin. A trailing `/mcp` is accepted and normalized:
+Enter the public origin without `/mcp`:
 
 ```text
 https://your-tunnel-host.example.com

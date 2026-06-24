@@ -76,15 +76,12 @@ export function setConfigHost(value: string, env: NodeJS.ProcessEnv = process.en
 }
 
 export function setConfigDomain(value: string, env: NodeJS.ProcessEnv = process.env): ConfigUpdateResult {
-  const publicBaseUrl = normalizePublicBaseUrlInput(value);
+  const publicBaseUrl = normalizeConfiguredDomain(value);
   const files = loadDevspaceFiles(env);
   writeDevspaceConfig({ ...files.config, publicBaseUrl }, env);
 
   return {
-    message: `Updated public base URL to ${publicBaseUrl}. Restart DevSpace for the change to take effect.`,
-    warning: publicBaseUrl.startsWith("http://")
-      ? "Warning: public URL uses HTTP. Prefer HTTPS for remote MCP access."
-      : undefined,
+    message: `Updated public domain to ${new URL(publicBaseUrl).hostname}. MCP URL: ${new URL(MCP_PATH, publicBaseUrl).toString()}. Restart DevSpace for the change to take effect.`,
   };
 }
 
@@ -157,35 +154,15 @@ function isPublicHost(host: string): boolean {
   return !["127.0.0.1", "localhost", "::1"].includes(host);
 }
 
-export function normalizePublicBaseUrlInput(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) throw new Error("Domain or URL is required.");
-
-  const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
-  let parsed: URL;
-  try {
-    parsed = new URL(withScheme);
-  } catch {
-    throw new Error(`Invalid domain or URL: ${value}`);
+function normalizeConfiguredDomain(value: string): string {
+  const domain = value.trim();
+  if (!domain) throw new Error("Domain is required.");
+  if (/[/:?#@]/.test(domain) || /\s/.test(domain)) {
+    throw new Error("Domain must be a hostname without a protocol, port, path, query string, or fragment.");
   }
 
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Public URL must use http or https.");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("Public URL must not include a username or password.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("Public URL must not include a query string or fragment.");
-  }
-
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  if (pathname && pathname !== MCP_PATH) {
-    throw new Error("Public URL must be an origin, optionally ending in /mcp.");
-  }
-
-  parsed.pathname = "";
-  return parsed.toString().replace(/\/$/, "");
+  const host = validateHost(domain);
+  return `https://${host}`;
 }
 
 function maskSecret(secret: string | undefined): string {
