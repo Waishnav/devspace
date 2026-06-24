@@ -14,6 +14,7 @@ for (const flag of ["-v", "--version"]) {
 }
 
 const topLevelHelp = runCli(["--help"]);
+assert.equal(runCli([]), topLevelHelp);
 assert.match(topLevelHelp, /^usage: devspace \[--version\] \[--help\] <command> \[<args>]$/m);
 assert.match(topLevelHelp, /start and connect a local MCP server/);
 assert.match(topLevelHelp, /manage persistent DevSpace settings/);

@@ -65,7 +65,8 @@ async function main(argv: string[]): Promise<void> {
 }
 
 function normalizeCommand(command: string | undefined): Command {
-  if (!command || command === "serve" || command === "start") return "serve";
+  if (!command) return "help";
+  if (command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
