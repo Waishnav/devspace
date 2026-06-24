@@ -2,7 +2,6 @@ import { isIP } from "node:net";
 import { loadServerSettings } from "./config.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
 import {
-  generateOwnerToken,
   loadDevspaceFiles,
   writeDevspaceAuth,
   writeDevspaceConfig,
@@ -26,8 +25,7 @@ export interface ConfigUpdateResult {
   warning?: string;
 }
 
-export interface ConfigKeyResetResult {
-  ownerToken: string;
+export interface ConfigKeyUpdateResult {
   authPath: string;
 }
 
@@ -107,14 +105,17 @@ export function setConfigPublicBaseUrl(
   return setConfigDomain(trimmed, env);
 }
 
-export function resetConfigKey(env: NodeJS.ProcessEnv = process.env): ConfigKeyResetResult {
+export function setConfigKey(
+  value: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ConfigKeyUpdateResult {
   if (env.DEVSPACE_OAUTH_OWNER_TOKEN?.trim()) {
     throw new Error(
-      "Cannot rotate the persisted Owner password while DEVSPACE_OAUTH_OWNER_TOKEN is set. Unset it first, then run `devspace config key` again.",
+      "Cannot update the persisted Owner password while DEVSPACE_OAUTH_OWNER_TOKEN is set. Unset it first, then run `devspace config key <owner-password>` again.",
     );
   }
 
-  const ownerToken = generateOwnerToken();
+  const ownerToken = validateOwnerToken(value);
   const stateDir = loadServerSettings(env).stateDir;
   const store = new SqliteOAuthStore(stateDir);
 
@@ -125,7 +126,18 @@ export function resetConfigKey(env: NodeJS.ProcessEnv = process.env): ConfigKeyR
   }
 
   const authPath = writeDevspaceAuth({ ownerToken }, env);
-  return { ownerToken, authPath };
+  return { authPath };
+}
+
+function validateOwnerToken(value: string): string {
+  const ownerToken = value.trim();
+  if (!ownerToken) {
+    throw new Error("Owner password is required. Use `devspace config key <owner-password>`.");
+  }
+  if (ownerToken.length < 16) {
+    throw new Error("Owner password must be at least 16 characters long.");
+  }
+  return ownerToken;
 }
 
 function validateHost(value: string): string {

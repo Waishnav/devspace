@@ -31,8 +31,8 @@ npx @waishnav/devspace config host 127.0.0.1
 npx @waishnav/devspace config port 7676
 npx @waishnav/devspace config domain devspace.example.com
 
-# Rotate the Owner password and revoke persisted OAuth clients and tokens.
-npx @waishnav/devspace config key
+# Set the Owner password and revoke persisted OAuth clients and tokens.
+npx @waishnav/devspace config key "your-new-owner-password"
 ```
 
 `config host`, `config port`, and `config domain` persist changes in
@@ -40,9 +40,10 @@ npx @waishnav/devspace config key
 accepts a bare domain or an `http`/`https` URL; it also accepts a trailing
 `/mcp` and stores the corresponding origin.
 
-`config key` prints the new Owner password once, stores it in `auth.json`, and
-clears persisted OAuth clients and tokens. Restart DevSpace before using the new
-password. It cannot rotate a password supplied through
+`config key <key>` stores the supplied Owner password in `auth.json` and
+clears persisted OAuth clients and tokens. The value must be at least 16
+characters and is never printed by DevSpace. Restart DevSpace before using the
+new password. It cannot update a password supplied through
 `DEVSPACE_OAUTH_OWNER_TOKEN`; unset that environment variable first.
 
 For backward compatibility, `config get` prints the persisted JSON and

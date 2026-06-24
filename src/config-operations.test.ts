@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildConfigShowResult,
-  resetConfigKey,
   setConfigDomain,
   setConfigHost,
+  setConfigKey,
   setConfigPort,
   setConfigPublicBaseUrl,
 } from "./config-operations.js";
@@ -50,9 +50,10 @@ try {
   });
   store.close();
 
-  const reset = resetConfigKey();
-  assert.notEqual(reset.ownerToken, "old-owner-token-that-is-long-enough");
-  assert.equal(loadDevspaceFiles().auth.ownerToken, reset.ownerToken);
+  const newOwnerPassword = "new-owner-password-for-test";
+  const update = setConfigKey(newOwnerPassword);
+  assert.ok(update.authPath.endsWith("auth.json"));
+  assert.equal(loadDevspaceFiles().auth.ownerToken, newOwnerPassword);
 
   const clearedStore = new SqliteOAuthStore(process.env.DEVSPACE_STATE_DIR);
   try {
@@ -62,12 +63,14 @@ try {
   }
 
   const shown = buildConfigShowResult();
-  assert.notEqual(shown.accessKey, reset.ownerToken);
+  assert.notEqual(shown.accessKey, newOwnerPassword);
   assert.match(shown.accessKey, /^.{3}\*+/);
 
+  assert.throws(() => setConfigKey(""), /Owner password is required/);
+  assert.throws(() => setConfigKey("too-short"), /at least 16 characters/);
   assert.throws(
-    () => resetConfigKey({ ...process.env, DEVSPACE_OAUTH_OWNER_TOKEN: "environment-owner-token" }),
-    /Cannot rotate the persisted Owner password/,
+    () => setConfigKey("new-owner-password-for-test", { ...process.env, DEVSPACE_OAUTH_OWNER_TOKEN: "environment-owner-token" }),
+    /Cannot update the persisted Owner password/,
   );
 
   const brokenStateRoot = mkdtempSync(join(tmpdir(), "devspace-config-broken-state-"));
@@ -84,7 +87,7 @@ try {
     writeDevspaceAuth({ ownerToken: "persisted-owner-token-before-failure" }, brokenEnv);
     const authBeforeFailure = readFileSync(loadDevspaceFiles(brokenEnv).authPath, "utf8");
 
-    assert.throws(() => resetConfigKey(brokenEnv), /EEXIST/);
+    assert.throws(() => setConfigKey("new-owner-password-for-test", brokenEnv), /EEXIST/);
     assert.equal(readFileSync(loadDevspaceFiles(brokenEnv).authPath, "utf8"), authBeforeFailure);
   } finally {
     rmSync(brokenStateRoot, { recursive: true, force: true });

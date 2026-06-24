@@ -8,7 +8,7 @@ import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
   buildConfigShowResult,
-  resetConfigKey,
+  setConfigKey,
   setConfigDomain,
   setConfigHost,
   setConfigPort,
@@ -284,10 +284,10 @@ function runConfigCommand(args: string[]): void {
   }
 
   if (subcommand === "key") {
-    const result = resetConfigKey();
+    const value = [key, ...rest].join(" ").trim();
+    const result = setConfigKey(value);
     console.log([
-      "Owner password rotated. Existing OAuth clients and tokens were cleared.",
-      `New Owner password: ${result.ownerToken}`,
+      "Owner password updated. Existing OAuth clients and tokens were cleared.",
       `Saved to: ${result.authPath}`,
       "Restart DevSpace for the new Owner password to take effect.",
     ].join("\n"));
@@ -373,7 +373,7 @@ function printConfigHelp(): void {
       "   host <host>                   Set the local bind host",
       "   port <port>                   Set the local bind port",
       "   domain <domain-or-url>        Set the public origin; a trailing /mcp is accepted",
-      "   key                           Rotate the Owner password and revoke saved OAuth sessions",
+      "   key <key>                   Set the Owner password and revoke saved OAuth sessions",
       "",
       "compatibility command",
       "   set publicBaseUrl <url|null>  Set or clear the persisted public base URL",

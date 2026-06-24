@@ -25,7 +25,7 @@ const configHelp = runCli(["--help", "config"]);
 assert.match(configHelp, /^usage: devspace config <command> \[<args>]$/m);
 assert.match(configHelp, /inspect effective settings/);
 assert.match(configHelp, /change persistent server settings/);
-assert.match(configHelp, /key\s+Rotate the Owner password and revoke saved OAuth sessions/);
+assert.match(configHelp, /key <key>\s+Set the Owner password and revoke saved OAuth sessions/);
 assert.equal(runCli(["-h", "config"]), configHelp);
 
 const root = mkdtempSync(join(tmpdir(), "devspace-cli-config-test-"));
@@ -56,9 +56,10 @@ try {
   assert.equal(shown.publicUrl, "https://devspace.example.com/mcp");
   assert.equal(shown.accessKey, "(not configured)");
 
-  const keyOutput = runCli(["config", "key"], env);
-  assert.match(keyOutput, /Owner password rotated/);
-  assert.match(keyOutput, /New Owner password: /);
+  const newOwnerPassword = "cli-owner-password-for-test";
+  const keyOutput = runCli(["config", "key", newOwnerPassword], env);
+  assert.match(keyOutput, /Owner password updated/);
+  assert.ok(!keyOutput.includes(newOwnerPassword));
   assert.match(runCli(["config", "show"], env), /Owner password: .{3}\*+/);
 } finally {
   rmSync(root, { recursive: true, force: true });
