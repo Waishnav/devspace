@@ -115,7 +115,6 @@ export function resetConfigKey(env: NodeJS.ProcessEnv = process.env): ConfigKeyR
   }
 
   const ownerToken = generateOwnerToken();
-  const authPath = writeDevspaceAuth({ ownerToken }, env);
   const stateDir = loadServerSettings(env).stateDir;
   const store = new SqliteOAuthStore(stateDir);
 
@@ -125,6 +124,7 @@ export function resetConfigKey(env: NodeJS.ProcessEnv = process.env): ConfigKeyR
     store.close();
   }
 
+  const authPath = writeDevspaceAuth({ ownerToken }, env);
   return { ownerToken, authPath };
 }
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -69,6 +69,26 @@ try {
     () => resetConfigKey({ ...process.env, DEVSPACE_OAUTH_OWNER_TOKEN: "environment-owner-token" }),
     /Cannot rotate the persisted Owner password/,
   );
+
+  const brokenStateRoot = mkdtempSync(join(tmpdir(), "devspace-config-broken-state-"));
+  try {
+    const brokenStatePath = join(brokenStateRoot, "state-file");
+    writeFileSync(brokenStatePath, "{}");
+
+    const brokenEnv = {
+      ...process.env,
+      DEVSPACE_CONFIG_DIR: process.env.DEVSPACE_CONFIG_DIR,
+      DEVSPACE_STATE_DIR: brokenStatePath,
+    };
+
+    writeDevspaceAuth({ ownerToken: "persisted-owner-token-before-failure" }, brokenEnv);
+    const authBeforeFailure = readFileSync(loadDevspaceFiles(brokenEnv).authPath, "utf8");
+
+    assert.throws(() => resetConfigKey(brokenEnv), /EEXIST/);
+    assert.equal(readFileSync(loadDevspaceFiles(brokenEnv).authPath, "utf8"), authBeforeFailure);
+  } finally {
+    rmSync(brokenStateRoot, { recursive: true, force: true });
+  }
 } finally {
   rmSync(root, { recursive: true, force: true });
   delete process.env.DEVSPACE_CONFIG_DIR;
