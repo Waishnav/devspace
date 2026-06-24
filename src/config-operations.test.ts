@@ -42,6 +42,9 @@ try {
   assert.equal(loadDevspaceFiles().config.host, "0.0.0.0");
   assert.match(hostResult.warning ?? "", /may expose DevSpace/);
   assert.throws(() => setConfigHost("https://example.com"), /Invalid host/);
+  assert.throws(() => setConfigHost("a..example.com"), /Invalid host/);
+  assert.throws(() => setConfigHost("api-.example.com"), /Invalid host/);
+  assert.throws(() => setConfigHost(`${"a".repeat(64)}.example.com`), /Invalid host/);
 
   const domainResult = setConfigDomain("devspace.example.com");
   assert.equal(loadDevspaceFiles().config.publicBaseUrl, "https://devspace.example.com");
@@ -49,6 +52,12 @@ try {
   assert.throws(() => setConfigDomain("devspace.example.com/mcp"), /Domain must be a hostname/);
   assert.throws(() => setConfigDomain("localhost:8443"), /Domain must be a hostname/);
   assert.throws(() => setConfigDomain("https://devspace.example.com"), /Domain must be a hostname/);
+
+  const legacyPublicBaseUrl = setConfigPublicBaseUrl("https://legacy.example.com:8443/path/?query=value#fragment");
+  assert.equal(loadDevspaceFiles().config.publicBaseUrl, "https://legacy.example.com:8443/path");
+  assert.match(legacyPublicBaseUrl.message, /https:\/\/legacy\.example\.com:8443\/path/);
+  assert.throws(() => setConfigPublicBaseUrl("ftp://legacy.example.com"), /must use http or https/);
+  assert.throws(() => setConfigPublicBaseUrl("not a URL"), /valid http or https URL/);
 
   setConfigPublicBaseUrl("none");
   assert.equal(loadDevspaceFiles().config.publicBaseUrl, null);
@@ -73,8 +82,7 @@ try {
   }
 
   const shown = buildConfigShowResult();
-  assert.notEqual(shown.accessKey, newOwnerPassword);
-  assert.match(shown.accessKey, /^.{3}\*+/);
+  assert.equal(shown.accessKey, "********");
 
   assert.throws(() => setConfigKey(""), /Owner password is required/);
   assert.throws(() => setConfigKey("too-short"), /at least 16 characters/);

@@ -46,10 +46,10 @@ async function main(argv: string[]): Promise<void> {
       await runDoctor();
       return;
     case "config":
-      runConfigCommand(args);
+      await runConfigCommand(args);
       return;
     case "help":
-      if ((rawCommand === "--help" || rawCommand === "-h") && args.length === 1 && args[0] === "config") {
+      if (args.length === 1 && args[0] === "config") {
         printConfigHelp();
         return;
       }
@@ -245,7 +245,7 @@ async function runDoctor(): Promise<void> {
   }
 }
 
-function runConfigCommand(args: string[]): void {
+async function runConfigCommand(args: string[]): Promise<void> {
   const [subcommand, key, ...rest] = args;
 
   if (!subcommand) {
@@ -279,7 +279,8 @@ function runConfigCommand(args: string[]): void {
   }
 
   if (subcommand === "key") {
-    const value = [key, ...rest].join(" ").trim();
+    const suppliedValue = [key, ...rest].join(" ").trim();
+    const value = suppliedValue || await promptForOwnerPassword();
     const result = setConfigKey(value);
     console.log([
       "Owner password updated. Existing OAuth clients and tokens were cleared.",
@@ -302,6 +303,18 @@ function runConfigCommand(args: string[]): void {
   }
 
   printConfigUpdate(setConfigPublicBaseUrl(value));
+}
+
+async function promptForOwnerPassword(): Promise<string> {
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error(
+      "Owner password is required. In a non-interactive terminal, use `devspace config key <owner-password>`.",
+    );
+  }
+
+  const value = await prompts.password({ message: "Enter a new Owner password" });
+  if (prompts.isCancel(value)) throw new SetupCancelledError();
+  return String(value);
 }
 
 function printConfigShow(): void {
@@ -353,7 +366,8 @@ function printConfigHelp(): void {
       "   host <host>                   Set the local bind host",
       "   port <port>                   Set the local bind port",
       "   domain <domain>               Set the public domain; MCP uses /mcp automatically",
-      "   key <key>                      Set the Owner password and revoke saved OAuth sessions",
+      "   key [key]                     Set the Owner password and revoke saved OAuth sessions",
+      "                               Omit <key> to enter it in a hidden prompt",
       "",
       "compatibility command",
       "   set publicBaseUrl <url|null>  Set or clear the persisted public base URL",
