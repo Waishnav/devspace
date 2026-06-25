@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export class AccessDeniedError extends Error {
   constructor(message: string) {
@@ -24,7 +24,10 @@ export function isPathInsideRoot(path: string, root: string): boolean {
 
   return (
     relationship === "" ||
-    (!relationship.startsWith("..") && relationship !== ".." && !relationship.includes(`..${sep}`))
+    (!isAbsolute(relationship) &&
+      !relationship.startsWith("..") &&
+      relationship !== ".." &&
+      !relationship.includes(`..${sep}`))
   );
 }
 
