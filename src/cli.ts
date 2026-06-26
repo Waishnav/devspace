@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
-import { loadConfig } from "./config.js";
+import { loadConfig, type ShellMode } from "./config.js";
+import { resolveShellCommand } from "./pi-tools.js";
 import {
   generateOwnerToken,
   loadDevspaceFiles,
@@ -214,11 +215,12 @@ async function runDoctor(): Promise<void> {
   console.log(`Node ABI: ${process.versions.modules}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
   console.log(`Git: ${checkGitAvailable()}`);
-  console.log(`Bash shell: ${checkBashShell()}`);
   console.log(`SQLite native dependency: ${checkSqliteNative()}`);
 
   try {
     const config = loadConfig();
+    console.log(`Shell mode: ${config.shell}`);
+    console.log(`Shell command: ${checkShellCommand(config.shell)}`);
     console.log(`Local MCP URL: http://${config.host}:${config.port}/mcp`);
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
@@ -391,6 +393,15 @@ function checkBashShell(): string {
     const message = error instanceof Error ? error.message : String(error);
     return `unavailable (${message})`;
   }
+}
+
+function checkShellCommand(mode: ShellMode): string {
+  if (mode === "bash" || (mode === "auto" && process.platform !== "win32")) {
+    return checkBashShell();
+  }
+
+  const { command, args } = resolveShellCommand(mode);
+  return `${command} ${args.join(" ")}`;
 }
 
 main(process.argv.slice(2)).catch((error) => {

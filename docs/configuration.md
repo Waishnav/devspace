@@ -38,6 +38,7 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+| `DEVSPACE_SHELL` | Shell backend for `bash`/`run_shell`. Defaults to `auto`. |
 
 ## OAuth
 
@@ -72,6 +73,15 @@ MCP clients discover metadata from:
 | --- | --- |
 | `minimal` | Default. Disables dedicated search and list tools. Clients use the shell tool with `rg`, `grep`, `find`, `ls`, or `tree` for inspection. |
 | `full` | Enables dedicated `grep`, `glob`, and `ls` tools. |
+
+`DEVSPACE_SHELL` controls how shell commands are executed.
+
+| Value | Behavior |
+| --- | --- |
+| `auto` | Default. Uses native PowerShell on Windows and Bash on Linux/macOS. |
+| `bash` | Uses Pi's Bash backend. On Windows this requires Git Bash, WSL, MSYS2, or Cygwin Bash. |
+| `powershell` | Uses native PowerShell directly, without a Bash/MSYS layer. |
+| `cmd` | Uses native `cmd.exe /d /s /c`. |
 
 ## Widgets
 
