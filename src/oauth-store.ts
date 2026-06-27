@@ -177,6 +177,15 @@ export class SqliteOAuthStore {
     this.database.sqlite.prepare("delete from oauth_refresh_tokens where token_hash = ?").run(tokenHash);
   }
 
+  clearAll(): void {
+    const clear = this.database.sqlite.transaction(() => {
+      this.database.sqlite.prepare("delete from oauth_access_tokens").run();
+      this.database.sqlite.prepare("delete from oauth_refresh_tokens").run();
+      this.database.sqlite.prepare("delete from oauth_clients").run();
+    });
+    clear.immediate();
+  }
+
   close(): void {
     this.database.close();
   }

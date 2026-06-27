@@ -28,6 +28,8 @@ export interface ServerConfig {
   logging: LoggingConfig;
 }
 
+export type ServerSettings = Omit<ServerConfig, "oauth">;
+
 function parsePort(value: string | number | undefined): number {
   if (value === undefined || value === "") return 7676;
 
@@ -204,7 +206,7 @@ function defaultAgentDir(): string {
   return join(homedir(), ".codex");
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+export function loadServerSettings(env: NodeJS.ProcessEnv = process.env): ServerSettings {
   const files = loadDevspaceFiles(env);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
   const port = parsePort(env.PORT ?? files.config.port);
@@ -223,7 +225,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
@@ -236,6 +237,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
+  };
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+  const files = loadDevspaceFiles(env);
+  return {
+    ...loadServerSettings(env),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken),
   };
 }
 

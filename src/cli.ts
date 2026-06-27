@@ -7,6 +7,15 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
+  buildConfigShowResult,
+  setConfigKey,
+  setConfigDomain,
+  setConfigHost,
+  setConfigPort,
+  setConfigPublicBaseUrl,
+  type ConfigUpdateResult,
+} from "./config-operations.js";
+import {
   generateOwnerToken,
   loadDevspaceFiles,
   writeDevspaceAuth,
@@ -37,11 +46,18 @@ async function main(argv: string[]): Promise<void> {
       await runDoctor();
       return;
     case "config":
-      runConfigCommand(args);
+      await runConfigCommand(args);
       return;
     case "help":
-      printHelp();
-      return;
+      if (args.length === 1 && args[0] === "config") {
+        printConfigHelp();
+        return;
+      }
+      if (args.length === 0) {
+        printHelp();
+        return;
+      }
+      throw new Error(`Unknown help target: ${args.join(" ")}. Use \`devspace --help <command>\`.`);
     case "version":
       printVersion();
       return;
@@ -49,7 +65,8 @@ async function main(argv: string[]): Promise<void> {
 }
 
 function normalizeCommand(command: string | undefined): Command {
-  if (!command || command === "serve" || command === "start") return "serve";
+  if (!command) return "help";
+  if (command === "serve" || command === "start") return "serve";
   if (command === "init" || command === "doctor" || command === "config") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
@@ -228,12 +245,48 @@ async function runDoctor(): Promise<void> {
   }
 }
 
-function runConfigCommand(args: string[]): void {
+async function runConfigCommand(args: string[]): Promise<void> {
   const [subcommand, key, ...rest] = args;
-  const files = loadDevspaceFiles();
 
-  if (!subcommand || subcommand === "get") {
-    console.log(JSON.stringify(files.config, null, 2));
+  if (!subcommand) {
+    printConfigShow();
+    return;
+  }
+
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    throw new Error(`Unknown config command: ${subcommand}. Use \`devspace --help config\`.`);
+  }
+
+  if (subcommand === "get") {
+    console.log(JSON.stringify(loadDevspaceFiles().config, null, 2));
+    return;
+  }
+
+  if (subcommand === "port") {
+    printConfigUpdate(setConfigPort(key ?? ""));
+    return;
+  }
+
+  if (subcommand === "host") {
+    printConfigUpdate(setConfigHost(key ?? ""));
+    return;
+  }
+
+  if (subcommand === "domain") {
+    const value = [key, ...rest].join(" ").trim();
+    printConfigUpdate(setConfigDomain(value));
+    return;
+  }
+
+  if (subcommand === "key") {
+    const suppliedValue = [key, ...rest].join(" ").trim();
+    const value = suppliedValue || await promptForOwnerPassword();
+    const result = setConfigKey(value);
+    console.log([
+      "Owner password updated. Existing OAuth clients and tokens were cleared.",
+      `Saved to: ${result.authPath}`,
+      "Restart DevSpace for the new Owner password to take effect.",
+    ].join("\n"));
     return;
   }
 
@@ -249,47 +302,79 @@ function runConfigCommand(args: string[]): void {
     throw new Error("Missing publicBaseUrl value.");
   }
 
-  writeDevspaceConfig({
-    ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
-  console.log(`Updated ${files.configPath}`);
+  printConfigUpdate(setConfigPublicBaseUrl(value));
+}
+
+async function promptForOwnerPassword(): Promise<string> {
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error(
+      "Owner password is required. In a non-interactive terminal, use `devspace config key <owner-password>`.",
+    );
+  }
+
+  const value = await prompts.password({ message: "Enter a new Owner password" });
+  if (prompts.isCancel(value)) throw new SetupCancelledError();
+  return String(value);
+}
+
+function printConfigShow(): void {
+  console.log(JSON.stringify(buildConfigShowResult(), null, 2));
+}
+
+function printConfigUpdate(result: ConfigUpdateResult): void {
+  console.log([result.warning, result.message].filter(Boolean).join("\n"));
 }
 
 function printHelp(): void {
   console.log(
     [
-      "DevSpace",
+      "usage: devspace [--version] [--help] <command> [<args>]",
       "",
-      "Usage:",
-      "  devspace                 Run first-time setup if needed, then start the server",
-      "  devspace serve           Start the server",
-      "  devspace init            Create or update ~/.devspace/config.json and auth.json",
-      "  devspace doctor          Show config, runtime, and native dependency status",
-      "  devspace config get      Print persisted config",
-      "  devspace config set publicBaseUrl <url|null>",
-      "  devspace -v, --version   Print the installed version",
+      "These are common DevSpace commands used in various situations:",
       "",
-      "For temporary tunnels:",
-      "  DEVSPACE_PUBLIC_BASE_URL=https://example.trycloudflare.com devspace serve",
+      "start and connect a local MCP server",
+      "   init       Create or update local configuration",
+      "   serve      Start the MCP server",
+      "   doctor     Check configuration, runtime, and native dependencies",
+      "",
+      "manage persistent DevSpace settings",
+      "   config     Show current effective settings",
+      "",
+      "get help and version information",
+      "   help       Show this help",
+      "   version    Print the installed version",
+      "",
+      "Use `devspace config` to show current settings.",
+      "Use `devspace --help config` for configuration commands.",
+      "Use `devspace serve` with DEVSPACE_PUBLIC_BASE_URL for a one-run tunnel override.",
     ].join("\n"),
   );
 }
 
-function printVersion(): void {
-  const packageJson = require("../package.json") as { version?: unknown };
-  if (typeof packageJson.version !== "string") {
-    throw new Error("Unable to read DevSpace package version.");
-  }
-
-  console.log(packageJson.version);
-}
-
-function normalizeOptionalPublicBaseUrl(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === "null" || trimmed === "none") return null;
-
-  return normalizePublicBaseUrl(trimmed);
+function printConfigHelp(): void {
+  console.log(
+    [
+      "usage: devspace config [<command> [<args>]]",
+      "",
+      "These are common DevSpace configuration commands:",
+      "",
+      "inspect effective settings",
+      "   (no command)                  Print effective settings as JSON",
+      "   get                           Print persisted config JSON (legacy-compatible)",
+      "",
+      "change persistent server settings",
+      "   host <host>                   Set the local bind host",
+      "   port <port>                   Set the local bind port",
+      "   domain <domain>               Set the public domain; MCP uses /mcp automatically",
+      "   key [key]                     Set the Owner password and revoke saved OAuth sessions",
+      "                               Omit <key> to enter it in a hidden prompt",
+      "",
+      "compatibility command",
+      "   set publicBaseUrl <url|null>  Set or clear the persisted public base URL",
+      "",
+      "Configuration changes are saved locally. Restart DevSpace for them to take effect.",
+    ].join("\n"),
+  );
 }
 
 function normalizePublicBaseUrl(value: string): string {
@@ -299,6 +384,15 @@ function normalizePublicBaseUrl(value: string): string {
   parsed.search = "";
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
   return parsed.toString().replace(/\/$/, "");
+}
+
+function printVersion(): void {
+  const packageJson = require("../package.json") as { version?: unknown };
+  if (typeof packageJson.version !== "string") {
+    throw new Error("Unable to read DevSpace package version.");
+  }
+
+  console.log(packageJson.version);
 }
 
 type TextPromptOptions = Omit<Parameters<typeof prompts.text>[0], "validate"> & {

@@ -103,6 +103,62 @@ the Owner password printed by `devspace init`. It is also stored in:
 
 Keep that password private.
 
+## Configuration Management
+
+Use `devspace config` to inspect the effective settings after DevSpace merges
+persisted configuration, environment variables, and defaults:
+
+```bash
+devspace config
+```
+
+Update persistent settings without running setup again:
+
+```bash
+# Change the local listening port
+devspace config port 7676
+
+# Change the local bind host
+devspace config host 127.0.0.1
+
+# Set the public domain; DevSpace automatically uses /mcp
+devspace config domain devspace.example.com
+
+# Recommended: set a new Owner password through a hidden prompt
+devspace config key
+
+# Non-interactive automation can supply the password explicitly
+devspace config key "your-new-owner-password"
+```
+
+`config domain` accepts a hostname or domain only. Do not include a protocol,
+port, path, or `/mcp`; DevSpace stores `https://devspace.example.com` and derives
+`https://devspace.example.com/mcp` automatically.
+
+Configuration changes are saved locally. `devspace config key` opens a hidden
+prompt in an interactive terminal; use an explicit password only for
+non-interactive automation. Restart `devspace serve` for host, port, domain, or
+Owner password changes to take effect.
+
+## CLI Help and Version
+
+```bash
+# Show the installed version
+devspace --version
+devspace -v
+
+# Show top-level help
+devspace --help
+devspace -h
+
+# Show configuration command help
+devspace --help config
+devspace -h config
+```
+
+Running `devspace` without arguments prints top-level help. Use `devspace serve`
+to start the MCP server.
+
 ## Connect Your MCP Client
 
 The default local endpoint is:

@@ -91,7 +91,7 @@ DEVSPACE_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @waishnav/devspace
 For a stable public URL, persist it:
 
 ```bash
-npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
+npx @waishnav/devspace config domain devspace.example.com
 npx @waishnav/devspace serve
 ```
 
