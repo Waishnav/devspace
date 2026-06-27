@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { loadConfig } from "./config.js";
 import { GitWorktreeError } from "./git-worktrees.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
-import { WorkspaceRegistry } from "./workspaces.js";
+import { ensureCheckoutWorkspaceRoot, WorkspaceRegistry } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
 const root = await mkdtemp(join(tmpdir(), "devspace-workspace-test-"));
@@ -46,6 +46,21 @@ try {
   assert.equal(missingWorkspace.workspace.root, missingWorkspaceRoot);
   assert.equal(missingWorkspace.workspace.mode, "checkout");
   assert.equal((await stat(missingWorkspaceRoot)).isDirectory(), true);
+
+  {
+    let mkdirCalls = 0;
+    const existingStats = await ensureCheckoutWorkspaceRoot(root, {
+      stat: async (path) => {
+        assert.equal(path, root);
+        return await stat(path);
+      },
+      mkdir: async () => {
+        mkdirCalls += 1;
+      },
+    });
+    assert.equal(existingStats.isDirectory(), true);
+    assert.equal(mkdirCalls, 0);
+  }
 
   await assert.rejects(
     () => registry.openWorkspace({ path: root, mode: "worktree" }),
