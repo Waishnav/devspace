@@ -185,8 +185,9 @@ function toolNamesFor(config: ServerConfig): ToolNames {
 }
 
 function serverInstructions(config: ServerConfig, toolNames: ToolNames): string {
+  const shellLabel = process.platform === "win32" && config.shell !== "bash" ? "shell" : "Bash";
   const inspection = config.minimalTools
-    ? `In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use ${toolNames.shell} with command-line tools such as grep, rg, find, ls, and tree for search and directory inspection. `
+    ? `In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use ${toolNames.shell} with ${shellLabel} command-line tools for search and directory inspection. `
     : `Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. `;
 
   const skills = config.skillsEnabled
@@ -1176,10 +1177,12 @@ function createMcpServer(
     server,
     toolNames.shell,
     {
-      title: config.toolNaming === "short" ? "Bash" : "Run shell",
+      title: config.toolNaming === "short" && !(process.platform === "win32" && config.shell !== "bash")
+        ? "Bash"
+        : "Run shell",
       description: config.minimalTools
-        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
-        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
+        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools appropriate for the configured shell for those read-only inspection actions. In PowerShell, use .Contains() or -like for literal Windows path matching; use -match only for real regex or with [regex]::Escape() for literal text. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
+        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. In PowerShell, use .Contains() or -like for literal Windows path matching; use -match only for real regex or with [regex]::Escape() for literal text. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
       inputSchema: {
         workspaceId: z
           .string()
@@ -1187,7 +1190,7 @@ function createMcpServer(
         command: z
           .string()
           .describe(
-            `Shell command to run. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes.`,
+            `Shell command to run. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes. In PowerShell, do not use -match with raw Windows path literals; use .Contains(), -like, or [regex]::Escape().`,
           ),
         workingDirectory: z
           .string()
@@ -1216,6 +1219,7 @@ function createMcpServer(
       const response = await runShellTool(input, {
         cwd,
         root: workspace.root,
+        shell: config.shell,
       });
 
       if (response.isError) {
