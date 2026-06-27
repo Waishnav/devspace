@@ -24,3 +24,10 @@ assert.equal(
   resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
   resolve("/workspace", "~/file.txt"),
 );
+
+if (process.platform === "win32") {
+  assert.throws(
+    () => assertAllowedPath("C:\\Users\\Administrator", ["G:\\Projects\\Dev\\Github\\devspace"]),
+    /Path is outside allowed roots/,
+  );
+}
