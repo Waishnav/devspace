@@ -137,16 +137,16 @@ function toolWidgetDescriptorMeta(
   };
 }
 
-interface ToolNames {
-  openWorkspace: "open_workspace";
-  read: "read_file" | "read";
-  write: "write_file" | "write";
-  edit: "edit_file" | "edit";
-  grep: "grep_files" | "grep";
-  glob: "find_files" | "glob";
-  ls: "list_directory" | "ls";
-  shell: "run_shell" | "bash";
-}
+const toolNames = {
+  openWorkspace: "open_workspace",
+  read: "read",
+  write: "write",
+  edit: "edit",
+  grep: "grep",
+  glob: "glob",
+  ls: "ls",
+  shell: "bash",
+} as const;
 
 interface ToolLogFields {
   tool: string;
@@ -160,31 +160,7 @@ interface ToolLogFields {
   error?: string;
 }
 
-function toolNamesFor(config: ServerConfig): ToolNames {
-  return config.toolNaming === "short"
-    ? {
-        openWorkspace: "open_workspace",
-        read: "read",
-        write: "write",
-        edit: "edit",
-        grep: "grep",
-        glob: "glob",
-        ls: "ls",
-        shell: "bash",
-      }
-    : {
-        openWorkspace: "open_workspace",
-        read: "read_file",
-        write: "write_file",
-        edit: "edit_file",
-        grep: "grep_files",
-        glob: "find_files",
-        ls: "list_directory",
-        shell: "run_shell",
-      };
-}
-
-function serverInstructions(config: ServerConfig, toolNames: ToolNames): string {
+function serverInstructions(config: ServerConfig): string {
   const inspection = config.minimalTools
     ? `In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use ${toolNames.shell} with command-line tools such as grep, rg, find, ls, and tree for search and directory inspection. `
     : `Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. `;
@@ -457,7 +433,6 @@ function createMcpServer(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
 ): McpServer {
-  const toolNames = toolNamesFor(config);
   const server = new McpServer(
     {
       name: "devspace",
@@ -467,7 +442,7 @@ function createMcpServer(
         "Secure local coding workspace for MCP clients. Provides workspace-scoped file, search, edit, write, and shell tools.",
     },
     {
-      instructions: serverInstructions(config, toolNames),
+      instructions: serverInstructions(config),
     },
   );
 
@@ -966,7 +941,7 @@ function createMcpServer(
       server,
       toolNames.grep,
       {
-        title: config.toolNaming === "short" ? "Grep" : "Grep files",
+        title: "Grep",
         description:
           "Search file contents inside an open workspace. Use this before broad reads when looking for symbols, text, or usage sites. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1039,7 +1014,7 @@ function createMcpServer(
       server,
       toolNames.glob,
       {
-        title: config.toolNaming === "short" ? "Glob" : "Find files",
+        title: "Glob",
         description:
           "Find files by glob pattern inside an open workspace. Use this to discover filenames or narrow file sets before reading. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1109,7 +1084,7 @@ function createMcpServer(
       server,
       toolNames.ls,
       {
-        title: config.toolNaming === "short" ? "Ls" : "List directory",
+        title: "Ls",
         description:
           "List a directory inside an open workspace. Use this for directory inspection before reading files. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1176,7 +1151,7 @@ function createMcpServer(
     server,
     toolNames.shell,
     {
-      title: config.toolNaming === "short" ? "Bash" : "Run shell",
+      title: "Bash",
       description: config.minimalTools
         ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
         : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,

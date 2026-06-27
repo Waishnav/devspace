@@ -492,25 +492,18 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
   switch (card.tool) {
     case "open_workspace":
       return { icon: folderIcon(), title: "Workspace", label, tone: "workspace" };
-    case "read_file":
     case "read":
       return { icon: fileIcon(), title: "Read File", label, tone: "read" };
-    case "write_file":
     case "write":
       return { icon: filePlusIcon(), title: "Write File", label, tone: "write" };
-    case "edit_file":
     case "edit":
       return { icon: editIcon(), title: "Edit File", label, tone: "edit" };
-    case "grep_files":
     case "grep":
       return { icon: searchIcon(), title: "Grep", label, tone: "search" };
-    case "find_files":
     case "glob":
       return { icon: filesIcon(), title: "Glob", label, tone: "search" };
-    case "list_directory":
     case "ls":
       return { icon: listIcon(), title: "List Directory", label, tone: "directory" };
-    case "run_shell":
     case "bash":
       return { icon: terminalIcon(), title: "Bash", label, tone: "shell" };
     case "show_changes":

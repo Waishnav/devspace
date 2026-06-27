@@ -97,7 +97,7 @@ Set `DEVSPACE_SKILLS=0` to hide skills from workspace output.
 
 ## Tool Names
 
-Short names are the default:
+DevSpace exposes these tool names:
 
 - `open_workspace`
 - `read`
@@ -108,14 +108,6 @@ Short names are the default:
 By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
 `grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
 such as `rg`, `find`, and `ls` for search and directory inspection.
-
-Legacy names are available with `DEVSPACE_TOOL_NAMING=legacy`:
-
-- `open_workspace`
-- `read_file`
-- `write_file`
-- `edit_file`
-- `run_shell`
 
 Use `DEVSPACE_TOOL_MODE=full` to restore dedicated search and directory tools.
 

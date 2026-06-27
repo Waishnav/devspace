@@ -59,13 +59,6 @@ MCP clients discover metadata from:
 
 ## Tool Modes
 
-`DEVSPACE_TOOL_NAMING` controls tool names.
-
-| Value | Behavior |
-| --- | --- |
-| `short` | Default. Uses `read`, `edit`, `bash`, and related names. |
-| `legacy` | Uses `read_file`, `edit_file`, `run_shell`, and related names. |
-
 `DEVSPACE_TOOL_MODE` controls the tool surface.
 
 | Value | Behavior |
@@ -123,7 +116,6 @@ DEVSPACE_ALLOWED_ROOTS="$HOME/personal,$HOME/work" \
 DEVSPACE_PUBLIC_BASE_URL="https://devspace.example.com" \
 DEVSPACE_WORKTREE_ROOT="$HOME/.devspace/worktrees" \
 DEVSPACE_TOOL_MODE="minimal" \
-DEVSPACE_TOOL_NAMING="short" \
 DEVSPACE_WIDGETS="full" \
 npx @waishnav/devspace serve
 ```
