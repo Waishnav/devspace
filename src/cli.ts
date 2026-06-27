@@ -14,6 +14,7 @@ import {
   type DevspaceUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
+import { checkEndpoint, formatEndpointHealth } from "./health.js";
 
 type Command = "serve" | "init" | "doctor" | "config" | "help" | "version";
 const require = createRequire(import.meta.url);
@@ -219,10 +220,25 @@ async function runDoctor(): Promise<void> {
 
   try {
     const config = loadConfig();
-    console.log(`Local MCP URL: http://${config.host}:${config.port}/mcp`);
-    console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
+    const localMcpUrl = `http://${config.host}:${config.port}/mcp`;
+    const publicMcpUrl = new URL("/mcp", config.publicBaseUrl).toString();
+    const localHealthUrl = `http://${config.host}:${config.port}/healthz`;
+    const publicHealthUrl = new URL("/healthz", config.publicBaseUrl).toString();
+    console.log(`Local MCP URL: ${localMcpUrl}`);
+    console.log(`Public MCP URL: ${publicMcpUrl}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+
+    const localHealth = await checkEndpoint(localHealthUrl);
+    const publicHealth = await checkEndpoint(publicHealthUrl);
+    console.log(`Local server: ${formatEndpointHealth(localHealth)}`);
+    console.log(`Public tunnel: ${formatEndpointHealth(publicHealth)}`);
+
+    if (!localHealth.ok) {
+      console.log("Action: start DevSpace with `devspace serve`.");
+    } else if (!publicHealth.ok) {
+      console.log("Action: start or repair the HTTPS tunnel, then update publicBaseUrl and reconnect the MCP client.");
+    }
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }
