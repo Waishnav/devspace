@@ -170,12 +170,11 @@ Uncommitted source checkout changes are not copied into the managed worktree.
 Commit, stash, or ask the model to work in checkout mode if those changes are
 needed.
 
-## Windows Shell Commands Fail
+## Windows Shell Behavior
 
-DevSpace shell execution requires Bash. Native PowerShell and `cmd.exe` command
-execution are not supported yet.
-
-Install Git for Windows and use Git Bash, or use WSL, MSYS2, or Cygwin Bash.
+On Windows, DevSpace uses native PowerShell by default. This avoids routing
+commands through Bash/MSYS before PowerShell receives them, which can otherwise
+expand PowerShell variables such as `$_` too early.
 
 Run:
 
@@ -183,7 +182,45 @@ Run:
 npx @waishnav/devspace doctor
 ```
 
-Confirm Bash is detected.
+Confirm `Shell mode` and `Shell command`.
+
+To force a specific shell:
+
+```powershell
+$env:DEVSPACE_SHELL="powershell"; npx @waishnav/devspace serve
+$env:DEVSPACE_SHELL="cmd"; npx @waishnav/devspace serve
+$env:DEVSPACE_SHELL="bash"; npx @waishnav/devspace serve
+```
+
+When writing PowerShell commands that inspect Windows paths, prefer `-like` or
+`.Contains()` for literal path fragments. `-match` uses regex, so a path segment
+like `\profiles` can be parsed as the regex escape `\p`. If you need regex, wrap
+literal paths with `[regex]::Escape($path)`.
+
+DevSpace blocks fragile PowerShell commands that look like literal Windows paths
+being passed to `-match`:
+
+```powershell
+$_.CommandLine -match "pydoll-mcp-server\profiles\chatgpt-linkedin-check"
+$_.Path -match 'C:\Users\Yuri\Documents'
+```
+
+Use literal matching instead:
+
+```powershell
+$_.CommandLine.Contains("pydoll-mcp-server\profiles\chatgpt-linkedin-check")
+$_.CommandLine -like "*pydoll-mcp-server*profiles*chatgpt-linkedin-check*"
+```
+
+If you really need `-match`, escape the literal first:
+
+```powershell
+$pattern = [regex]::Escape("pydoll-mcp-server\profiles\chatgpt-linkedin-check")
+$_.CommandLine -match $pattern
+```
+
+Regex patterns that do not look like Windows paths, such as
+`'remote-debugging-port=\d+'`, are allowed.
 
 ## Skills Do Not Appear
 

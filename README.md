@@ -159,15 +159,17 @@ For a normal ChatGPT coding session:
 
 ## Platform Support
 
-DevSpace supports Linux, macOS, and Windows environments with a Bash-compatible
-shell.
+DevSpace supports Linux, macOS, and Windows. On Windows, the default shell mode
+uses native PowerShell so commands do not pass through Git Bash, MSYS, or WSL
+before reaching PowerShell.
 
 | Platform                                          | Status            | Notes                                          |
 | ------------------------------------------------- | ----------------- | ---------------------------------------------- |
 | Linux                                             | Supported         | Requires Node, npm, Git, and Bash.             |
 | macOS                                             | Supported         | Requires Node, npm, Git, and Bash.             |
-| Windows with Git Bash, WSL, MSYS2, or Cygwin Bash | Supported         | Git Bash is the simplest native Windows setup. |
-| Windows PowerShell or `cmd.exe` only              | Not supported yet | Install Git Bash or use WSL.                   |
+| Windows PowerShell                               | Supported         | Default on Windows through `DEVSPACE_SHELL=auto`. |
+| Windows `cmd.exe`                                | Supported         | Set `DEVSPACE_SHELL=cmd`.                      |
+| Windows with Git Bash, WSL, MSYS2, or Cygwin Bash | Supported         | Set `DEVSPACE_SHELL=bash`.                     |
 
 Run this to inspect your local setup:
 
