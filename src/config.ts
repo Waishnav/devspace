@@ -110,8 +110,7 @@ function parsePathList(value: string | undefined): string[] {
     value
       ?.split(",")
       .map((entry) => entry.trim())
-      .filter(Boolean)
-      .map((entry) => resolve(expandHomePath(entry))) ?? []
+      .filter(Boolean) ?? []
   );
 }
 

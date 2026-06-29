@@ -22,8 +22,12 @@ try {
   const explicitSkills = join(root, "explicit-skills");
   const globalAgentsSkills = join(root, ".agents", "skills");
   const projectAgentsSkills = join(projectRoot, ".agents", "skills");
+  const globalClaudeSkills = join(root, ".claude", "skills");
+  const projectClaudeSkills = join(projectRoot, ".claude", "skills");
   await mkdir(join(globalAgentsSkills, "agent-global-skill"), { recursive: true });
   await mkdir(join(projectAgentsSkills, "agent-project-skill"), { recursive: true });
+  await mkdir(join(globalClaudeSkills, "claude-global-skill"), { recursive: true });
+  await mkdir(join(projectClaudeSkills, "claude-project-skill"), { recursive: true });
   await mkdir(join(projectRoot, ".pi", "skills", "project-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
@@ -49,6 +53,28 @@ try {
       "---",
       "",
       "# Agent Project Skill",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(globalClaudeSkills, "claude-global-skill", "SKILL.md"),
+    [
+      "---",
+      "name: claude-global-skill",
+      "description: Claude global skill description.",
+      "---",
+      "",
+      "# Claude Global Skill",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(projectClaudeSkills, "claude-project-skill", "SKILL.md"),
+    [
+      "---",
+      "name: claude-project-skill",
+      "description: Claude project skill description.",
+      "---",
+      "",
+      "# Claude Project Skill",
     ].join("\n"),
   );
   await writeFile(
@@ -110,13 +136,15 @@ try {
   const config = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_SKILL_PATHS: explicitSkills,
+    DEVSPACE_SKILL_PATHS: [explicitSkills, "~/.claude/skills", "./.claude/skills"].join(","),
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
   const loaded = loadWorkspaceSkills(config, projectRoot);
   assert.equal(loaded.skills.some((skill) => skill.name === "agent-global-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "agent-project-skill"), true);
+  assert.equal(loaded.skills.some((skill) => skill.name === "claude-global-skill"), true);
+  assert.equal(loaded.skills.some((skill) => skill.name === "claude-project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
@@ -125,7 +153,7 @@ try {
   const duplicateConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_SKILL_PATHS: [explicitSkills, projectAgentsSkills].join(","),
+    DEVSPACE_SKILL_PATHS: [explicitSkills, "./.agents/skills"].join(","),
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });

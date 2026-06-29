@@ -28,12 +28,17 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
   ].filter((path) => existsSync(path));
 
   const seen = new Set<string>();
-  return [...defaultPaths, ...config.skillPaths].filter((path) => {
-    const resolvedPath = resolve(expandHomePath(path));
-    if (seen.has(resolvedPath)) return false;
-    seen.add(resolvedPath);
-    return true;
-  });
+  return [...defaultPaths, ...config.skillPaths]
+    .map((path) => resolveSkillPath(path, cwd))
+    .filter((path) => {
+      if (seen.has(path)) return false;
+      seen.add(path);
+      return true;
+    });
+}
+
+function resolveSkillPath(path: string, cwd: string): string {
+  return resolve(cwd, expandHomePath(path));
 }
 
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
