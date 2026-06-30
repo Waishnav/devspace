@@ -13,6 +13,7 @@
   "files": [
     "dist",
     "docs",
+    "examples",
     "scripts",
     "README.md"
   ],
