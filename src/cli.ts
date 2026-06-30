@@ -7,6 +7,7 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import {
+  ensureDevspaceDefaultSkills,
   generateOwnerToken,
   loadDevspaceFiles,
   writeDevspaceAuth,
@@ -140,10 +141,12 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const configPath = writeDevspaceConfig(config);
     const authPath = writeDevspaceAuth(auth);
+    const seededSkillPaths = ensureDevspaceDefaultSkills();
 
     const lines = [
       `Config: ${configPath}`,
       `Auth: ${authPath}`,
+      ...seededSkillPaths.map((path) => `Default skill: ${path}`),
       `Local MCP URL: http://${config.host}:${config.port}/mcp`,
       ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
     ];
