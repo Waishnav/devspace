@@ -1082,7 +1082,7 @@ function createMcpServer(
       {
         title: "Apply patch",
         description:
-          "Apply one Codex-style patch inside an open workspace. Supports adding, overwriting, updating, deleting, and moving files. Earlier successful file changes remain if a later patch action fails. Use this for all file modifications. Paths must be relative to the workspace. Call open_workspace first and pass workspaceId.",
+          "Apply one Codex-style patch inside an open workspace. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the workspace. Call open_workspace first and pass workspaceId.",
         inputSchema: {
           workspaceId: z
             .string()

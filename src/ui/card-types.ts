@@ -16,6 +16,8 @@ export type ToolName =
 
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
+export type PatchOperation = "add" | "update" | "delete" | "move";
+
 export interface ToolResultCard {
   tool: ToolName;
   workspaceId?: string;
@@ -26,6 +28,7 @@ export interface ToolResultCard {
   files?: Array<{
     path?: string;
     previousPath?: string;
+    operation?: PatchOperation;
     type?: string;
     additions?: number;
     removals?: number;
@@ -86,7 +89,11 @@ export function isWriteTool(tool: ToolName): boolean {
 }
 
 export function isEditTool(tool: ToolName): boolean {
-  return tool === "edit" || tool === "apply_patch";
+  return tool === "edit";
+}
+
+export function isPatchTool(tool: ToolName): boolean {
+  return tool === "apply_patch";
 }
 
 export function isSearchTool(tool: ToolName): boolean {
@@ -139,6 +146,7 @@ export function isExpandableCard(card: ToolResultCard): boolean {
   }
 
   if (isReviewTool(card.tool)) return Boolean(card.files?.length || card.payload?.patch);
+  if (isPatchTool(card.tool)) return Boolean(card.payload?.patch);
 
   return Boolean(card.payload);
 }

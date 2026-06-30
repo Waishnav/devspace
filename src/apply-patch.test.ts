@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyPatch, parsePatch, replaceFile } from "./apply-patch.js";
+import { applyPatch, isSamePatchFile, parsePatch, replaceFile } from "./apply-patch.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-apply-patch-"));
 const replacement = join(root, "replacement.txt");
@@ -11,6 +11,17 @@ await writeFile(replacement, "old\n");
 await writeFile(replacementTemporary, "new\n");
 await replaceFile(replacementTemporary, replacement, true, "win32");
 assert.equal(await readFile(replacement, "utf8"), "new\n");
+
+const sameIdentity = async (): Promise<{ dev: number; ino: number }> => ({ dev: 1, ino: 2 });
+const differentIdentity = async (path: string): Promise<{ dev: number; ino: number }> => ({
+  dev: 1,
+  ino: path.endsWith("foo.txt") ? 3 : 2,
+});
+assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/Foo.txt"), true);
+assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/foo.txt", sameIdentity), true);
+assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/bar.txt", sameIdentity), false);
+assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/foo.txt", differentIdentity), false);
+
 await writeFile(join(root, "alpha.txt"), "one\ntwo\nthree\n");
 await writeFile(join(root, "remove.txt"), "remove me\n");
 await writeFile(join(root, "windows.txt"), "first\r\nsecond\r\n");
@@ -124,7 +135,52 @@ await assert.rejects(
   ),
   /could not find hunk context/,
 );
-assert.equal(await readFile(join(root, "should-not-exist.txt"), "utf8"), "staged\n");
+await assert.rejects(readFile(join(root, "should-not-exist.txt"), "utf8"), /ENOENT/);
+assert.equal(await readFile(join(root, "moved/alpha.txt"), "utf8"), "ONE\nchanged\nthree\n");
+
+const splitHunkRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-split-hunk-"));
+await writeFile(
+  join(splitHunkRoot, "long.txt"),
+  Array.from({ length: 20 }, (_, index) => String(index + 1)).join("\n") + "\n",
+);
+const splitHunkResult = await applyPatch(
+  splitHunkRoot,
+  `*** Begin Patch
+*** Update File: long.txt
+@@
+ 1
+-2
++two
+ 3
+@@
+ 17
+-18
++eighteen
+ 19
+*** End Patch`,
+);
+assert.equal(splitHunkResult.patch.match(/^@@ /gm)?.length, 2);
+assert.equal(
+  await readFile(join(splitHunkRoot, "long.txt"), "utf8"),
+  [
+    "1", "two", "3", "4", "5", "6", "7", "8", "9", "10",
+    "11", "12", "13", "14", "15", "16", "17", "eighteen", "19", "20",
+  ].join("\n") + "\n",
+);
+
+const trailingSpaceRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-trailing-space-"));
+await writeFile(join(trailingSpaceRoot, "spaces.txt"), "old\n");
+const trailingSpaceResult = await applyPatch(
+  trailingSpaceRoot,
+  `*** Begin Patch
+*** Update File: spaces.txt
+@@
+-old
++new${"   "}
+*** End Patch`,
+);
+assert.equal(trailingSpaceResult.patch.endsWith("+new   "), true);
+assert.equal(await readFile(join(trailingSpaceRoot, "spaces.txt"), "utf8"), "new   \n");
 
 assert.throws(() => parsePatch("*** Begin Patch\n*** End Patch"), /contains no file actions/);
 assert.throws(() => parsePatch("*** Add File: bad.txt\n+x"), /missing .* marker/);
