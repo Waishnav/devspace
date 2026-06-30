@@ -8,6 +8,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   isEditTool,
   isExpandableCard,
+  isPatchTool,
   isReadTool,
   isReviewTool,
   isSearchTool,
@@ -261,17 +262,17 @@ async function renderPayloadIfNeeded(): Promise<void> {
     return;
   }
 
-  if (isReviewTool(card.tool)) {
-    const visibleFileCount = reviewFilesExpanded
-      ? undefined
-      : Math.max(3, (card.files ?? []).slice(0, 3).length);
+  if (isReviewTool(card.tool) || isPatchTool(card.tool)) {
+    const visibleFileCount = isReviewTool(card.tool) && !reviewFilesExpanded
+      ? Math.max(3, (card.files ?? []).slice(0, 3).length)
+      : undefined;
 
     if (currentPayload) {
       currentPayload.update({ card, hostContext, errorMessage, visibleFileCount });
       return;
     }
 
-    renderStatus(target, "Loading review...");
+    renderStatus(target, isReviewTool(card.tool) ? "Loading review..." : "Loading diff...");
 
     const { mountReviewPayload } = await import("./review-payload.js");
     if (target !== currentPayloadContainer || !card) return;
@@ -340,7 +341,7 @@ function renderSummaryBadge(card: ToolResultCard): HTMLElement {
     return stats;
   }
 
-  if (isEditTool(card.tool) || isWriteTool(card.tool)) {
+  if (isPatchTool(card.tool) || isEditTool(card.tool) || isWriteTool(card.tool)) {
     const stats = element("span", { className: "stats" });
     stats.setAttribute("aria-label", "Diff statistics");
     stats.append(
