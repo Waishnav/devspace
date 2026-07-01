@@ -83,11 +83,17 @@ DevSpace discovers standard Agent Skills from:
 
 - `~/.agents/skills`
 - project `.agents/skills`
+- `~/.devspace/skills`
 
 It also keeps compatibility with:
 
+- the bundled `local-agent-delegation` skill when `DEVSPACE_LOCAL_AGENTS=1`, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
+
+Example local coding-agent profiles are packaged under `examples/agents/` for
+users who want starter templates. These examples are inert: DevSpace does not
+currently parse, load, activate, or run local agent profile definitions.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
@@ -99,7 +105,9 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 - advertised `SKILL.md` files
 - files under a skill directory after that skill's `SKILL.md` has been read
 
-Set `DEVSPACE_SKILLS=0` to hide skills from workspace output.
+Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Set
+`DEVSPACE_LOCAL_AGENTS=1` to expose the experimental `local-agent-delegation`
+skill.
 
 ## Tool Names
 

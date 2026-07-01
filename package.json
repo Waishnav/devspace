@@ -13,7 +13,9 @@
   "files": [
     "dist",
     "docs",
+    "examples",
     "scripts",
+    "skills",
     "README.md"
   ],
   "publishConfig": {

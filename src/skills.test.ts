@@ -20,6 +20,7 @@ try {
   const projectRoot = join(root, "project");
   const agentDir = join(root, "agent");
   const explicitSkills = join(root, "explicit-skills");
+  const devspaceSkills = join(root, ".devspace", "skills");
   const globalAgentsSkills = join(root, ".agents", "skills");
   const projectAgentsSkills = join(projectRoot, ".agents", "skills");
   const globalClaudeSkills = join(root, ".claude", "skills");
@@ -30,8 +31,11 @@ try {
   await mkdir(join(projectClaudeSkills, "claude-project-skill"), { recursive: true });
   await mkdir(join(projectRoot, ".pi", "skills", "project-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
+  await mkdir(join(agentDir, "skills", "local-agent-delegation"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
+  await mkdir(join(explicitSkills, "local-agent-delegation"), { recursive: true });
+  await mkdir(join(devspaceSkills, "devspace-local-skill"), { recursive: true });
 
   await writeFile(
     join(globalAgentsSkills, "agent-global-skill", "SKILL.md"),
@@ -89,6 +93,17 @@ try {
     ].join("\n"),
   );
   await writeFile(
+    join(devspaceSkills, "devspace-local-skill", "SKILL.md"),
+    [
+      "---",
+      "name: devspace-local-skill",
+      "description: DevSpace local skill description.",
+      "---",
+      "",
+      "# DevSpace Local Skill",
+    ].join("\n"),
+  );
+  await writeFile(
     join(agentDir, "skills", "global-skill", "SKILL.md"),
     [
       "---",
@@ -108,6 +123,28 @@ try {
       "---",
       "",
       "# Duplicate Skill",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(agentDir, "skills", "local-agent-delegation", "SKILL.md"),
+    [
+      "---",
+      "name: local-agent-delegation",
+      "description: Hidden local agent skill winner.",
+      "---",
+      "",
+      "# Local Agent Delegation",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(explicitSkills, "local-agent-delegation", "SKILL.md"),
+    [
+      "---",
+      "name: local-agent-delegation",
+      "description: Hidden local agent skill loser.",
+      "---",
+      "",
+      "# Local Agent Delegation Duplicate",
     ].join("\n"),
   );
   await writeFile(
@@ -146,9 +183,31 @@ try {
   assert.equal(loaded.skills.some((skill) => skill.name === "claude-global-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "claude-project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
+  assert.equal(loaded.skills.some((skill) => skill.name === "devspace-local-skill"), true);
+  assert.equal(loaded.skills.some((skill) => skill.name === "local-agent-delegation"), false);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
   assert.equal(loaded.diagnostics.some((diagnostic) => diagnostic.type === "collision"), true);
+  assert.equal(
+    loaded.diagnostics.some(
+      (diagnostic) => diagnostic.collision?.name === "local-agent-delegation",
+    ),
+    false,
+  );
+
+  const experimentalConfig = loadConfig({
+    DEVSPACE_ALLOWED_ROOTS: projectRoot,
+    DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_LOCAL_AGENTS: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  assert.equal(
+    loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
+      (skill) => skill.name === "local-agent-delegation",
+    ),
+    true,
+  );
 
   const duplicateConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
