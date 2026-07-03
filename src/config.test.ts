@@ -24,6 +24,9 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
+assert.equal(loadConfig(baseEnv).goalsEnabled, false);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_GOALS: "0" }).goalsEnabled, false);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_GOALS: "1" }).goalsEnabled, true);
 
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "invalid" }),
