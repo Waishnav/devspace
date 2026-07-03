@@ -456,7 +456,7 @@ async function runLocalAgentProfile(
     prompt: fullPrompt,
     workspace: record.workspaceRoot,
     providerSessionId: record.providerSessionId,
-    writeMode: "read_only",
+    writeMode: "allowed",
     model: profile.model,
   });
 }
