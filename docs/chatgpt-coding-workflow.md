@@ -121,8 +121,27 @@ helps the model recover the full objective, progress summary, and next step
 after compaction, summary messages, long gaps, or lost context. The model should
 call `get_goal` in those moments and before declaring a multi-step goal complete.
 
-This is not autonomous Codex goal mode: DevSpace does not wake the model for
-continuation turns, control the host harness, or track model token budgets.
+This is not autonomous Codex goal mode, and it is not intended to claim one-for-one
+feature parity with Codex goals. DevSpace is an MCP server, so it can provide
+durable goal state and model-visible tools, but it cannot currently control the
+host model lifecycle.
+
+Current gaps and open questions:
+
+- DevSpace cannot wake the model for automatic continuation turns when a thread
+  becomes idle.
+- DevSpace cannot inject hidden goal context into every model turn the way a
+  harness can.
+- DevSpace cannot directly detect that the host compacted the conversation;
+  the model has to call `get_goal` after seeing a summary, losing context, or
+  resuming work.
+- DevSpace does not receive reliable model token usage, so goal token budgets
+  are intentionally not implemented.
+- DevSpace scopes goals to `workspaceId`, not to the host's chat thread, because
+  MCP does not expose a stable ChatGPT or Claude thread identifier.
+- Future work may explore host-provided session/thread metadata, explicit UI
+  controls for goals, richer progress history, and better recovery hooks if MCP
+  hosts expose lifecycle events.
 
 ## Tool Names
 

@@ -89,8 +89,12 @@ Set `DEVSPACE_GOALS=1` to expose optional workspace-scoped goal tools:
 
 Goals are stored in DevSpace state and scoped to the opened `workspaceId`. They
 help the model reload the full objective, progress summary, and next step after
-compaction, summaries, long gaps, or context loss. DevSpace does not auto-start
-new model turns, detect host compaction directly, or track model token budgets.
+compaction, summaries, long gaps, or context loss.
+
+This is not one-for-one Codex goal parity. DevSpace does not auto-start new model
+turns, inject hidden goal context into every turn, detect host compaction
+directly, or track model token budgets. See the ChatGPT coding workflow guide for
+current gaps and open questions.
 
 ## Widgets
 
