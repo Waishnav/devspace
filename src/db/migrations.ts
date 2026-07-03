@@ -17,6 +17,11 @@ const migrations: Migration[] = [
     name: "oauth-state",
     up: migrateOAuthState,
   },
+  {
+    version: 3,
+    name: "workspace-goals",
+    up: migrateWorkspaceGoals,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -93,6 +98,28 @@ function migrateWorkspaceState(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workspace_sessions", "base_ref", "text");
   addColumnIfMissing(sqlite, "workspace_sessions", "base_sha", "text");
   addColumnIfMissing(sqlite, "workspace_sessions", "managed", "text not null default 'false'");
+}
+
+function migrateWorkspaceGoals(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workspace_goals (
+      workspace_session_id text primary key,
+      goal_id text not null,
+      objective text not null,
+      status text not null default 'active',
+      progress_summary text not null default '',
+      next_step text not null default '',
+      created_at text not null,
+      updated_at text not null,
+      completed_at text,
+      foreign key (workspace_session_id)
+        references workspace_sessions(id)
+        on delete cascade
+    );
+
+    create index if not exists workspace_goals_status_idx
+      on workspace_goals(status, updated_at desc);
+  `);
 }
 
 function migrateOAuthState(sqlite: Database.Database): void {

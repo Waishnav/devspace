@@ -21,6 +21,7 @@ export interface ServerConfig {
   widgets: WidgetMode;
   stateDir: string;
   worktreeRoot: string;
+  goalsEnabled: boolean;
   skillsEnabled: boolean;
   skillPaths: string[];
   agentDir: string;
@@ -223,6 +224,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
+    goalsEnabled: parseBoolean(env.DEVSPACE_GOALS),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),

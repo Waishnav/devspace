@@ -20,6 +20,13 @@ import * as z from "zod/v4";
 import { applyPatch } from "./apply-patch.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
 import {
+  createGoalStore,
+  goalStatuses,
+  type GoalStatus,
+  type GoalStore,
+  type WorkspaceGoal,
+} from "./goal-store.js";
+import {
   logEvent,
   requestIp,
   requestPath,
@@ -63,6 +70,7 @@ const SHELL_TOOL_ANNOTATIONS = {
   idempotentHint: false,
   openWorldHint: true,
 };
+const GOAL_WORKFLOW_INSTRUCTION = " If goal tools are available, treat goals as workspace-scoped persistent task state. When opening a workspace, resuming after a long gap, seeing a compaction or summary message, losing task context, or before deciding a multi-step task is complete, call get_goal to reload any active goal. If an active goal exists, preserve its full objective, continue from the stored progress and next step, update progress after meaningful work, and mark it complete only when current evidence proves the full objective is satisfied.";
 
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
@@ -163,13 +171,14 @@ interface ToolLogFields {
 }
 
 function serverInstructions(config: ServerConfig): string {
+  const goalInstruction = config.goalsEnabled ? GOAL_WORKFLOW_INSTRUCTION : "";
   const showChangesInstruction =
     config.widgets === "changes"
       ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
       : "";
 
   if (config.toolMode === "codex") {
-    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${showChangesInstruction}`;
+    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${goalInstruction}${showChangesInstruction}`;
   }
 
   const inspection = config.toolMode !== "full"
@@ -182,7 +191,7 @@ function serverInstructions(config: ServerConfig): string {
 
   const agentsMd = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
 
-  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
+  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${goalInstruction}${showChangesInstruction}`;
 }
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
@@ -208,6 +217,18 @@ const workspaceAgentsFileOutputSchema = z.object({
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({
   path: z.string(),
+});
+
+const workspaceGoalOutputSchema = z.object({
+  workspaceSessionId: z.string(),
+  goalId: z.string(),
+  objective: z.string(),
+  status: z.enum(goalStatuses),
+  progressSummary: z.string(),
+  nextStep: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().optional(),
 });
 
 const reviewFileOutputSchema = z.object({
@@ -485,6 +506,239 @@ function processToolResponse(
   };
 }
 
+function goalInstruction(goal: WorkspaceGoal | undefined): string {
+  if (!goal) {
+    return "No workspace goal is set. Continue with the user's current request.";
+  }
+
+  switch (goal.status) {
+    case "active":
+      return "Continue pursuing the full active goal. Use the stored progress summary and next step as context, inspect current workspace state before relying on memory, and update the goal after meaningful progress.";
+    case "paused":
+      return "The workspace goal is paused. Do not continue it unless the user asks to resume or update it.";
+    case "blocked":
+      return "The workspace goal is blocked. Explain the blocker and wait for user input or an external-state change before continuing it.";
+    case "complete":
+      return "The workspace goal is complete. Do not reopen it unless the user asks to resume or replace it.";
+    case "cancelled":
+      return "The workspace goal is cancelled. Do not continue it unless the user creates or replaces the goal.";
+  }
+}
+
+function goalResultText(goal: WorkspaceGoal | undefined): string {
+  if (!goal) return "No goal is set for this workspace.";
+
+  return [
+    `Goal ${goal.goalId} is ${goal.status}.`,
+    `Objective: ${goal.objective}`,
+    goal.progressSummary ? `Progress: ${goal.progressSummary}` : undefined,
+    goal.nextStep ? `Next step: ${goal.nextStep}` : undefined,
+    goal.completedAt ? `Completed at: ${goal.completedAt}` : undefined,
+    goalInstruction(goal),
+  ].filter(Boolean).join("\n");
+}
+
+function goalToolResponse(tool: string, workspaceId: string, goal: WorkspaceGoal | undefined) {
+  const result = goalResultText(goal);
+  const content = [textBlock(result)];
+  return {
+    content,
+    _meta: {
+      tool,
+      card: {
+        workspaceId,
+        summary: {
+          status: goal?.status ?? "none",
+          hasGoal: Boolean(goal),
+        },
+        payload: { goal, instruction: goalInstruction(goal) },
+      },
+    },
+    structuredContent: {
+      result,
+      goal: goal ?? null,
+      instruction: goalInstruction(goal),
+    },
+  };
+}
+
+function registerGoalTools(
+  server: McpServer,
+  config: ServerConfig,
+  workspaces: WorkspaceRegistry,
+  goals: GoalStore,
+): void {
+  registerAppTool(
+    server,
+    "get_goal",
+    {
+      title: "Get goal",
+      description:
+        "Get the workspace-scoped persistent goal for an open workspace. Call this after open_workspace when goal tools are available, after a compaction or summary message, after a long gap, when task context seems incomplete, and before marking multi-step work complete.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+      },
+      outputSchema: resultOutputSchema({
+        goal: workspaceGoalOutputSchema.nullable(),
+        instruction: z.string(),
+      }),
+      _meta: {},
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspaceId }) => {
+      const startedAt = performance.now();
+      workspaces.getWorkspace(workspaceId);
+      const goal = goals.getGoal(workspaceId);
+      logToolCall(config, {
+        tool: "get_goal",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return goalToolResponse("get_goal", workspaceId, goal);
+    },
+  );
+
+  registerAppTool(
+    server,
+    "set_goal",
+    {
+      title: "Set goal",
+      description:
+        "Create or replace the single persistent goal for an open workspace. Use this only when the user explicitly asks to track a goal or clearly gives a durable multi-step objective to preserve across compaction and future turns.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+        objective: z.string().min(1).describe("Full user objective to preserve."),
+        progressSummary: z
+          .string()
+          .optional()
+          .describe("Optional concise progress summary for future context reloads."),
+        nextStep: z
+          .string()
+          .optional()
+          .describe("Optional next concrete step to continue the goal."),
+      },
+      outputSchema: resultOutputSchema({
+        goal: workspaceGoalOutputSchema,
+        instruction: z.string(),
+      }),
+      _meta: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ workspaceId, objective, progressSummary, nextStep }) => {
+      const startedAt = performance.now();
+      workspaces.getWorkspace(workspaceId);
+      const goal = goals.setGoal({
+        workspaceSessionId: workspaceId,
+        objective,
+        progressSummary,
+        nextStep,
+      });
+      logToolCall(config, {
+        tool: "set_goal",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return goalToolResponse("set_goal", workspaceId, goal);
+    },
+  );
+
+  registerAppTool(
+    server,
+    "update_goal",
+    {
+      title: "Update goal",
+      description:
+        "Update the workspace goal's status, progress summary, or next step. Keep progress summaries compact and evidence-based. Mark complete only when current workspace evidence proves the full objective is satisfied; mark blocked only when meaningful progress is genuinely impossible without user input or an external-state change.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+        status: z.enum(goalStatuses).optional().describe("Optional new goal status."),
+        progressSummary: z
+          .string()
+          .optional()
+          .describe("Concise durable progress summary for future context reloads."),
+        nextStep: z
+          .string()
+          .optional()
+          .describe("Next concrete step for continuing the goal."),
+      },
+      outputSchema: resultOutputSchema({
+        goal: workspaceGoalOutputSchema.nullable(),
+        instruction: z.string(),
+      }),
+      _meta: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ workspaceId, status, progressSummary, nextStep }) => {
+      const startedAt = performance.now();
+      workspaces.getWorkspace(workspaceId);
+      if (status === undefined && progressSummary === undefined && nextStep === undefined) {
+        throw new Error("Provide at least one of status, progressSummary, or nextStep.");
+      }
+      const goal = goals.updateGoal({
+        workspaceSessionId: workspaceId,
+        status: status as GoalStatus | undefined,
+        progressSummary,
+        nextStep,
+      });
+      logToolCall(config, {
+        tool: "update_goal",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return goalToolResponse("update_goal", workspaceId, goal);
+    },
+  );
+
+  registerAppTool(
+    server,
+    "clear_goal",
+    {
+      title: "Clear goal",
+      description:
+        "Clear the persistent goal for an open workspace. Use this when the user asks to remove goal tracking or replace the workflow with no active goal.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+      },
+      outputSchema: resultOutputSchema({
+        removed: z.boolean(),
+      }),
+      _meta: {},
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async ({ workspaceId }) => {
+      const startedAt = performance.now();
+      workspaces.getWorkspace(workspaceId);
+      const removed = goals.clearGoal(workspaceId);
+      const result = removed ? "Cleared the workspace goal." : "No goal was set for this workspace.";
+      const content = [textBlock(result)];
+      logToolCall(config, {
+        tool: "clear_goal",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return {
+        content,
+        _meta: {
+          tool: "clear_goal",
+          card: {
+            workspaceId,
+            summary: { removed },
+            payload: { removed },
+          },
+        },
+        structuredContent: {
+          result,
+          removed,
+        },
+      };
+    },
+  );
+}
+
 function registerCodexProcessTools(
   server: McpServer,
   config: ServerConfig,
@@ -633,6 +887,7 @@ function createMcpServer(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
+  goalStore?: GoalStore,
 ): McpServer {
   const server = new McpServer(
     {
@@ -721,6 +976,7 @@ function createMcpServer(
         availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema),
         skills: z.array(workspaceSkillOutputSchema),
         skillDiagnostics: z.array(z.unknown()),
+        goal: workspaceGoalOutputSchema.nullable().optional(),
         instruction: z.string(),
       },
       ...toolWidgetDescriptorMeta(config, "workspace"),
@@ -749,9 +1005,13 @@ function createMcpServer(
       const availableAgentsFileOutputs = availableAgentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
       }));
-      const instruction = config.skillsEnabled
+      const goal = goalStore?.getGoal(workspace.id);
+      const baseInstruction = config.skillsEnabled
         ? "Use this workspaceId in all subsequent tool calls for this project. Do not call open_workspace again for this same folder unless this workspaceId stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
         : "Use this workspaceId in all subsequent tool calls for this project. Do not call open_workspace again for this same folder unless this workspaceId stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+      const instruction = goalStore
+        ? `${baseInstruction}${GOAL_WORKFLOW_INSTRUCTION}`
+        : baseInstruction;
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -768,6 +1028,7 @@ function createMcpServer(
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
+            goal ? `Workspace goal: ${goal.status} - ${goal.objective}` : undefined,
             instruction,
           ].filter(Boolean).join("\n"),
         },
@@ -793,6 +1054,7 @@ function createMcpServer(
               availableAgentsFiles: availableAgentsFileOutputs.length,
               skills: visibleSkills.length,
               skillDiagnostics: workspace.skillDiagnostics.length,
+              goalStatus: goal?.status ?? "none",
             },
           },
         },
@@ -806,6 +1068,7 @@ function createMcpServer(
           availableAgentsFiles: availableAgentsFileOutputs,
           skills: visibleSkills,
           skillDiagnostics: workspace.skillDiagnostics,
+          goal: goalStore ? goal ?? null : undefined,
           instruction,
         },
       };
@@ -1508,6 +1771,10 @@ function createMcpServer(
   );
   }
 
+  if (goalStore) {
+    registerGoalTools(server, config, workspaces, goalStore);
+  }
+
   if (config.toolMode === "codex") {
     registerCodexProcessTools(server, config, workspaces, processSessions);
   }
@@ -1533,6 +1800,7 @@ export function createServer(config = loadConfig()): RunningServer {
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
   const workspaceStore = createWorkspaceStore(config.stateDir);
+  const goalStore = config.goalsEnabled ? createGoalStore(config.stateDir) : undefined;
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
@@ -1659,7 +1927,7 @@ export function createServer(config = loadConfig()): RunningServer {
           }
         };
 
-        const server = createMcpServer(config, workspaces, reviewCheckpoints, processSessions);
+        const server = createMcpServer(config, workspaces, reviewCheckpoints, processSessions, goalStore);
         await server.connect(transport);
       } else {
         sendJsonRpcError(res, 400, -32000, "No valid MCP session");
@@ -1687,6 +1955,7 @@ export function createServer(config = loadConfig()): RunningServer {
       closed = true;
       processSessions.shutdown();
       oauthProvider.close();
+      goalStore?.close?.();
       workspaceStore.close?.();
     },
   };

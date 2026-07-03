@@ -101,6 +101,48 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 
 Set `DEVSPACE_SKILLS=0` to hide skills from workspace output.
 
+## Goal Tracking
+
+Goal tracking is optional and disabled by default. Start DevSpace with:
+
+```bash
+DEVSPACE_GOALS=1 devspace serve
+```
+
+When enabled, DevSpace exposes workspace-scoped goal tools:
+
+- `get_goal`
+- `set_goal`
+- `update_goal`
+- `clear_goal`
+
+A goal belongs to the opened `workspaceId`. It is durable DevSpace state that
+helps the model recover the full objective, progress summary, and next step
+after compaction, summary messages, long gaps, or lost context. The model should
+call `get_goal` in those moments and before declaring a multi-step goal complete.
+
+This is not autonomous Codex goal mode, and it is not intended to claim one-for-one
+feature parity with Codex goals. DevSpace is an MCP server, so it can provide
+durable goal state and model-visible tools, but it cannot currently control the
+host model lifecycle.
+
+Current gaps and open questions:
+
+- DevSpace cannot wake the model for automatic continuation turns when a thread
+  becomes idle.
+- DevSpace cannot inject hidden goal context into every model turn the way a
+  harness can.
+- DevSpace cannot directly detect that the host compacted the conversation;
+  the model has to call `get_goal` after seeing a summary, losing context, or
+  resuming work.
+- DevSpace does not receive reliable model token usage, so goal token budgets
+  are intentionally not implemented.
+- DevSpace scopes goals to `workspaceId`, not to the host's chat thread, because
+  MCP does not expose a stable ChatGPT or Claude thread identifier.
+- Future work may explore host-provided session/thread metadata, explicit UI
+  controls for goals, richer progress history, and better recovery hooks if MCP
+  hosts expose lifecycle events.
+
 ## Tool Names
 
 DevSpace exposes these tool names:
@@ -110,6 +152,9 @@ DevSpace exposes these tool names:
 - `write`
 - `edit`
 - `bash`
+
+When `DEVSPACE_GOALS=1`, DevSpace also exposes `get_goal`, `set_goal`,
+`update_goal`, and `clear_goal` across tool modes.
 
 By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
 `grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
