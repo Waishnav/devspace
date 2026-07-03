@@ -38,6 +38,7 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+| `DEVSPACE_GOALS` | Set to `1` to enable workspace-scoped goal tools. Disabled by default. |
 
 ## OAuth
 
@@ -76,6 +77,20 @@ Codex-mode commands run without a PTY by default. Set `tty: true` on
 `exec_command` for interactive terminal programs. PTY support uses the optional
 `node-pty` dependency; `write_stdin` can send input, poll output, and resize PTY
 sessions.
+
+## Goal Tracking
+
+Set `DEVSPACE_GOALS=1` to expose optional workspace-scoped goal tools:
+
+- `get_goal`
+- `set_goal`
+- `update_goal`
+- `clear_goal`
+
+Goals are stored in DevSpace state and scoped to the opened `workspaceId`. They
+help the model reload the full objective, progress summary, and next step after
+compaction, summaries, long gaps, or context loss. DevSpace does not auto-start
+new model turns, detect host compaction directly, or track model token budgets.
 
 ## Widgets
 

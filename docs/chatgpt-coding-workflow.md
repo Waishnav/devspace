@@ -101,6 +101,29 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 
 Set `DEVSPACE_SKILLS=0` to hide skills from workspace output.
 
+## Goal Tracking
+
+Goal tracking is optional and disabled by default. Start DevSpace with:
+
+```bash
+DEVSPACE_GOALS=1 devspace serve
+```
+
+When enabled, DevSpace exposes workspace-scoped goal tools:
+
+- `get_goal`
+- `set_goal`
+- `update_goal`
+- `clear_goal`
+
+A goal belongs to the opened `workspaceId`. It is durable DevSpace state that
+helps the model recover the full objective, progress summary, and next step
+after compaction, summary messages, long gaps, or lost context. The model should
+call `get_goal` in those moments and before declaring a multi-step goal complete.
+
+This is not autonomous Codex goal mode: DevSpace does not wake the model for
+continuation turns, control the host harness, or track model token budgets.
+
 ## Tool Names
 
 DevSpace exposes these tool names:
@@ -110,6 +133,9 @@ DevSpace exposes these tool names:
 - `write`
 - `edit`
 - `bash`
+
+When `DEVSPACE_GOALS=1`, DevSpace also exposes `get_goal`, `set_goal`,
+`update_goal`, and `clear_goal` across tool modes.
 
 By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
 `grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
