@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/waishnav-devspace-badge.png)](https://mseep.ai/app/waishnav-devspace)
+
 <p align="center">
   <picture>
     <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/docs/assets/devspace-logo-light.png" alt="DevSpace logo" width="140">
