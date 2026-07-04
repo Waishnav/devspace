@@ -16,6 +16,7 @@ const ACP_COMMANDS: Record<"cursor" | "copilot", [string, ...string[]]> = {
   cursor: ["cursor-agent", "--acp"],
   copilot: ["copilot", "--acp"],
 };
+const PI_AGENT_TIMEOUT_MS = 120_000;
 
 export async function runLocalAgentProvider(
   provider: LocalAgentProvider,
@@ -94,18 +95,18 @@ class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
     const { client, server } = await createOpencode();
     try {
       const sessionId = input.providerSessionId ?? await createOpencodeSession(client, input);
-      const promptResult = await client.session.prompt({
-        sessionID: sessionId,
-        directory: input.workspace,
-        ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
-        parts: [{ type: "text", text: input.prompt }],
-      }, { throwOnError: true });
-      const finalResponse = extractOpenCodeFinalResponse(promptResult);
+      const promptResult = await promptOpencodeSession(client, sessionId, input);
+      await waitForOpencodeSession(client, sessionId);
+      const messages = await readOpencodeMessages(client, sessionId);
+      const finalResponse = requireFinalResponse(
+        "OpenCode",
+        extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
+      );
       return {
         provider: this.provider,
         providerSessionId: sessionId,
         finalResponse,
-        items: [promptResult],
+        items: [promptResult, messages],
       };
     } finally {
       server.close();
@@ -169,7 +170,10 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "pi" as const;
 
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
-    const child = spawn(process.env.PI_COMMAND ?? "pi", ["--mode", "rpc"], {
+    const args = ["--mode", "rpc"];
+    if (input.model) args.push("--model", input.model);
+    if (input.providerSessionId) args.push("--session", input.providerSessionId);
+    const child = spawn(process.env.PI_COMMAND ?? "pi", args, {
       cwd: input.workspace,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -177,19 +181,21 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
     });
     assertPipedChild(child);
     const rpc = new JsonLineRpc(child);
+    const events: unknown[] = [];
+    rpc.onEvent((event) => events.push(event));
     try {
-      await rpc.request({
-        type: "prompt",
-        message: input.prompt,
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.providerSessionId ? { session: input.providerSessionId } : {}),
-      });
-      const messages = await rpc.request({ type: "get_messages" });
+      const state = await rpc.request({ type: "get_state" });
+      const providerSessionId = readNestedString(state, ["sessionId"]) ?? input.providerSessionId ?? null;
+      const done = rpc.waitForEvent((event) => asRecord(event)?.type === "agent_end", PI_AGENT_TIMEOUT_MS);
+      await rpc.request({ type: "prompt", message: input.prompt });
+      const agentEnd = await done;
+      const messages = readArray(agentEnd, "messages") ? agentEnd : await rpc.request({ type: "get_messages" });
+      const finalResponse = requireFinalResponse("Pi", extractPiFinalResponse(messages));
       return {
         provider: this.provider,
-        providerSessionId: input.providerSessionId ?? null,
-        finalResponse: extractPiFinalResponse(messages),
-        items: [messages],
+        providerSessionId,
+        finalResponse,
+        items: [...events, messages],
       };
     } finally {
       child.kill();
@@ -202,6 +208,7 @@ class JsonLineRpc {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }>();
+  private readonly eventSubscribers = new Set<(event: unknown) => void>();
   private buffer = "";
   private nextId = 1;
   private stderr = "";
@@ -225,6 +232,26 @@ class JsonLineRpc {
     });
   }
 
+  onEvent(callback: (event: unknown) => void): () => void {
+    this.eventSubscribers.add(callback);
+    return () => this.eventSubscribers.delete(callback);
+  }
+
+  waitForEvent(predicate: (event: unknown) => boolean, timeoutMs: number): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        unsubscribe();
+        reject(new Error(`Pi RPC timed out waiting for agent completion\n${this.stderr}`.trim()));
+      }, timeoutMs);
+      const unsubscribe = this.onEvent((event) => {
+        if (!predicate(event)) return;
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(event);
+      });
+    });
+  }
+
   private handleStdout(chunk: string): void {
     this.buffer += chunk;
     for (;;) {
@@ -234,15 +261,20 @@ class JsonLineRpc {
       this.buffer = this.buffer.slice(newline + 1);
       if (!line) continue;
       const message = JSON.parse(line) as Record<string, unknown>;
+      if (message.type !== "response") {
+        for (const subscriber of this.eventSubscribers) subscriber(message);
+        continue;
+      }
+
       const id = typeof message.id === "string" ? message.id : undefined;
       if (!id) continue;
       const pending = this.pending.get(id);
       if (!pending) continue;
       this.pending.delete(id);
-      if (message.error) {
-        pending.reject(new Error(errorMessage(message.error)));
+      if (message.success === false || message.error) {
+        pending.reject(new Error(errorMessage(message.error ?? `Pi RPC request failed: ${message.command ?? id}`)));
       } else {
-        pending.resolve(message.result ?? message);
+        pending.resolve(message.data ?? message.result ?? message);
       }
     }
   }
@@ -256,19 +288,63 @@ class JsonLineRpc {
 }
 
 async function createOpencodeSession(client: unknown, input: LocalAgentRunInput): Promise<string> {
-  const result = await (client as {
+  const sessionClient = client as {
     session: {
       create(parameters?: unknown, options?: unknown): Promise<unknown>;
     };
-  }).session.create({
+  };
+  const result = await sessionClient.session.create({
     directory: input.workspace,
+    location: { directory: input.workspace },
     ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
   }, { throwOnError: true });
-  const id = (result as { id?: unknown }).id;
+  const id =
+    readNestedString(result, ["id"]) ??
+    readNestedString(result, ["data", "id"]) ??
+    readNestedString(result, ["session", "id"]) ??
+    readNestedString(result, ["data", "session", "id"]);
   if (typeof id !== "string") {
     throw new Error("OpenCode did not return a session id.");
   }
   return id;
+}
+
+async function promptOpencodeSession(
+  client: unknown,
+  sessionId: string,
+  input: LocalAgentRunInput,
+): Promise<unknown> {
+  const session = (client as {
+    session: {
+      prompt(parameters?: unknown, options?: unknown): Promise<unknown>;
+    };
+  }).session;
+  const promptInput = {
+    sessionID: sessionId,
+    directory: input.workspace,
+    prompt: { parts: [{ type: "text", text: input.prompt }] },
+    parts: [{ type: "text", text: input.prompt }],
+    ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
+  };
+  return session.prompt(promptInput, { throwOnError: true });
+}
+
+async function waitForOpencodeSession(client: unknown, sessionId: string): Promise<void> {
+  const session = (client as {
+    session?: { wait?: (parameters?: unknown, options?: unknown) => Promise<unknown> };
+  }).session;
+  if (!session?.wait) return;
+  await session.wait({ sessionID: sessionId }, { throwOnError: true });
+}
+
+async function readOpencodeMessages(client: unknown, sessionId: string): Promise<unknown> {
+  const session = (client as {
+    session?: {
+      messages?: (parameters?: unknown, options?: unknown) => Promise<unknown>;
+    };
+  }).session;
+  if (!session?.messages) return undefined;
+  return session.messages({ sessionID: sessionId, order: "asc", limit: 100 }, { throwOnError: true });
 }
 
 function parseOpencodeModel(model: string): { providerID: string; modelID: string } {
@@ -317,7 +393,8 @@ function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
     if (!message) continue;
     const info = asRecord(message.info);
     const role = typeof info?.role === "string" ? info.role : message.role;
-    if (role !== "assistant") continue;
+    const type = typeof message.type === "string" ? message.type : undefined;
+    if (role !== "assistant" && type !== "assistant") continue;
     const text = extractOpenCodeAssistantMessageText(message);
     if (text) return text;
   }
@@ -327,6 +404,19 @@ function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
 function extractOpenCodeAssistantMessageText(value: unknown): string {
   const message = asRecord(value);
   if (!message) return "";
+
+  const content = readArray(message, "content");
+  if (content) {
+    const text = content
+      .map((part) => {
+        const partRecord = asRecord(part);
+        if (!partRecord || partRecord.type !== "text") return "";
+        return typeof partRecord.text === "string" ? partRecord.text : "";
+      })
+      .filter(Boolean)
+      .join("");
+    if (text.trim()) return text.trim();
+  }
 
   const parts = readArray(message, "parts");
   if (parts) {
@@ -381,6 +471,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function readNestedString(value: unknown, path: string[]): string | undefined {
+  let current: unknown = value;
+  for (const key of path) {
+    current = asRecord(current)?.[key];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function requireFinalResponse(provider: string, response: string): string {
+  const trimmed = response.trim();
+  if (!trimmed) {
+    throw new Error(`${provider} did not return a final assistant response.`);
+  }
+  return trimmed;
 }

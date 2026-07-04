@@ -43,6 +43,28 @@ assert.equal(
 
 assert.equal(
   extractOpenCodeFinalResponse({
+    data: [
+      {
+        id: "msg_user",
+        type: "user",
+        text: "Review the change.",
+      },
+      {
+        id: "msg_assistant",
+        type: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking" },
+          { type: "tool", name: "grep", state: { status: "completed", result: "src/foo.ts" } },
+          { type: "text", text: "Final OpenCode v2 response." },
+        ],
+      },
+    ],
+  }),
+  "Final OpenCode v2 response.",
+);
+
+assert.equal(
+  extractOpenCodeFinalResponse({
     data: {
       info: {
         id: "msg_structured",
@@ -70,23 +92,25 @@ assert.equal(
 
 assert.equal(
   extractPiFinalResponse({
-    messages: [
-      { role: "user", content: "Review the change." },
-      {
-        role: "assistant",
-        content: [
-          { type: "thinking", thinking: "thinking" },
-          { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "src/foo.ts" } },
-          { type: "text", text: "Final Pi response." },
-        ],
-      },
-      {
-        role: "toolResult",
-        toolCallId: "tool-1",
-        toolName: "read",
-        content: [{ type: "text", text: "tool output" }],
-      },
-    ],
+    data: {
+      messages: [
+        { role: "user", content: "Review the change." },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "thinking" },
+            { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "src/foo.ts" } },
+            { type: "text", text: "Final Pi response." },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "read",
+          content: [{ type: "text", text: "tool output" }],
+        },
+      ],
+    },
   }),
   "Final Pi response.",
 );
