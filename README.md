@@ -183,32 +183,6 @@ devspace doctor
 - [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
 - [Troubleshooting Gotchas](https://github.com/Waishnav/devspace/blob/main/docs/gotchas.md)
 
-## Releasing
-
-DevSpace publishes to npm from GitHub Actions when a version tag is pushed. The
-release workflow runs typecheck, tests, build, verifies the tag matches
-`package.json`, checks the packed contents, and publishes through npm Trusted
-Publishing.
-
-Before the first automated release, configure the npm package trusted publisher:
-
-- Publisher: GitHub Actions
-- Organization or user: `Waishnav`
-- Repository: `devspace`
-- Workflow filename: `release.yml`
-- Allowed action: `npm publish`
-
-Release a new version from `main`:
-
-```bash
-npm version patch --no-git-tag-version
-git add package.json package-lock.json
-git commit -m "chore: release v$(node -p "require('./package.json').version")"
-git tag "v$(node -p "require('./package.json').version")"
-git push origin main
-git push origin "v$(node -p "require('./package.json').version")"
-```
-
 ## Philosophy
 
 Every piece of software is becoming conversational. Natural language is
