@@ -2,6 +2,10 @@
   "name": "@waishnav/devspace",
   "version": "1.0.3",
   "description": "Expose a secure local coding workspace through an MCP server.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Waishnav/devspace.git"
+  },
   "type": "module",
   "main": "dist/server.js",
   "engines": {
