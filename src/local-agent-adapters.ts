@@ -1,4 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import {
@@ -175,7 +177,7 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
     if (input.providerSessionId) args.push("--session", input.providerSessionId);
     const child = spawn(process.env.PI_COMMAND ?? "pi", args, {
       cwd: input.workspace,
-      env: process.env,
+      env: piCommandEnvironment(process.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -211,6 +213,37 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
     } finally {
       child.kill();
     }
+  }
+}
+
+export function piCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env.PI_COMMAND) return env;
+  const path = env.PATH;
+  if (!path) return env;
+
+  return {
+    ...env,
+    PATH: path
+      .split(delimiter)
+      .filter((entry) => entry && !isDevspaceNodeModulesBin(entry))
+      .join(delimiter),
+  };
+}
+
+function isDevspaceNodeModulesBin(pathEntry: string): boolean {
+  const resolvedEntry = resolve(pathEntry);
+  if (!resolvedEntry.endsWith(`${sep}node_modules${sep}.bin`)) {
+    return false;
+  }
+
+  const packageJson = resolve(resolvedEntry, "..", "..", "package.json");
+  if (!existsSync(packageJson)) return false;
+
+  try {
+    const packageInfo = JSON.parse(readFileSync(packageJson, "utf8")) as { name?: unknown };
+    return packageInfo.name === "@waishnav/devspace";
+  } catch {
+    return false;
   }
 }
 

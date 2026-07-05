@@ -5,6 +5,7 @@ import {
   extractPiFinalResponse,
   extractPiProviderError,
   extractPiStreamingText,
+  piCommandEnvironment,
 } from "./local-agent-adapters.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
@@ -179,3 +180,23 @@ assert.equal(
   ]),
   "Final Pi response.",
 );
+
+{
+  const devspaceBin = `${process.cwd()}/node_modules/.bin`;
+  const userBin = "/home/user/.local/bin";
+  const env = piCommandEnvironment({
+    PATH: [devspaceBin, userBin].join(":"),
+  });
+
+  assert.equal(env.PATH, userBin);
+}
+
+{
+  const devspaceBin = `${process.cwd()}/node_modules/.bin`;
+  const env = piCommandEnvironment({
+    PI_COMMAND: "/custom/pi",
+    PATH: [devspaceBin, "/home/user/.local/bin"].join(":"),
+  });
+
+  assert.equal(env.PATH, `${devspaceBin}:/home/user/.local/bin`);
+}
