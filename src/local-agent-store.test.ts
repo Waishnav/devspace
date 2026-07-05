@@ -29,10 +29,13 @@ try {
     status: "idle",
     latestResponse: "done",
     providerSessionId: "thread_123",
+    thinking: "medium",
   });
 
   assert.equal(updated.status, "idle");
+  assert.equal(updated.thinking, "medium");
   assert.equal(store.get("thread_123")?.id, created.id);
+  assert.equal(store.get(created.id)?.thinking, "medium");
   assert.equal(store.update(created.id, { latestResponse: undefined }).latestResponse, undefined);
   assert.deepEqual(
     store.list({ workspaceRoot: join(root, "project") }).map((agent) => agent.latestResponse),

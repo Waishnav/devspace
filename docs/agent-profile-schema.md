@@ -90,7 +90,8 @@ model: sonnet
 ### `thinking`
 
 Optional provider reasoning effort, thinking level, or model variant. If omitted,
-DevSpace lets the provider default apply.
+DevSpace lets the provider default apply. Values are provider-specific
+passthrough strings; DevSpace does not translate names between harnesses.
 
 ```yaml
 thinking: low

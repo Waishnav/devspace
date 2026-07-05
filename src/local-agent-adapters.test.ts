@@ -92,6 +92,24 @@ assert.throws(
   /Available values: gpt-5\.4/,
 );
 
+assert.throws(
+  () => resolveAcpModelConfigUpdate(undefined, "gpt-5.4", "cursor"),
+  /session metadata/,
+);
+
+assert.throws(
+  () => resolveAcpModelConfigUpdate({ newSessionResponse: { configOptions: [] } }, "gpt-5.4", "cursor"),
+  /session id/,
+);
+
+assert.throws(
+  () => resolveAcpModelConfigUpdate({
+    sessionId: "session_model_4",
+    newSessionResponse: { configOptions: [] },
+  }, "gpt-5.4", "cursor"),
+  /does not expose a model/,
+);
+
 assert.deepEqual(
   resolveAcpThinkingConfigUpdate({
     sessionId: "session_1",
@@ -153,6 +171,24 @@ assert.throws(
     },
   }, "max", "cursor"),
   /Available values: low/,
+);
+
+assert.throws(
+  () => resolveAcpThinkingConfigUpdate(undefined, "high", "copilot"),
+  /session metadata/,
+);
+
+assert.throws(
+  () => resolveAcpThinkingConfigUpdate({ newSessionResponse: { configOptions: [] } }, "high", "copilot"),
+  /session id/,
+);
+
+assert.throws(
+  () => resolveAcpThinkingConfigUpdate({
+    sessionId: "session_4",
+    newSessionResponse: { configOptions: [] },
+  }, "high", "copilot"),
+  /does not expose a thinking option/,
 );
 
 {

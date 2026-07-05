@@ -59,6 +59,9 @@ devspace agents run <profile-or-provider> --thinking <level> "<prompt>"
 
 Use `--thinking` only when the user asks for a specific reasoning depth or when
 the task clearly needs a different effort than the configured profile default.
+Thinking values are provider-specific passthrough values. Use names supported by
+the selected local agent harness; DevSpace does not translate values between
+providers.
 
 Good delegation targets:
 
