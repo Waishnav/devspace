@@ -29,7 +29,7 @@ it automatically from the shell environment injected by the workspace tool.
 DevSpace agent id.
 
 `run <provider> "<prompt>"` starts a raw built-in provider when no configured
-profile is needed. Built-in providers are listed by `open_workspace`.
+profile is needed. Built-in providers are listed by `open_thread`.
 
 `run <id> "<prompt>"` sends a follow-up to an existing agent.
 
@@ -44,9 +44,9 @@ DevSpace agent integration.
 ## Choosing a profile
 
 Choose profiles from the compact subagent profile catalog returned by
-`open_workspace`. Use the profile name with `devspace agents run`. If no
+`open_thread`. Use the profile name with `devspace agents run`. If no
 profile fits and delegation is still appropriate, use a built-in provider name
-from `open_workspace`.
+from `open_thread`.
 
 Profiles may declare a model and optional thinking level. To override the
 configured/default provider model or thinking level for a run, pass `--model`

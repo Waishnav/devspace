@@ -4,9 +4,9 @@ DevSpace brings a Codex-style coding-agent loop to ChatGPT and other MCP hosts:
 inspect the repo, follow local instructions, make scoped edits, run
 verification, and show the user what changed.
 
-## Open One Workspace
+## Open One Thread
 
-ChatGPT should call `open_workspace` once for a project folder:
+ChatGPT should call `open_thread` once for a project folder:
 
 ```json
 {
@@ -14,12 +14,12 @@ ChatGPT should call `open_workspace` once for a project folder:
 }
 ```
 
-The result includes a `workspaceId`. All later file, search, edit, show-changes,
-and shell calls should reuse that same `workspaceId`.
+The result includes a `thread_id`. All later file, search, edit, show-changes,
+and shell calls should reuse that same `thread_id`.
 
 Do not reopen the same folder unless:
 
-- the `workspaceId` is rejected as unknown
+- the `thread_id` is rejected as unknown
 - the user switches to another folder
 - the user switches between checkout and worktree mode
 - the user explicitly asks to reopen
@@ -93,7 +93,7 @@ It also keeps compatibility with:
 
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
-`open_workspace` exposes a compact catalog with profile names, descriptions,
+`open_thread` exposes a compact catalog with profile names, descriptions,
 providers, and optional models/thinking levels so the model can choose a configured agent
 without seeing provider-specific launch details.
 
@@ -103,7 +103,7 @@ before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
-When `open_workspace` returns matching skills, the model should read the
+When `open_thread` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
 
 Skill paths may be outside the workspace. DevSpace only permits reading:
@@ -115,14 +115,14 @@ Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Set
 `DEVSPACE_SUBAGENTS=1` to expose the experimental subagent catalog and
 `subagent-delegation` skill. That skill teaches the minimal
 `devspace agents ls`, `devspace agents run`, and `devspace agents show`
-workflow. The catalog comes from `open_workspace`; `devspace agents ls` lists
+workflow. The catalog comes from `open_thread`; `devspace agents ls` lists
 existing subagent sessions for that workspace.
 
 ## Tool Names
 
 DevSpace exposes these tool names:
 
-- `open_workspace`
+- `open_thread`
 - `read`
 - `write`
 - `edit`
@@ -137,7 +137,7 @@ Use `DEVSPACE_TOOL_MODE=full` to restore dedicated search and directory tools.
 The experimental Codex-style surface is enabled with
 `DEVSPACE_TOOL_MODE=codex`. It exposes:
 
-- `open_workspace`
+- `open_thread`
 - `read`
 - `apply_patch`
 - `exec_command`
@@ -160,7 +160,7 @@ to expose the aggregate show-changes flow.
 
 When `show_changes` is exposed, models should call it exactly once after the
 final file modification in any turn that changes files. The tool only requires
-the `workspaceId`; DevSpace automatically compares against the last shown
+the `thread_id`; DevSpace automatically compares against the last shown
 checkpoint and advances that checkpoint after rendering the aggregate diff.
 
 ## Shell Use
