@@ -63,9 +63,9 @@ MCP clients discover metadata from:
 
 | Value | Behavior |
 | --- | --- |
-| `minimal` | Default. Exposes `open_workspace`, `read`, `write`, `edit`, and `bash`. Clients use `bash` with tools such as `rg`, `find`, and `ls` for inspection. |
+| `minimal` | Default. Exposes `open_project`, `read`, `write`, `edit`, and `bash`. Clients use `bash` with tools such as `rg`, `find`, and `ls` for inspection. |
 | `full` | Exposes the minimal tools plus dedicated `grep`, `glob`, and `ls` tools. |
-| `codex` | Experimental. Exposes `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. Existing mutation and shell tools are hidden. |
+| `codex` | Experimental. Exposes `open_project`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. Existing mutation and shell tools are hidden. |
 
 `DEVSPACE_MINIMAL_TOOLS` remains a backward-compatible alias when
 `DEVSPACE_TOOL_MODE` is unset: `1` selects `minimal` and `0` selects `full`.
@@ -84,7 +84,7 @@ sessions.
 | Value | Behavior |
 | --- | --- |
 | `full` | Default. Widget UI is attached to exposed workspace, file, edit, and shell tools. |
-| `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_workspace` and `show_changes`. |
+| `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_project` and `show_changes`. |
 | `off` | Disables widget UI. |
 
 ## Skills
@@ -114,7 +114,7 @@ from:
 - `~/.devspace/agents/*.md`
 - project `.devspace/agents/*.md`
 
-`open_workspace` returns a compact catalog containing profile names,
+`open_project` returns a compact catalog containing profile names,
 descriptions, providers, and optional models/thinking levels so the host model can choose an
 agent without reading provider-specific launch details. `devspace agents ls`
 lists existing subagent sessions for the current workspace, scoped by the

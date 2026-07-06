@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { WorkspaceMode, WorkspaceStore } from "./workspace-store.js";
 import { mkdir, opendir, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -94,7 +94,7 @@ export class WorkspaceRegistry {
 
     const session = this.store?.getSession(workspaceId);
     if (!session) {
-      throw new Error(`Unknown workspaceId: ${workspaceId}. Call open_workspace first.`);
+      throw new Error(`Unknown projectId: ${workspaceId}. Call open_project first.`);
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
@@ -200,7 +200,7 @@ export class WorkspaceRegistry {
     worktree?: WorkspaceWorktree;
   }): Promise<WorkspaceContext> {
     const workspace: Workspace = {
-      id: `ws_${randomUUID()}`,
+      id: this.createProjectId(),
       root: input.root,
       mode: input.mode,
       sourceRoot: input.sourceRoot,
@@ -224,6 +224,14 @@ export class WorkspaceRegistry {
     const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
 
     return { workspace, agentsFiles, availableAgentsFiles };
+  }
+
+  private createProjectId(): string {
+    let id: string;
+    do {
+      id = `proj_${randomBytes(4).toString("hex")}`;
+    } while (this.workspaces.has(id) || Boolean(this.store?.getSession(id)));
+    return id;
   }
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {

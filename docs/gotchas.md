@@ -130,14 +130,14 @@ To regenerate setup:
 npx @waishnav/devspace init --force
 ```
 
-## Unknown `workspaceId`
+## Unknown `projectId`
 
-`workspaceId` values are session identifiers. If the server restarts and the
-client receives an unknown workspace error, call `open_workspace` again for that
+`projectId` values are opened-project identifiers. If the server restarts and the
+client receives an unknown project error, call `open_project` again for that
 project.
 
 Workspace session metadata is persisted, but clients should still treat
-`open_workspace` as the way to begin a fresh working session.
+`open_project` as the way to begin a fresh working session.
 
 ## Workspace Path Rejected
 
@@ -207,7 +207,7 @@ It also checks compatibility and custom paths:
 
 When `DEVSPACE_SUBAGENTS=1`, DevSpace loads agent profiles from
 `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`, then exposes a
-compact profile catalog through `open_workspace`. The bundled
+compact profile catalog through `open_project`. The bundled
 `subagent-delegation` skill keeps the model-facing workflow to
 `devspace agents ls`, `devspace agents run`, and `devspace agents show`.
 `devspace agents ls` lists existing subagent sessions, not profile
@@ -218,7 +218,7 @@ Copy or adapt them into one of the active profile directories before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
-If a skill appears in `open_workspace`, the model must read that skill's
+If a skill appears in `open_project`, the model must read that skill's
 `SKILL.md` before reading other files inside the skill directory.
 
 ## Review Card Does Not Appear

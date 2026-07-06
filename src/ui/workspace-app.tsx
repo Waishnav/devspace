@@ -228,8 +228,8 @@ async function renderPayloadIfNeeded(): Promise<void> {
     return;
   }
 
-  if (card.tool === "open_workspace") {
-    renderPrePayload(target, workspacePayloadText(card), "open_workspace");
+  if (card.tool === "open_project") {
+    renderPrePayload(target, workspacePayloadText(card), "open_project");
     return;
   }
 
@@ -353,11 +353,11 @@ function renderSummaryBadge(card: ToolResultCard): HTMLElement {
     return stats;
   }
 
-  if (card.tool === "open_workspace") {
+  if (card.tool === "open_project") {
     const agentsFiles = summaryNumber(summary, "agentsFiles") ?? 0;
     const skills = summaryNumber(summary, "skills") ?? 0;
     const group = element("span", { className: "badge-group" });
-    group.setAttribute("aria-label", "Workspace summary");
+    group.setAttribute("aria-label", "Project summary");
 
     const agentsBadge = element("span", {
       className: `badge ${agentsFiles > 0 ? "success" : "muted"}`,
@@ -465,7 +465,7 @@ function workspacePayloadText(card: ToolResultCard): string {
   const availableAgentsFiles = card.availableAgentsFiles ?? [];
   const skills = card.skills ?? [];
   const lines = [
-    card.workspaceId ? `Workspace: ${card.workspaceId}` : undefined,
+    card.projectId ? `Project: ${card.projectId}` : undefined,
     card.root ? `Root: ${card.root}` : undefined,
     skills.length > 0
       ? `Skills: ${skills.map((skill) => skill.name ?? skill.path ?? "unnamed").join(", ")}`
@@ -515,8 +515,8 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
   const label = getToolLabel(card);
 
   switch (card.tool) {
-    case "open_workspace":
-      return { icon: folderIcon(), title: "Workspace", label, tone: "workspace" };
+    case "open_project":
+      return { icon: folderIcon(), title: "Project", label, tone: "workspace" };
     case "read":
       return { icon: fileIcon(), title: "Read File", label, tone: "read" };
     case "write":

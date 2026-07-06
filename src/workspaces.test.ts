@@ -47,6 +47,7 @@ try {
   const registry = new WorkspaceRegistry(config);
   const { workspace, agentsFiles, availableAgentsFiles } = await registry.openWorkspace(root);
 
+  assert.match(workspace.id, /^proj_[a-f0-9]{8}$/);
   assert.equal(workspace.mode, "checkout");
   assert.deepEqual(
     agentsFiles.map((file) => file.content),
