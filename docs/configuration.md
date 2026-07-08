@@ -134,6 +134,30 @@ DEVSPACE_SKILL_PATHS="$HOME/.claude/skills,$HOME/company/skills" \
 npx @waishnav/devspace serve
 ```
 
+## Executor Bridge
+
+DevSpace can optionally expose a small bridge to a local
+[Executor](https://github.com/UsefulSoftwareCo/executor) service. This is useful
+when you want ChatGPT to use the same MCP catalog you already maintain for local
+coding apps.
+
+| Variable | Purpose |
+| --- | --- |
+| `DEVSPACE_EXECUTOR` | Set to `1` to expose the Executor bridge tools. Disabled by default. |
+| `DEVSPACE_EXECUTOR_COMMAND` | Executor CLI command. Defaults to `executor`. |
+| `DEVSPACE_EXECUTOR_BASE_URL` | Optional Executor service URL, such as `http://localhost:4789`. |
+| `DEVSPACE_EXECUTOR_TIMEOUT_MS` | CLI timeout in milliseconds. Defaults to `120000`. |
+
+When enabled, DevSpace exposes:
+
+- `executor_sources` — list Executor integrations and tool counts
+- `executor_search_tools` — search the Executor catalog
+- `executor_call_tool` — invoke a dot-separated Executor tool path with JSON arguments
+
+Use DevSpace workspace tools for code/file/shell work. Use Executor bridge tools
+for non-workspace integrations such as Zotero, Obsidian, mail, or other MCP and
+API sources configured in Executor.
+
 ## Logging
 
 | Variable | Default |

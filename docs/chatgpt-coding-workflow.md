@@ -128,6 +128,17 @@ DevSpace exposes these tool names:
 - `edit`
 - `bash`
 
+When `DEVSPACE_EXECUTOR=1`, DevSpace also exposes:
+
+- `executor_sources`
+- `executor_search_tools`
+- `executor_call_tool`
+
+Use the Executor bridge only for integrations outside the workspace tool model.
+For example, search Executor for Zotero, Obsidian, mail, or other configured MCP
+tools, then call the returned path with JSON arguments. Continue using DevSpace
+tools for local code edits, file reads, and shell commands.
+
 By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
 `grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
 such as `rg`, `find`, and `ls` for search and directory inspection.

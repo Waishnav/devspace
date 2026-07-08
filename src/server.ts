@@ -35,6 +35,11 @@ import {
   runShellTool,
   writeFileTool,
 } from "./pi-tools.js";
+import {
+  callExecutorTool,
+  listExecutorSources,
+  searchExecutorTools,
+} from "./executor-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
@@ -174,9 +179,12 @@ function serverInstructions(config: ServerConfig): string {
     config.widgets === "changes"
       ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
       : "";
+  const executorInstruction = config.executor.enabled
+    ? " Executor bridge tools are available for non-workspace MCP integrations. Use executor_sources to inspect configured integrations, executor_search_tools to find a tool, and executor_call_tool to invoke a specific Executor tool path with JSON arguments. Prefer DevSpace workspace tools for local code edits and shell work."
+    : "";
 
   if (config.toolMode === "codex") {
-    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${showChangesInstruction}`;
+    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${executorInstruction}${showChangesInstruction}`;
   }
 
   const inspection = config.toolMode !== "full"
@@ -189,7 +197,7 @@ function serverInstructions(config: ServerConfig): string {
 
   const agentsMd = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
 
-  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
+  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${executorInstruction}${showChangesInstruction}`;
 }
 
 function formatVisibleAgent(agent: {
@@ -669,6 +677,100 @@ function registerCodexProcessTools(
         exitCode: snapshot.exitCode,
         wallTimeMs: snapshot.wallTimeMs,
       });
+    },
+  );
+}
+
+function registerExecutorBridgeTools(server: McpServer, config: ServerConfig): void {
+  registerAppTool(
+    server,
+    "executor_sources",
+    {
+      title: "List Executor sources",
+      description:
+        "List integrations currently configured in the local Executor service, including proxied MCP servers and built-in Executor tools. Use this before searching or calling Executor tools.",
+      inputSchema: {},
+      outputSchema: resultOutputSchema(),
+      _meta: {},
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async () => {
+      const startedAt = performance.now();
+      const response = await listExecutorSources(config.executor);
+      logToolCall(config, {
+        tool: "executor_sources",
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return {
+        content: [textBlock(response.result)],
+        structuredContent: { result: response.result },
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "executor_search_tools",
+    {
+      title: "Search Executor tools",
+      description:
+        "Search the local Executor catalog by natural-language query. The returned tool path can be passed to executor_call_tool.",
+      inputSchema: {
+        query: z.string().describe("Natural-language search query, such as 'zotero collections' or 'obsidian search'."),
+        limit: z.number().int().min(1).max(50).optional().describe("Maximum results to return. Defaults to 20."),
+      },
+      outputSchema: resultOutputSchema(),
+      _meta: {},
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (input) => {
+      const startedAt = performance.now();
+      const response = await searchExecutorTools(config.executor, input);
+      logToolCall(config, {
+        tool: "executor_search_tools",
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return {
+        content: [textBlock(response.result)],
+        structuredContent: { result: response.result },
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "executor_call_tool",
+    {
+      title: "Call Executor tool",
+      description:
+        "Invoke one tool from the local Executor catalog by its dot-separated path. Search first with executor_search_tools unless the path is already known. Use JSON object arguments matching the target tool schema.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Dot-separated Executor tool path, for example zotero.user.default.zotero_list_collections."),
+        arguments: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("JSON object arguments for the target Executor tool. Use an empty object for tools with no required inputs."),
+      },
+      outputSchema: resultOutputSchema(),
+      _meta: {},
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+    async (input) => {
+      const startedAt = performance.now();
+      const response = await callExecutorTool(config.executor, input);
+      logToolCall(config, {
+        tool: "executor_call_tool",
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return {
+        content: [textBlock(response.result)],
+        structuredContent: { result: response.result },
+      };
     },
   );
 }
@@ -1581,6 +1683,10 @@ function createMcpServer(
 
   if (config.toolMode === "codex") {
     registerCodexProcessTools(server, config, workspaces, processSessions);
+  }
+
+  if (config.executor.enabled) {
+    registerExecutorBridgeTools(server, config);
   }
 
   return server;

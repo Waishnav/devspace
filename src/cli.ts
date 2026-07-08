@@ -221,6 +221,11 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
+    console.log(
+      config.executor.enabled
+        ? `executor bridge: enabled (${config.executor.command}${config.executor.baseUrl ? `, ${config.executor.baseUrl}` : ""})`
+        : "executor bridge: disabled",
+    );
     console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     if (config.subagents) {

@@ -26,11 +26,32 @@ assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
 assert.equal(loadConfig(baseEnv).subagents, false);
+assert.deepEqual(loadConfig(baseEnv).executor, {
+  enabled: false,
+  command: "executor",
+  baseUrl: undefined,
+  timeoutMs: 120000,
+});
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents,
   true,
+);
+assert.deepEqual(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_EXECUTOR: "1",
+    DEVSPACE_EXECUTOR_COMMAND: "/opt/homebrew/bin/executor",
+    DEVSPACE_EXECUTOR_BASE_URL: "http://localhost:4789",
+    DEVSPACE_EXECUTOR_TIMEOUT_MS: "30000",
+  }).executor,
+  {
+    enabled: true,
+    command: "/opt/homebrew/bin/executor",
+    baseUrl: "http://localhost:4789",
+    timeoutMs: 30000,
+  },
 );
 assert.equal(resolveSubagentsFlag({}, {}), undefined);
 assert.equal(resolveSubagentsFlag({ subagents: true }, {}), true);
@@ -137,6 +158,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "0" }),
   /Invalid DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: 0/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_EXECUTOR_TIMEOUT_MS: "0" }),
+  /Invalid DEVSPACE_EXECUTOR_TIMEOUT_MS: 0/,
 );
 
 assert.equal(loadConfig(baseEnv).publicBaseUrl, "http://127.0.0.1:7676");
