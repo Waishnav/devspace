@@ -52,7 +52,7 @@ Use lowercase kebab-case names. If omitted, DevSpace uses the filename without
 
 ### `description`
 
-Required short purpose. This is exposed by `open_workspace` so the supervising
+Required short purpose. This is exposed by `open_thread` so the supervising
 model can choose the right profile.
 
 ### `provider`
@@ -118,7 +118,7 @@ disabled: true
 ## Markdown body
 
 The body is the profile prompt prefix DevSpace prepends when launching that
-profile. It is not included in `open_workspace` by default.
+profile. It is not included in `open_thread` by default.
 
 Recommended body content:
 
@@ -137,7 +137,7 @@ devspace agents run <profile-or-id> "<prompt>"
 devspace agents show <id>
 ```
 
-`open_workspace` exposes compact profile metadata:
+`open_thread` exposes compact profile metadata:
 
 ```json
 {

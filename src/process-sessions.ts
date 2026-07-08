@@ -421,7 +421,7 @@ export class ProcessSessionManager {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Unknown process session: ${sessionId}`);
     if (session.workspaceId !== workspaceId) {
-      throw new Error(`Process session ${sessionId} does not belong to workspace ${workspaceId}.`);
+      throw new Error(`Process session ${sessionId} does not belong to thread ${workspaceId}.`);
     }
     return session;
   }

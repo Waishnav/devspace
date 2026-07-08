@@ -41,6 +41,12 @@ import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import {
+  OPEN_THREAD_SHORT_DISCLAIMER,
+  OPEN_THREAD_TOOL,
+  THREAD_ID_DESCRIBE,
+  THREAD_ID_PARAM,
+} from "./mcp-thread-scope.js";
 import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
 import {
   formatLocalAgentProviderAvailabilitySummary,
@@ -147,7 +153,7 @@ function toolWidgetDescriptorMeta(
 }
 
 const toolNames = {
-  openWorkspace: "open_workspace",
+  openThread: OPEN_THREAD_TOOL,
   read: "read",
   write: "write",
   edit: "edit",
@@ -159,7 +165,7 @@ const toolNames = {
 
 interface ToolLogFields {
   tool: string;
-  workspaceId?: string;
+  thread_id?: string;
   path?: string;
   workingDirectory?: string;
   command?: string;
@@ -172,11 +178,14 @@ interface ToolLogFields {
 function serverInstructions(config: ServerConfig): string {
   const showChangesInstruction =
     config.widgets === "changes"
-      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
+      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that thread after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
       : "";
 
+  const reopen =
+    `do not call ${toolNames.openThread} again unless switching folders/worktrees, changing checkout/worktree mode, the ${THREAD_ID_PARAM} is rejected as unknown, or the user explicitly asks to reopen`;
+
   if (config.toolMode === "codex") {
-    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${showChangesInstruction}`;
+    return `Use DevSpace on the user's machine. Call ${toolNames.openThread} once per project folder or worktree and reuse its ${THREAD_ID_PARAM}. ${OPEN_THREAD_SHORT_DISCLAIMER} Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes (sessionId is only for a running exec_command process, not the project scope). Follow instructions returned by ${toolNames.openThread}; read applicable instruction and skill files before working in their scope.${showChangesInstruction}`;
   }
 
   const inspection = config.toolMode !== "full"
@@ -184,12 +193,12 @@ function serverInstructions(config: ServerConfig): string {
     : `Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. `;
 
   const skills = config.skillsEnabled
-    ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
+    ? `When ${toolNames.openThread} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the project root, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
 
-  const agentsMd = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
+  const agentsMd = `Follow instructions returned by ${toolNames.openThread}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
 
-  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
+  return `Use DevSpace on the user's machine. Call ${toolNames.openThread} once per project folder or worktree to obtain a ${THREAD_ID_PARAM}. ${OPEN_THREAD_SHORT_DISCLAIMER} Reuse that same ${THREAD_ID_PARAM} for all later file, search, edit, write, show-changes, and shell tools in that folder; ${reopen}. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
 }
 
 function formatVisibleAgent(agent: {
@@ -512,7 +521,7 @@ function processToolResponse(
     _meta: {
       tool,
       card: {
-        workspaceId,
+        thread_id: workspaceId,
         summary: { ...summary, ...outputSummary },
         payload: { content },
       },
@@ -541,9 +550,9 @@ function registerCodexProcessTools(
     {
       title: "Execute command",
       description:
-        "Run a command inside an open workspace. Returns its result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes. Call open_workspace first and pass workspaceId.",
+        "Run a command inside an open DevSpace thread. Returns its result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes. Call open_thread first and pass thread_id.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+        thread_id: z.string().describe(THREAD_ID_DESCRIBE),
         cmd: z.string().min(1).describe("Shell command to execute."),
         tty: z
           .boolean()
@@ -554,7 +563,7 @@ function registerCodexProcessTools(
         workingDirectory: z
           .string()
           .optional()
-          .describe("Working directory relative to the workspace root. Defaults to the workspace root."),
+          .describe("Working directory relative to the project root. Defaults to the project root."),
         yieldTimeMs: z
           .number()
           .int()
@@ -574,12 +583,12 @@ function registerCodexProcessTools(
       ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, cmd, tty, columns, rows, workingDirectory, yieldTimeMs, maxOutputTokens }) => {
+    async ({ thread_id, cmd, tty, columns, rows, workingDirectory, yieldTimeMs, maxOutputTokens }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = workspaces.getWorkspace(thread_id);
       const cwd = workspaces.resolveWorkingDirectory(workspace, workingDirectory);
       const snapshot = await processSessions.start({
-        workspaceId,
+        workspaceId: thread_id,
         command: cmd,
         cwd,
         workspaceRoot: workspace.root,
@@ -592,7 +601,7 @@ function registerCodexProcessTools(
 
       logToolCall(config, {
         tool: "exec_command",
-        workspaceId,
+        thread_id: thread_id,
         workingDirectory: workingDirectory ?? ".",
         command: cmd,
         commandLength: cmd.length,
@@ -600,7 +609,7 @@ function registerCodexProcessTools(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return processToolResponse("exec_command", workspaceId, snapshot, {
+      return processToolResponse("exec_command", thread_id, snapshot, {
         command: cmd,
         workingDirectory: workingDirectory ?? ".",
         running: snapshot.running,
@@ -618,7 +627,7 @@ function registerCodexProcessTools(
       description:
         "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace identifier used to start the process."),
+        thread_id: z.string().describe("DevSpace thread_id from open_thread (project scope for this process)."),
         sessionId: z.number().describe("Process session identifier returned by exec_command."),
         chars: z.string().optional().describe("Characters to write. Omit or pass an empty string to poll."),
         columns: z.number().int().min(1).max(1_000).optional().describe("Resize a PTY to this width."),
@@ -642,11 +651,11 @@ function registerCodexProcessTools(
       ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, sessionId, chars, columns, rows, yieldTimeMs, maxOutputTokens }) => {
+    async ({ thread_id, sessionId, chars, columns, rows, yieldTimeMs, maxOutputTokens }) => {
       const startedAt = performance.now();
-      workspaces.getWorkspace(workspaceId);
+      workspaces.getWorkspace(thread_id);
       const snapshot = await processSessions.write({
-        workspaceId,
+        workspaceId: thread_id,
         sessionId,
         chars,
         columns,
@@ -657,12 +666,12 @@ function registerCodexProcessTools(
 
       logToolCall(config, {
         tool: "write_stdin",
-        workspaceId,
+        thread_id: thread_id,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return processToolResponse("write_stdin", workspaceId, snapshot, {
+      return processToolResponse("write_stdin", thread_id, snapshot, {
         sessionId,
         charactersWritten: chars?.length ?? 0,
         running: snapshot.running,
@@ -726,11 +735,11 @@ function createMcpServer(
 
   registerAppTool(
     server,
-    "open_workspace",
+    "open_thread",
     {
-      title: "Open workspace",
+      title: "Open local project thread (DevSpace)",
       description:
-        "Open a local project directory as a coding workspace. Call this once per project folder or worktree before reading, editing, searching, writing, showing changes, or running commands. Reuse the returned workspaceId for later calls in the same folder; do not call open_workspace again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. By default this opens the actual checkout; set mode=\"worktree\" when the user asks for an isolated or parallel coding session. Returns a workspaceId, loaded root project instructions, and nested instruction file paths the model should read before working in those directories.",
+        `Open a local project directory as a DevSpace coding thread on the user's machine. ${OPEN_THREAD_SHORT_DISCLAIMER} Call this once per project folder or worktree before reading, editing, searching, writing, showing changes, or running commands. Reuse the returned ${THREAD_ID_PARAM} for later calls in the same folder; do not call ${OPEN_THREAD_TOOL} again unless switching folders/worktrees, changing checkout/worktree mode, the ${THREAD_ID_PARAM} is rejected as unknown, or the user explicitly asks to reopen. By default this opens the actual checkout; set mode="worktree" when the user asks for an isolated or parallel coding session. Returns ${THREAD_ID_PARAM}, loaded root project instructions, and nested instruction file paths the model should read before working in those directories.`,
       inputSchema: {
         path: z
           .string()
@@ -749,7 +758,7 @@ function createMcpServer(
           .describe("Git ref to base a worktree on. Only used with mode=\"worktree\". Defaults to HEAD."),
       },
       outputSchema: {
-        workspaceId: z.string(),
+        thread_id: z.string(),
         root: z.string(),
         mode: z.enum(["checkout", "worktree"]),
         sourceRoot: z.string().optional(),
@@ -808,13 +817,13 @@ function createMcpServer(
         path: formatAgentsPath(file.path, workspace.root),
       }));
       const instruction = config.skillsEnabled
-        ? "Use this workspaceId in all subsequent tool calls for this project. Do not call open_workspace again for this same folder unless this workspaceId stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId in all subsequent tool calls for this project. Do not call open_workspace again for this same folder unless this workspaceId stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this thread_id in all subsequent tool calls for this project. Do not call open_thread again for this same folder unless this thread_id stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
+        : "Use this thread_id in all subsequent tool calls for this project. Do not call open_thread again for this same folder unless this thread_id stops working, the user asks to reopen, or you switch to a different folder/worktree. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
           text: [
-            `Opened workspace ${workspace.id}`,
+            `Opened thread ${workspace.id}`,
             `Root: ${workspace.root}`,
             `Mode: ${workspace.mode}`,
             loadedAgentsFiles.length > 0
@@ -840,8 +849,8 @@ function createMcpServer(
         },
       ];
       logToolCall(config, {
-        tool: "open_workspace",
-        workspaceId: workspace.id,
+        tool: "open_thread",
+        thread_id: workspace.id,
         path: workspace.root,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
@@ -850,9 +859,9 @@ function createMcpServer(
       return {
         content: resultContent,
         _meta: {
-          tool: "open_workspace",
+          tool: "open_thread",
           card: {
-            workspaceId: workspace.id,
+            thread_id: workspace.id,
             root: workspace.root,
             path: workspace.root,
             summary: {
@@ -866,7 +875,7 @@ function createMcpServer(
           },
         },
         structuredContent: {
-          workspaceId: workspace.id,
+          thread_id: workspace.id,
           root: workspace.root,
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
@@ -890,8 +899,8 @@ function createMcpServer(
       title: "Read file",
       description:
         [
-          "Read a file inside an open workspace. Use this for file inspection instead of shell commands like cat or sed. Call open_workspace first and pass workspaceId.",
-          "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_workspace before working in nested directories.",
+          "Read a file inside an open DevSpace thread. Use this for file inspection instead of shell commands like cat or sed. Call open_thread first and pass thread_id.",
+          "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_thread before working in nested directories.",
           config.skillsEnabled
             ? "If available skills were returned and a task matches one, read that skill's path before proceeding. Skill paths may be outside the workspace; only advertised SKILL.md files and files under already-loaded skill directories are readable."
             : "",
@@ -899,15 +908,15 @@ function createMcpServer(
           .filter(Boolean)
           .join(" "),
       inputSchema: {
-        workspaceId: z
+        thread_id: z
           .string()
-          .describe("Workspace identifier returned by open_workspace."),
+          .describe(THREAD_ID_DESCRIBE),
         path: z
           .string()
           .describe(
             config.skillsEnabled
-              ? "File path to read, relative to the workspace root. May also be an advertised skill path from open_workspace skills."
-              : "File path to read, relative to the workspace root.",
+              ? "File path to read, relative to the project root. May also be an advertised skill path from open_thread skills."
+              : "File path to read, relative to the project root.",
           ),
         offset: z
           .number()
@@ -926,9 +935,9 @@ function createMcpServer(
       ...toolWidgetDescriptorMeta(config, "read"),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ thread_id, ...input }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = workspaces.getWorkspace(thread_id);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
       const response = await readFileTool(
         { ...input, path: readPath.absolutePath },
@@ -942,7 +951,7 @@ function createMcpServer(
       if (response.isError) {
         logFailedToolResponse(config, {
           tool: toolNames.read,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
         }, response.content, startedAt);
         return response;
@@ -956,7 +965,7 @@ function createMcpServer(
       };
       logToolCall(config, {
         tool: toolNames.read,
-        workspaceId,
+        thread_id: thread_id,
         path: input.path,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
@@ -967,7 +976,7 @@ function createMcpServer(
         _meta: {
           tool: toolNames.read,
           card: {
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
             summary,
             payload: { content: response.content },
@@ -987,23 +996,23 @@ function createMcpServer(
     {
       title: "Write file",
       description:
-        `Create or completely overwrite a file inside an open workspace. Prefer ${toolNames.edit} for targeted changes to existing files. Call open_workspace first and pass workspaceId.`,
+        `Create or completely overwrite a file inside an open DevSpace thread. Prefer ${toolNames.edit} for targeted changes to existing files. Call open_thread first and pass thread_id.`,
       inputSchema: {
-        workspaceId: z
+        thread_id: z
           .string()
-          .describe("Workspace identifier returned by open_workspace."),
+          .describe(THREAD_ID_DESCRIBE),
         path: z
           .string()
-          .describe("File path to write, relative to the workspace root."),
+          .describe("File path to write, relative to the project root."),
         content: z.string().describe("Complete new file content."),
       },
       outputSchema: resultOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "write"),
       annotations: WRITE_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ thread_id, ...input }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = workspaces.getWorkspace(thread_id);
       workspaces.resolvePath(workspace, input.path);
       const response = await writeFileTool(input, {
         cwd: workspace.root,
@@ -1013,7 +1022,7 @@ function createMcpServer(
       if (response.isError) {
         logFailedToolResponse(config, {
           tool: toolNames.write,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
         }, response.content, startedAt);
         return response;
@@ -1028,7 +1037,7 @@ function createMcpServer(
       };
       logToolCall(config, {
         tool: toolNames.write,
-        workspaceId,
+        thread_id: thread_id,
         path: input.path,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
@@ -1039,7 +1048,7 @@ function createMcpServer(
         _meta: {
           tool: toolNames.write,
           card: {
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
             summary,
             payload: {
@@ -1061,14 +1070,14 @@ function createMcpServer(
     {
       title: "Edit file",
       description:
-        `Edit one file inside an open workspace by replacing exact text blocks. Prefer this over ${toolNames.write} for targeted changes. Each oldText must match a unique, non-overlapping region of the original file; merge nearby changes into one edit and keep oldText as small as possible while still unique. Call open_workspace first and pass workspaceId.`,
+        `Edit one file inside an open DevSpace thread by replacing exact text blocks. Prefer this over ${toolNames.write} for targeted changes. Each oldText must match a unique, non-overlapping region of the original file; merge nearby changes into one edit and keep oldText as small as possible while still unique. Call open_thread first and pass thread_id.`,
       inputSchema: {
-        workspaceId: z
+        thread_id: z
           .string()
-          .describe("Workspace identifier returned by open_workspace."),
+          .describe(THREAD_ID_DESCRIBE),
         path: z
           .string()
-          .describe("File path to edit, relative to the workspace root."),
+          .describe("File path to edit, relative to the project root."),
         edits: z
           .array(
             z.object({
@@ -1088,9 +1097,9 @@ function createMcpServer(
       ...toolWidgetDescriptorMeta(config, "edit"),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ thread_id, ...input }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = workspaces.getWorkspace(thread_id);
       workspaces.resolvePath(workspace, input.path);
       const response = await editFileTool(input, {
         cwd: workspace.root,
@@ -1100,7 +1109,7 @@ function createMcpServer(
       if (response.isError) {
         logFailedToolResponse(config, {
           tool: toolNames.edit,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
         }, response.content, startedAt);
         return response;
@@ -1117,7 +1126,7 @@ function createMcpServer(
       const editContent = [textBlock(editResultText)];
       logToolCall(config, {
         tool: toolNames.edit,
-        workspaceId,
+        thread_id: thread_id,
         path: input.path,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
@@ -1128,7 +1137,7 @@ function createMcpServer(
         _meta: {
           tool: toolNames.edit,
           card: {
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
             summary,
             payload: {
@@ -1153,11 +1162,11 @@ function createMcpServer(
       {
         title: "Apply patch",
         description:
-          "Apply one Codex-style patch inside an open workspace. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the workspace. Call open_workspace first and pass workspaceId.",
+          "Apply one Codex-style patch inside an open DevSpace thread. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the project root. Call open_thread first and pass thread_id.",
         inputSchema: {
-          workspaceId: z
+          thread_id: z
             .string()
-            .describe("Workspace identifier returned by open_workspace."),
+            .describe(THREAD_ID_DESCRIBE),
           patch: z
             .string()
             .describe("Patch text enclosed by *** Begin Patch and *** End Patch markers."),
@@ -1176,9 +1185,9 @@ function createMcpServer(
         ...toolWidgetDescriptorMeta(config, "edit"),
         annotations: EDIT_TOOL_ANNOTATIONS,
       },
-      async ({ workspaceId, patch }) => {
+      async ({ thread_id, patch }) => {
         const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
+        const workspace = workspaces.getWorkspace(thread_id);
         const applied = await applyPatch(workspace.root, patch);
         const paths = applied.files.map((file) => file.path).join(", ");
         const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
@@ -1189,7 +1198,7 @@ function createMcpServer(
 
         logToolCall(config, {
           tool: "apply_patch",
-          workspaceId,
+          thread_id: thread_id,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
         });
@@ -1199,7 +1208,7 @@ function createMcpServer(
           _meta: {
             tool: "apply_patch",
             card: {
-              workspaceId,
+            thread_id: thread_id,
               path: displayPath,
               summary: {
                 files: applied.files.length,
@@ -1229,19 +1238,19 @@ function createMcpServer(
         description:
           "Show aggregate file changes for an open workspace. If the current turn successfully modified files, call this exactly once after the final related file change and before your final response so the user can inspect the combined diff for the turn. Do not call it after every individual file change, and do not skip it because prior file-change tools already displayed per-tool diffs.",
         inputSchema: {
-          workspaceId: z
+          thread_id: z
             .string()
-            .describe("Workspace identifier returned by open_workspace."),
+            .describe(THREAD_ID_DESCRIBE),
         },
         outputSchema: resultOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "show_changes"),
         annotations: { readOnlyHint: true },
       },
-      async ({ workspaceId }) => {
+      async ({ thread_id }) => {
         const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
+        const workspace = workspaces.getWorkspace(thread_id);
         const review = await reviewCheckpoints.reviewChanges({
-          workspaceId,
+          workspaceId: thread_id,
           root: workspace.root,
           since: "last_shown",
           markReviewed: true,
@@ -1250,7 +1259,7 @@ function createMcpServer(
         const content = [textBlock(review.result)];
         logToolCall(config, {
           tool: "show_changes",
-          workspaceId,
+          thread_id: thread_id,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
         });
@@ -1260,7 +1269,7 @@ function createMcpServer(
           _meta: {
             tool: "show_changes",
             card: {
-              workspaceId,
+            thread_id: thread_id,
               summary: review.summary,
               files: review.files,
               payload: {
@@ -1283,17 +1292,17 @@ function createMcpServer(
       {
         title: "Grep",
         description:
-          "Search file contents inside an open workspace. Use this before broad reads when looking for symbols, text, or usage sites. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
+          "Search file contents inside an open DevSpace thread. Use this before broad reads when looking for symbols, text, or usage sites. Respects project ignore rules. Call open_thread first and pass thread_id.",
         inputSchema: {
-          workspaceId: z
+          thread_id: z
             .string()
-            .describe("Workspace identifier returned by open_workspace."),
+            .describe(THREAD_ID_DESCRIBE),
           pattern: z.string().describe("Search pattern."),
           path: z
             .string()
             .optional()
             .describe(
-              "Optional path or glob scope relative to the workspace root.",
+              "Optional path or glob scope relative to the project root.",
             ),
           include: z.string().optional().describe("Optional include glob."),
         },
@@ -1301,9 +1310,9 @@ function createMcpServer(
         ...toolWidgetDescriptorMeta(config, "search"),
         annotations: { readOnlyHint: true },
       },
-      async ({ workspaceId, ...input }) => {
+      async ({ thread_id, ...input }) => {
         const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
+        const workspace = workspaces.getWorkspace(thread_id);
         if (input.path) workspaces.resolvePath(workspace, input.path);
         const response = await grepFilesTool(input, {
           cwd: workspace.root,
@@ -1313,7 +1322,7 @@ function createMcpServer(
         if (response.isError) {
           logFailedToolResponse(config, {
             tool: toolNames.grep,
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
           }, response.content, startedAt);
           return response;
@@ -1326,7 +1335,7 @@ function createMcpServer(
         };
         logToolCall(config, {
           tool: toolNames.grep,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
@@ -1337,7 +1346,7 @@ function createMcpServer(
           _meta: {
             tool: toolNames.grep,
             card: {
-              workspaceId,
+            thread_id: thread_id,
               path: input.path,
               summary,
               payload: { content: response.content },
@@ -1356,24 +1365,24 @@ function createMcpServer(
       {
         title: "Glob",
         description:
-          "Find files by glob pattern inside an open workspace. Use this to discover filenames or narrow file sets before reading. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
+          "Find files by glob pattern inside an open DevSpace thread. Use this to discover filenames or narrow file sets before reading. Respects project ignore rules. Call open_thread first and pass thread_id.",
         inputSchema: {
-          workspaceId: z
+          thread_id: z
             .string()
-            .describe("Workspace identifier returned by open_workspace."),
+            .describe(THREAD_ID_DESCRIBE),
           pattern: z.string().describe("File glob pattern."),
           path: z
             .string()
             .optional()
-            .describe("Optional path scope relative to the workspace root."),
+            .describe("Optional path scope relative to the project root."),
         },
         outputSchema: resultOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "search"),
         annotations: { readOnlyHint: true },
       },
-      async ({ workspaceId, ...input }) => {
+      async ({ thread_id, ...input }) => {
         const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
+        const workspace = workspaces.getWorkspace(thread_id);
         if (input.path) workspaces.resolvePath(workspace, input.path);
         const response = await findFilesTool(input, {
           cwd: workspace.root,
@@ -1383,7 +1392,7 @@ function createMcpServer(
         if (response.isError) {
           logFailedToolResponse(config, {
             tool: toolNames.glob,
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
           }, response.content, startedAt);
           return response;
@@ -1396,7 +1405,7 @@ function createMcpServer(
         };
         logToolCall(config, {
           tool: toolNames.glob,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
@@ -1407,7 +1416,7 @@ function createMcpServer(
           _meta: {
             tool: toolNames.glob,
             card: {
-              workspaceId,
+            thread_id: thread_id,
               path: input.path,
               summary,
               payload: { content: response.content },
@@ -1426,24 +1435,24 @@ function createMcpServer(
       {
         title: "Ls",
         description:
-          "List a directory inside an open workspace. Use this for directory inspection before reading files. Call open_workspace first and pass workspaceId.",
+          "List a directory inside an open DevSpace thread. Use this for directory inspection before reading files. Call open_thread first and pass thread_id.",
         inputSchema: {
-          workspaceId: z
+          thread_id: z
             .string()
-            .describe("Workspace identifier returned by open_workspace."),
+            .describe(THREAD_ID_DESCRIBE),
           path: z
             .string()
             .describe(
-              "Directory path to list, relative to the workspace root.",
+              "Directory path to list, relative to the project root.",
             ),
         },
         outputSchema: resultOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "directory"),
         annotations: { readOnlyHint: true },
       },
-      async ({ workspaceId, ...input }) => {
+      async ({ thread_id, ...input }) => {
         const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
+        const workspace = workspaces.getWorkspace(thread_id);
         workspaces.resolvePath(workspace, input.path);
         const response = await listDirectoryTool(input, {
           cwd: workspace.root,
@@ -1453,7 +1462,7 @@ function createMcpServer(
         if (response.isError) {
           logFailedToolResponse(config, {
             tool: toolNames.ls,
-            workspaceId,
+            thread_id: thread_id,
             path: input.path,
           }, response.content, startedAt);
           return response;
@@ -1462,7 +1471,7 @@ function createMcpServer(
         const summary = textSummary(response.content);
         logToolCall(config, {
           tool: toolNames.ls,
-          workspaceId,
+          thread_id: thread_id,
           path: input.path,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
@@ -1473,7 +1482,7 @@ function createMcpServer(
           _meta: {
             tool: toolNames.ls,
             card: {
-              workspaceId,
+            thread_id: thread_id,
               path: input.path,
               summary,
               payload: { content: response.content },
@@ -1494,12 +1503,12 @@ function createMcpServer(
     {
       title: "Bash",
       description: config.toolMode !== "full"
-        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
-        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
+        ? `Run a shell command inside an open DevSpace thread. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_thread first and pass thread_id. This is powerful local execution and should only be exposed behind strong authentication.`
+        : `Run a shell command inside an open DevSpace thread. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_thread first and pass thread_id. This is powerful local execution and should only be exposed behind strong authentication.`,
       inputSchema: {
-        workspaceId: z
+        thread_id: z
           .string()
-          .describe("Workspace identifier returned by open_workspace."),
+          .describe(THREAD_ID_DESCRIBE),
         command: z
           .string()
           .describe(
@@ -1509,7 +1518,7 @@ function createMcpServer(
           .string()
           .optional()
           .describe(
-            "Optional working directory relative to the workspace root. Defaults to the workspace root.",
+            "Optional working directory relative to the project root. Defaults to the project root.",
           ),
         timeout: z
           .number()
@@ -1522,9 +1531,9 @@ function createMcpServer(
       ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, workingDirectory, ...input }) => {
+    async ({ thread_id, workingDirectory, ...input }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = workspaces.getWorkspace(thread_id);
       const cwd = workspaces.resolveWorkingDirectory(
         workspace,
         workingDirectory,
@@ -1537,7 +1546,7 @@ function createMcpServer(
       if (response.isError) {
         logFailedToolResponse(config, {
           tool: toolNames.shell,
-          workspaceId,
+          thread_id: thread_id,
           workingDirectory: workingDirectory ?? ".",
           command: input.command,
           commandLength: input.command.length,
@@ -1552,7 +1561,7 @@ function createMcpServer(
       };
       logToolCall(config, {
         tool: toolNames.shell,
-        workspaceId,
+        thread_id: thread_id,
         workingDirectory: workingDirectory ?? ".",
         command: input.command,
         commandLength: input.command.length,
@@ -1565,7 +1574,7 @@ function createMcpServer(
         _meta: {
           tool: toolNames.shell,
           card: {
-            workspaceId,
+            thread_id: thread_id,
             path: workingDirectory,
             summary,
             payload: { content: response.content },

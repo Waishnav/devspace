@@ -1,7 +1,7 @@
 import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName =
-  | "open_workspace"
+  | "open_thread"
   | "show_changes"
   | "apply_patch"
   | "exec_command"
@@ -20,7 +20,7 @@ export type PatchOperation = "add" | "update" | "delete" | "move";
 
 export interface ToolResultCard {
   tool: ToolName;
-  workspaceId?: string;
+  thread_id?: string;
   path?: string;
   root?: string;
   status?: string;
@@ -65,7 +65,7 @@ export interface ToolPayload {
 
 export function isToolName(value: unknown): value is ToolName {
   return (
-    value === "open_workspace" ||
+    value === "open_thread" ||
     value === "show_changes" ||
     value === "apply_patch" ||
     value === "exec_command" ||
@@ -133,7 +133,7 @@ export function summaryNumber(
 }
 
 export function isExpandableCard(card: ToolResultCard): boolean {
-  if (card.tool === "open_workspace") {
+  if (card.tool === "open_thread") {
     return (
       Number(card.summary?.agentsFiles ?? 0) > 0 ||
       Number(card.summary?.skills ?? 0) > 0 ||

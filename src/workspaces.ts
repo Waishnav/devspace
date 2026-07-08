@@ -101,7 +101,7 @@ export class WorkspaceRegistry {
 
     const session = this.store?.getSession(workspaceId);
     if (!session) {
-      throw new Error(`Unknown workspaceId: ${workspaceId}. Call open_workspace first.`);
+      throw new Error(`Unknown thread_id: ${workspaceId}. Call open_thread first.`);
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
