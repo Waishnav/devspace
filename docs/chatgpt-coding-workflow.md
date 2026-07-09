@@ -103,6 +103,12 @@ before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
+Example skills are packaged under `examples/skills/`. The
+`examples/skills/executor-local-mcp` skill is a template for using a user's
+existing Executor setup from DevSpace shell tools. Copy it into
+`~/.devspace/skills` or another active skill directory when ChatGPT should
+discover and call local Executor MCP/API integrations.
+
 When `open_workspace` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
 
@@ -127,17 +133,6 @@ DevSpace exposes these tool names:
 - `write`
 - `edit`
 - `bash`
-
-When `DEVSPACE_EXECUTOR=1`, DevSpace also exposes:
-
-- `executor_sources`
-- `executor_search_tools`
-- `executor_call_tool`
-
-Use the Executor bridge only for integrations outside the workspace tool model.
-For example, search Executor for Zotero, Obsidian, mail, or other configured MCP
-tools, then call the returned path with JSON arguments. Continue using DevSpace
-tools for local code edits, file reads, and shell commands.
 
 By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
 `grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools

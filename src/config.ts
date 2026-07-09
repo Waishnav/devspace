@@ -27,12 +27,6 @@ export interface ServerConfig {
   devspaceAgentsDir: string;
   subagents: boolean;
   agentDir: string;
-  executor: {
-    enabled: boolean;
-    command: string;
-    baseUrl?: string;
-    timeoutMs: number;
-  };
   logging: LoggingConfig;
 }
 
@@ -241,12 +235,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
         ? files.config.subagents === true
         : parseBoolean(env.DEVSPACE_SUBAGENTS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
-    executor: {
-      enabled: parseBoolean(env.DEVSPACE_EXECUTOR),
-      command: env.DEVSPACE_EXECUTOR_COMMAND?.trim() || "executor",
-      baseUrl: env.DEVSPACE_EXECUTOR_BASE_URL?.trim() || undefined,
-      timeoutMs: parsePositiveInteger(env.DEVSPACE_EXECUTOR_TIMEOUT_MS, 120_000, "DEVSPACE_EXECUTOR_TIMEOUT_MS"),
-    },
     logging: parseLoggingConfig(env),
   };
 }
