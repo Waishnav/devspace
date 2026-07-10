@@ -15,12 +15,15 @@ GPT-5.6-only patch. No assumption is made about undocumented OpenAI internals.
   excerpts and lazy full-file reads.
 - Keeps advertised instruction files readable without widening the workspace
   filesystem allowlist.
-- Adds optional text-volume metrics so maintainers can measure response size and
-  identify avoidable context expansion.
+- Adds execution-cost diagnostics for response volume, duration, Tool calls,
+  errors, and retries while keeping token values explicitly approximate.
 - Adds opt-in compound inspection tools for common, bounded read-only workflows.
 - Adds safer support for explicitly pre-approved shell command aliases.
 - Improves built-in agent profile, skill matching, design-audit, and MCP App
   integration paths while keeping the features opt-in.
+- Adds safe standard PATH discovery without sourcing login-shell configuration.
+- Integrates runtime diagnosis, compatibility smoke checks, cost snapshots, and
+  workspace-scoped Finder actions into the existing Tool surface.
 - Includes tests for the compatibility behavior and feature flags.
 
 ## Scope and privacy
@@ -73,6 +76,9 @@ The patch set is split by responsibility:
 1. `0001-compact-workspace-and-usage.patch`
 2. `0002-safe-tools-and-compound-inspection.patch`
 3. `0003-agents-skills-app-integration.patch`
+4. `0004-runtime-diagnostics-and-costs.patch`
+5. `0005-existing-tool-runtime-integration.patch`
+6. `0006-finder-app-action.patch`
 
 The same changes are also present directly in the pull-request branch, so the
 maintainer can review normal source diffs without running the updater.

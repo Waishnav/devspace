@@ -10,14 +10,14 @@ const existing = ["/usr/bin", "/bin"].join(delimiter);
 const existingDirs = new Set([
   "/opt/homebrew/bin",
   "/usr/local/bin",
-  "/Users/test/.local/bin",
+  "/test-home/.local/bin",
   "/usr/bin",
   "/bin",
 ]);
 const info = shellPathInfo(
   { PATH: existing },
   "darwin",
-  "/Users/test",
+  "/test-home",
   (path) => existingDirs.has(path),
 );
 assert.deepEqual(info.entries, [
@@ -25,12 +25,12 @@ assert.deepEqual(info.entries, [
   "/bin",
   "/opt/homebrew/bin",
   "/usr/local/bin",
-  "/Users/test/.local/bin",
+  "/test-home/.local/bin",
 ]);
 assert.deepEqual(info.addedEntries, [
   "/opt/homebrew/bin",
   "/usr/local/bin",
-  "/Users/test/.local/bin",
+  "/test-home/.local/bin",
 ]);
 assert.match(commandWithAugmentedPath("gh auth status", { PATH: existing }, "darwin"), /^export PATH='/);
 assert.equal(commandWithAugmentedPath("dir", { PATH: existing }, "win32"), "dir");

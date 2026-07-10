@@ -1,6 +1,6 @@
 {
   "name": "devspace-openai-model-compatibility",
-  "bundleVersion": "2026.07.1",
+  "bundleVersion": "2026.07.2",
   "status": "community-proposal",
   "target": {
     "package": "@waishnav/devspace",
@@ -22,6 +22,21 @@
       "order": 3,
       "path": "patches/0003-agents-skills-app-integration.patch",
       "scope": "Agent profiles, skills, design audit, configuration docs, and MCP App integration"
+    },
+    {
+      "order": 4,
+      "path": "patches/0004-runtime-diagnostics-and-costs.patch",
+      "scope": "Safe PATH discovery, runtime diagnostics, compatibility smoke checks, and execution-cost aggregation"
+    },
+    {
+      "order": 5,
+      "path": "patches/0005-existing-tool-runtime-integration.patch",
+      "scope": "Runtime commands integrated into the existing Bash Tool plus app-only Finder registration"
+    },
+    {
+      "order": 6,
+      "path": "patches/0006-finder-app-action.patch",
+      "scope": "Workspace-scoped Open in Finder action for MCP App result cards"
     }
   ],
   "defaults": {

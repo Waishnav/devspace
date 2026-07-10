@@ -37,6 +37,21 @@ The public branch must pass:
 - Arbitrary normal shell commands continue through the existing shell path and
   are not rewritten as approved aliases.
 
+### Runtime reliability
+
+- Standard executable locations are added only when present.
+- Login-shell startup files are not sourced.
+- `devspace-runtime diagnose` reports executable availability without returning
+  credentials or authentication values.
+- `devspace-runtime smoke` completes bounded workspace, file, PATH, Git, and MCP
+  App checks.
+- `devspace-runtime costs` reflects observed calls, duration, errors, retries,
+  character volume, and approximate text tokens for the active server process.
+- Finder paths inside the workspace are accepted on macOS; paths outside the
+  workspace are rejected by the root guard.
+- The Finder server action is app-only and does not increase the model-facing
+  Tool catalog.
+
 ### Optional capabilities
 
 - Skill matcher disabled by default.

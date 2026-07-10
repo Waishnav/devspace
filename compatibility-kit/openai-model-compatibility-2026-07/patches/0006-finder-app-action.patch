@@ -1,0 +1,141 @@
+diff --git a/src/ui/workspace-app.css b/src/ui/workspace-app.css
+index 28ba6bf5450997dedd96e5aee29ec1b5863a8ab4..fa8ecce3b2dfc4f2df9548aca7e8a308a512d430 100644
+--- a/src/ui/workspace-app.css
++++ b/src/ui/workspace-app.css
+@@ -105,6 +105,59 @@ body {
+   white-space: nowrap;
+ }
+ 
++.path-action-row {
++  padding: 0 14px 10px 64px;
++}
++
++.path-link {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) auto;
++  align-items: center;
++  gap: 12px;
++  width: 100%;
++  min-height: 31px;
++  padding: 5px 8px 5px 10px;
++  border: 1px solid color-mix(in srgb, var(--color-border-primary, #3a3a40) 72%, transparent);
++  border-radius: 7px;
++  background: color-mix(in srgb, var(--color-background-primary, #17181c) 38%, transparent);
++  color: var(--color-text-secondary, #d6d6dc);
++  cursor: pointer;
++  text-align: left;
++}
++
++.path-link:hover:not(:disabled),
++.path-link:focus-visible {
++  border-color: color-mix(in srgb, var(--color-link, #78a9ff) 58%, var(--color-border-primary, #3a3a40));
++  color: var(--color-link, #78a9ff);
++  outline: none;
++}
++
++.path-link:disabled {
++  cursor: default;
++  opacity: 0.78;
++}
++
++.path-link-text {
++  overflow: hidden;
++  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
++  font-size: var(--font-text-xs-size, 12px);
++  text-decoration: underline;
++  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.path-link-action {
++  color: var(--color-text-tertiary, #a3a3aa);
++  font-size: var(--font-text-xs-size, 12px);
++  white-space: nowrap;
++}
++
++.path-link:hover:not(:disabled) .path-link-action,
++.path-link:focus-visible .path-link-action {
++  color: inherit;
++}
++
+ .stats {
+   display: inline-flex;
+   gap: 5px;
+diff --git a/src/ui/workspace-app.tsx b/src/ui/workspace-app.tsx
+index edbb620fec3ab20a81603d15e45075e33af41b4d..d558621e7a290a2d8cbf5ea903f70cb11a83e513 100644
+--- a/src/ui/workspace-app.tsx
++++ b/src/ui/workspace-app.tsx
+@@ -200,6 +200,8 @@ function render(): void {
+     renderChevron(expanded, expandable),
+   );
+   section.append(button);
++  const pathAction = renderPathAction(card);
++  if (pathAction) section.append(pathAction);
+ 
+   if (expanded) {
+     const body = element("div", { className: "tool-body" });
+@@ -212,6 +214,63 @@ function render(): void {
+   renderPayloadIfNeeded();
+ }
+ 
++function renderPathAction(card: ToolResultCard): HTMLElement | null {
++  const displayPath = card.path ?? card.root;
++  const toolPath = card.path ?? (card.root ? "." : undefined);
++  if (!app || !card.workspaceId || !displayPath || !toolPath) return null;
++
++  const row = element("div", { className: "path-action-row" });
++  const button = element("button", {
++    className: "path-link",
++    type: "button",
++    title: `Open in Finder: ${displayPath}`,
++  });
++  button.setAttribute("aria-label", `Open in Finder: ${displayPath}`);
++  const pathText = element("span", {
++    className: "path-link-text",
++    text: displayPath,
++  });
++  const actionText = element("span", {
++    className: "path-link-action",
++    text: "Open in Finder",
++  });
++  button.append(pathText, actionText);
++
++  button.addEventListener("click", async () => {
++    if (!app || button.disabled) return;
++    button.disabled = true;
++    actionText.textContent = "Opening…";
++    try {
++      const result = await app.callServerTool({
++        name: "open_in_finder",
++        arguments: {
++          workspaceId: card.workspaceId,
++          path: toolPath,
++        },
++      });
++      const structured = getStructuredContent<{ status?: string }>(result);
++      if (result.isError || structured?.status === "unsupported") {
++        actionText.textContent = structured?.status === "unsupported"
++          ? "macOS only"
++          : "Unable to open";
++        button.disabled = false;
++        return;
++      }
++      actionText.textContent = "Opened in Finder";
++      window.setTimeout(() => {
++        actionText.textContent = "Open in Finder";
++        button.disabled = false;
++      }, 1_800);
++    } catch (openError) {
++      actionText.textContent = openError instanceof Error ? "Unable to open" : "Error";
++      button.disabled = false;
++    }
++  });
++
++  row.append(button);
++  return row;
++}
++
+ function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
+   const main = element("main", { className: "shell" });
+   main.append(element("section", { className: `empty ${tone}`, text: message }));
