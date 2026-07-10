@@ -1,0 +1,1434 @@
+diff --git a/src/pi-tools.ts b/src/pi-tools.ts
+index 238b9c5..dd72dd7 100644
+--- a/src/pi-tools.ts
++++ b/src/pi-tools.ts
+@@ -1,3 +1,6 @@
++import { readFile } from "node:fs/promises";
++import { homedir } from "node:os";
++import { join, resolve } from "node:path";
+ import {
+   createBashTool,
+   createEditTool,
+@@ -16,7 +19,7 @@ import {
+   type WriteToolInput,
+   type AgentToolResult,
+ } from "@earendil-works/pi-coding-agent";
+-import { resolveAllowedPath } from "./roots.js";
++import { expandHomePath, resolveAllowedPath } from "./roots.js";
+ 
+ type McpContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+ export type ToolResponse<TDetails = unknown> = {
+@@ -50,6 +53,84 @@ function formatToolError(error: unknown): McpContent[] {
+   return [{ type: "text", text: message }];
+ }
+ 
++interface ApprovedShellCommand {
++  alias: string;
++  enabled?: boolean;
++  workspaceRoot: string;
++  workingDirectory?: string;
++  command: string;
++}
++
++const approvedCommandPrefix = "devspace-approved ";
++function approvedCommandsPath(): string {
++  return resolve(expandHomePath(
++    process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE
++      ?? join(homedir(), ".devspace", "approved-shell-commands.json"),
++  ));
++}
++
++async function loadApprovedShellCommands(): Promise<ApprovedShellCommand[]> {
++  try {
++    const raw = await readFile(approvedCommandsPath(), "utf8");
++    const parsed = JSON.parse(raw) as { commands?: ApprovedShellCommand[] };
++    return Array.isArray(parsed.commands) ? parsed.commands : [];
++  } catch {
++    return [];
++  }
++}
++
++async function resolveApprovedShellAlias(
++  input: BashToolInput,
++  context: ToolContext,
++): Promise<{ input: BashToolInput; cwd: string }> {
++  const rawCommand = String(input.command ?? "").trim();
++  if (!rawCommand.startsWith(approvedCommandPrefix)) {
++    return { input, cwd: context.cwd };
++  }
++
++  const alias = rawCommand.slice(approvedCommandPrefix.length).trim();
++  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(alias)) {
++    throw new Error("Invalid approved shell command alias.");
++  }
++
++  const commands = await loadApprovedShellCommands();
++  const command = commands.find(
++    (entry) => entry?.enabled !== false && entry?.alias === alias,
++  );
++  if (!command) {
++    throw new Error(`Approved shell command alias is not configured: ${alias}`);
++  }
++
++  const configuredRoot = String(command.workspaceRoot ?? "").trim();
++  if (!configuredRoot) {
++    throw new Error(`Approved shell command has no workspace root: ${alias}`);
++  }
++
++  const expectedRoot = resolve(expandHomePath(configuredRoot));
++  const actualRoot = resolve(context.root);
++  if (expectedRoot !== actualRoot) {
++    throw new Error(`Approved shell command alias is not allowed for this workspace: ${alias}`);
++  }
++
++  const approvedCwd = resolveAllowedPath(
++    String(command.workingDirectory ?? "."),
++    actualRoot,
++    [actualRoot],
++  );
++  const approvedCommand = String(command.command ?? "").trim();
++  if (!approvedCommand) {
++    throw new Error(`Approved shell command is empty: ${alias}`);
++  }
++
++  return {
++    input: {
++      ...input,
++      command: approvedCommand,
++    },
++    cwd: approvedCwd,
++  };
++}
++
+ async function runTool<TInput, TDetails = unknown>(
+   execute: (input: TInput) => Promise<AgentToolResult<TDetails>>,
+   input: TInput,
+@@ -119,11 +200,21 @@ export async function listDirectoryTool(input: LsToolInput, context: ToolContext
+ }
+ 
+ export async function runShellTool(input: BashToolInput, context: ToolContext): Promise<ToolResponse> {
+-  const tool = createBashTool(context.cwd);
+-  const timeout = input.timeout === undefined ? 30 : Math.min(input.timeout, 300);
++  let approved: { input: BashToolInput; cwd: string };
++  try {
++    approved = await resolveApprovedShellAlias(input, context);
++  } catch (error) {
++    return { content: formatToolError(error), isError: true };
++  }
++
++  const tool = createBashTool(approved.cwd);
++  const timeout =
++    approved.input.timeout === undefined
++      ? 30
++      : Math.min(approved.input.timeout, 300);
+ 
+   return runTool((params) => tool.execute("run_shell", params), {
+-    command: input.command,
++    command: approved.input.command,
+     timeout,
+   }, context);
+ }
+diff --git a/src/pi-tools.test.ts b/src/pi-tools.test.ts
+new file mode 100644
+index 0000000..55f1a85
+--- /dev/null
++++ b/src/pi-tools.test.ts
+@@ -0,0 +1,51 @@
++import assert from "node:assert/strict";
++import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { runShellTool } from "./pi-tools.js";
++
++const root = await mkdtemp(join(tmpdir(), "devspace-approved-shell-test-"));
++const commandsFile = join(root, "approved.json");
++const previousCommandsFile = process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE;
++
++try {
++  await mkdir(join(root, "nested"));
++  process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE = commandsFile;
++  await writeFile(commandsFile, JSON.stringify({
++    commands: [{
++      alias: "where",
++      workspaceRoot: root,
++      workingDirectory: "nested",
++      command: "pwd",
++    }],
++  }));
++
++  const allowed = await runShellTool(
++    { command: "devspace-approved where" },
++    { cwd: root, root },
++  );
++  assert.equal(allowed.isError, undefined);
++  assert.match(allowed.content[0]?.type === "text" ? allowed.content[0].text : "", /nested/);
++
++  await writeFile(commandsFile, JSON.stringify({
++    commands: [{
++      alias: "escape",
++      workspaceRoot: root,
++      workingDirectory: "..",
++      command: "pwd",
++    }],
++  }));
++  const denied = await runShellTool(
++    { command: "devspace-approved escape" },
++    { cwd: root, root },
++  );
++  assert.equal(denied.isError, true);
++  assert.match(denied.content[0]?.type === "text" ? denied.content[0].text : "", /outside allowed roots/);
++} finally {
++  if (previousCommandsFile === undefined) {
++    delete process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE;
++  } else {
++    process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE = previousCommandsFile;
++  }
++  await rm(root, { recursive: true, force: true });
++}
+diff --git a/src/safe-inspection.ts b/src/safe-inspection.ts
+new file mode 100644
+index 0000000..20383be
+--- /dev/null
++++ b/src/safe-inspection.ts
+@@ -0,0 +1,66 @@
++import { realpath, stat } from "node:fs/promises";
++import { basename, extname, resolve, sep } from "node:path";
++import { isPathInsideRoot } from "./roots.js";
++
++const SECRET_SEGMENTS = new Set([
++  ".aws",
++  ".gnupg",
++  ".ssh",
++  "credentials",
++  "credential",
++  "secrets",
++  "secret",
++]);
++const SECRET_EXTENSIONS = new Set([".key", ".pem", ".p12", ".pfx"]);
++const BINARY_EXTENSIONS = new Set([
++  ".7z", ".avi", ".bin", ".bmp", ".class", ".dmg", ".doc", ".docx",
++  ".gif", ".gz", ".ico", ".jar", ".jpeg", ".jpg", ".mov", ".mp3",
++  ".mp4", ".pdf", ".png", ".tar", ".wasm", ".webp", ".woff", ".woff2", ".zip",
++]);
++const GENERATED_SEGMENTS = new Set([
++  ".git", ".next", ".turbo", "build", "coverage", "dist", "node_modules",
++]);
++
++export function pathSegments(path: string): string[] {
++  return resolve(path).split(sep).filter(Boolean).map((part) => part.toLowerCase());
++}
++
++export function isSecretLikePath(path: string): boolean {
++  const segments = pathSegments(path);
++  const name = basename(path).toLowerCase();
++  return segments.some((part) => SECRET_SEGMENTS.has(part))
++    || name === ".env"
++    || name.startsWith(".env.")
++    || name === "id_rsa"
++    || name === "id_ed25519"
++    || /(?:^|[-_.])(token|credentials?|secrets?)(?:[-_.]|$)/.test(name)
++    || SECRET_EXTENSIONS.has(extname(name));
++}
++
++export function isGeneratedOrBinaryPath(path: string): boolean {
++  const segments = pathSegments(path);
++  return segments.some((part) => GENERATED_SEGMENTS.has(part))
++    || BINARY_EXTENSIONS.has(extname(path).toLowerCase());
++}
++
++export function containsSecretValue(text: string): boolean {
++  return /-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(text)
++    || /\b(?:bearer|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/i.test(text);
++}
++
++export function redactSensitiveText(text: string): string {
++  return text
++    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
++    .replace(/(\b(?:bearer|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]");
++}
++
++export async function safeRealFile(path: string, root: string): Promise<string | undefined> {
++  try {
++    const [realFile, realRoot] = await Promise.all([realpath(path), realpath(root)]);
++    if (!isPathInsideRoot(realFile, realRoot)) return undefined;
++    if (!(await stat(realFile)).isFile()) return undefined;
++    return realFile;
++  } catch {
++    return undefined;
++  }
++}
+diff --git a/src/compound-tools.ts b/src/compound-tools.ts
+new file mode 100644
+index 0000000..dc2f24c
+--- /dev/null
++++ b/src/compound-tools.ts
+@@ -0,0 +1,592 @@
++import { execFile } from "node:child_process";
++import { existsSync, realpathSync } from "node:fs";
++import { opendir, readFile, realpath, stat } from "node:fs/promises";
++import { basename, dirname, relative, resolve, sep } from "node:path";
++import { promisify } from "node:util";
++import { isPathInsideRoot, resolveAllowedPath } from "./roots.js";
++import {
++  containsSecretValue,
++  isGeneratedOrBinaryPath,
++  isSecretLikePath,
++  safeRealFile,
++} from "./safe-inspection.js";
++import {
++  buildBoundedPayload,
++  clampInteger,
++  takeWithinCharacterBudget,
++  type ToolMetrics,
++} from "./tool-metrics.js";
++
++const execFileAsync = promisify(execFile);
++const MAX_GIT_BUFFER = 1024 * 1024;
++const SKIPPED_DIRS = new Set([
++  ".git", ".next", ".turbo", "build", "coverage", "dist", "node_modules",
++]);
++
++export interface InspectionSkillSummary {
++  name: string;
++  description?: string;
++}
++
++export interface InspectionAgentSummary {
++  name: string;
++  provider: string;
++  available?: boolean;
++  writeMode?: string;
++}
++
++export interface WorkspaceInspectionContext {
++  root: string;
++  instructionPaths: string[];
++  skills: InspectionSkillSummary[];
++  agentProviders: InspectionAgentSummary[];
++  agentProfiles: InspectionAgentSummary[];
++}
++
++export interface ProjectSnapshotResult extends Record<string, unknown> {
++  branch: string | null;
++  dirty: boolean;
++  changedFiles: string[];
++  diffStat: string;
++  package: {
++    name?: string;
++    version?: string;
++    scripts: string[];
++  };
++  applicableInstructions: string[];
++  skills: InspectionSkillSummary[];
++  agentProviders: InspectionAgentSummary[];
++  agentProfiles: InspectionAgentSummary[];
++  codeGraph: {
++    detected: boolean;
++    available: false;
++    reason: "not_initialized" | "adapter_unavailable";
++  };
++  recommendedTestCommand?: string;
++  recommendedBuildCommand?: string;
++  metrics: ToolMetrics;
++}
++
++export async function projectSnapshot(
++  context: WorkspaceInspectionContext,
++  options: { maxCharacters?: number } = {},
++): Promise<ProjectSnapshotResult> {
++  const startedAt = performance.now();
++  const maxCharacters = clampInteger(options.maxCharacters, 12_000, 2_000, 50_000);
++  const [branchResult, statusResult, statResult, packageInfo] = await Promise.all([
++    git(context.root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
++    git(context.root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
++    git(context.root, ["diff", "--no-ext-diff", "--no-textconv", "--shortstat", "HEAD", "--"]),
++    readPackageSummary(context.root),
++  ]);
++  const rawChangedFiles = statusResult.ok ? parseStatusPaths(statusResult.stdout) : [];
++  const detected = existsSync(resolve(context.root, ".codegraph"));
++
++  return buildBoundedPayload({
++    startedAt,
++    maxCharacters,
++    build: (contentBudget) => {
++      const files = takeWithinCharacterBudget(rawChangedFiles, Math.floor(contentBudget * 0.28));
++      const instructions = takeWithinCharacterBudget(
++        context.instructionPaths.map((path) => displayPath(path, context.root)),
++        Math.floor(contentBudget * 0.18),
++      );
++      const skills = takeWithinCharacterBudget(
++        context.skills.map((skill) => ({
++          name: skill.name.slice(0, 100),
++          ...(skill.description ? { description: skill.description.slice(0, 160) } : {}),
++        })),
++        Math.floor(contentBudget * 0.18),
++      );
++      const providers = takeWithinCharacterBudget(
++        context.agentProviders,
++        Math.floor(contentBudget * 0.13),
++      );
++      const profiles = takeWithinCharacterBudget(
++        context.agentProfiles,
++        Math.floor(contentBudget * 0.13),
++      );
++      const truncated = files.truncated
++        || instructions.truncated
++        || skills.truncated
++        || providers.truncated
++        || profiles.truncated;
++      const returnedItems = files.items.length
++        + instructions.items.length
++        + skills.items.length
++        + providers.items.length
++        + profiles.items.length;
++
++      return {
++        payload: {
++          branch: branchResult.ok ? branchResult.stdout.trim() || null : null,
++          dirty: rawChangedFiles.length > 0,
++          changedFiles: files.items,
++          diffStat: statResult.ok ? statResult.stdout.trim().slice(0, 500) : "",
++          package: packageInfo,
++          applicableInstructions: instructions.items,
++          skills: skills.items,
++          agentProviders: providers.items,
++          agentProfiles: profiles.items,
++          codeGraph: {
++            detected,
++            available: false as const,
++            reason: detected ? "adapter_unavailable" as const : "not_initialized" as const,
++          },
++          ...(recommendedCommand(packageInfo.scripts, "test")
++            ? { recommendedTestCommand: recommendedCommand(packageInfo.scripts, "test") }
++            : {}),
++          ...(recommendedCommand(packageInfo.scripts, "build")
++            ? { recommendedBuildCommand: recommendedCommand(packageInfo.scripts, "build") }
++            : {}),
++        },
++        returnedItems,
++        truncated,
++      };
++    },
++  });
++}
++
++export interface FocusedContextResult extends Record<string, unknown> {
++  relevantFiles: string[];
++  relevantSymbols: Array<{ name: string; path: string; line: number }>;
++  searchMatches: Array<{ path: string; line: number }>;
++  applicableInstructions: string[];
++  impactCandidates: string[];
++  recommendedReads: string[];
++  detectionMethod: "bounded_text_fallback" | "codegraph_adapter_unavailable_fallback";
++  metrics: ToolMetrics;
++}
++
++export async function focusedContext(
++  context: WorkspaceInspectionContext,
++  options: {
++    focus: string;
++    paths?: string[];
++    maxFiles?: number;
++    maxCharacters?: number;
++  },
++): Promise<FocusedContextResult> {
++  const startedAt = performance.now();
++  const focus = options.focus.normalize("NFKC").trim().slice(0, 300);
++  if (!focus) throw new Error("focus is required.");
++  const maxFiles = clampInteger(options.maxFiles, 8, 1, 25);
++  const maxCharacters = clampInteger(options.maxCharacters, 12_000, 2_000, 50_000);
++  const scopes = await resolveScopes(context.root, options.paths);
++  const candidates = await collectCandidateFiles(context.root, scopes, 500);
++  const focusTokens = searchableTokens(focus);
++  candidates.files.sort((a, b) => filenameScore(b, focusTokens) - filenameScore(a, focusTokens));
++
++  const relevantFiles: string[] = [];
++  const relevantSymbols: Array<{ name: string; path: string; line: number }> = [];
++  const searchMatches: Array<{ path: string; line: number }> = [];
++  let scannedBytes = 0;
++  let scanTruncated = candidates.truncated || candidates.files.length > 120;
++
++  for (const path of candidates.files.slice(0, 120)) {
++    if (relevantFiles.length >= maxFiles || scannedBytes >= 3_000_000) {
++      scanTruncated = true;
++      break;
++    }
++    const content = await readBoundedTextFile(path, context.root, 96_000);
++    if (content === undefined) continue;
++    scannedBytes += content.length;
++    const display = displayPath(path, context.root);
++    const lines = content.split(/\r?\n/);
++    let matchedFile = false;
++    for (let index = 0; index < lines.length; index += 1) {
++      const line = lines[index] ?? "";
++      const normalizedLine = line.normalize("NFKC").toLocaleLowerCase();
++      if (!focusTokens.some((token) => normalizedLine.includes(token))) continue;
++      matchedFile = true;
++      if (searchMatches.length < maxFiles * 5) {
++        searchMatches.push({ path: display, line: index + 1 });
++      }
++      const symbol = extractSymbol(line);
++      if (symbol && relevantSymbols.length < maxFiles * 3) {
++        relevantSymbols.push({ name: symbol, path: display, line: index + 1 });
++      }
++    }
++    if (matchedFile) relevantFiles.push(display);
++  }
++
++  const instructionPaths = context.instructionPaths
++    .filter((path) => scopes.some((scope) =>
++      isPathInsideRoot(path, scope) || isPathInsideRoot(scope, dirname(path))))
++    .map((path) => displayPath(path, context.root));
++  const codeGraphDetected = existsSync(resolve(context.root, ".codegraph"));
++
++  return buildBoundedPayload({
++    startedAt,
++    maxCharacters,
++    build: (contentBudget) => {
++      const files = takeWithinCharacterBudget(relevantFiles, Math.floor(contentBudget * 0.18));
++      const symbols = takeWithinCharacterBudget(relevantSymbols, Math.floor(contentBudget * 0.22));
++      const matches = takeWithinCharacterBudget(searchMatches, Math.floor(contentBudget * 0.22));
++      const instructions = takeWithinCharacterBudget(instructionPaths, Math.floor(contentBudget * 0.13));
++      const impact = takeWithinCharacterBudget(relevantFiles, Math.floor(contentBudget * 0.1));
++      const reads = takeWithinCharacterBudget(relevantFiles, Math.floor(contentBudget * 0.1));
++      const truncated = scanTruncated
++        || files.truncated || symbols.truncated || matches.truncated
++        || instructions.truncated || impact.truncated || reads.truncated;
++      return {
++        payload: {
++          relevantFiles: files.items,
++          relevantSymbols: symbols.items,
++          searchMatches: matches.items,
++          applicableInstructions: instructions.items,
++          impactCandidates: impact.items,
++          recommendedReads: reads.items,
++          detectionMethod: codeGraphDetected
++            ? "codegraph_adapter_unavailable_fallback" as const
++            : "bounded_text_fallback" as const,
++        },
++        returnedItems: files.items.length + symbols.items.length + matches.items.length,
++        truncated,
++      };
++    },
++  });
++}
++
++export interface ReviewChangesResult extends Record<string, unknown> {
++  changedFiles: Array<{ path: string; status: string }>;
++  diffStat: string;
++  summary: string;
++  riskCandidates: string[];
++  suspiciousChanges: Array<{ rule: string; file: string; line?: number }>;
++  testRecommendations: string[];
++  truncated: boolean;
++  metrics: ToolMetrics;
++}
++
++export async function reviewChanges(
++  context: WorkspaceInspectionContext,
++  options: { scope?: string; baseRef?: string; maxCharacters?: number } = {},
++): Promise<ReviewChangesResult> {
++  const startedAt = performance.now();
++  const maxCharacters = clampInteger(options.maxCharacters, 12_000, 2_000, 50_000);
++  const baseRef = options.baseRef?.trim() || "HEAD";
++  validateBaseRef(baseRef);
++  await requireGitRef(context.root, baseRef);
++  const pathspec = options.scope ? await gitPathspec(context.root, options.scope) : undefined;
++  const suffix = pathspec ? ["--", pathspec] : ["--"];
++  const [nameStatus, status, diffStat, diff, packageInfo] = await Promise.all([
++    git(context.root, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", baseRef, ...suffix]),
++    git(context.root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", ...suffix]),
++    git(context.root, ["diff", "--no-ext-diff", "--no-textconv", "--shortstat", baseRef, ...suffix]),
++    git(context.root, ["diff", "--no-ext-diff", "--no-textconv", "--unified=0", baseRef, ...suffix]),
++    readPackageSummary(context.root),
++  ]);
++  const changed = new Map<string, string>();
++  if (nameStatus.ok) {
++    for (const entry of parseNameStatus(nameStatus.stdout)) changed.set(entry.path, entry.status);
++  }
++  if (status.ok) {
++    for (const path of parseStatusPaths(status.stdout)) {
++      if (!changed.has(path)) changed.set(path, "untracked");
++    }
++  }
++  const changedFiles = Array.from(changed, ([path, changeStatus]) => ({ path, status: changeStatus }))
++    .sort((a, b) => a.path.localeCompare(b.path));
++  const suspicious = diff.ok ? inspectDiff(diff.stdout.slice(0, 300_000)) : [];
++  const riskCandidates = Array.from(new Set(suspicious.map((item) => item.rule)));
++  const testRecommendations = ["typecheck", "test", "build"]
++    .map((name) => recommendedCommand(packageInfo.scripts, name))
++    .filter((command): command is string => command !== undefined);
++
++  const result = buildBoundedPayload({
++    startedAt,
++    maxCharacters,
++    build: (contentBudget) => {
++      const files = takeWithinCharacterBudget(changedFiles, Math.floor(contentBudget * 0.4));
++      const risks = takeWithinCharacterBudget(riskCandidates, Math.floor(contentBudget * 0.15));
++      const findings = takeWithinCharacterBudget(suspicious, Math.floor(contentBudget * 0.3));
++      const tests = takeWithinCharacterBudget(testRecommendations, Math.floor(contentBudget * 0.1));
++      const truncated = files.truncated || risks.truncated || findings.truncated || tests.truncated
++        || (diff.ok && diff.stdout.length > 300_000);
++      return {
++        payload: {
++          changedFiles: files.items,
++          diffStat: diffStat.ok ? diffStat.stdout.trim().slice(0, 500) : "",
++          summary: `${changedFiles.length} changed file(s); ${suspicious.length} suspicious pattern(s).`,
++          riskCandidates: risks.items,
++          suspiciousChanges: findings.items,
++          testRecommendations: tests.items,
++          truncated,
++        },
++        returnedItems: files.items.length + findings.items.length,
++        truncated,
++      };
++    },
++  });
++
++  return { ...result, truncated: result.metrics.truncated };
++}
++
++async function readPackageSummary(root: string): Promise<{
++  name?: string;
++  version?: string;
++  scripts: string[];
++}> {
++  const packagePath = resolve(root, "package.json");
++  const realFile = await safeRealFile(packagePath, root);
++  if (!realFile || isSecretLikePath(realFile)) return { scripts: [] };
++  try {
++    const info = await stat(realFile);
++    if (info.size > 512_000) return { scripts: [] };
++    const parsed = JSON.parse(await readFile(realFile, "utf8")) as Record<string, unknown>;
++    const scripts = parsed.scripts && typeof parsed.scripts === "object" && !Array.isArray(parsed.scripts)
++      ? Object.keys(parsed.scripts as Record<string, unknown>)
++        .filter((name) => /^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/.test(name))
++        .slice(0, 100)
++      : [];
++    const packageName = typeof parsed.name === "string" && !containsSecretValue(parsed.name)
++      ? parsed.name.slice(0, 200)
++      : undefined;
++    const packageVersion = typeof parsed.version === "string" && !containsSecretValue(parsed.version)
++      ? parsed.version.slice(0, 50)
++      : undefined;
++    return {
++      ...(packageName ? { name: packageName } : {}),
++      ...(packageVersion ? { version: packageVersion } : {}),
++      scripts,
++    };
++  } catch {
++    return { scripts: [] };
++  }
++}
++
++function recommendedCommand(scripts: string[], name: string): string | undefined {
++  if (!scripts.includes(name)) return undefined;
++  return name === "test" ? "npm test" : `npm run ${name}`;
++}
++
++async function resolveScopes(root: string, paths: string[] | undefined): Promise<string[]> {
++  if (!paths || paths.length === 0) return [await realpath(root)];
++  const scopes: string[] = [];
++  for (const path of paths.slice(0, 25)) {
++    const resolved = resolveAllowedPath(path, root, [root]);
++    const real = await realpath(resolved);
++    const realRoot = await realpath(root);
++    if (!isPathInsideRoot(real, realRoot)) throw new Error(`Path is outside workspace root: ${path}`);
++    scopes.push(real);
++  }
++  return scopes;
++}
++
++async function collectCandidateFiles(
++  root: string,
++  scopes: string[],
++  hardLimit: number,
++): Promise<{ files: string[]; truncated: boolean }> {
++  const files: string[] = [];
++  let truncated = false;
++  const realRoot = await realpath(root);
++
++  const visit = async (path: string): Promise<void> => {
++    if (files.length >= hardLimit) {
++      truncated = true;
++      return;
++    }
++    let info;
++    try {
++      info = await stat(path);
++    } catch {
++      return;
++    }
++    if (info.isFile()) {
++      const realFile = await safeRealFile(path, realRoot);
++      if (!realFile || isSecretLikePath(realFile) || isGeneratedOrBinaryPath(realFile)) return;
++      files.push(realFile);
++      return;
++    }
++    if (!info.isDirectory()) return;
++    let realDirectory: string;
++    try {
++      realDirectory = await realpath(path);
++    } catch {
++      return;
++    }
++    if (!isPathInsideRoot(realDirectory, realRoot)) return;
++    let directory;
++    try {
++      directory = await opendir(path);
++    } catch {
++      return;
++    }
++    for await (const entry of directory) {
++      if (files.length >= hardLimit) {
++        truncated = true;
++        break;
++      }
++      if (entry.isDirectory() && SKIPPED_DIRS.has(entry.name)) continue;
++      await visit(resolve(path, entry.name));
++    }
++  };
++
++  for (const scope of scopes) await visit(scope);
++  return { files, truncated };
++}
++
++async function readBoundedTextFile(
++  path: string,
++  root: string,
++  maxBytes: number,
++): Promise<string | undefined> {
++  const realFile = await safeRealFile(path, root);
++  if (!realFile || isSecretLikePath(realFile) || isGeneratedOrBinaryPath(realFile)) return undefined;
++  try {
++    const info = await stat(realFile);
++    if (info.size > maxBytes) return undefined;
++    const content = await readFile(realFile);
++    if (content.includes(0)) return undefined;
++    return content.toString("utf8");
++  } catch {
++    return undefined;
++  }
++}
++
++function searchableTokens(focus: string): string[] {
++  const normalized = focus.toLocaleLowerCase();
++  const values = normalized.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
++  return Array.from(new Set([normalized, ...values])).filter((value) => value.length >= 2).slice(0, 12);
++}
++
++function filenameScore(path: string, focusTokens: string[]): number {
++  const name = basename(path).toLocaleLowerCase();
++  return focusTokens.reduce((score, token) => score + (name.includes(token) ? 1 : 0), 0);
++}
++
++function extractSymbol(line: string): string | undefined {
++  const match = line.match(/\b(?:class|interface|type|function|const|let|var|enum)\s+([A-Za-z_$][\w$]*)/);
++  return match?.[1];
++}
++
++function displayPath(path: string, root: string): string {
++  const lexicalPath = resolve(path);
++  const lexicalRoot = resolve(root);
++  let comparablePath = lexicalPath;
++  let comparableRoot = lexicalRoot;
++  if (!isPathInsideRoot(lexicalPath, lexicalRoot)) {
++    try {
++      comparablePath = realpathSync(lexicalPath);
++      comparableRoot = realpathSync(lexicalRoot);
++    } catch {
++      // Keep lexical paths when either side does not exist.
++    }
++  }
++  const relationship = relative(comparableRoot, comparablePath);
++  if (relationship === "" || relationship === ".") return ".";
++  if (relationship === ".." || relationship.startsWith(`..${sep}`)) return resolve(path).split(sep).join("/");
++  return relationship.split(sep).join("/");
++}
++
++function parseStatusPaths(output: string): string[] {
++  const tokens = output.split("\0").filter(Boolean);
++  const paths: string[] = [];
++  for (let index = 0; index < tokens.length; index += 1) {
++    const token = tokens[index] ?? "";
++    if (token.length < 4) continue;
++    const status = token.slice(0, 2);
++    const path = token.slice(3);
++    if (path) paths.push(path);
++    if (status.includes("R") || status.includes("C")) index += 1;
++  }
++  return Array.from(new Set(paths)).sort();
++}
++
++function parseNameStatus(output: string): Array<{ path: string; status: string }> {
++  const tokens = output.split("\0").filter(Boolean);
++  const entries: Array<{ path: string; status: string }> = [];
++  for (let index = 0; index < tokens.length; index += 1) {
++    const status = tokens[index] ?? "";
++    const path = tokens[index + 1];
++    if (!path) break;
++    if (status.startsWith("R") || status.startsWith("C")) {
++      const destination = tokens[index + 2];
++      if (destination) entries.push({ path: destination, status });
++      index += 2;
++    } else {
++      entries.push({ path, status });
++      index += 1;
++    }
++  }
++  return entries;
++}
++
++function inspectDiff(diff: string): Array<{ rule: string; file: string; line?: number }> {
++  const findings: Array<{ rule: string; file: string; line?: number }> = [];
++  let file = "unknown";
++  let nextLine: number | undefined;
++  for (const line of diff.split("\n")) {
++    if (line.startsWith("+++ b/")) {
++      file = line.slice(6);
++      nextLine = undefined;
++      continue;
++    }
++    const hunk = line.match(/^@@[^+]*\+(\d+)/);
++    if (hunk) {
++      nextLine = Number(hunk[1]);
++      continue;
++    }
++    if (!line.startsWith("+") || line.startsWith("+++")) continue;
++    const value = line.slice(1);
++    const add = (rule: string) => {
++      if (!findings.some((item) => item.rule === rule && item.file === file && item.line === nextLine)) {
++        findings.push({ rule, file, ...(nextLine === undefined ? {} : { line: nextLine }) });
++      }
++    };
++    if (containsSecretValue(value)) add("potential_secret_value");
++    if (/\b(?:eval|exec)\s*\(/.test(value)) add("dynamic_code_execution");
++    if (/chmod\s+777|dangerouslySetInnerHTML/.test(value)) add("dangerous_permission_or_html");
++    if (/\bas\s+any\b|:\s*any\b/.test(value)) add("type_safety_escape");
++    if (/oauth|permissions?|allowed[_-]?roots?|iam/i.test(file)) add("permission_boundary_changed");
++    if (/package(?:-lock)?\.json$|pnpm-lock|yarn\.lock$/.test(file)) add("dependency_manifest_changed");
++    if (nextLine !== undefined) nextLine += 1;
++    if (findings.length >= 100) break;
++  }
++  return findings;
++}
++
++function validateBaseRef(baseRef: string): void {
++  if (!baseRef || baseRef.length > 200 || baseRef.startsWith("-") || /[\0-\x1f\x7f]/.test(baseRef)) {
++    throw new Error(`Invalid baseRef: ${baseRef}`);
++  }
++}
++
++async function requireGitRef(root: string, baseRef: string): Promise<void> {
++  const result = await git(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${baseRef}^{commit}`]);
++  if (!result.ok) throw new Error(`Unknown baseRef: ${baseRef}`);
++}
++
++async function gitPathspec(root: string, scope: string): Promise<string> {
++  const absolute = resolveAllowedPath(scope, root, [root]);
++  const realRoot = await realpath(root);
++  let realScope: string;
++  try {
++    realScope = await realpath(absolute);
++  } catch {
++    realScope = absolute;
++  }
++  if (!isPathInsideRoot(realScope, realRoot)) throw new Error(`Path is outside workspace root: ${scope}`);
++  const relationship = relative(realRoot, realScope).split(sep).join("/");
++  return `:(literal)${relationship || "."}`;
++}
++
++async function git(root: string, args: string[]): Promise<{ ok: boolean; stdout: string }> {
++  try {
++    const result = await execFileAsync("git", args, {
++      cwd: root,
++      encoding: "utf8",
++      timeout: 5_000,
++      maxBuffer: MAX_GIT_BUFFER,
++      windowsHide: true,
++    });
++    return { ok: true, stdout: result.stdout };
++  } catch (error) {
++    const stdout = typeof error === "object" && error && "stdout" in error && typeof error.stdout === "string"
++      ? error.stdout
++      : "";
++    return { ok: false, stdout };
++  }
++}
+diff --git a/src/compound-tools.test.ts b/src/compound-tools.test.ts
+new file mode 100644
+index 0000000..23a46b1
+--- /dev/null
++++ b/src/compound-tools.test.ts
+@@ -0,0 +1,99 @@
++import assert from "node:assert/strict";
++import { execFile } from "node:child_process";
++import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { promisify } from "node:util";
++import {
++  focusedContext,
++  projectSnapshot,
++  reviewChanges,
++  type WorkspaceInspectionContext,
++} from "./compound-tools.js";
++
++const execFileAsync = promisify(execFile);
++const root = await mkdtemp(join(tmpdir(), "gpt-agent-compound-tools-test-"));
++
++try {
++  await mkdir(join(root, "src"));
++  await mkdir(join(root, "other"));
++  await writeFile(join(root, "package.json"), JSON.stringify({
++    name: "fixture-project",
++    version: "1.2.3",
++    scripts: { typecheck: "tsc", test: "test-command", build: "build-command" },
++  }));
++  await writeFile(join(root, "src", "target.ts"), "export function targetSymbol() { return 1; }\n");
++  await writeFile(join(root, "other", "outside.ts"), "export const targetSymbol = 2;\n");
++  await writeFile(join(root, ".env"), "API_KEY=super-secret-value-that-must-not-leak\n");
++  await git(["init"]);
++  await git(["config", "user.email", "gpt-agent@example.com"]);
++  await git(["config", "user.name", "GPT Agent"]);
++  await git(["add", "."]);
++  await git(["commit", "-m", "fixture"]);
++
++  await writeFile(join(root, "src", "target.ts"), [
++    "export function targetSymbol() {",
++    "  const unsafe: any = 2;",
++    "  return unsafe;",
++    "}",
++    "",
++  ].join("\n"));
++  await writeFile(join(root, ".env"), "API_KEY=changed-secret-value-that-must-not-leak\n");
++
++  const context: WorkspaceInspectionContext = {
++    root,
++    instructionPaths: [join(root, "AGENTS.md")],
++    skills: Array.from({ length: 80 }, (_, index) => ({
++      name: `skill-${index}`,
++      description: `Skill ${index} description`,
++    })),
++    agentProviders: [{ name: "codex", provider: "codex", available: true }],
++    agentProfiles: [{ name: "review", provider: "codex", writeMode: "read_only" }],
++  };
++
++  const snapshot = await projectSnapshot(context, { maxCharacters: 2_000 });
++  assert.equal(snapshot.package.name, "fixture-project");
++  assert.deepEqual(snapshot.package.scripts.sort(), ["build", "test", "typecheck"]);
++  assert.equal(snapshot.recommendedTestCommand, "npm test");
++  assert.equal(snapshot.recommendedBuildCommand, "npm run build");
++  assert.equal(snapshot.metrics.truncated, true);
++  assert.ok(snapshot.metrics.payloadCharacters <= 2_000);
++  assert.equal(snapshot.metrics.payloadCharacters, JSON.stringify(snapshot).length);
++  assert.equal(JSON.stringify(snapshot).includes("super-secret-value"), false);
++
++  const focused = await focusedContext(context, {
++    focus: "targetSymbol",
++    paths: ["src"],
++    maxFiles: 1,
++    maxCharacters: 4_000,
++  });
++  assert.deepEqual(focused.relevantFiles, ["src/target.ts"]);
++  assert.equal(focused.relevantFiles.some((path) => path.startsWith("other/")), false);
++  assert.equal(focused.relevantFiles.length <= 1, true);
++  assert.equal(focused.metrics.payloadCharacters, JSON.stringify(focused).length);
++
++  const fileBefore = await readFile(join(root, "src", "target.ts"));
++  const indexBefore = await readFile(join(root, ".git", "index"));
++  const statusBefore = (await git(["status", "--porcelain=v1", "-z"])).stdout;
++  const stagedBefore = (await git(["diff", "--cached"])).stdout;
++  const review = await reviewChanges(context, { maxCharacters: 4_000 });
++  assert.ok(review.changedFiles.some((entry) => entry.path === "src/target.ts"));
++  assert.ok(review.suspiciousChanges.some((entry) => entry.rule === "type_safety_escape"));
++  assert.equal(JSON.stringify(review).includes("changed-secret-value"), false);
++  assert.equal(review.metrics.payloadCharacters, JSON.stringify(review).length);
++  assert.deepEqual(await readFile(join(root, "src", "target.ts")), fileBefore);
++  assert.deepEqual(await readFile(join(root, ".git", "index")), indexBefore);
++  assert.equal((await git(["status", "--porcelain=v1", "-z"])).stdout, statusBefore);
++  assert.equal((await git(["diff", "--cached"])).stdout, stagedBefore);
++
++  await assert.rejects(
++    () => reviewChanges(context, { baseRef: "--output=/tmp/escape" }),
++    /Invalid baseRef/,
++  );
++} finally {
++  await rm(root, { recursive: true, force: true });
++}
++
++async function git(args: string[]): Promise<{ stdout: string; stderr: string }> {
++  return execFileAsync("git", args, { cwd: root, encoding: "utf8" });
++}
+diff --git a/src/register-v11-tools.ts b/src/register-v11-tools.ts
+new file mode 100644
+index 0000000..9730a8c
+--- /dev/null
++++ b/src/register-v11-tools.ts
+@@ -0,0 +1,336 @@
++import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
++import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
++import * as z from "zod/v4";
++import type { ServerConfig } from "./config.js";
++import {
++  focusedContext,
++  projectSnapshot,
++  reviewChanges,
++  type WorkspaceInspectionContext,
++} from "./compound-tools.js";
++import { runDesignAudit } from "./design-audit.js";
++import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
++import { matchWorkspaceSkills } from "./skill-matcher.js";
++import type { Workspace, WorkspaceRegistry } from "./workspaces.js";
++
++const metricsSchema = z.object({
++  serverDurationMs: z.number().int().nonnegative(),
++  payloadCharacters: z.number().int().nonnegative(),
++  returnedItems: z.number().int().nonnegative(),
++  truncated: z.boolean(),
++  cacheHit: z.boolean().optional(),
++});
++
++const readOnlyAnnotations = {
++  readOnlyHint: true,
++  destructiveHint: false,
++  idempotentHint: true,
++  openWorldHint: false,
++};
++
++export function registerV11Tools(
++  server: McpServer,
++  input: {
++    config: ServerConfig;
++    workspaces: WorkspaceRegistry;
++    localAgentProviders: LocalAgentProviderAvailability[];
++  },
++): void {
++  const enabledTools = new Set(enabledV11ToolNames(input.config));
++  if (enabledTools.has("match_skills")) {
++    registerAppTool(
++      server,
++      "match_skills",
++      {
++        title: "Match skills",
++        description: "Rank a small set of relevant Skill metadata without loading Skill bodies.",
++        inputSchema: {
++          workspaceId: z.string(),
++          task: z.string().min(1).max(4_000),
++          limit: z.number().int().min(1).max(10).optional(),
++          includeGlobal: z.boolean().optional(),
++        },
++        outputSchema: {
++          matches: z.array(z.object({
++            name: z.string(),
++            shortDescription: z.string(),
++            path: z.string(),
++            matchReason: z.string(),
++            confidence: z.number().min(0).max(1),
++            requiredTools: z.array(z.string()).optional(),
++          })),
++          metrics: metricsSchema,
++        },
++        _meta: {},
++        annotations: readOnlyAnnotations,
++      },
++      async ({ workspaceId, task, limit, includeGlobal }) => {
++        const workspace = input.workspaces.getWorkspace(workspaceId);
++        const result = await matchWorkspaceSkills({
++          skills: workspace.skills,
++          workspaceRoot: workspace.root,
++          task,
++          limit,
++          includeGlobal,
++        });
++        return toolResult(
++          result,
++          result.matches.length === 0
++            ? "No relevant skills found."
++            : `Matched skills: ${result.matches.map((match) => match.name).join(", ")}`,
++        );
++      },
++    );
++  }
++
++  if (enabledTools.has("project_snapshot")) {
++    registerProjectSnapshot(server, input);
++    registerFocusedContext(server, input);
++    registerReviewChanges(server, input);
++  }
++
++  if (enabledTools.has("design_audit")) {
++    registerAppTool(
++      server,
++      "design_audit",
++      {
++        title: "Design audit",
++        description: "Run a guarded rendered UI audit through the configured browser adapter.",
++        inputSchema: {
++          workspaceId: z.string(),
++          url: z.string().min(1).max(2_000),
++          desktopViewport: viewportSchema.optional(),
++          mobileViewport: viewportSchema.optional(),
++          routes: z.array(z.string().max(500)).max(20).optional(),
++          checks: z.array(z.string().max(100)).max(20).optional(),
++          outputDirectory: z.string().max(1_000).optional(),
++        },
++        outputSchema: {
++          status: z.enum(["disabled", "unavailable", "completed"]),
++          adapter: z.string(),
++          validatedUrl: z.string().optional(),
++          artifacts: z.array(z.object({
++            kind: z.enum(["desktop-screenshot", "mobile-screenshot", "report"]),
++            path: z.string(),
++          })),
++          diagnostics: z.array(z.string()),
++          consoleErrors: z.number().int().nonnegative().optional(),
++          overflowIssues: z.number().int().nonnegative().optional(),
++          accessibilityIssues: z.number().int().nonnegative().optional(),
++          headingIssues: z.number().int().nonnegative().optional(),
++          metrics: metricsSchema,
++        },
++        _meta: {},
++        annotations: { ...readOnlyAnnotations, openWorldHint: true },
++      },
++      async ({ workspaceId, ...toolInput }) => {
++        const workspace = input.workspaces.getWorkspace(workspaceId);
++        const result = await runDesignAudit(input.config, {
++          workspaceRoot: workspace.root,
++          ...toolInput,
++        });
++        return {
++          ...toolResult(result, result.diagnostics.join(" ")),
++          isError: result.status !== "completed",
++        };
++      },
++    );
++  }
++}
++
++export function enabledV11ToolNames(config: ServerConfig): string[] {
++  return [
++    config.skillMatcher && config.skillsEnabled ? "match_skills" : undefined,
++    ...(config.compoundTools
++      ? ["project_snapshot", "focused_context", "review_changes"]
++      : []),
++    config.designAudit ? "design_audit" : undefined,
++  ].filter((name): name is string => name !== undefined);
++}
++
++function registerProjectSnapshot(
++  server: McpServer,
++  input: {
++    config: ServerConfig;
++    workspaces: WorkspaceRegistry;
++    localAgentProviders: LocalAgentProviderAvailability[];
++  },
++): void {
++  registerAppTool(
++    server,
++    "project_snapshot",
++    {
++      title: "Project snapshot",
++      description: "Return a bounded project and Git digest without diff bodies or secret contents.",
++      inputSchema: {
++        workspaceId: z.string(),
++        maxCharacters: z.number().int().min(2_000).max(50_000).optional(),
++      },
++      outputSchema: {
++        branch: z.string().nullable(),
++        dirty: z.boolean(),
++        changedFiles: z.array(z.string()),
++        diffStat: z.string(),
++        package: z.object({
++          name: z.string().optional(),
++          version: z.string().optional(),
++          scripts: z.array(z.string()),
++        }),
++        applicableInstructions: z.array(z.string()),
++        skills: z.array(z.object({ name: z.string(), description: z.string().optional() })),
++        agentProviders: z.array(agentSummarySchema),
++        agentProfiles: z.array(agentSummarySchema),
++        codeGraph: z.object({
++          detected: z.boolean(),
++          available: z.literal(false),
++          reason: z.enum(["not_initialized", "adapter_unavailable"]),
++        }),
++        recommendedTestCommand: z.string().optional(),
++        recommendedBuildCommand: z.string().optional(),
++        metrics: metricsSchema,
++      },
++      _meta: {},
++      annotations: readOnlyAnnotations,
++    },
++    async ({ workspaceId, maxCharacters }) => {
++      const workspace = input.workspaces.getWorkspace(workspaceId);
++      const result = await projectSnapshot(
++        inspectionContext(workspace, input.localAgentProviders),
++        { maxCharacters },
++      );
++      return toolResult(
++        result,
++        `Project snapshot: ${result.changedFiles.length} changed file(s), branch ${result.branch ?? "unknown"}.`,
++      );
++    },
++  );
++}
++
++function registerFocusedContext(
++  server: McpServer,
++  input: {
++    workspaces: WorkspaceRegistry;
++    localAgentProviders: LocalAgentProviderAvailability[];
++  },
++): void {
++  registerAppTool(
++    server,
++    "focused_context",
++    {
++      title: "Focused context",
++      description: "Find bounded files, symbols, and match locations for one focus area.",
++      inputSchema: {
++        workspaceId: z.string(),
++        focus: z.string().min(1).max(4_000),
++        paths: z.array(z.string().max(1_000)).max(25).optional(),
++        maxFiles: z.number().int().min(1).max(25).optional(),
++        maxCharacters: z.number().int().min(2_000).max(50_000).optional(),
++      },
++      outputSchema: {
++        relevantFiles: z.array(z.string()),
++        relevantSymbols: z.array(z.object({ name: z.string(), path: z.string(), line: z.number().int().positive() })),
++        searchMatches: z.array(z.object({ path: z.string(), line: z.number().int().positive() })),
++        applicableInstructions: z.array(z.string()),
++        impactCandidates: z.array(z.string()),
++        recommendedReads: z.array(z.string()),
++        detectionMethod: z.enum(["bounded_text_fallback", "codegraph_adapter_unavailable_fallback"]),
++        metrics: metricsSchema,
++      },
++      _meta: {},
++      annotations: readOnlyAnnotations,
++    },
++    async ({ workspaceId, ...toolInput }) => {
++      const workspace = input.workspaces.getWorkspace(workspaceId);
++      const result = await focusedContext(
++        inspectionContext(workspace, input.localAgentProviders),
++        toolInput,
++      );
++      return toolResult(result, `Focused context: ${result.relevantFiles.length} relevant file(s).`);
++    },
++  );
++}
++
++function registerReviewChanges(
++  server: McpServer,
++  input: {
++    workspaces: WorkspaceRegistry;
++    localAgentProviders: LocalAgentProviderAvailability[];
++  },
++): void {
++  registerAppTool(
++    server,
++    "review_changes",
++    {
++      title: "Review changes",
++      description: "Analyze a bounded Git diff without changing files, index, refs, or staging.",
++      inputSchema: {
++        workspaceId: z.string(),
++        scope: z.string().max(1_000).optional(),
++        baseRef: z.string().max(200).optional(),
++        maxCharacters: z.number().int().min(2_000).max(50_000).optional(),
++      },
++      outputSchema: {
++        changedFiles: z.array(z.object({ path: z.string(), status: z.string() })),
++        diffStat: z.string(),
++        summary: z.string(),
++        riskCandidates: z.array(z.string()),
++        suspiciousChanges: z.array(z.object({ rule: z.string(), file: z.string(), line: z.number().int().positive().optional() })),
++        testRecommendations: z.array(z.string()),
++        truncated: z.boolean(),
++        metrics: metricsSchema,
++      },
++      _meta: {},
++      annotations: readOnlyAnnotations,
++    },
++    async ({ workspaceId, ...toolInput }) => {
++      const workspace = input.workspaces.getWorkspace(workspaceId);
++      const result = await reviewChanges(
++        inspectionContext(workspace, input.localAgentProviders),
++        toolInput,
++      );
++      return toolResult(result, result.summary);
++    },
++  );
++}
++
++const viewportSchema = z.object({
++  width: z.number().int().min(320).max(8_000),
++  height: z.number().int().min(320).max(8_000),
++});
++
++const agentSummarySchema = z.object({
++  name: z.string(),
++  provider: z.string(),
++  available: z.boolean().optional(),
++  writeMode: z.string().optional(),
++});
++
++function inspectionContext(
++  workspace: Workspace,
++  providers: LocalAgentProviderAvailability[],
++): WorkspaceInspectionContext {
++  return {
++    root: workspace.root,
++    instructionPaths: Array.from(workspace.advertisedInstructionPaths).sort(),
++    skills: workspace.skills
++      .filter((skill) => !skill.disableModelInvocation)
++      .map((skill) => ({ name: skill.name, description: skill.description })),
++    agentProviders: providers.map((provider) => ({
++      name: provider.name,
++      provider: provider.name,
++      available: provider.available,
++    })),
++    agentProfiles: workspace.agentProfiles.map((profile) => ({
++      name: profile.name,
++      provider: profile.provider,
++      writeMode: profile.writeMode,
++    })),
++  };
++}
++
++function toolResult<T extends Record<string, unknown>>(structuredContent: T, summary: string) {
++  return {
++    content: [{ type: "text" as const, text: summary.slice(0, 1_000) }],
++    structuredContent,
++  };
++}
+diff --git a/src/register-v11-tools.test.ts b/src/register-v11-tools.test.ts
+new file mode 100644
+index 0000000..ce589c7
+--- /dev/null
++++ b/src/register-v11-tools.test.ts
+@@ -0,0 +1,26 @@
++import assert from "node:assert/strict";
++import { loadConfig } from "./config.js";
++import { enabledV11ToolNames } from "./register-v11-tools.js";
++
++const baseEnv = {
++  DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
++};
++
++assert.deepEqual(enabledV11ToolNames(loadConfig(baseEnv)), []);
++assert.deepEqual(
++  enabledV11ToolNames(loadConfig({
++    ...baseEnv,
++    DEVSPACE_SKILL_MATCHER: "1",
++    DEVSPACE_COMPOUND_TOOLS: "1",
++    DEVSPACE_DESIGN_AUDIT: "1",
++  })),
++  ["match_skills", "project_snapshot", "focused_context", "review_changes", "design_audit"],
++);
++assert.deepEqual(
++  enabledV11ToolNames(loadConfig({
++    ...baseEnv,
++    DEVSPACE_SKILL_MATCHER: "1",
++    DEVSPACE_SKILLS: "0",
++  })),
++  [],
++);
+diff --git a/src/tool-metrics.ts b/src/tool-metrics.ts
+new file mode 100644
+index 0000000..8e2970c
+--- /dev/null
++++ b/src/tool-metrics.ts
+@@ -0,0 +1,92 @@
++export interface ToolMetrics {
++  serverDurationMs: number;
++  payloadCharacters: number;
++  returnedItems: number;
++  truncated: boolean;
++  cacheHit?: boolean;
++}
++
++export interface BoundedBuild<T extends object> {
++  payload: T;
++  returnedItems: number;
++  truncated: boolean;
++}
++
++export function measuredPayload<T extends object>(
++  payload: T,
++  input: {
++    startedAt: number;
++    returnedItems: number;
++    truncated: boolean;
++    cacheHit?: boolean;
++  },
++): T & { metrics: ToolMetrics } {
++  const metrics: ToolMetrics = {
++    serverDurationMs: Math.max(0, Math.round(performance.now() - input.startedAt)),
++    payloadCharacters: 0,
++    returnedItems: input.returnedItems,
++    truncated: input.truncated,
++    ...(input.cacheHit === undefined ? {} : { cacheHit: input.cacheHit }),
++  };
++  const result = { ...payload, metrics };
++
++  for (let attempt = 0; attempt < 4; attempt += 1) {
++    const characters = JSON.stringify(result).length;
++    if (metrics.payloadCharacters === characters) break;
++    metrics.payloadCharacters = characters;
++  }
++
++  return result;
++}
++
++export function buildBoundedPayload<T extends object>(input: {
++  startedAt: number;
++  maxCharacters: number;
++  cacheHit?: boolean;
++  build(contentBudget: number): BoundedBuild<T>;
++}): T & { metrics: ToolMetrics } {
++  let contentBudget = Math.max(0, input.maxCharacters - 512);
++  let result: T & { metrics: ToolMetrics };
++
++  for (let attempt = 0; attempt < 5; attempt += 1) {
++    const built = input.build(contentBudget);
++    result = measuredPayload(built.payload, {
++      startedAt: input.startedAt,
++      returnedItems: built.returnedItems,
++      truncated: built.truncated,
++      cacheHit: input.cacheHit,
++    });
++    if (result.metrics.payloadCharacters <= input.maxCharacters) return result;
++    contentBudget = Math.max(
++      0,
++      contentBudget - (result.metrics.payloadCharacters - input.maxCharacters) - 64,
++    );
++  }
++
++  throw new Error(`Unable to fit tool payload within ${input.maxCharacters} characters.`);
++}
++
++export function takeWithinCharacterBudget<T>(
++  items: T[],
++  budget: number,
++): { items: T[]; truncated: boolean } {
++  const selected: T[] = [];
++  let used = 2;
++  for (const item of items) {
++    const characters = JSON.stringify(item).length + (selected.length > 0 ? 1 : 0);
++    if (used + characters > budget) return { items: selected, truncated: true };
++    selected.push(item);
++    used += characters;
++  }
++  return { items: selected, truncated: false };
++}
++
++export function clampInteger(
++  value: number | undefined,
++  fallback: number,
++  minimum: number,
++  maximum: number,
++): number {
++  if (value === undefined) return fallback;
++  return Math.min(maximum, Math.max(minimum, Math.floor(value)));
++}

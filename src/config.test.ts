@@ -12,7 +12,36 @@ const baseEnv = {
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
+assert.equal(loadConfig(baseEnv).openWorkspacePayload, "compact");
+assert.equal(loadConfig(baseEnv).openWorkspaceInstructionChars, 6_000);
+assert.equal(loadConfig(baseEnv).usageContent, "compact");
+assert.equal(loadConfig(baseEnv).skillMatcher, false);
+assert.equal(loadConfig(baseEnv).compoundTools, false);
+assert.equal(loadConfig(baseEnv).builtinProfiles, false);
+assert.equal(loadConfig(baseEnv).designAudit, false);
+assert.deepEqual(loadConfig(baseEnv).designAuditAllowedHosts, ["localhost", "127.0.0.1", "::1"]);
+assert.equal(loadConfig(baseEnv).widgets, "off");
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_PAYLOAD: "full" }).widgets,
+  "full",
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_PAYLOAD: "full" }).openWorkspacePayload,
+  "full",
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS: "8000" })
+    .openWorkspaceInstructionChars,
+  8_000,
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_USAGE_CONTENT: "off" }).usageContent,
+  "off",
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_USAGE_CONTENT: "full" }).usageContent,
+  "full",
+);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
@@ -60,6 +89,35 @@ assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
 );
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_PAYLOAD: "invalid" }),
+  /Invalid DEVSPACE_OPEN_WORKSPACE_PAYLOAD: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_USAGE_CONTENT: "invalid" }),
+  /Invalid DEVSPACE_USAGE_CONTENT: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS: "0" }),
+  /Invalid DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS: 0/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS: "255" }),
+  /Invalid DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS: 255/,
+);
+for (const name of [
+  "DEVSPACE_SKILL_MATCHER",
+  "DEVSPACE_COMPOUND_TOOLS",
+  "DEVSPACE_BUILTIN_PROFILES",
+  "DEVSPACE_DESIGN_AUDIT",
+]) {
+  assert.equal(loadConfig({ ...baseEnv, [name]: "true" })[featureKey(name)], true);
+  assert.equal(loadConfig({ ...baseEnv, [name]: "off" })[featureKey(name)], false);
+  assert.throws(
+    () => loadConfig({ ...baseEnv, [name]: "invalid" }),
+    new RegExp(`Invalid ${name}: invalid`),
+  );
+}
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
   level: "info",
@@ -70,6 +128,16 @@ assert.deepEqual(loadConfig(baseEnv).logging, {
   shellCommands: false,
   trustProxy: false,
 });
+
+function featureKey(name: string): "skillMatcher" | "compoundTools" | "builtinProfiles" | "designAudit" {
+  switch (name) {
+    case "DEVSPACE_SKILL_MATCHER": return "skillMatcher";
+    case "DEVSPACE_COMPOUND_TOOLS": return "compoundTools";
+    case "DEVSPACE_BUILTIN_PROFILES": return "builtinProfiles";
+    case "DEVSPACE_DESIGN_AUDIT": return "designAudit";
+    default: throw new Error(`Unknown feature flag: ${name}`);
+  }
+}
 
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "silent" }).logging.level, "silent");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "error" }).logging.level, "error");

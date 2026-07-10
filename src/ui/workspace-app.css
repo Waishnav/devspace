@@ -105,6 +105,59 @@ body {
   white-space: nowrap;
 }
 
+.path-action-row {
+  padding: 0 14px 10px 64px;
+}
+
+.path-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 31px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-primary, #3a3a40) 72%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-background-primary, #17181c) 38%, transparent);
+  color: var(--color-text-secondary, #d6d6dc);
+  cursor: pointer;
+  text-align: left;
+}
+
+.path-link:hover:not(:disabled),
+.path-link:focus-visible {
+  border-color: color-mix(in srgb, var(--color-link, #78a9ff) 58%, var(--color-border-primary, #3a3a40));
+  color: var(--color-link, #78a9ff);
+  outline: none;
+}
+
+.path-link:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.path-link-text {
+  overflow: hidden;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: var(--font-text-xs-size, 12px);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-link-action {
+  color: var(--color-text-tertiary, #a3a3aa);
+  font-size: var(--font-text-xs-size, 12px);
+  white-space: nowrap;
+}
+
+.path-link:hover:not(:disabled) .path-link-action,
+.path-link:focus-visible .path-link-action {
+  color: inherit;
+}
+
 .stats {
   display: inline-flex;
   gap: 5px;

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product UI Review"
+  short_description: "Review product UI flows with rendered evidence"
+  default_prompt: "Use $product-ui-review to review this rendered product flow and report prioritized findings."

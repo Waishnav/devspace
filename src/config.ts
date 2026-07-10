@@ -7,6 +7,8 @@ import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
+export type OpenWorkspacePayloadMode = "compact" | "full";
+export type UsageContentMode = "off" | "compact" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -19,6 +21,14 @@ export interface ServerConfig {
   publicBaseUrl: string;
   toolMode: ToolMode;
   widgets: WidgetMode;
+  openWorkspacePayload: OpenWorkspacePayloadMode;
+  openWorkspaceInstructionChars: number;
+  usageContent: UsageContentMode;
+  skillMatcher: boolean;
+  compoundTools: boolean;
+  builtinProfiles: boolean;
+  designAudit: boolean;
+  designAuditAllowedHosts: string[];
   stateDir: string;
   worktreeRoot: string;
   skillsEnabled: boolean;
@@ -81,6 +91,14 @@ function parseBoolean(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
 }
 
+function parseFeatureFlag(value: string | undefined, name: string): boolean {
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`Invalid ${name}: ${value}`);
+}
+
 function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
   const mode = env.DEVSPACE_TOOL_MODE;
   if (mode === "minimal" || mode === "full" || mode === "codex") return mode;
@@ -135,6 +153,19 @@ function parsePositiveInteger(value: string | undefined, fallback: number, name:
   return parsed;
 }
 
+function parseIntegerAtLeast(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  minimum: number,
+): number {
+  const parsed = parsePositiveInteger(value, fallback, name);
+  if (parsed < minimum) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return parsed;
+}
+
 function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
   return {
     level: parseLogLevel(env.DEVSPACE_LOG_LEVEL),
@@ -147,8 +178,23 @@ function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
   };
 }
 
-function parseWidgetMode(value: string | undefined): WidgetMode {
-  if (!value || value === "full") return "full";
+function parseOpenWorkspacePayloadMode(value: string | undefined): OpenWorkspacePayloadMode {
+  if (!value || value === "compact") return "compact";
+  if (value === "full") return value;
+
+  throw new Error(`Invalid DEVSPACE_OPEN_WORKSPACE_PAYLOAD: ${value}`);
+}
+
+function parseUsageContentMode(value: string | undefined): UsageContentMode {
+  if (!value || value === "compact") return "compact";
+  if (value === "off" || value === "full") return value;
+
+  throw new Error(`Invalid DEVSPACE_USAGE_CONTENT: ${value}`);
+}
+
+function parseWidgetMode(value: string | undefined, fallback: WidgetMode): WidgetMode {
+  if (!value) return fallback;
+  if (value === "full") return "full";
   if (value === "off" || value === "changes") return value;
 
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
@@ -206,6 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const publicBaseUrl = parsePublicBaseUrl(
     env.DEVSPACE_PUBLIC_BASE_URL ?? files.config.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
+  const openWorkspacePayload = parseOpenWorkspacePayloadMode(env.DEVSPACE_OPEN_WORKSPACE_PAYLOAD);
   const derivedAllowedHosts = [
     "localhost",
     "127.0.0.1",
@@ -223,7 +270,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
     toolMode: parseToolMode(env),
-    widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
+    widgets: parseWidgetMode(env.DEVSPACE_WIDGETS, openWorkspacePayload === "compact" ? "off" : "full"),
+    openWorkspacePayload,
+    openWorkspaceInstructionChars: parseIntegerAtLeast(
+      env.DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS,
+      6_000,
+      "DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS",
+      256,
+    ),
+    usageContent: parseUsageContentMode(env.DEVSPACE_USAGE_CONTENT),
+    skillMatcher: parseFeatureFlag(env.DEVSPACE_SKILL_MATCHER, "DEVSPACE_SKILL_MATCHER"),
+    compoundTools: parseFeatureFlag(env.DEVSPACE_COMPOUND_TOOLS, "DEVSPACE_COMPOUND_TOOLS"),
+    builtinProfiles: parseFeatureFlag(env.DEVSPACE_BUILTIN_PROFILES, "DEVSPACE_BUILTIN_PROFILES"),
+    designAudit: parseFeatureFlag(env.DEVSPACE_DESIGN_AUDIT, "DEVSPACE_DESIGN_AUDIT"),
+    designAuditAllowedHosts: parseStringList(
+      env.DEVSPACE_DESIGN_AUDIT_ALLOWED_HOSTS,
+      ["localhost", "127.0.0.1", "::1"],
+    ),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),

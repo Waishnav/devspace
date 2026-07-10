@@ -13,6 +13,7 @@ import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import { runLocalAgentProvider } from "./local-agent-adapters.js";
 import {
+  assertLocalAgentProfileBoundary,
   isLocalAgentProvider,
   loadLocalAgentProfiles,
   type LocalAgentProfile,
@@ -392,6 +393,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
       `Unknown subagent profile, provider, or id: ${parsed.target}. Available ${formatAvailableLocalAgentTargets(profiles)}`,
     );
   }
+  if (target.kind === "profile") assertLocalAgentProfileBoundary(target.profile);
   assertLocalAgentProviderAvailable(target.provider);
 
   const promptFile = writeAgentPromptFile(parsed.prompt);
@@ -475,13 +477,14 @@ async function runLocalAgentProfile(
   record: LocalAgentRecord,
   prompt: string,
 ): Promise<LocalAgentRunResult> {
+  assertLocalAgentProfileBoundary(profile);
   const body = profile.body.trim();
   const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
   return runLocalAgentProvider(profile.provider, {
     prompt: fullPrompt,
     workspace: record.workspaceRoot,
     providerSessionId: record.providerSessionId,
-    writeMode: "allowed",
+    writeMode: profile.writeMode,
     model: record.model ?? profile.model,
     thinking: record.thinking ?? profile.thinking,
   });

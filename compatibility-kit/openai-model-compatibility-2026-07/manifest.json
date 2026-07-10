@@ -1,0 +1,65 @@
+{
+  "name": "devspace-openai-model-compatibility",
+  "bundleVersion": "2026.07.2",
+  "status": "community-proposal",
+  "target": {
+    "package": "@waishnav/devspace",
+    "version": "1.0.4",
+    "commit": "d03187460cebdc2820e797cb59740537100a0f99"
+  },
+  "patches": [
+    {
+      "order": 1,
+      "path": "patches/0001-compact-workspace-and-usage.patch",
+      "scope": "Compact workspace payloads, instruction reads, feature flags, and text-volume metrics"
+    },
+    {
+      "order": 2,
+      "path": "patches/0002-safe-tools-and-compound-inspection.patch",
+      "scope": "Approved shell aliases, bounded inspection helpers, compound tools, and registration"
+    },
+    {
+      "order": 3,
+      "path": "patches/0003-agents-skills-app-integration.patch",
+      "scope": "Agent profiles, skills, design audit, configuration docs, and MCP App integration"
+    },
+    {
+      "order": 4,
+      "path": "patches/0004-runtime-diagnostics-and-costs.patch",
+      "scope": "Safe PATH discovery, runtime diagnostics, compatibility smoke checks, and execution-cost aggregation"
+    },
+    {
+      "order": 5,
+      "path": "patches/0005-existing-tool-runtime-integration.patch",
+      "scope": "Runtime commands integrated into the existing Bash Tool plus app-only Finder registration"
+    },
+    {
+      "order": 6,
+      "path": "patches/0006-finder-app-action.patch",
+      "scope": "Workspace-scoped Open in Finder action for MCP App result cards"
+    }
+  ],
+  "defaults": {
+    "openWorkspacePayload": "compact",
+    "usageContent": "compact",
+    "skillMatcher": false,
+    "compoundTools": false,
+    "builtinProfiles": false,
+    "designAudit": false
+  },
+  "privacy": {
+    "personalPathsIncluded": false,
+    "credentialsIncluded": false,
+    "privateEndpointsIncluded": false,
+    "privateBrandingIncluded": false,
+    "personalLogsIncluded": false
+  },
+  "automation": {
+    "commits": false,
+    "pushes": false,
+    "publishes": false,
+    "deploys": false,
+    "userConfigMutations": false
+  },
+  "provenance": "Prepared and validated through ChatGPT instructions using DevSpace MCP tools."
+}

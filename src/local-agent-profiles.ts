@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
+import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 
 export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
 
@@ -21,6 +23,7 @@ export interface LocalAgentProfile {
   provider: LocalAgentProvider;
   model?: string;
   thinking?: string;
+  writeMode: Exclude<LocalAgentWriteMode, "full_access">;
   filePath: string;
   body: string;
   disabled: boolean;
@@ -32,6 +35,7 @@ export interface LocalAgentProfileSummary {
   provider: LocalAgentProvider;
   model?: string;
   thinking?: string;
+  writeMode: Exclude<LocalAgentWriteMode, "full_access">;
 }
 
 interface ParsedFrontmatter {
@@ -49,9 +53,10 @@ export async function loadLocalAgentProfiles(
   if (!config.subagents) return [];
 
   const profileDirs = [
+    config.builtinProfiles ? builtinProfilesDir() : undefined,
     config.devspaceAgentsDir,
     join(workspaceRoot, ".devspace", "agents"),
-  ];
+  ].filter((directory): directory is string => directory !== undefined);
   const profilesByName = new Map<string, LocalAgentProfile>();
 
   for (const directory of profileDirs) {
@@ -74,6 +79,7 @@ export function summarizeLocalAgentProfile(
     provider: profile.provider,
     model: profile.model,
     thinking: profile.thinking,
+    writeMode: profile.writeMode,
   };
 }
 
@@ -158,10 +164,25 @@ function profileFromFrontmatter(
     provider,
     model: readString(frontmatter, "model"),
     thinking: readString(frontmatter, "thinking"),
+    writeMode: readWriteMode(frontmatter, filePath),
     filePath,
     body,
     disabled: frontmatter.disabled === true,
   };
+}
+
+function builtinProfilesDir(): string {
+  return fileURLToPath(new URL("../agents", import.meta.url));
+}
+
+function readWriteMode(
+  frontmatter: Record<string, unknown>,
+  filePath: string,
+): Exclude<LocalAgentWriteMode, "full_access"> {
+  const value = readString(frontmatter, "write-mode") ?? readString(frontmatter, "writeMode");
+  if (!value || value === "allowed") return "allowed";
+  if (value === "read_only") return value;
+  throw new Error(`Subagent profile write-mode must be read_only or allowed: ${filePath}`);
 }
 
 function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProvider {
@@ -179,6 +200,19 @@ function readProvider(frontmatter: Record<string, unknown>, filePath: string): L
 
 export function isLocalAgentProvider(value: string): value is LocalAgentProvider {
   return PROVIDERS.has(value as LocalAgentProvider);
+}
+
+export function assertLocalAgentProfileBoundary(profile: LocalAgentProfile): void {
+  if (profile.writeMode === "read_only" && profile.provider !== "codex") {
+    throw new Error(
+      `Read-only profile ${profile.name} requires the codex provider; ${profile.provider} cannot enforce this boundary.`,
+    );
+  }
+  if (profile.writeMode === "read_only" && profile.name === profile.provider) {
+    throw new Error(
+      `Read-only profile name ${profile.name} is reserved for the raw provider target.`,
+    );
+  }
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {

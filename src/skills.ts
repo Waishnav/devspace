@@ -39,7 +39,7 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
+    (config.designAudit || (config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)))
       ? bundledSkills
       : undefined,
   ];

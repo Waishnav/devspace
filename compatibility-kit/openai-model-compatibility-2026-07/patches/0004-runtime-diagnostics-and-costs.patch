@@ -1,0 +1,809 @@
+diff --git a/package.json b/package.json
+index b6ad4b4fe3185b850a0dc94506293e09965be2c8..f5b002236bc2af529ec5294e193a8d8a7216f64e 100644
+--- a/package.json
++++ b/package.json
+@@ -29,7 +29,8 @@
+     "dev": "node scripts/dev-server.mjs",
+     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
+     "start": "node dist/cli.js serve",
+-    "test": "tsx src/config.test.ts && tsx src/usage-meter.test.ts && tsx src/pi-tools.test.ts && tsx src/skill-matcher.test.ts && tsx src/compound-tools.test.ts && tsx src/design-audit.test.ts && tsx src/register-v11-tools.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts",
++    "test": "tsx src/config.test.ts && tsx src/shell-environment.test.ts && tsx src/runtime-operations.test.ts && tsx src/usage-meter.test.ts && tsx src/pi-tools.test.ts && tsx src/skill-matcher.test.ts && tsx src/compound-tools.test.ts && tsx src/design-audit.test.ts && tsx src/register-v11-tools.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts",
++    "test:runtime": "tsx src/shell-environment.test.ts && tsx src/runtime-operations.test.ts && tsx src/usage-meter.test.ts",
+     "typecheck": "tsc -p tsconfig.json --noEmit"
+   },
+   "keywords": [],
+diff --git a/src/runtime-operations.test.ts b/src/runtime-operations.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ba2b2fda3cde935879be4bca09e3add16b3d10cc
+--- /dev/null
++++ b/src/runtime-operations.test.ts
+@@ -0,0 +1,45 @@
++import assert from "node:assert/strict";
++import { execFile } from "node:child_process";
++import { mkdtemp, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { promisify } from "node:util";
++import {
++  diagnoseRuntime,
++  finderOpenArguments,
++  runCompatibilitySmoke,
++} from "./runtime-operations.js";
++
++const execFileAsync = promisify(execFile);
++const root = await mkdtemp(join(tmpdir(), "devspace-runtime-operations-"));
++try {
++  await writeFile(join(root, "AGENTS.md"), "Test instructions.\n", "utf8");
++  await writeFile(join(root, "package.json"), '{"name":"runtime-test"}\n', "utf8");
++  await execFileAsync("git", ["init", "-q"], { cwd: root });
++
++  const diagnostics = await diagnoseRuntime({
++    workspaceRoot: root,
++    commands: ["git", "node", "definitely-missing-command"],
++    checkGitHubAuth: false,
++  });
++  assert.equal(diagnostics.workspace.accessible, true);
++  assert.equal(diagnostics.workspace.gitRepository, true);
++  assert.equal(diagnostics.executables.find((entry) => entry.command === "git")?.found, true);
++  assert.equal(
++    diagnostics.executables.find((entry) => entry.command === "definitely-missing-command")?.found,
++    false,
++  );
++  assert.equal(diagnostics.githubAuthentication, "not_checked");
++
++  const smoke = await runCompatibilitySmoke(root);
++  assert.equal(smoke.status, "passed");
++  assert.equal(smoke.summary.failed, 0);
++  assert.equal(smoke.steps.find((step) => step.name === "workspace")?.status, "passed");
++  assert.equal(smoke.steps.find((step) => step.name === "git")?.status, "passed");
++
++  assert.deepEqual(finderOpenArguments("/tmp/file.txt", "file", "darwin"), ["-R", "/tmp/file.txt"]);
++  assert.deepEqual(finderOpenArguments("/tmp/folder", "directory", "darwin"), ["/tmp/folder"]);
++  assert.equal(finderOpenArguments("C:\\temp", "directory", "win32"), undefined);
++} finally {
++  await rm(root, { recursive: true, force: true });
++}
+diff --git a/src/runtime-operations.ts b/src/runtime-operations.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1d7a59e693d9cdd384c057fe5ab325533abbc41
+--- /dev/null
++++ b/src/runtime-operations.ts
+@@ -0,0 +1,318 @@
++import { execFile } from "node:child_process";
++import { access, readdir, readFile, stat } from "node:fs/promises";
++import { basename, join } from "node:path";
++import { promisify } from "node:util";
++import { measuredPayload } from "./tool-metrics.js";
++import { resolveExecutable, shellPathInfo } from "./shell-environment.js";
++
++const execFileAsync = promisify(execFile);
++
++export interface RuntimeDiagnosticResult {
++  platform: NodeJS.Platform;
++  nodeVersion: string;
++  workspace: {
++    root: string;
++    name: string;
++    accessible: boolean;
++    gitRepository: boolean;
++  };
++  shellPath: {
++    entryCount: number;
++    addedEntries: string[];
++  };
++  executables: Array<{
++    command: string;
++    found: boolean;
++    path?: string;
++  }>;
++  githubAuthentication: "not_checked" | "authenticated" | "unauthenticated" | "gh_unavailable";
++  diagnostics: string[];
++  metrics: {
++    serverDurationMs: number;
++    payloadCharacters: number;
++    returnedItems: number;
++    truncated: boolean;
++  };
++}
++
++export async function diagnoseRuntime(input: {
++  workspaceRoot: string;
++  commands?: string[];
++  checkGitHubAuth?: boolean;
++}): Promise<RuntimeDiagnosticResult> {
++  const startedAt = performance.now();
++  const commands = Array.from(new Set(input.commands ?? ["git", "node", "npm", "gh"]))
++    .filter((command) => /^[A-Za-z0-9._+-]+$/.test(command))
++    .slice(0, 20);
++  const shell = shellPathInfo();
++  const executables = commands.map((command) => {
++    const path = resolveExecutable(command);
++    return { command, found: Boolean(path), ...(path ? { path } : {}) };
++  });
++  const accessible = await pathAccessible(input.workspaceRoot);
++  const gitRepository = accessible && await isGitRepository(input.workspaceRoot);
++  const ghPath = executables.find((entry) => entry.command === "gh")?.path;
++  let githubAuthentication: RuntimeDiagnosticResult["githubAuthentication"] = "not_checked";
++  if (input.checkGitHubAuth) {
++    if (!ghPath) {
++      githubAuthentication = "gh_unavailable";
++    } else {
++      githubAuthentication = await commandSucceeds(
++        ghPath,
++        ["auth", "status", "--hostname", "github.com"],
++        input.workspaceRoot,
++      ) ? "authenticated" : "unauthenticated";
++    }
++  }
++
++  const diagnostics = [
++    accessible ? "Workspace is accessible." : "Workspace is not accessible.",
++    gitRepository ? "Git repository detected." : "Git repository not detected.",
++    shell.addedEntries.length > 0
++      ? `Added ${shell.addedEntries.length} safe PATH fallback(s).`
++      : "No PATH fallbacks were needed.",
++    ...executables
++      .filter((entry) => !entry.found)
++      .map((entry) => `Executable not found: ${entry.command}`),
++    input.checkGitHubAuth
++      ? `GitHub authentication: ${githubAuthentication}.`
++      : "GitHub authentication was not checked.",
++  ];
++
++  return measuredPayload({
++    platform: process.platform,
++    nodeVersion: process.version,
++    workspace: {
++      root: input.workspaceRoot,
++      name: basename(input.workspaceRoot),
++      accessible,
++      gitRepository,
++    },
++    shellPath: {
++      entryCount: shell.entries.length,
++      addedEntries: shell.addedEntries,
++    },
++    executables,
++    githubAuthentication,
++    diagnostics,
++  }, {
++    startedAt,
++    returnedItems: executables.length + diagnostics.length,
++    truncated: false,
++  });
++}
++
++export interface CompatibilitySmokeResult {
++  status: "passed" | "failed";
++  steps: Array<{
++    name: string;
++    status: "passed" | "failed" | "skipped";
++    detail: string;
++    durationMs: number;
++  }>;
++  summary: {
++    passed: number;
++    failed: number;
++    skipped: number;
++  };
++  metrics: {
++    serverDurationMs: number;
++    payloadCharacters: number;
++    returnedItems: number;
++    truncated: boolean;
++  };
++}
++
++export async function runCompatibilitySmoke(
++  workspaceRoot: string,
++): Promise<CompatibilitySmokeResult> {
++  const startedAt = performance.now();
++  const steps: CompatibilitySmokeResult["steps"] = [];
++
++  await smokeStep(steps, "workspace", async () => {
++    const info = await stat(workspaceRoot);
++    if (!info.isDirectory()) throw new Error("Workspace root is not a directory.");
++    return "Workspace directory is accessible.";
++  });
++
++  await smokeStep(steps, "list", async () => {
++    const entries = await readdir(workspaceRoot);
++    return `Listed ${entries.length} root item(s).`;
++  });
++
++  const readableCandidate = await firstAccessible([
++    join(workspaceRoot, "AGENTS.md"),
++    join(workspaceRoot, "package.json"),
++    join(workspaceRoot, "README.md"),
++  ]);
++  if (readableCandidate) {
++    await smokeStep(steps, "read", async () => {
++      const content = await readFile(readableCandidate, "utf8");
++      if (content.length === 0) throw new Error("Selected text file is empty.");
++      return `Read ${basename(readableCandidate)} (${content.length} characters).`;
++    });
++    await smokeStep(steps, "search", async () => {
++      const content = await readFile(readableCandidate, "utf8");
++      const lines = content.split(/\r?\n/u).filter((line) => /\S/u.test(line));
++      if (lines.length === 0) throw new Error("No searchable text was found.");
++      return `Found ${lines.length} non-empty line(s).`;
++    });
++  } else {
++    steps.push({
++      name: "read",
++      status: "skipped",
++      detail: "No standard text file was available.",
++      durationMs: 0,
++    });
++    steps.push({
++      name: "search",
++      status: "skipped",
++      detail: "No standard text file was available.",
++      durationMs: 0,
++    });
++  }
++
++  await smokeStep(steps, "shell-path", async () => {
++    const executable = resolveExecutable("node");
++    if (!executable) throw new Error("Node executable was not resolved from the augmented PATH.");
++    const { stdout } = await execFileAsync(executable, ["-e", "process.stdout.write(process.cwd())"], {
++      cwd: workspaceRoot,
++      timeout: 5_000,
++      maxBuffer: 8_192,
++    });
++    if (!stdout.trim()) throw new Error("Shell probe returned no working directory.");
++    return "Resolved and executed Node through the augmented PATH.";
++  });
++
++  const gitPath = resolveExecutable("git");
++  if (gitPath && await isGitRepository(workspaceRoot)) {
++    await smokeStep(steps, "git", async () => {
++      await execFileAsync(gitPath, ["status", "--short", "--branch"], {
++        cwd: workspaceRoot,
++        timeout: 5_000,
++        maxBuffer: 64_000,
++      });
++      return "Git status completed.";
++    });
++  } else {
++    steps.push({
++      name: "git",
++      status: "skipped",
++      detail: gitPath ? "Workspace is not a Git repository." : "Git executable was not found.",
++      durationMs: 0,
++    });
++  }
++
++  const appResource = join(workspaceRoot, "src", "ui", "workspace-app.html");
++  steps.push({
++    name: "app-resource",
++    status: await pathAccessible(appResource) ? "passed" : "skipped",
++    detail: await pathAccessible(appResource)
++      ? "MCP App resource entry point is present."
++      : "No MCP App resource entry point was detected in this workspace.",
++    durationMs: 0,
++  });
++
++  const summary = {
++    passed: steps.filter((step) => step.status === "passed").length,
++    failed: steps.filter((step) => step.status === "failed").length,
++    skipped: steps.filter((step) => step.status === "skipped").length,
++  };
++
++  return measuredPayload({
++    status: summary.failed === 0 ? "passed" : "failed",
++    steps,
++    summary,
++  }, {
++    startedAt,
++    returnedItems: steps.length,
++    truncated: false,
++  });
++}
++
++export function finderOpenArguments(
++  path: string,
++  kind: "file" | "directory",
++  platform: NodeJS.Platform = process.platform,
++): string[] | undefined {
++  if (platform !== "darwin") return undefined;
++  return kind === "directory" ? [path] : ["-R", path];
++}
++
++export async function openPathInFinder(path: string): Promise<{
++  status: "opened" | "unsupported";
++  path: string;
++  kind: "file" | "directory";
++}> {
++  const info = await stat(path);
++  const kind = info.isDirectory() ? "directory" : "file";
++  const args = finderOpenArguments(path, kind);
++  if (!args) {
++    return { status: "unsupported", path, kind };
++  }
++  const openExecutable = resolveExecutable("open") ?? "/usr/bin/open";
++  await execFileAsync(openExecutable, args, {
++    timeout: 10_000,
++    maxBuffer: 8_192,
++  });
++  return { status: "opened", path, kind };
++}
++
++async function smokeStep(
++  steps: CompatibilitySmokeResult["steps"],
++  name: string,
++  operation: () => Promise<string>,
++): Promise<void> {
++  const startedAt = performance.now();
++  try {
++    const detail = await operation();
++    steps.push({
++      name,
++      status: "passed",
++      detail,
++      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
++    });
++  } catch (error) {
++    steps.push({
++      name,
++      status: "failed",
++      detail: error instanceof Error ? error.message : String(error),
++      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
++    });
++  }
++}
++
++async function pathAccessible(path: string): Promise<boolean> {
++  try {
++    await access(path);
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++async function firstAccessible(paths: string[]): Promise<string | undefined> {
++  for (const path of paths) {
++    if (await pathAccessible(path)) return path;
++  }
++  return undefined;
++}
++
++async function isGitRepository(cwd: string): Promise<boolean> {
++  const gitPath = resolveExecutable("git");
++  if (!gitPath) return false;
++  return commandSucceeds(gitPath, ["rev-parse", "--is-inside-work-tree"], cwd);
++}
++
++async function commandSucceeds(command: string, args: string[], cwd: string): Promise<boolean> {
++  try {
++    await execFileAsync(command, args, {
++      cwd,
++      timeout: 5_000,
++      maxBuffer: 8_192,
++    });
++    return true;
++  } catch {
++    return false;
++  }
++}
+diff --git a/src/shell-environment.test.ts b/src/shell-environment.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ddadb2b410699004ddb42455499bba8aa0b0993
+--- /dev/null
++++ b/src/shell-environment.test.ts
+@@ -0,0 +1,46 @@
++import assert from "node:assert/strict";
++import { delimiter } from "node:path";
++import {
++  commandWithAugmentedPath,
++  resolveExecutable,
++  shellPathInfo,
++} from "./shell-environment.js";
++
++const existing = ["/usr/bin", "/bin"].join(delimiter);
++const existingDirs = new Set([
++  "/opt/homebrew/bin",
++  "/usr/local/bin",
++  "/test-home/.local/bin",
++  "/usr/bin",
++  "/bin",
++]);
++const info = shellPathInfo(
++  { PATH: existing },
++  "darwin",
++  "/test-home",
++  (path) => existingDirs.has(path),
++);
++assert.deepEqual(info.entries, [
++  "/usr/bin",
++  "/bin",
++  "/opt/homebrew/bin",
++  "/usr/local/bin",
++  "/test-home/.local/bin",
++]);
++assert.deepEqual(info.addedEntries, [
++  "/opt/homebrew/bin",
++  "/usr/local/bin",
++  "/test-home/.local/bin",
++]);
++assert.match(commandWithAugmentedPath("gh auth status", { PATH: existing }, "darwin"), /^export PATH='/);
++assert.equal(commandWithAugmentedPath("dir", { PATH: existing }, "win32"), "dir");
++assert.equal(
++  resolveExecutable(
++    "gh",
++    { PATH: existing },
++    "darwin",
++    (path) => path === "/opt/homebrew/bin/gh" || existingDirs.has(path),
++  ),
++  "/opt/homebrew/bin/gh",
++);
++assert.equal(resolveExecutable("bad command", { PATH: existing }, "darwin"), undefined);
+diff --git a/src/shell-environment.ts b/src/shell-environment.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2983d421044fba5d01031e9f27fca367a3b54230
+--- /dev/null
++++ b/src/shell-environment.ts
+@@ -0,0 +1,89 @@
++import { existsSync } from "node:fs";
++import { homedir } from "node:os";
++import { delimiter, join } from "node:path";
++
++export interface ShellPathInfo {
++  path: string;
++  entries: string[];
++  addedEntries: string[];
++}
++
++function uniqueEntries(entries: string[]): string[] {
++  const seen = new Set<string>();
++  return entries.filter((entry) => {
++    const normalized = entry.trim();
++    if (!normalized || seen.has(normalized)) return false;
++    seen.add(normalized);
++    return true;
++  });
++}
++
++export function shellPathInfo(
++  env: NodeJS.ProcessEnv = process.env,
++  platform: NodeJS.Platform = process.platform,
++  home: string = homedir(),
++  directoryExists: (path: string) => boolean = existsSync,
++): ShellPathInfo {
++  const existingEntries = String(env.PATH ?? "")
++    .split(delimiter)
++    .filter(Boolean);
++  const candidates = platform === "win32"
++    ? []
++    : [
++        "/opt/homebrew/bin",
++        "/opt/homebrew/sbin",
++        "/usr/local/bin",
++        "/usr/local/sbin",
++        join(home, ".local", "bin"),
++        join(home, "bin"),
++        "/usr/bin",
++        "/bin",
++        "/usr/sbin",
++        "/sbin",
++      ];
++  const existingSet = new Set(existingEntries);
++  const addedEntries = uniqueEntries(candidates)
++    .filter((entry) => !existingSet.has(entry) && directoryExists(entry));
++  const entries = uniqueEntries([...existingEntries, ...addedEntries]);
++
++  return {
++    path: entries.join(delimiter),
++    entries,
++    addedEntries,
++  };
++}
++
++function quotePosix(value: string): string {
++  return `'${value.replaceAll("'", `'"'"'`)}'`;
++}
++
++export function commandWithAugmentedPath(
++  command: string,
++  env: NodeJS.ProcessEnv = process.env,
++  platform: NodeJS.Platform = process.platform,
++): string {
++  if (platform === "win32") return command;
++  const info = shellPathInfo(env, platform);
++  return `export PATH=${quotePosix(info.path)}; ${command}`;
++}
++
++export function resolveExecutable(
++  command: string,
++  env: NodeJS.ProcessEnv = process.env,
++  platform: NodeJS.Platform = process.platform,
++  fileExists: (path: string) => boolean = existsSync,
++): string | undefined {
++  if (!/^[A-Za-z0-9._+-]+$/.test(command)) return undefined;
++  const info = shellPathInfo(env, platform);
++  const extensions = platform === "win32"
++    ? String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";")
++    : [""];
++
++  for (const entry of info.entries) {
++    for (const extension of extensions) {
++      const candidate = join(entry, `${command}${extension}`);
++      if (fileExists(candidate)) return candidate;
++    }
++  }
++  return undefined;
++}
+diff --git a/src/usage-meter.test.ts b/src/usage-meter.test.ts
+index 448dc8e1a721c850a910a71787737586997cc565..f18fec430d09b160c58ef3c9323b88de30f06997 100644
+--- a/src/usage-meter.test.ts
++++ b/src/usage-meter.test.ts
+@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
+ import { platform } from "node:os";
+ import {
+   appendUsageToContent,
++  compactDuration,
+   compactTokenCount,
+   editInputChars,
+   estimateTokensFromChars,
++  getExecutionCostSnapshot,
+   recordObservedToolUsage,
+   textContentChars,
+ } from "./usage-meter.js";
+@@ -13,6 +15,8 @@ assert.equal(estimateTokensFromChars(0), 0);
+ assert.equal(estimateTokensFromChars(5), 2);
+ assert.equal(compactTokenCount(999), "999");
+ assert.equal(compactTokenCount(1_500), "1.5k");
++assert.equal(compactDuration(950), "950ms");
++assert.equal(compactDuration(1_500), "1.5s");
+ assert.equal(editInputChars([{ oldText: "old", newText: "new" }]), 6);
+ assert.equal(textContentChars([{ type: "text", text: "hello" }]), 5);
+ 
+@@ -22,22 +26,35 @@ const usage = recordObservedToolUsage({
+   tool: "read",
+   observedChars: 40,
+   savedChars: 80,
++  inputChars: 10,
++  outputChars: 30,
++  payloadChars: 40,
++  durationMs: 125,
++  error: false,
++  retries: 1,
+ });
+ const content = [{ type: "text" as const, text: "result" }];
+ 
++assert.equal(usage.durationMs, 125);
++assert.equal(usage.sessionCalls >= 1, true);
+ assert.deepEqual(appendUsageToContent(content, usage, "off"), content);
+ const compactContent = appendUsageToContent(content, usage, "compact");
+ const compactText = compactContent.at(-1);
+ assert.match(
+   compactText?.type === "text" ? compactText.text : "",
+-  /DevSpace token estimate/,
++  /DevSpace cost:/,
+ );
+ const fullContent = appendUsageToContent(content, usage, "full");
+ const fullText = fullContent.at(-1);
+ assert.match(
+   fullText?.type === "text" ? fullText.text : "",
+-  /not actual model usage or billing data/,
++  /Execution cost estimate/,
+ );
++const snapshot = getExecutionCostSnapshot();
++assert.equal(snapshot.calls >= 1, true);
++assert.equal(snapshot.byTool.read.calls >= 1, true);
++assert.equal(snapshot.byTool.read.totalDurationMs >= 125, true);
++assert.equal(snapshot.retries >= 1, true);
+ 
+ if (previousHistory === undefined) {
+   delete process.env.DEVSPACE_USAGE_HISTORY;
+diff --git a/src/usage-meter.ts b/src/usage-meter.ts
+index 83f6b84dc7e225a67edb27d1b679f6046978713e..ec6401c6ddda14877f2ac2b5b3dc0c0a3ac64313 100644
+--- a/src/usage-meter.ts
++++ b/src/usage-meter.ts
+@@ -7,10 +7,16 @@ import type { UsageContentMode } from "./config.js";
+ type TextContent = { type: "text"; text: string };
+ type ToolContent = TextContent | { type: "image"; data: string; mimeType: string };
+ 
+-interface UsageBucket {
++export interface UsageBucket {
+   observedTokens: number;
+   savedTokens: number;
+   calls: number;
++  inputChars: number;
++  outputChars: number;
++  payloadChars: number;
++  totalDurationMs: number;
++  errorCalls: number;
++  retries: number;
+ }
+ 
+ export interface UsageEntry {
+@@ -25,8 +31,29 @@ export interface UsageEntry {
+   observedTokens: number;
+   savedChars: number;
+   savedTokens: number;
++  inputChars: number;
++  outputChars: number;
++  payloadChars: number;
++  durationMs: number;
++  error: boolean;
++  retries: number;
+   sessionObservedTokens: number;
+   sessionSavedTokens: number;
++  sessionDurationMs: number;
++  sessionCalls: number;
++  sessionErrors: number;
++  sessionRetries: number;
++  byTool: Record<string, UsageBucket>;
++  note: string;
++}
++
++export interface ExecutionCostSnapshot {
++  observedTokens: number;
++  savedTokens: number;
++  totalDurationMs: number;
++  calls: number;
++  errors: number;
++  retries: number;
+   byTool: Record<string, UsageBucket>;
+   note: string;
+ }
+@@ -34,6 +61,10 @@ export interface UsageEntry {
+ const session = {
+   observedTokens: 0,
+   savedTokens: 0,
++  totalDurationMs: 0,
++  calls: 0,
++  errors: 0,
++  retries: 0,
+   byTool: new Map<string, UsageBucket>(),
+ };
+ let historyWrite = Promise.resolve();
+@@ -43,8 +74,8 @@ function historyPath(): string {
+     ?? join(homedir(), ".local", "share", "devspace", "usage-history.jsonl");
+ }
+ 
+-function clampNumber(value: number): number {
+-  return Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
++function clampNumber(value: number | undefined): number {
++  return Number.isFinite(value) && Number(value) > 0 ? Math.ceil(Number(value)) : 0;
+ }
+ 
+ export function estimateTokensFromChars(chars: number): number {
+@@ -80,9 +111,17 @@ export function compactTokenCount(tokens: number): string {
+   return `${tokens}`;
+ }
+ 
++export function compactDuration(durationMs: number): string {
++  if (durationMs >= 60_000) return `${(durationMs / 60_000).toFixed(1)}m`;
++  if (durationMs >= 1_000) return `${(durationMs / 1_000).toFixed(1)}s`;
++  return `${durationMs}ms`;
++}
++
+ function byToolSnapshot(): Record<string, UsageBucket> {
+   return Object.fromEntries(
+-    Array.from(session.byTool.entries()).sort(([a], [b]) => a.localeCompare(b)),
++    Array.from(session.byTool.entries())
++      .sort(([a], [b]) => a.localeCompare(b))
++      .map(([tool, bucket]) => [tool, { ...bucket }]),
+   );
+ }
+ 
+@@ -103,24 +142,52 @@ export function recordObservedToolUsage(input: {
+   path?: string;
+   observedChars: number;
+   savedChars: number;
++  inputChars?: number;
++  outputChars?: number;
++  payloadChars?: number;
++  durationMs?: number;
++  error?: boolean;
++  retries?: number;
+ }): UsageEntry {
+   const tool = input.tool ?? "unknown";
+   const observedChars = clampNumber(input.observedChars);
+   const savedChars = clampNumber(input.savedChars);
+   const observedTokens = estimateTokensFromChars(observedChars);
+   const savedTokens = estimateTokensFromChars(savedChars);
++  const inputChars = clampNumber(input.inputChars);
++  const outputChars = clampNumber(input.outputChars);
++  const payloadChars = clampNumber(input.payloadChars ?? observedChars);
++  const durationMs = clampNumber(input.durationMs);
++  const retries = clampNumber(input.retries);
++  const error = input.error === true;
+   const current = session.byTool.get(tool) ?? {
+     observedTokens: 0,
+     savedTokens: 0,
+     calls: 0,
++    inputChars: 0,
++    outputChars: 0,
++    payloadChars: 0,
++    totalDurationMs: 0,
++    errorCalls: 0,
++    retries: 0,
+   };
+ 
+   current.observedTokens += observedTokens;
+   current.savedTokens += savedTokens;
+   current.calls += 1;
++  current.inputChars += inputChars;
++  current.outputChars += outputChars;
++  current.payloadChars += payloadChars;
++  current.totalDurationMs += durationMs;
++  current.errorCalls += error ? 1 : 0;
++  current.retries += retries;
+   session.byTool.set(tool, current);
+   session.observedTokens += observedTokens;
+   session.savedTokens += savedTokens;
++  session.totalDurationMs += durationMs;
++  session.calls += 1;
++  session.errors += error ? 1 : 0;
++  session.retries += retries;
+ 
+   const entry: UsageEntry = {
+     ts: new Date().toISOString(),
+@@ -136,31 +203,55 @@ export function recordObservedToolUsage(input: {
+     observedTokens,
+     savedChars,
+     savedTokens,
++    inputChars,
++    outputChars,
++    payloadChars,
++    durationMs,
++    error,
++    retries,
+     sessionObservedTokens: session.observedTokens,
+     sessionSavedTokens: session.savedTokens,
++    sessionDurationMs: session.totalDurationMs,
++    sessionCalls: session.calls,
++    sessionErrors: session.errors,
++    sessionRetries: session.retries,
+     byTool: byToolSnapshot(),
+-    note: "DevSpace observed text estimate only. Not ChatGPT actual model usage.",
++    note: "DevSpace observed execution estimate only. Not host-model billing or actual model usage.",
+   };
+   appendHistory(entry);
+   return entry;
+ }
+ 
++export function getExecutionCostSnapshot(): ExecutionCostSnapshot {
++  return {
++    observedTokens: session.observedTokens,
++    savedTokens: session.savedTokens,
++    totalDurationMs: session.totalDurationMs,
++    calls: session.calls,
++    errors: session.errors,
++    retries: session.retries,
++    byTool: byToolSnapshot(),
++    note: "Text-token values are estimates; duration and call/error counts are observed by DevSpace.",
++  };
++}
++
+ function fullUsageSummaryText(entry: UsageEntry): string {
+   const byTool = Object.entries(entry.byTool)
+-    .map(([tool, value]) => `${tool} ${compactTokenCount(value.observedTokens)}`)
++    .map(([tool, value]) => `${tool} ${value.calls} calls/${compactDuration(value.totalDurationMs)}`)
+     .join(" / ");
+ 
+   return [
+-    "DevSpace token estimate:",
+-    `Observed this call: ~${compactTokenCount(entry.observedTokens)} / session: ~${compactTokenCount(entry.sessionObservedTokens)}`,
+-    `Session by tool: ${byTool || "none"}`,
+-    `Estimated text avoided: ~${compactTokenCount(entry.sessionSavedTokens)} tokens`,
+-    "Calculated only from text handled by DevSpace. This is not actual model usage or billing data.",
++    "Execution cost estimate:",
++    `Current: ~${compactTokenCount(entry.observedTokens)} tokens / ${compactDuration(entry.durationMs)} / ${entry.error ? "error" : "ok"}`,
++    `Session: ~${compactTokenCount(entry.sessionObservedTokens)} tokens / ${compactDuration(entry.sessionDurationMs)} / ${entry.sessionCalls} calls / ${entry.sessionErrors} errors / ${entry.sessionRetries} retries`,
++    `By tool: ${byTool || "none"}`,
++    `Estimated saved tokens: ~${compactTokenCount(entry.sessionSavedTokens)}`,
++    "Token values are estimated from text handled by DevSpace, not actual host-model usage.",
+   ].join("\n");
+ }
+ 
+ function compactUsageSummaryText(entry: UsageEntry): string {
+-  return `DevSpace token estimate: call ~${compactTokenCount(entry.observedTokens)} / session ~${compactTokenCount(entry.sessionObservedTokens)}`;
++  return `DevSpace cost: ~${compactTokenCount(entry.observedTokens)} tok · ${compactDuration(entry.durationMs)} | session ~${compactTokenCount(entry.sessionObservedTokens)} tok · ${entry.sessionCalls} calls · ${entry.sessionErrors} errors`;
+ }
+ 
+ export function appendUsageToContent<T extends ToolContent>(

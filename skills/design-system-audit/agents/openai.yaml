@@ -1,0 +1,4 @@
+interface:
+  display_name: "Design System Audit"
+  short_description: "Audit visual consistency and interaction states"
+  default_prompt: "Use $design-system-audit to audit this rendered interface against its design system."

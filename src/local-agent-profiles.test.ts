@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
-import { loadLocalAgentProfiles, summarizeLocalAgentProfile } from "./local-agent-profiles.js";
+import {
+  assertLocalAgentProfileBoundary,
+  loadLocalAgentProfiles,
+  summarizeLocalAgentProfile,
+} from "./local-agent-profiles.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
 
@@ -71,6 +75,7 @@ try {
   assert.equal(profiles[0]?.provider, "claude");
   assert.equal(profiles[0]?.model, "sonnet");
   assert.equal(profiles[0]?.thinking, "high");
+  assert.equal(profiles[0]?.writeMode, "allowed");
   assert.equal(profiles[0]?.body, "Project body.");
   assert.deepEqual(summarizeLocalAgentProfile(profiles[0]!), {
     name: "reviewer",
@@ -78,7 +83,53 @@ try {
     provider: "claude",
     model: "sonnet",
     thinking: "high",
+    writeMode: "allowed",
   });
+
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "readonly.md"),
+    [
+      "---",
+      "name: readonly",
+      "description: Read-only reviewer.",
+      "provider: codex",
+      "write-mode: read_only",
+      "---",
+      "",
+      "Review only.",
+    ].join("\n"),
+  );
+  const withReadOnly = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
+  assert.equal(withReadOnly.find((profile) => profile.name === "readonly")?.writeMode, "read_only");
+  assert.doesNotThrow(() => assertLocalAgentProfileBoundary(
+    withReadOnly.find((profile) => profile.name === "readonly")!,
+  ));
+  assert.throws(
+    () => assertLocalAgentProfileBoundary({
+      ...withReadOnly.find((profile) => profile.name === "readonly")!,
+      provider: "claude",
+    }),
+    /requires the codex provider/,
+  );
+  assert.throws(
+    () => assertLocalAgentProfileBoundary({
+      ...withReadOnly.find((profile) => profile.name === "readonly")!,
+      name: "codex",
+    }),
+    /reserved for the raw provider target/,
+  );
+
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "invalid-mode.md"),
+    [
+      "---",
+      "name: invalid-mode",
+      "description: Invalid mode.",
+      "provider: codex",
+      "write-mode: full_access",
+      "---",
+    ].join("\n"),
+  );
 
   await writeFile(
     join(workspaceRoot, ".devspace", "agents", "custom.md"),
@@ -94,7 +145,21 @@ try {
     ].join("\n"),
   );
   const profilesWithInvalid = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
-  assert.deepEqual(profilesWithInvalid.map((profile) => profile.name), ["reviewer"]);
+  assert.deepEqual(profilesWithInvalid.map((profile) => profile.name), ["readonly", "reviewer"]);
+
+  const builtinConfig = loadConfig({
+    DEVSPACE_CONFIG_DIR: configDir,
+    DEVSPACE_ALLOWED_ROOTS: workspaceRoot,
+    DEVSPACE_SUBAGENTS: "1",
+    DEVSPACE_BUILTIN_PROFILES: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+  });
+  const builtinProfiles = await loadLocalAgentProfiles(builtinConfig, workspaceRoot);
+  for (const name of ["design", "explore", "implement", "review"]) {
+    assert.ok(builtinProfiles.some((profile) => profile.name === name));
+  }
+  assert.equal(builtinProfiles.find((profile) => profile.name === "explore")?.writeMode, "read_only");
+  assert.equal(builtinProfiles.find((profile) => profile.name === "implement")?.writeMode, "allowed");
 
   const disabledConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

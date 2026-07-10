@@ -1,0 +1,4 @@
+interface:
+  display_name: "Responsive Accessibility Audit"
+  short_description: "Check responsive layout and accessibility"
+  default_prompt: "Use $responsive-accessibility-audit to validate desktop, mobile, and accessibility evidence."

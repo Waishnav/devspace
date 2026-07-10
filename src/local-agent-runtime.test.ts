@@ -56,6 +56,8 @@ assert.deepEqual(codex.started[0], {
   approvalPolicy: "never",
   model: undefined,
   modelReasoningEffort: undefined,
+  networkAccessEnabled: false,
+  webSearchMode: "disabled",
 });
 
 await runtime.run({
@@ -72,6 +74,8 @@ assert.deepEqual(codex.started[1], {
   approvalPolicy: "never",
   model: "gpt-5.4",
   modelReasoningEffort: "high",
+  networkAccessEnabled: undefined,
+  webSearchMode: undefined,
 });
 
 const resumed = await runtime.run({
@@ -92,6 +96,8 @@ assert.deepEqual(codex.resumed, [
       approvalPolicy: "never",
       model: undefined,
       modelReasoningEffort: undefined,
+      networkAccessEnabled: undefined,
+      webSearchMode: undefined,
     },
   },
 ]);

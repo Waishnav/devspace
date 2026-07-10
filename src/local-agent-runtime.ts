@@ -55,12 +55,15 @@ function sandboxModeFor(writeMode: LocalAgentWriteMode | undefined): SandboxMode
 }
 
 function threadOptionsFor(input: LocalAgentRunInput): ThreadOptions {
+  const readOnly = input.writeMode === "read_only" || input.writeMode === undefined;
   return {
     workingDirectory: input.workspace,
     sandboxMode: sandboxModeFor(input.writeMode),
     approvalPolicy: "never",
     model: input.model,
     modelReasoningEffort: input.thinking as ModelReasoningEffort | undefined,
+    networkAccessEnabled: readOnly ? false : undefined,
+    webSearchMode: readOnly ? "disabled" : undefined,
   };
 }
 

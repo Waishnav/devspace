@@ -11,18 +11,11 @@ import { ensureCheckoutWorkspaceRoot, WorkspaceRegistry } from "./workspaces.js"
 
 const execFileAsync = promisify(execFile);
 const root = await mkdtemp(join(tmpdir(), "devspace-workspace-test-"));
+const agentDir = await mkdtemp(join(tmpdir(), "devspace-agent-dir-test-"));
 const outsideRoot = await mkdtemp(join(tmpdir(), "devspace-workspace-outside-test-"));
 
 try {
-  const agentDir = join(root, ".pi", "agent");
-  await mkdir(agentDir, { recursive: true });
-  if (platform() === "win32") {
-    await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
-  } else {
-    await mkdir(join(agentDir, "skills"), { recursive: true });
-    await writeFile(join(agentDir, "skills", "AGENTS.md"), "global instructions\n");
-    await symlink("skills/AGENTS.md", join(agentDir, "AGENTS.md"));
-  }
+  await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
   await writeFile(join(root, "AGENTS.md"), "root instructions\n");
   await mkdir(join(root, ".devspace", "agents"), { recursive: true });
   await writeFile(
@@ -63,12 +56,22 @@ try {
     availableAgentsFiles.map((file) => file.path),
     [join(root, "nested", "AGENTS.md")],
   );
+  const advertisedGlobalInstruction = registry.resolveReadPath(
+    workspace,
+    join(agentDir, "AGENTS.md"),
+  );
+  assert.equal(advertisedGlobalInstruction.absolutePath, join(agentDir, "AGENTS.md"));
+  assert.throws(
+    () => registry.resolveReadPath(workspace, join(agentDir, "not-advertised.txt")),
+    /outside allowed roots/,
+  );
   assert.deepEqual(
     workspace.agentProfiles.map((profile) => ({
       name: profile.name,
       description: profile.description,
       provider: profile.provider,
       body: profile.body,
+      writeMode: profile.writeMode,
     })),
     [
       {
@@ -76,11 +79,30 @@ try {
         description: "Read-only project reviewer.",
         provider: "codex",
         body: "Review only.",
+        writeMode: "allowed",
       },
     ],
   );
 
   if (platform() !== "win32") {
+    const safeAgentDir = join(root, ".pi", "safe-agent");
+    await mkdir(join(safeAgentDir, "skills"), { recursive: true });
+    await writeFile(join(safeAgentDir, "skills", "AGENTS.md"), "safe global instructions\n");
+    await symlink("skills/AGENTS.md", join(safeAgentDir, "AGENTS.md"));
+    const safeConfig = loadConfig({
+      DEVSPACE_CONFIG_DIR: join(root, ".devspace-safe-home"),
+      DEVSPACE_ALLOWED_ROOTS: root,
+      DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "safe-worktrees"),
+      DEVSPACE_AGENT_DIR: safeAgentDir,
+      DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+      PORT: "1",
+    });
+    const safeWorkspace = await new WorkspaceRegistry(safeConfig).openWorkspace(root);
+    assert.deepEqual(
+      safeWorkspace.agentsFiles.map((file) => file.content),
+      ["safe global instructions\n", "root instructions\n"],
+    );
+
     const unsafeAgentDir = join(root, ".pi", "unsafe-agent");
     await mkdir(unsafeAgentDir, { recursive: true });
     await writeFile(join(outsideRoot, "secret.txt"), "outside secret\n");
@@ -203,6 +225,7 @@ try {
   }
 } finally {
   await rm(root, { recursive: true, force: true });
+  await rm(agentDir, { recursive: true, force: true });
   await rm(outsideRoot, { recursive: true, force: true });
 }
 

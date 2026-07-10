@@ -209,6 +209,22 @@ try {
     true,
   );
 
+  const designConfig = loadConfig({
+    DEVSPACE_ALLOWED_ROOTS: projectRoot,
+    DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_DESIGN_AUDIT: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  const designSkills = loadWorkspaceSkills(designConfig, projectRoot).skills;
+  for (const name of [
+    "design-system-audit",
+    "responsive-accessibility-audit",
+    "product-ui-review",
+  ]) {
+    assert.ok(designSkills.some((skill) => skill.name === name));
+  }
+
   const duplicateConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,

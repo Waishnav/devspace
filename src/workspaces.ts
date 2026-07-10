@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
-import { assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
+import { assertAllowedPath, expandHomePath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
 import {
   loadWorkspaceSkills,
   markSkillActivated,
@@ -47,6 +47,7 @@ export interface Workspace {
   skillDiagnostics: LoadedSkills["diagnostics"];
   agentProfiles: LocalAgentProfile[];
   activatedSkillDirs: Set<string>;
+  advertisedInstructionPaths: Set<string>;
 }
 
 export interface WorkspaceContext {
@@ -124,6 +125,7 @@ export class WorkspaceRegistry {
       ...this.loadSkillsForWorkspace(root),
       agentProfiles: [],
       activatedSkillDirs: new Set(),
+      advertisedInstructionPaths: new Set(),
     };
     this.store?.touchSession(workspaceId);
     this.workspaces.set(restoredWorkspace.id, restoredWorkspace);
@@ -147,6 +149,14 @@ export class WorkspaceRegistry {
         readRoots: [workspace.root],
       };
     } catch (workspaceError) {
+      const advertisedInstructionPath = resolve(expandHomePath(inputPath));
+      if (workspace.advertisedInstructionPaths.has(advertisedInstructionPath)) {
+        return {
+          absolutePath: advertisedInstructionPath,
+          readRoots: [dirname(advertisedInstructionPath)],
+        };
+      }
+
       const skillRead = resolveSkillReadPath(
         workspace.skills,
         workspace.activatedSkillDirs,
@@ -213,6 +223,7 @@ export class WorkspaceRegistry {
       ...this.loadSkillsForWorkspace(input.root),
       agentProfiles: await loadLocalAgentProfiles(this.config, input.root),
       activatedSkillDirs: new Set(),
+      advertisedInstructionPaths: new Set(),
     };
 
     this.store?.createSession({
@@ -227,6 +238,9 @@ export class WorkspaceRegistry {
     this.workspaces.set(workspace.id, workspace);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
     const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
+    workspace.advertisedInstructionPaths = new Set(
+      [...agentsFiles, ...availableAgentsFiles].map((file) => resolve(file.path)),
+    );
 
     return { workspace, agentsFiles, availableAgentsFiles };
   }

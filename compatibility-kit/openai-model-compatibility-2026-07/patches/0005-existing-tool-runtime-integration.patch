@@ -1,0 +1,453 @@
+diff --git a/docs/configuration.md b/docs/configuration.md
+index cd4bfa6c8f5bb3ba1f7620278e14a9e69fbc2f22..113593e7d07eea45fbe2950601ab9e3b0f53f4a5 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -87,16 +87,19 @@ sessions.
+ | `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_workspace` and `show_changes`. |
+ | `off` | Disables widget UI. This is the default in compact mode. |
+ 
+-## Compact payloads and usage estimates
++## Compact payloads and execution-cost estimates
+ 
+ | Variable | Default | Purpose |
+ | --- | --- | --- |
+ | `DEVSPACE_OPEN_WORKSPACE_PAYLOAD` | `compact` | Use `compact` for bounded instruction excerpts and smaller skill metadata, or `full` for the v1.0 payload. |
+ | `DEVSPACE_OPEN_WORKSPACE_INSTRUCTION_CHARS` | `6000` | Maximum characters returned per instruction excerpt; minimum `256`. |
+-| `DEVSPACE_USAGE_CONTENT` | `compact` | Append `compact` or `full` observed-token estimates to tool output, or use `off` to hide them. |
+-| `DEVSPACE_USAGE_HISTORY` | `~/.local/share/devspace/usage-history.jsonl` | Local JSONL destination for non-blocking usage diagnostics. |
++| `DEVSPACE_USAGE_CONTENT` | `compact` | Append `compact` or `full` execution-cost summaries to tool output, or use `off` to hide them. |
++| `DEVSPACE_USAGE_HISTORY` | `~/.local/share/devspace/usage-history.jsonl` | Local JSONL destination for non-blocking execution diagnostics. |
+ 
+-Token counts are estimates from text handled by DevSpace, not ChatGPT model billing or actual model usage.
++Execution diagnostics record observed server duration, Tool call count, error count, retry count,
++input/output character volume, and text-token estimates. Token counts are estimates from text handled
++by DevSpace, not host-model billing or actual model usage. Run `devspace-runtime costs` through
++the existing Bash Tool for the current server-process aggregate.
+ 
+ ## DevSpace v1.1 feature flags
+ 
+@@ -113,6 +116,33 @@ All v1.1 feature flags default to `0`, so the existing compact Tool catalog and
+ Feature flag values are strict: `1/0`, `true/false`, `yes/no`, and `on/off` are accepted.
+ New Tool results include `serverDurationMs`, `payloadCharacters`, `returnedItems`, and `truncated`.
+ 
++## Runtime reliability commands
++
++Runtime diagnostics are integrated into the existing Bash Tool instead of increasing the model-facing
++MCP Tool catalog. These exact commands are intercepted by DevSpace and do not start a login shell:
++
++| Bash command | Purpose |
++| --- | --- |
++| `devspace-runtime diagnose [--github] [command ...]` | Classifies workspace access, Git detection, executable discovery, safe PATH fallbacks, and optional GitHub CLI authentication without returning credentials. |
++| `devspace-runtime smoke` | Runs bounded read-only checks for list/read/search, shell PATH resolution, Git, and MCP App resources. |
++| `devspace-runtime costs` | Returns observed duration, calls, errors, retries, character volume, and estimated text tokens from the current server process. |
++| `devspace-runtime finder <path>` | On macOS, opens a validated workspace directory or reveals a validated file in Finder after an explicit request. |
++
++Shell execution augments the inherited PATH with existing standard locations such as
++`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and system binary directories. It does not
++source `.zshrc`, `.zprofile`, or another login-shell configuration, avoiding startup side effects.
++
++When Widgets are enabled, Tool cards with a workspace path display a link-style **Open in Finder**
++action. The App calls the app-only `open_in_finder` Tool; it is hidden from the model-facing catalog.
++The server validates the path against the workspace before invoking macOS Finder. Paths outside the
++approved workspace are rejected by the normal root guard.
++
++For a quick regression check after a host-model rollout, run `devspace-runtime smoke` through Bash or:
++
++```bash
++npm run test:runtime
++```
++
+ The v1.1 package intentionally ships Design Audit as an adapter only: no Playwright/CDP/axe
+ runtime is currently bundled, no browser binary is downloaded, and an enabled Tool returns an
+ unavailable error until a real adapter is connected. A future adapter must use an ephemeral
+diff --git a/src/pi-tools.test.ts b/src/pi-tools.test.ts
+index 55f1a857b6762ef85aa879abe24c1e868926bd86..b606a669b4853359f4ca7f49bc452df03f128328 100644
+--- a/src/pi-tools.test.ts
++++ b/src/pi-tools.test.ts
+@@ -27,6 +27,39 @@ try {
+   assert.equal(allowed.isError, undefined);
+   assert.match(allowed.content[0]?.type === "text" ? allowed.content[0].text : "", /nested/);
+ 
++  const diagnosis = await runShellTool(
++    { command: "devspace-runtime diagnose node git" },
++    { cwd: root, root },
++  );
++  assert.equal(diagnosis.isError, undefined);
++  const diagnosisText = diagnosis.content[0]?.type === "text" ? diagnosis.content[0].text : "";
++  assert.match(diagnosisText, /"accessible": true/);
++  assert.match(diagnosisText, /"command": "node"/);
++
++  const smoke = await runShellTool(
++    { command: "devspace-runtime smoke" },
++    { cwd: root, root },
++  );
++  assert.equal(smoke.isError, undefined);
++  assert.match(smoke.content[0]?.type === "text" ? smoke.content[0].text : "", /"status": "passed"/);
++
++  const costs = await runShellTool(
++    { command: "devspace-runtime costs" },
++    { cwd: root, root },
++  );
++  assert.equal(costs.isError, undefined);
++  assert.match(costs.content[0]?.type === "text" ? costs.content[0].text : "", /"calls":/);
++
++  const finderEscape = await runShellTool(
++    { command: "devspace-runtime finder ../outside" },
++    { cwd: root, root },
++  );
++  assert.equal(finderEscape.isError, true);
++  assert.match(
++    finderEscape.content[0]?.type === "text" ? finderEscape.content[0].text : "",
++    /outside allowed roots/,
++  );
++
+   await writeFile(commandsFile, JSON.stringify({
+     commands: [{
+       alias: "escape",
+diff --git a/src/pi-tools.ts b/src/pi-tools.ts
+index dd72dd7227113d088ea5c6a3141e36bcc7c30e09..f01be3655625170492bb098aadd42ac8f0fe3e9c 100644
+--- a/src/pi-tools.ts
++++ b/src/pi-tools.ts
+@@ -20,6 +20,13 @@ import {
+   type AgentToolResult,
+ } from "@earendil-works/pi-coding-agent";
+ import { expandHomePath, resolveAllowedPath } from "./roots.js";
++import {
++  diagnoseRuntime,
++  openPathInFinder,
++  runCompatibilitySmoke,
++} from "./runtime-operations.js";
++import { commandWithAugmentedPath } from "./shell-environment.js";
++import { getExecutionCostSnapshot } from "./usage-meter.js";
+ 
+ type McpContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+ export type ToolResponse<TDetails = unknown> = {
+@@ -62,6 +69,100 @@ interface ApprovedShellCommand {
+ }
+ 
+ const approvedCommandPrefix = "devspace-approved ";
++const runtimeCommandPrefix = "devspace-runtime";
++
++function textResponse(text: string, isError = false): ToolResponse {
++  return {
++    content: [{ type: "text", text }],
++    ...(isError ? { isError: true } : {}),
++  };
++}
++
++function jsonResponse(value: unknown): ToolResponse {
++  return textResponse(JSON.stringify(value, null, 2));
++}
++
++async function runBuiltinRuntimeCommand(
++  input: BashToolInput,
++  context: ToolContext,
++): Promise<ToolResponse | undefined> {
++  const rawCommand = String(input.command ?? "").trim();
++  if (
++    rawCommand !== runtimeCommandPrefix
++    && !rawCommand.startsWith(`${runtimeCommandPrefix} `)
++  ) return undefined;
++
++  if (
++    rawCommand === runtimeCommandPrefix
++    || rawCommand === `${runtimeCommandPrefix} help`
++  ) {
++    return textResponse([
++      "Built-in DevSpace runtime commands:",
++      "  devspace-runtime diagnose [--github] [command ...]",
++      "  devspace-runtime smoke",
++      "  devspace-runtime costs",
++      "  devspace-runtime finder <workspace-relative-path>",
++    ].join("\n"));
++  }
++
++  if (rawCommand === `${runtimeCommandPrefix} costs`) {
++    return jsonResponse(getExecutionCostSnapshot());
++  }
++
++  if (rawCommand === `${runtimeCommandPrefix} smoke`) {
++    const result = await runCompatibilitySmoke(context.root);
++    return {
++      ...jsonResponse(result),
++      ...(result.status === "failed" ? { isError: true } : {}),
++    };
++  }
++
++  if (
++    rawCommand === `${runtimeCommandPrefix} diagnose`
++    || rawCommand.startsWith(`${runtimeCommandPrefix} diagnose `)
++  ) {
++    const args = rawCommand
++      .slice(`${runtimeCommandPrefix} diagnose`.length)
++      .trim()
++      .split(/\s+/u)
++      .filter(Boolean);
++    const checkGitHubAuth = args.includes("--github");
++    const commands = args
++      .filter((arg) => arg !== "--github")
++      .filter((arg) => /^[A-Za-z0-9._+-]+$/u.test(arg))
++      .slice(0, 20);
++    const result = await diagnoseRuntime({
++      workspaceRoot: context.root,
++      commands: commands.length > 0 ? commands : undefined,
++      checkGitHubAuth,
++    });
++    return jsonResponse(result);
++  }
++
++  if (rawCommand.startsWith(`${runtimeCommandPrefix} finder `)) {
++    const rawPath = rawCommand
++      .slice(`${runtimeCommandPrefix} finder `.length)
++      .trim();
++    const requestedPath = (
++      (rawPath.startsWith("\"") && rawPath.endsWith("\""))
++      || (rawPath.startsWith("'") && rawPath.endsWith("'"))
++    ) ? rawPath.slice(1, -1) : rawPath;
++    if (!requestedPath) {
++      return textResponse("Finder path is required.", true);
++    }
++    try {
++      const absolutePath = resolveAllowedPath(requestedPath, context.cwd, [context.root]);
++      return jsonResponse(await openPathInFinder(absolutePath));
++    } catch (error) {
++      return textResponse(error instanceof Error ? error.message : String(error), true);
++    }
++  }
++
++  return textResponse(
++    "Unknown devspace-runtime command. Run `devspace-runtime help`.",
++    true,
++  );
++}
+ function approvedCommandsPath(): string {
+   return resolve(expandHomePath(
+     process.env.DEVSPACE_APPROVED_SHELL_COMMANDS_FILE
+@@ -200,6 +301,9 @@ export async function listDirectoryTool(input: LsToolInput, context: ToolContext
+ }
+ 
+ export async function runShellTool(input: BashToolInput, context: ToolContext): Promise<ToolResponse> {
++  const builtin = await runBuiltinRuntimeCommand(input, context);
++  if (builtin) return builtin;
++
+   let approved: { input: BashToolInput; cwd: string };
+   try {
+     approved = await resolveApprovedShellAlias(input, context);
+@@ -214,7 +318,7 @@ export async function runShellTool(input: BashToolInput, context: ToolContext):
+       : Math.min(approved.input.timeout, 300);
+ 
+   return runTool((params) => tool.execute("run_shell", params), {
+-    command: approved.input.command,
++    command: commandWithAugmentedPath(approved.input.command),
+     timeout,
+   }, context);
+ }
+diff --git a/src/register-v11-tools.ts b/src/register-v11-tools.ts
+index 9730a8cf001b2a4df164db2245309690bbd838c5..62352611caa7bc08016e7591da243fcd7fba0aac 100644
+--- a/src/register-v11-tools.ts
++++ b/src/register-v11-tools.ts
+@@ -11,6 +11,7 @@ import {
+ import { runDesignAudit } from "./design-audit.js";
+ import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
+ import { matchWorkspaceSkills } from "./skill-matcher.js";
++import { openPathInFinder } from "./runtime-operations.js";
+ import type { Workspace, WorkspaceRegistry } from "./workspaces.js";
+ 
+ const metricsSchema = z.object({
+@@ -36,6 +37,7 @@ export function registerV11Tools(
+     localAgentProviders: LocalAgentProviderAvailability[];
+   },
+ ): void {
++  registerFinderAppTool(server, input);
+   const enabledTools = new Set(enabledV11ToolNames(input.config));
+   if (enabledTools.has("match_skills")) {
+     registerAppTool(
+@@ -138,6 +140,55 @@ export function registerV11Tools(
+   }
+ }
+ 
++function registerFinderAppTool(
++  server: McpServer,
++  input: {
++    config: ServerConfig;
++    workspaces: WorkspaceRegistry;
++    localAgentProviders: LocalAgentProviderAvailability[];
++  },
++): void {
++  registerAppTool(
++    server,
++    "open_in_finder",
++    {
++      title: "Open in Finder",
++      description: "Open a workspace-scoped local path in macOS Finder after validating that it remains inside the open workspace. Files are revealed; directories are opened. This Tool is callable only by the MCP App UI.",
++      inputSchema: {
++        workspaceId: z.string(),
++        path: z.string().min(1).max(4_000),
++      },
++      outputSchema: {
++        status: z.enum(["opened", "unsupported"]),
++        path: z.string(),
++        kind: z.enum(["file", "directory"]),
++      },
++      _meta: {
++        ui: {
++          visibility: ["app"],
++        },
++      },
++      annotations: {
++        readOnlyHint: true,
++        destructiveHint: false,
++        idempotentHint: true,
++        openWorldHint: false,
++      },
++    },
++    async ({ workspaceId, path }) => {
++      const workspace = input.workspaces.getWorkspace(workspaceId);
++      const absolutePath = input.workspaces.resolvePath(workspace, path);
++      const result = await openPathInFinder(absolutePath);
++      return toolResult(
++        result,
++        result.status === "opened"
++          ? `Opened ${result.kind} in Finder.`
++          : "Finder integration is only available on macOS.",
++      );
++    },
++  );
++}
++
+ export function enabledV11ToolNames(config: ServerConfig): string[] {
+   return [
+     config.skillMatcher && config.skillsEnabled ? "match_skills" : undefined,
+@@ -328,9 +379,9 @@ function inspectionContext(
+   };
+ }
+ 
+-function toolResult<T extends Record<string, unknown>>(structuredContent: T, summary: string) {
++function toolResult<T extends object>(structuredContent: T, summary: string) {
+   return {
+     content: [{ type: "text" as const, text: summary.slice(0, 1_000) }],
+-    structuredContent,
++    structuredContent: structuredContent as Record<string, unknown>,
+   };
+ }
+diff --git a/src/server.ts b/src/server.ts
+index 93edc39c4f29748294b76bf28d26ef716b06d762..f115360066853b256b8becea8a9fa65e6ed84cf5 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -336,10 +336,22 @@ function logFailedToolResponse(
+   content: ToolContent[],
+   startedAt: number,
+ ): void {
++  const durationMs = Math.round(performance.now() - startedAt);
++  const outputChars = textContentChars(content);
++  recordObservedToolUsage({
++    tool: fields.tool,
++    workspaceId: fields.workspaceId,
++    path: fields.path,
++    observedChars: outputChars,
++    savedChars: 0,
++    outputChars,
++    durationMs,
++    error: true,
++  });
+   logToolCall(config, {
+     ...fields,
+     success: false,
+-    durationMs: Math.round(performance.now() - startedAt),
++    durationMs,
+     error: toolErrorPreview(content),
+   });
+ }
+@@ -1067,6 +1079,9 @@ function createMcpServer(
+         path: input.path,
+         observedChars,
+         savedChars,
++        inputChars: String(input.path).length,
++        outputChars: observedChars,
++        durationMs: Math.round(performance.now() - startedAt),
+       });
+       const content = appendUsageToContent(response.content, usage, config.usageContent);
+       logToolCall(config, {
+@@ -1149,6 +1164,9 @@ function createMcpServer(
+         path: input.path,
+         observedChars: input.content.length + textContentChars(response.content),
+         savedChars: 0,
++        inputChars: input.content.length,
++        outputChars: textContentChars(response.content),
++        durationMs: Math.round(performance.now() - startedAt),
+       });
+       const content = appendUsageToContent(response.content, usage, config.usageContent);
+       logToolCall(config, {
+@@ -1250,6 +1268,9 @@ function createMcpServer(
+         path: input.path,
+         observedChars,
+         savedChars,
++        inputChars: editInputChars(input.edits),
++        outputChars: textContentChars(editContent),
++        durationMs: Math.round(performance.now() - startedAt),
+       });
+       const content = appendUsageToContent(editContent, usage, config.usageContent);
+       logToolCall(config, {
+@@ -1472,6 +1493,12 @@ function createMcpServer(
+             + String(input.include ?? "").length
+             + textContentChars(response.content),
+           savedChars: 0,
++          inputChars:
++            String(input.pattern ?? "").length
++            + String(input.path ?? "").length
++            + String(input.include ?? "").length,
++          outputChars: textContentChars(response.content),
++          durationMs: Math.round(performance.now() - startedAt),
+         });
+         const content = appendUsageToContent(response.content, usage, config.usageContent);
+         logToolCall(config, {
+@@ -1555,6 +1582,9 @@ function createMcpServer(
+             + String(input.path ?? "").length
+             + textContentChars(response.content),
+           savedChars: 0,
++          inputChars: String(input.pattern ?? "").length + String(input.path ?? "").length,
++          outputChars: textContentChars(response.content),
++          durationMs: Math.round(performance.now() - startedAt),
+         });
+         const content = appendUsageToContent(response.content, usage, config.usageContent);
+         logToolCall(config, {
+@@ -1631,6 +1661,9 @@ function createMcpServer(
+           path: input.path,
+           observedChars: String(input.path ?? "").length + textContentChars(response.content),
+           savedChars: 0,
++          inputChars: String(input.path ?? "").length,
++          outputChars: textContentChars(response.content),
++          durationMs: Math.round(performance.now() - startedAt),
+         });
+         const content = appendUsageToContent(response.content, usage, config.usageContent);
+         logToolCall(config, {
+@@ -1668,8 +1701,8 @@ function createMcpServer(
+     {
+       title: "Bash",
+       description: config.toolMode !== "full"
+-        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
+-        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
++        ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools such as grep, rg, find, ls, and tree for those read-only inspection actions. Built-in commands are available without adding more MCP Tools: devspace-runtime diagnose [--github] [command ...], devspace-runtime smoke, devspace-runtime costs, and devspace-runtime finder <path> for an explicit user request. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
++        : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Built-in commands are available without adding more MCP Tools: devspace-runtime diagnose [--github] [command ...], devspace-runtime smoke, devspace-runtime costs, and devspace-runtime finder <path> for an explicit user request. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
+       inputSchema: {
+         workspaceId: z
+           .string()
+@@ -1677,7 +1710,7 @@ function createMcpServer(
+         command: z
+           .string()
+           .describe(
+-            `Shell command to run. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes.`,
++            `Shell command to run. Use devspace-runtime diagnose, smoke, or costs for built-in diagnostics; use devspace-runtime finder <path> only on explicit request. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes.`,
+           ),
+         workingDirectory: z
+           .string()
+@@ -1731,6 +1764,9 @@ function createMcpServer(
+         path: workingDirectory ?? ".",
+         observedChars: input.command.length + textContentChars(response.content),
+         savedChars: 0,
++        inputChars: input.command.length,
++        outputChars: textContentChars(response.content),
++        durationMs: Math.round(performance.now() - startedAt),
+       });
+       const content = appendUsageToContent(response.content, usage, config.usageContent);
+       logToolCall(config, {
