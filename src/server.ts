@@ -36,6 +36,10 @@ import {
   writeFileTool,
 } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
+import {
+  McpSessionRegistry,
+  type McpSessionCloseResult,
+} from "./mcp-sessions.js";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
@@ -49,6 +53,10 @@ import {
 } from "./local-agent-availability.js";
 
 type Transport = StreamableHTTPServerTransport;
+// MCP clients can reconnect without closing the previous transport. Bound stale
+// session retention so abandoned MCP servers do not accumulate for the life of the process.
+const MCP_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const MCP_SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
 const WRITE_TOOL_ANNOTATIONS = {
@@ -1596,7 +1604,7 @@ export function createServer(config = loadConfig()): RunningServer {
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const transports = new Map<string, Transport>();
+  const transports = new McpSessionRegistry<Transport>();
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
@@ -1612,6 +1620,37 @@ export function createServer(config = loadConfig()): RunningServer {
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
     : [];
+
+  const logSessionCloseResults = (
+    reason: "idle_timeout" | "server_shutdown",
+    results: McpSessionCloseResult[],
+  ) => {
+    for (const result of results) {
+      if (result.error) {
+        logEvent(config.logging, "warn", "mcp_session_close_failed", {
+          reason,
+          sessionIdPrefix: sessionIdPrefix(result.sessionId),
+          error:
+            result.error instanceof Error
+              ? result.error.message
+              : String(result.error),
+        });
+        continue;
+      }
+
+      logEvent(config.logging, "info", "mcp_session_closed", {
+        reason,
+        sessionIdPrefix: sessionIdPrefix(result.sessionId),
+      });
+    }
+  };
+
+  const sessionCleanupTimer = setInterval(() => {
+    void transports
+      .closeIdle(MCP_SESSION_IDLE_TIMEOUT_MS)
+      .then((results) => logSessionCloseResults("idle_timeout", results));
+  }, MCP_SESSION_CLEANUP_INTERVAL_MS);
+  sessionCleanupTimer.unref();
 
   if (config.logging.trustProxy) {
     app.set("trust proxy", true);
@@ -1716,7 +1755,7 @@ export function createServer(config = loadConfig()): RunningServer {
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            if (transport) transports.set(newSessionId, transport);
+            if (transport) transports.register(newSessionId, transport);
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
               sessionIdPrefix: sessionIdPrefix(newSessionId),
@@ -1727,9 +1766,9 @@ export function createServer(config = loadConfig()): RunningServer {
 
         transport.onclose = () => {
           const closedSessionId = transport?.sessionId;
-          if (closedSessionId) {
-            transports.delete(closedSessionId);
+          if (closedSessionId && transports.remove(closedSessionId)) {
             logEvent(config.logging, "info", "mcp_session_closed", {
+              reason: "transport_close",
               sessionIdPrefix: sessionIdPrefix(closedSessionId),
             });
           }
@@ -1768,6 +1807,10 @@ export function createServer(config = loadConfig()): RunningServer {
     close: () => {
       if (closed) return;
       closed = true;
+      clearInterval(sessionCleanupTimer);
+      void transports
+        .closeAll()
+        .then((results) => logSessionCloseResults("server_shutdown", results));
       processSessions.shutdown();
       oauthProvider.close();
       workspaceStore.close?.();
