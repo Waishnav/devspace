@@ -42,6 +42,7 @@ import {
 } from "./mcp-sessions.js";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
+import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
@@ -82,7 +83,7 @@ interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
   localAgentProviders: LocalAgentProviderAvailability[];
-  close(): void;
+  close(): Promise<void>;
 }
 
 type ToolContent =
@@ -1799,21 +1800,21 @@ export function createServer(config = loadConfig()): RunningServer {
     }
   });
 
-  let closed = false;
+  let closePromise: Promise<void> | undefined;
   return {
     app,
     config,
     localAgentProviders,
     close: () => {
-      if (closed) return;
-      closed = true;
-      clearInterval(sessionCleanupTimer);
-      void transports
-        .closeAll()
-        .then((results) => logSessionCloseResults("server_shutdown", results));
-      processSessions.shutdown();
-      oauthProvider.close();
-      workspaceStore.close?.();
+      closePromise ??= (async () => {
+        clearInterval(sessionCleanupTimer);
+        const results = await transports.closeAll();
+        logSessionCloseResults("server_shutdown", results);
+        processSessions.shutdown();
+        oauthProvider.close();
+        workspaceStore.close?.();
+      })();
+      return closePromise;
     },
   };
 }
@@ -1843,12 +1844,19 @@ if (await isMainModule()) {
     }
   });
 
-  const shutdown = () => {
-    httpServer.close(() => {
-      close();
-      process.exit(0);
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await shutdownHttpServer(httpServer, close);
+    process.exit(0);
+  };
+  const handleShutdown = () => {
+    void shutdown().catch((error) => {
+      console.error("devspace shutdown failed", error);
+      process.exit(1);
     });
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", handleShutdown);
+  process.once("SIGTERM", handleShutdown);
 }

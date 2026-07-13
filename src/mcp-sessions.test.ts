@@ -59,3 +59,28 @@ assert.deepEqual(shutdownResults, [{ sessionId: "second" }]);
 assert.equal(first.closeCalls, 0);
 assert.equal(second.closeCalls, 1);
 assert.equal(registry.size, 0);
+
+let finishDelayedClose: (() => void) | undefined;
+let delayedCloseResolved = false;
+const delayedTransport: FakeTransport = {
+  closeCalls: 0,
+  close() {
+    this.closeCalls += 1;
+    return new Promise<void>((resolve) => {
+      finishDelayedClose = resolve;
+    });
+  },
+};
+registry.register("delayed", delayedTransport);
+const delayedClose = registry.closeAll();
+void delayedClose.then(() => {
+  delayedCloseResolved = true;
+});
+
+await Promise.resolve();
+assert.equal(delayedCloseResolved, false);
+assert.equal(delayedTransport.closeCalls, 1);
+finishDelayedClose?.();
+await delayedClose;
+assert.equal(delayedCloseResolved, true);
+assert.equal(registry.size, 0);
