@@ -2,14 +2,10 @@ import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName =
   | "open_workspace"
-  | "read_file"
-  | "write_file"
-  | "edit_file"
-  | "grep_files"
-  | "find_files"
-  | "list_directory"
-  | "run_shell"
   | "show_changes"
+  | "apply_patch"
+  | "exec_command"
+  | "write_stdin"
   | "read"
   | "write"
   | "edit"
@@ -19,6 +15,8 @@ export type ToolName =
   | "bash";
 
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
+
+export type PatchOperation = "add" | "update" | "delete" | "move";
 
 export interface ToolResultCard {
   tool: ToolName;
@@ -30,6 +28,7 @@ export interface ToolResultCard {
   files?: Array<{
     path?: string;
     previousPath?: string;
+    operation?: PatchOperation;
     type?: string;
     additions?: number;
     removals?: number;
@@ -67,14 +66,10 @@ export interface ToolPayload {
 export function isToolName(value: unknown): value is ToolName {
   return (
     value === "open_workspace" ||
-    value === "read_file" ||
-    value === "write_file" ||
-    value === "edit_file" ||
-    value === "grep_files" ||
-    value === "find_files" ||
-    value === "list_directory" ||
-    value === "run_shell" ||
     value === "show_changes" ||
+    value === "apply_patch" ||
+    value === "exec_command" ||
+    value === "write_stdin" ||
     value === "read" ||
     value === "write" ||
     value === "edit" ||
@@ -86,23 +81,27 @@ export function isToolName(value: unknown): value is ToolName {
 }
 
 export function isReadTool(tool: ToolName): boolean {
-  return tool === "read_file" || tool === "read";
+  return tool === "read";
 }
 
 export function isWriteTool(tool: ToolName): boolean {
-  return tool === "write_file" || tool === "write";
+  return tool === "write";
 }
 
 export function isEditTool(tool: ToolName): boolean {
-  return tool === "edit_file" || tool === "edit";
+  return tool === "edit";
+}
+
+export function isPatchTool(tool: ToolName): boolean {
+  return tool === "apply_patch";
 }
 
 export function isSearchTool(tool: ToolName): boolean {
-  return tool === "grep_files" || tool === "find_files" || tool === "grep" || tool === "glob";
+  return tool === "grep" || tool === "glob";
 }
 
 export function isShellTool(tool: ToolName): boolean {
-  return tool === "run_shell" || tool === "bash";
+  return tool === "bash" || tool === "exec_command" || tool === "write_stdin";
 }
 
 export function isReviewTool(tool: ToolName): boolean {
@@ -147,6 +146,7 @@ export function isExpandableCard(card: ToolResultCard): boolean {
   }
 
   if (isReviewTool(card.tool)) return Boolean(card.files?.length || card.payload?.patch);
+  if (isPatchTool(card.tool)) return Boolean(card.payload?.patch);
 
   return Boolean(card.payload);
 }

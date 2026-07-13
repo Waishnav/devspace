@@ -17,6 +17,7 @@ import {
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
+import { applyPatch } from "./apply-patch.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
 import {
   logEvent,
@@ -35,10 +36,17 @@ import {
   writeFileTool,
 } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
+import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
+import {
+  formatLocalAgentProviderAvailabilitySummary,
+  getLocalAgentProviderAvailabilitySnapshot,
+  type LocalAgentProviderAvailability,
+} from "./local-agent-availability.js";
 
 type Transport = StreamableHTTPServerTransport;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
@@ -65,6 +73,7 @@ const SHELL_TOOL_ANNOTATIONS = {
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
+  localAgentProviders: LocalAgentProviderAvailability[];
   close(): void;
 }
 
@@ -137,16 +146,16 @@ function toolWidgetDescriptorMeta(
   };
 }
 
-interface ToolNames {
-  openWorkspace: "open_workspace";
-  read: "read_file" | "read";
-  write: "write_file" | "write";
-  edit: "edit_file" | "edit";
-  grep: "grep_files" | "grep";
-  glob: "find_files" | "glob";
-  ls: "list_directory" | "ls";
-  shell: "run_shell" | "bash";
-}
+const toolNames = {
+  openWorkspace: "open_workspace",
+  read: "read",
+  write: "write",
+  edit: "edit",
+  grep: "grep",
+  glob: "glob",
+  ls: "ls",
+  shell: "bash",
+} as const;
 
 interface ToolLogFields {
   tool: string;
@@ -160,33 +169,18 @@ interface ToolLogFields {
   error?: string;
 }
 
-function toolNamesFor(config: ServerConfig): ToolNames {
-  return config.toolNaming === "short"
-    ? {
-        openWorkspace: "open_workspace",
-        read: "read",
-        write: "write",
-        edit: "edit",
-        grep: "grep",
-        glob: "glob",
-        ls: "ls",
-        shell: "bash",
-      }
-    : {
-        openWorkspace: "open_workspace",
-        read: "read_file",
-        write: "write_file",
-        edit: "edit_file",
-        grep: "grep_files",
-        glob: "find_files",
-        ls: "list_directory",
-        shell: "run_shell",
-      };
-}
+function serverInstructions(config: ServerConfig): string {
+  const showChangesInstruction =
+    config.widgets === "changes"
+      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
+      : "";
 
-function serverInstructions(config: ServerConfig, toolNames: ToolNames): string {
+  if (config.toolMode === "codex") {
+    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${showChangesInstruction}`;
+  }
+
   const shellLabel = process.platform === "win32" && config.shell !== "bash" ? "shell" : "Bash";
-  const inspection = config.minimalTools
+  const inspection = config.toolMode !== "full"
     ? `In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use ${toolNames.shell} with ${shellLabel} command-line tools for search and directory inspection. `
     : `Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. `;
 
@@ -196,13 +190,29 @@ function serverInstructions(config: ServerConfig, toolNames: ToolNames): string 
 
   const agentsMd = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
 
-  const showChanges =
-    config.widgets === "changes"
-      ? " After creating, editing, or overwriting files, call show_changes once after the related file changes are complete so the user can see the aggregate diff."
-      : "";
-
-  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChanges}`;
+  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
 }
+
+function formatVisibleAgent(agent: {
+  name: string;
+  provider: string;
+  model?: string;
+  thinking?: string;
+  providerAvailable?: boolean;
+  providerUnavailableReason?: string;
+}): string {
+  const model = agent.model ? `, model ${agent.model}` : "";
+  const thinking = agent.thinking ? `, thinking ${agent.thinking}` : "";
+  const availability = agent.providerAvailable === false
+    ? `, unavailable: ${agent.providerUnavailableReason ?? "provider unavailable"}`
+    : "";
+  return `${agent.name} (${agent.provider}${model}${thinking}${availability})`;
+}
+
+function formatUnavailableAgentProvider(provider: LocalAgentProviderAvailability): string {
+  return `${provider.name} (${provider.reason ?? "unavailable"})`;
+}
+
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
     result: z
@@ -223,6 +233,22 @@ const workspaceSkillOutputSchema = z.object({
 const workspaceAgentsFileOutputSchema = z.object({
   path: z.string(),
   content: z.string(),
+});
+
+const workspaceLocalAgentOutputSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  provider: z.string(),
+  model: z.string().optional(),
+  thinking: z.string().optional(),
+  providerAvailable: z.boolean().optional(),
+  providerUnavailableReason: z.string().optional(),
+});
+
+const workspaceLocalAgentProviderOutputSchema = z.object({
+  name: z.string(),
+  available: z.boolean(),
+  reason: z.string().optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({
@@ -453,12 +479,208 @@ async function assertWorkspaceAppAssets(): Promise<void> {
   }
 }
 
+function processResult(snapshot: ProcessSnapshot): string {
+  const status = snapshot.running
+    ? `Process running with session ID ${snapshot.sessionId}.`
+    : snapshot.signal
+      ? `Process exited after signal ${snapshot.signal}.`
+      : `Process exited with code ${snapshot.exitCode ?? "unknown"}.`;
+  return snapshot.output ? `${snapshot.output.replace(/\n$/, "")}\n${status}` : status;
+}
+
+function processOutputSchema(): z.ZodRawShape {
+  return resultOutputSchema({
+    sessionId: z.number().optional(),
+    running: z.boolean(),
+    exitCode: z.number().int().optional(),
+    signal: z.string().optional(),
+    wallTimeMs: z.number().nonnegative(),
+    outputTruncated: z.boolean(),
+  });
+}
+
+function processToolResponse(
+  tool: "exec_command" | "write_stdin",
+  workspaceId: string,
+  snapshot: ProcessSnapshot,
+  summary: Record<string, unknown>,
+) {
+  const result = processResult(snapshot);
+  const content = [textBlock(result)];
+  const outputSummary = textSummary(snapshot.output ? [textBlock(snapshot.output)] : []);
+  return {
+    content,
+    _meta: {
+      tool,
+      card: {
+        workspaceId,
+        summary: { ...summary, ...outputSummary },
+        payload: { content },
+      },
+    },
+    structuredContent: {
+      result,
+      sessionId: snapshot.sessionId,
+      running: snapshot.running,
+      exitCode: snapshot.exitCode,
+      signal: snapshot.signal,
+      wallTimeMs: snapshot.wallTimeMs,
+      outputTruncated: snapshot.outputTruncated,
+    },
+  };
+}
+
+function registerCodexProcessTools(
+  server: McpServer,
+  config: ServerConfig,
+  workspaces: WorkspaceRegistry,
+  processSessions: ProcessSessionManager,
+): void {
+  registerAppTool(
+    server,
+    "exec_command",
+    {
+      title: "Execute command",
+      description:
+        "Run a command inside an open workspace. Returns its result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes. Call open_workspace first and pass workspaceId.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+        cmd: z.string().min(1).describe("Shell command to execute."),
+        tty: z
+          .boolean()
+          .optional()
+          .describe("Allocate a pseudo-terminal for interactive commands. Defaults to false."),
+        columns: z.number().int().min(1).max(1_000).optional().describe("Initial PTY width. Defaults to 80."),
+        rows: z.number().int().min(1).max(1_000).optional().describe("Initial PTY height. Defaults to 24."),
+        workingDirectory: z
+          .string()
+          .optional()
+          .describe("Working directory relative to the workspace root. Defaults to the workspace root."),
+        yieldTimeMs: z
+          .number()
+          .int()
+          .min(0)
+          .max(30_000)
+          .optional()
+          .describe("Milliseconds to wait before returning a running session. Defaults to 10000."),
+        maxOutputTokens: z
+          .number()
+          .int()
+          .positive()
+          .max(100_000)
+          .optional()
+          .describe("Approximate output token budget. Defaults to 10000."),
+      },
+      outputSchema: processOutputSchema(),
+      ...toolWidgetDescriptorMeta(config, "shell"),
+      annotations: SHELL_TOOL_ANNOTATIONS,
+    },
+    async ({ workspaceId, cmd, tty, columns, rows, workingDirectory, yieldTimeMs, maxOutputTokens }) => {
+      const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
+      const cwd = workspaces.resolveWorkingDirectory(workspace, workingDirectory);
+      const snapshot = await processSessions.start({
+        workspaceId,
+        command: cmd,
+        cwd,
+        workspaceRoot: workspace.root,
+        tty,
+        columns,
+        rows,
+        yieldTimeMs,
+        maxOutputTokens,
+      });
+
+      logToolCall(config, {
+        tool: "exec_command",
+        workspaceId,
+        workingDirectory: workingDirectory ?? ".",
+        command: cmd,
+        commandLength: cmd.length,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+
+      return processToolResponse("exec_command", workspaceId, snapshot, {
+        command: cmd,
+        workingDirectory: workingDirectory ?? ".",
+        running: snapshot.running,
+        exitCode: snapshot.exitCode,
+        wallTimeMs: snapshot.wallTimeMs,
+      });
+    },
+  );
+
+  registerAppTool(
+    server,
+    "write_stdin",
+    {
+      title: "Write to process",
+      description:
+        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
+      inputSchema: {
+        workspaceId: z.string().describe("Workspace identifier used to start the process."),
+        sessionId: z.number().describe("Process session identifier returned by exec_command."),
+        chars: z.string().optional().describe("Characters to write. Omit or pass an empty string to poll."),
+        columns: z.number().int().min(1).max(1_000).optional().describe("Resize a PTY to this width."),
+        rows: z.number().int().min(1).max(1_000).optional().describe("Resize a PTY to this height."),
+        yieldTimeMs: z
+          .number()
+          .int()
+          .min(0)
+          .max(30_000)
+          .optional()
+          .describe("Milliseconds to wait for process output or completion. Defaults to 10000."),
+        maxOutputTokens: z
+          .number()
+          .int()
+          .positive()
+          .max(100_000)
+          .optional()
+          .describe("Approximate output token budget. Defaults to 10000."),
+      },
+      outputSchema: processOutputSchema(),
+      ...toolWidgetDescriptorMeta(config, "shell"),
+      annotations: SHELL_TOOL_ANNOTATIONS,
+    },
+    async ({ workspaceId, sessionId, chars, columns, rows, yieldTimeMs, maxOutputTokens }) => {
+      const startedAt = performance.now();
+      workspaces.getWorkspace(workspaceId);
+      const snapshot = await processSessions.write({
+        workspaceId,
+        sessionId,
+        chars,
+        columns,
+        rows,
+        yieldTimeMs,
+        maxOutputTokens,
+      });
+
+      logToolCall(config, {
+        tool: "write_stdin",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+
+      return processToolResponse("write_stdin", workspaceId, snapshot, {
+        sessionId,
+        charactersWritten: chars?.length ?? 0,
+        running: snapshot.running,
+        exitCode: snapshot.exitCode,
+        wallTimeMs: snapshot.wallTimeMs,
+      });
+    },
+  );
+}
+
 function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
+  processSessions: ProcessSessionManager,
+  localAgentProviders: LocalAgentProviderAvailability[],
 ): McpServer {
-  const toolNames = toolNamesFor(config);
   const server = new McpServer(
     {
       name: "devspace",
@@ -468,7 +690,7 @@ function createMcpServer(
         "Secure local coding workspace for MCP clients. Provides workspace-scoped file, search, edit, write, and shell tools.",
     },
     {
-      instructions: serverInstructions(config, toolNames),
+      instructions: serverInstructions(config),
     },
   );
 
@@ -545,6 +767,8 @@ function createMcpServer(
         agentsFiles: z.array(workspaceAgentsFileOutputSchema),
         availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema),
         skills: z.array(workspaceSkillOutputSchema),
+        agentProviders: z.array(workspaceLocalAgentProviderOutputSchema),
+        agents: z.array(workspaceLocalAgentOutputSchema),
         skillDiagnostics: z.array(z.unknown()),
         instruction: z.string(),
       },
@@ -567,6 +791,16 @@ function createMcpServer(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
+      const visibleAgentProviders = config.subagents ? localAgentProviders : [];
+      const visibleAgents = workspace.agentProfiles.map((profile) => {
+        const summary = summarizeLocalAgentProfile(profile);
+        const availability = visibleAgentProviders.find((provider) => provider.name === summary.provider);
+        return {
+          ...summary,
+          providerAvailable: availability?.available,
+          providerUnavailableReason: availability?.reason,
+        };
+      });
       const loadedAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -593,6 +827,15 @@ function createMcpServer(
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
+            visibleAgentProviders.some((provider) => provider.available)
+              ? `Available subagent providers: ${visibleAgentProviders.filter((provider) => provider.available).map((provider) => provider.name).join(", ")}`
+              : undefined,
+            visibleAgentProviders.some((provider) => !provider.available)
+              ? `Unavailable subagent providers: ${visibleAgentProviders.filter((provider) => !provider.available).map(formatUnavailableAgentProvider).join(", ")}`
+              : undefined,
+            visibleAgents.length > 0
+              ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
+              : undefined,
             instruction,
           ].filter(Boolean).join("\n"),
         },
@@ -617,6 +860,8 @@ function createMcpServer(
               agentsFiles: loadedAgentsFiles.length,
               availableAgentsFiles: availableAgentsFileOutputs.length,
               skills: visibleSkills.length,
+              agentProviders: visibleAgentProviders.length,
+              agents: visibleAgents.length,
               skillDiagnostics: workspace.skillDiagnostics.length,
             },
           },
@@ -630,6 +875,8 @@ function createMcpServer(
           agentsFiles: loadedAgentsFiles,
           availableAgentsFiles: availableAgentsFileOutputs,
           skills: visibleSkills,
+          agentProviders: visibleAgentProviders,
+          agents: visibleAgents,
           skillDiagnostics: workspace.skillDiagnostics,
           instruction,
         },
@@ -734,6 +981,7 @@ function createMcpServer(
     },
   );
 
+  if (config.toolMode !== "codex") {
   registerAppTool(
     server,
     toolNames.write,
@@ -897,6 +1145,81 @@ function createMcpServer(
       };
     },
   );
+  }
+
+  if (config.toolMode === "codex") {
+    registerAppTool(
+      server,
+      "apply_patch",
+      {
+        title: "Apply patch",
+        description:
+          "Apply one Codex-style patch inside an open workspace. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the workspace. Call open_workspace first and pass workspaceId.",
+        inputSchema: {
+          workspaceId: z
+            .string()
+            .describe("Workspace identifier returned by open_workspace."),
+          patch: z
+            .string()
+            .describe("Patch text enclosed by *** Begin Patch and *** End Patch markers."),
+        },
+        outputSchema: resultOutputSchema({
+          additions: z.number(),
+          removals: z.number(),
+          files: z.array(
+            z.object({
+              path: z.string(),
+              previousPath: z.string().optional(),
+              operation: z.enum(["add", "update", "delete", "move"]),
+            }),
+          ),
+        }),
+        ...toolWidgetDescriptorMeta(config, "edit"),
+        annotations: EDIT_TOOL_ANNOTATIONS,
+      },
+      async ({ workspaceId, patch }) => {
+        const startedAt = performance.now();
+        const workspace = workspaces.getWorkspace(workspaceId);
+        const applied = await applyPatch(workspace.root, patch);
+        const paths = applied.files.map((file) => file.path).join(", ");
+        const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
+        const content = [textBlock(result)];
+        const displayPath = applied.files.length === 1
+          ? applied.files[0]?.path
+          : `${applied.files.length} files`;
+
+        logToolCall(config, {
+          tool: "apply_patch",
+          workspaceId,
+          success: true,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+
+        return {
+          content,
+          _meta: {
+            tool: "apply_patch",
+            card: {
+              workspaceId,
+              path: displayPath,
+              summary: {
+                files: applied.files.length,
+                additions: applied.additions,
+                removals: applied.removals,
+              },
+              payload: { patch: applied.patch },
+            },
+          },
+          structuredContent: {
+            result,
+            additions: applied.additions,
+            removals: applied.removals,
+            files: applied.files,
+          },
+        };
+      },
+    );
+  }
 
   if (config.widgets === "changes") {
     registerAppTool(
@@ -905,32 +1228,24 @@ function createMcpServer(
       {
         title: "Show changes",
         description:
-          "Show aggregate file changes in an open workspace since the last shown checkpoint or since the workspace was opened. After you create, edit, or overwrite files, call this once when the related file changes are complete so the user can inspect the combined diff.",
+          "Show aggregate file changes for an open workspace. If the current turn successfully modified files, call this exactly once after the final related file change and before your final response so the user can inspect the combined diff for the turn. Do not call it after every individual file change, and do not skip it because prior file-change tools already displayed per-tool diffs.",
         inputSchema: {
           workspaceId: z
             .string()
             .describe("Workspace identifier returned by open_workspace."),
-          since: z
-            .enum(["last_shown", "workspace_open"])
-            .optional()
-            .describe("Defaults to last_shown. Use workspace_open to compare against the initial open_workspace checkpoint."),
-          markReviewed: z
-            .boolean()
-            .optional()
-            .describe("Defaults to true. When true, advances the last shown checkpoint to the current workspace state."),
         },
         outputSchema: resultOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "show_changes"),
         annotations: { readOnlyHint: true },
       },
-      async ({ workspaceId, since, markReviewed }) => {
+      async ({ workspaceId }) => {
         const startedAt = performance.now();
         const workspace = workspaces.getWorkspace(workspaceId);
         const review = await reviewCheckpoints.reviewChanges({
           workspaceId,
           root: workspace.root,
-          since: since ?? "last_shown",
-          markReviewed: markReviewed ?? true,
+          since: "last_shown",
+          markReviewed: true,
         });
 
         const content = [textBlock(review.result)];
@@ -962,12 +1277,12 @@ function createMcpServer(
     );
   }
 
-  if (!config.minimalTools) {
+  if (config.toolMode === "full") {
     registerAppTool(
       server,
       toolNames.grep,
       {
-        title: config.toolNaming === "short" ? "Grep" : "Grep files",
+        title: "Grep",
         description:
           "Search file contents inside an open workspace. Use this before broad reads when looking for symbols, text, or usage sites. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1040,7 +1355,7 @@ function createMcpServer(
       server,
       toolNames.glob,
       {
-        title: config.toolNaming === "short" ? "Glob" : "Find files",
+        title: "Glob",
         description:
           "Find files by glob pattern inside an open workspace. Use this to discover filenames or narrow file sets before reading. Respects project ignore rules. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1110,7 +1425,7 @@ function createMcpServer(
       server,
       toolNames.ls,
       {
-        title: config.toolNaming === "short" ? "Ls" : "List directory",
+        title: "Ls",
         description:
           "List a directory inside an open workspace. Use this for directory inspection before reading files. Call open_workspace first and pass workspaceId.",
         inputSchema: {
@@ -1173,14 +1488,13 @@ function createMcpServer(
     );
   }
 
+  if (config.toolMode !== "codex") {
   registerAppTool(
     server,
     toolNames.shell,
     {
-      title: config.toolNaming === "short" && !(process.platform === "win32" && config.shell !== "bash")
-        ? "Bash"
-        : "Run shell",
-      description: config.minimalTools
+      title: process.platform === "win32" && config.shell !== "bash" ? "Run shell" : "Bash",
+      description: config.toolMode !== "full"
         ? `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use command-line tools appropriate for the configured shell for those read-only inspection actions. In PowerShell, use .Contains() or -like for literal Windows path matching; use -match only for real regex or with [regex]::Escape() for literal text. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`
         : `Run a shell command inside an open workspace. Use only for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. In PowerShell, use .Contains() or -like for literal Windows path matching; use -match only for real regex or with [regex]::Escape() for literal text. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. Call open_workspace first and pass workspaceId. This is powerful local execution and should only be exposed behind strong authentication.`,
       inputSchema: {
@@ -1265,6 +1579,11 @@ function createMcpServer(
       };
     },
   );
+  }
+
+  if (config.toolMode === "codex") {
+    registerCodexProcessTools(server, config, workspaces, processSessions);
+  }
 
   return server;
 }
@@ -1289,6 +1608,10 @@ export function createServer(config = loadConfig()): RunningServer {
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
+  const processSessions = new ProcessSessionManager();
+  const localAgentProviders = config.subagents
+    ? getLocalAgentProviderAvailabilitySnapshot()
+    : [];
 
   if (config.logging.trustProxy) {
     app.set("trust proxy", true);
@@ -1412,7 +1735,13 @@ export function createServer(config = loadConfig()): RunningServer {
           }
         };
 
-        const server = createMcpServer(config, workspaces, reviewCheckpoints);
+        const server = createMcpServer(
+          config,
+          workspaces,
+          reviewCheckpoints,
+          processSessions,
+          localAgentProviders,
+        );
         await server.connect(transport);
       } else {
         sendJsonRpcError(res, 400, -32000, "No valid MCP session");
@@ -1435,9 +1764,11 @@ export function createServer(config = loadConfig()): RunningServer {
   return {
     app,
     config,
+    localAgentProviders,
     close: () => {
       if (closed) return;
       closed = true;
+      processSessions.shutdown();
       oauthProvider.close();
       workspaceStore.close?.();
     },
@@ -1453,7 +1784,7 @@ async function isMainModule(): Promise<boolean> {
 }
 
 if (await isMainModule()) {
-  const { app, config, close } = createServer();
+  const { app, config, close, localAgentProviders } = createServer();
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(
       `devspace listening on http://${config.host}:${config.port}/mcp`,
@@ -1464,6 +1795,9 @@ if (await isMainModule()) {
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    if (config.subagents) {
+      console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
+    }
   });
 
   const shutdown = () => {

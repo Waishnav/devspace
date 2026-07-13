@@ -366,7 +366,6 @@ body {
   word-break: break-word;
 }
 
-.text-payload.run_shell,
 .text-payload.bash {
   color: var(--color-text-primary, #f5f5f6);
   background: var(--color-background-primary, #101114);

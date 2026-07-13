@@ -8,6 +8,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   isEditTool,
   isExpandableCard,
+  isPatchTool,
   isReadTool,
   isReviewTool,
   isSearchTool,
@@ -18,9 +19,11 @@ import {
   payloadText,
   summaryNumber,
   type HostContext,
+  type PatchOperation,
   type ToolName,
   type ToolResultCard,
 } from "./card-types.js";
+import { getPatchDisplayParts } from "./patch-display.js";
 import "./workspace-app.css";
 
 interface ToolDisplay {
@@ -261,17 +264,17 @@ async function renderPayloadIfNeeded(): Promise<void> {
     return;
   }
 
-  if (isReviewTool(card.tool)) {
-    const visibleFileCount = reviewFilesExpanded
-      ? undefined
-      : Math.max(3, (card.files ?? []).slice(0, 3).length);
+  if (isReviewTool(card.tool) || isPatchTool(card.tool)) {
+    const visibleFileCount = isReviewTool(card.tool) && !reviewFilesExpanded
+      ? Math.max(3, (card.files ?? []).slice(0, 3).length)
+      : undefined;
 
     if (currentPayload) {
       currentPayload.update({ card, hostContext, errorMessage, visibleFileCount });
       return;
     }
 
-    renderStatus(target, "Loading review...");
+    renderStatus(target, isReviewTool(card.tool) ? "Loading review..." : "Loading diff...");
 
     const { mountReviewPayload } = await import("./review-payload.js");
     if (target !== currentPayloadContainer || !card) return;
@@ -340,7 +343,7 @@ function renderSummaryBadge(card: ToolResultCard): HTMLElement {
     return stats;
   }
 
-  if (isEditTool(card.tool) || isWriteTool(card.tool)) {
+  if (isPatchTool(card.tool) || isEditTool(card.tool) || isWriteTool(card.tool)) {
     const stats = element("span", { className: "stats" });
     stats.setAttribute("aria-label", "Diff statistics");
     stats.append(
@@ -369,7 +372,11 @@ function renderSummaryBadge(card: ToolResultCard): HTMLElement {
   }
 
   if (isShellTool(card.tool)) {
-    return element("span", { className: "badge", text: `ran · ${String(summary.lines ?? 0)} lines` });
+    const state = summary.running === true ? "running" : "ran";
+    return element("span", {
+      className: "badge",
+      text: `${state} · ${String(summary.lines ?? 0)} lines`,
+    });
   }
 
   if (isSearchTool(card.tool)) {
@@ -486,33 +493,50 @@ function formatAgentsFilesForPayload(
     .join("\n\n");
 }
 
+function getPatchToolDisplay(card: ToolResultCard, label: string): ToolDisplay {
+  const display = getPatchDisplayParts(card);
+
+  return {
+    icon: patchIcon(display.iconOperation),
+    title: display.title,
+    label,
+    tone: display.tone,
+  };
+}
+
+function patchIcon(operation: PatchOperation | undefined): string {
+  if (operation === "add") return filePlusIcon();
+  if (operation === "delete") return fileIcon();
+  if (operation === "move") return filesIcon();
+  return editIcon();
+}
+
 function getToolDisplay(card: ToolResultCard): ToolDisplay {
   const label = getToolLabel(card);
 
   switch (card.tool) {
     case "open_workspace":
       return { icon: folderIcon(), title: "Workspace", label, tone: "workspace" };
-    case "read_file":
     case "read":
       return { icon: fileIcon(), title: "Read File", label, tone: "read" };
-    case "write_file":
     case "write":
       return { icon: filePlusIcon(), title: "Write File", label, tone: "write" };
-    case "edit_file":
     case "edit":
       return { icon: editIcon(), title: "Edit File", label, tone: "edit" };
-    case "grep_files":
+    case "apply_patch":
+      return getPatchToolDisplay(card, label);
     case "grep":
       return { icon: searchIcon(), title: "Grep", label, tone: "search" };
-    case "find_files":
     case "glob":
       return { icon: filesIcon(), title: "Glob", label, tone: "search" };
-    case "list_directory":
     case "ls":
       return { icon: listIcon(), title: "List Directory", label, tone: "directory" };
-    case "run_shell":
     case "bash":
       return { icon: terminalIcon(), title: "Bash", label, tone: "shell" };
+    case "exec_command":
+      return { icon: terminalIcon(), title: "Exec Command", label, tone: "shell" };
+    case "write_stdin":
+      return { icon: terminalIcon(), title: "Process Session", label, tone: "shell" };
     case "show_changes":
       return { icon: reviewIcon(), title: "Show Changes", label, tone: "review" };
   }
@@ -520,7 +544,7 @@ function getToolDisplay(card: ToolResultCard): ToolDisplay {
 
 function getToolLabel(card: ToolResultCard): string {
   if (isShellTool(card.tool)) {
-    return String(card.summary?.command ?? card.path ?? card.tool);
+    return String(card.summary?.command ?? card.summary?.sessionId ?? card.path ?? card.tool);
   }
   if (isReviewTool(card.tool)) {
     const count = Number(card.summary?.files ?? card.files?.length ?? 0);

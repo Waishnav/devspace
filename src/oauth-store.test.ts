@@ -43,6 +43,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
     assert.deepEqual(migrations, [
       { version: 1, name: "workspace-state" },
       { version: 2, name: "oauth-state" },
+      { version: 3, name: "local-agent-sessions" },
     ]);
   } finally {
     database.close();

@@ -17,6 +17,11 @@ const migrations: Migration[] = [
     name: "oauth-state",
     up: migrateOAuthState,
   },
+  {
+    version: 3,
+    name: "local-agent-sessions",
+    up: migrateLocalAgentSessions,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -138,9 +143,40 @@ function migrateOAuthState(sqlite: Database.Database): void {
   `);
 }
 
+function migrateLocalAgentSessions(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists local_agent_sessions (
+      id text primary key,
+      workspace_id text,
+      workspace_root text not null,
+      profile_name text not null,
+      provider text not null,
+      model text,
+      thinking text,
+      provider_session_id text,
+      status text not null,
+      latest_response text,
+      error text,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create index if not exists local_agent_sessions_workspace_id_idx
+      on local_agent_sessions(workspace_id, updated_at desc);
+
+    create index if not exists local_agent_sessions_workspace_root_idx
+      on local_agent_sessions(workspace_root, updated_at desc);
+
+    create index if not exists local_agent_sessions_provider_session_id_idx
+      on local_agent_sessions(provider_session_id);
+  `);
+
+  addColumnIfMissing(sqlite, "local_agent_sessions", "thinking", "text");
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions",
+  table: "workspace_sessions" | "local_agent_sessions",
   column: string,
   definition: string,
 ): void {

@@ -117,6 +117,14 @@ Most users should connect through a public HTTPS tunnel:
 https://your-tunnel-host.example.com/mcp
 ```
 
+> [!NOTE]
+> Using DevSpace as an MCP connector isn't against OpenAI's Usage Policies — it's
+> a standard custom App/connector setup, and writing or running code isn't a
+> restricted use case. But your account is governed by your usage, not by
+> DevSpace. Don't point it at anything that would violate your provider's terms.
+> Used normally, you're fine. (Based on OpenAI's Usage Policies and Service Terms
+> as of June 2026.)
+
 ## What ChatGPT Can Do
 
 Once connected, ChatGPT can open one of your approved project folders as a

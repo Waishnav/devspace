@@ -73,7 +73,33 @@ export const oauthRefreshTokens = sqliteTable(
   },
 );
 
+export const localAgentSessions = sqliteTable(
+  "local_agent_sessions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id"),
+    workspaceRoot: text("workspace_root").notNull(),
+    profileName: text("profile_name").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    thinking: text("thinking"),
+    providerSessionId: text("provider_session_id"),
+    status: text("status").notNull(),
+    latestResponse: text("latest_response"),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("local_agent_sessions_workspace_id_idx").on(table.workspaceId, table.updatedAt),
+    index("local_agent_sessions_workspace_root_idx").on(table.workspaceRoot, table.updatedAt),
+    index("local_agent_sessions_provider_session_id_idx").on(table.providerSessionId),
+  ],
+);
+
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
+export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;

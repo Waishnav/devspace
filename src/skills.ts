@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   loadSkills,
   type Skill,
@@ -19,15 +21,65 @@ export interface SkillReadResolution {
   isSkillFile: boolean;
 }
 
+const SUBAGENT_DELEGATION_NAME = "subagent-delegation";
+const SUBAGENT_DELEGATION_SKILL = join(SUBAGENT_DELEGATION_NAME, "SKILL.md");
+
+function bundledSkillsDir(): string {
+  return fileURLToPath(new URL("../skills", import.meta.url));
+}
+
+function hasSubagentDelegationSkill(skillDir: string): boolean {
+  return existsSync(join(skillDir, SUBAGENT_DELEGATION_SKILL));
+}
+
+export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
+  const bundledSkills = bundledSkillsDir();
+  const defaultPathCandidates = [
+    join(homedir(), ".agents", "skills"),
+    resolve(cwd, ".agents", "skills"),
+    config.devspaceSkillsDir,
+    join(config.agentDir, "skills"),
+    config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
+      ? bundledSkills
+      : undefined,
+  ];
+  const defaultPaths = defaultPathCandidates.filter(
+    (path): path is string => path !== undefined && existsSync(path),
+  );
+
+  const seen = new Set<string>();
+  return [...defaultPaths, ...config.skillPaths]
+    .map((path) => resolveSkillPath(path, cwd))
+    .filter((path) => {
+      if (seen.has(path)) return false;
+      seen.add(path);
+      return true;
+    });
+}
+
+function resolveSkillPath(path: string, cwd: string): string {
+  return resolve(cwd, expandHomePath(path));
+}
+
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
-  return loadSkills({
+  const result = loadSkills({
     cwd,
     agentDir: config.agentDir,
-    skillPaths: config.skillPaths,
-    includeDefaults: true,
+    skillPaths: effectiveSkillPaths(config, cwd),
+    includeDefaults: false,
   });
+
+  if (config.subagents) return result;
+
+  return {
+    skills: result.skills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),
+    diagnostics: result.diagnostics.filter((diagnostic) => {
+      const collision = diagnostic.collision;
+      return !(collision?.resourceType === "skill" && collision.name === SUBAGENT_DELEGATION_NAME);
+    }),
+  };
 }
 
 export function resolveSkillReadPath(
