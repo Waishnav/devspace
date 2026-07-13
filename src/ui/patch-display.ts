@@ -7,10 +7,10 @@ export interface PatchDisplayParts {
 }
 
 const patchOperationLabels: Record<PatchOperation, string> = {
-  add: "Write",
-  update: "Edit",
-  delete: "Delete",
-  move: "Move",
+  add: "Added",
+  update: "Edited",
+  delete: "Deleted",
+  move: "Moved",
 };
 
 export function getPatchDisplayParts(card: Pick<ToolResultCard, "files">): PatchDisplayParts {
@@ -18,7 +18,7 @@ export function getPatchDisplayParts(card: Pick<ToolResultCard, "files">): Patch
   const operations = patchOperations(files);
 
   if (operations.length === 0) {
-    return { title: "Apply Patch", tone: "edit" };
+    return { title: "Applied patch", tone: "edit" };
   }
 
   const singleOperation = operations.length === 1 ? operations[0] : undefined;
@@ -57,18 +57,12 @@ function countChangedFiles(files: NonNullable<ToolResultCard["files"]>): number 
 
 function patchTitle(operations: PatchOperation[], fileCount: number): string {
   if (operations.length === 1) {
-    return `${patchOperationLabels[operations[0]]} ${fileNoun(fileCount)}`;
+    return `${patchOperationLabels[operations[0]]} ${fileCount} ${fileNoun(fileCount)}`;
   }
 
-  return `${joinTitleParts(operations.map((operation) => patchOperationLabels[operation]))} ${fileNoun(fileCount)}`;
+  return `Changed ${fileCount} ${fileNoun(fileCount)}`;
 }
 
-function fileNoun(fileCount: number): "File" | "Files" {
-  return fileCount === 1 ? "File" : "Files";
-}
-
-function joinTitleParts(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} & ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")} & ${parts.at(-1)}`;
+function fileNoun(fileCount: number): "file" | "files" {
+  return fileCount === 1 ? "file" : "files";
 }

@@ -856,6 +856,7 @@ function createMcpServer(
             root: workspace.root,
             path: workspace.root,
             summary: {
+              mode: workspace.mode,
               agentsFiles: loadedAgentsFiles.length,
               availableAgentsFiles: availableAgentsFileOutputs.length,
               skills: visibleSkills.length,
@@ -1206,6 +1207,7 @@ function createMcpServer(
                 additions: applied.additions,
                 removals: applied.removals,
               },
+              files: applied.files,
               payload: { patch: applied.patch },
             },
           },

@@ -1,6 +1,5 @@
 import {
   ChevronDown,
-  CircleCheck,
   FileDiff,
   FilePenLine,
   FilePlus,
@@ -17,7 +16,6 @@ import {
 } from "lucide";
 
 export const toolIcons = {
-  check: CircleCheck,
   chevronDown: ChevronDown,
   diff: FileDiff,
   editFile: FilePenLine,

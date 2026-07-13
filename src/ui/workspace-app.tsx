@@ -11,28 +11,21 @@ import {
   isPatchTool,
   isReadTool,
   isReviewTool,
-  isSearchTool,
-  isShellTool,
   isToolName,
   isToolResultCard,
   isWriteTool,
   payloadText,
-  summaryNumber,
   type HostContext,
-  type PatchOperation,
   type ToolName,
   type ToolResultCard,
 } from "./card-types.js";
-import { getPatchDisplayParts } from "./patch-display.js";
-import { renderIcon, toolIcons, type ToolIcon } from "./icons.js";
+import { renderIcon, toolIcons } from "./icons.js";
+import {
+  getToolDisplay,
+  getToolHeaderSummary,
+  type ToolDisplay,
+} from "./tool-display.js";
 import "./workspace-app.css";
-
-interface ToolDisplay {
-  icon: ToolIcon;
-  title: string;
-  label: string;
-  tone: string;
-}
 
 interface MountedPayload {
   update(options: {
@@ -188,17 +181,19 @@ function render(): void {
 
   const toolMain = element("span", { className: "tool-main" });
   const title = element("span", { className: "tool-title", text: display.title });
-  const label = element("span", {
-    className: "tool-label",
-    text: display.label,
-    title: display.label,
-  });
-  toolMain.append(title, label);
+  toolMain.append(title);
+  if (display.label) {
+    toolMain.append(element("span", {
+      className: "tool-label",
+      text: display.label,
+      title: display.label,
+    }));
+  }
 
   button.append(
     icon,
     toolMain,
-    renderSummaryBadge(card),
+    renderHeaderSummary(card),
     renderChevron(expanded, expandable),
   );
   section.append(button);
@@ -332,60 +327,25 @@ function renderPrePayload(
   container.replaceChildren(element("pre", { className: `text-payload ${tool}`, text }));
 }
 
-function renderSummaryBadge(card: ToolResultCard): HTMLElement {
-  const summary = card.summary ?? {};
+function renderHeaderSummary(card: ToolResultCard): HTMLElement {
+  const summary = getToolHeaderSummary(card);
 
-  if (isReviewTool(card.tool)) {
-    const stats = element("span", { className: "stats" });
-    stats.setAttribute("aria-label", "Review diff statistics");
-    stats.append(
-      element("span", { className: "add", text: `+${String(summary.additions ?? 0)}` }),
-      element("span", { className: "remove", text: `-${String(summary.removals ?? 0)}` }),
-    );
-    return stats;
-  }
-
-  if (isPatchTool(card.tool) || isEditTool(card.tool) || isWriteTool(card.tool)) {
+  if (summary.kind === "diff") {
     const stats = element("span", { className: "stats" });
     stats.setAttribute("aria-label", "Diff statistics");
     stats.append(
-      element("span", { className: "add", text: `+${String(summary.additions ?? 0)}` }),
-      element("span", { className: "remove", text: `-${String(summary.removals ?? 0)}` }),
+      element("span", { className: "add", text: `+${String(summary.additions)}` }),
+      element("span", { className: "remove", text: `-${String(summary.removals)}` }),
     );
     return stats;
   }
 
-  if (card.tool === "open_workspace") {
-    const agentsFiles = summaryNumber(summary, "agentsFiles") ?? 0;
-    const skills = summaryNumber(summary, "skills") ?? 0;
-    const group = element("span", { className: "badge-group" });
-    group.setAttribute("aria-label", "Workspace summary");
-
-    const agentsBadge = element("span", {
-      className: `badge ${agentsFiles > 0 ? "success" : "muted"}`,
-      text: agentsFiles > 0 ? "AGENTS.md" : "No AGENTS.md",
-    });
-    if (agentsFiles > 0) {
-      agentsBadge.prepend(renderIcon(toolIcons.check, "badge-icon"));
-    }
-
-    group.append(agentsBadge, element("span", { className: "badge", text: `${skills} skills` }));
-    return group;
-  }
-
-  if (isShellTool(card.tool)) {
-    const state = summary.running === true ? "running" : "ran";
-    return element("span", {
-      className: "badge",
-      text: `${state} · ${String(summary.lines ?? 0)} lines`,
-    });
-  }
-
-  if (isSearchTool(card.tool)) {
-    return element("span", { className: "badge", text: `${String(summary.lines ?? 0)} lines` });
-  }
-
-  return element("span", { className: "badge", text: `${String(summary.lines ?? 0)} lines` });
+  const meta = element("span", {
+    className: `header-meta ${summary.kind === "empty" ? "empty" : ""}`,
+    text: summary.kind === "text" ? summary.text : "",
+  });
+  if (summary.kind === "empty") meta.setAttribute("aria-hidden", "true");
+  return meta;
 }
 
 function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
@@ -415,14 +375,18 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   icon.append(renderIcon(display.icon));
   const titleGroup = element("span", { className: "tool-main review-title-group" });
 
-  titleGroup.append(
-    element("span", { className: "tool-title", text: display.title }),
-    element("span", { className: "tool-label", text: display.label, title: display.label }),
-  );
+  titleGroup.append(element("span", { className: "tool-title", text: display.title }));
+  if (display.label) {
+    titleGroup.append(element("span", {
+      className: "tool-label",
+      text: display.label,
+      title: display.label,
+    }));
+  }
   header.append(
     icon,
     titleGroup,
-    renderSummaryBadge(card),
+    renderHeaderSummary(card),
     renderChevron(expanded, expandable),
   );
 
@@ -512,72 +476,6 @@ function formatAgentsFilesForPayload(
       return content ? `${path}\n\n${content}` : `${path}\n\nNo content loaded.`;
     })
     .join("\n\n");
-}
-
-function getPatchToolDisplay(card: ToolResultCard, label: string): ToolDisplay {
-  const display = getPatchDisplayParts(card);
-
-  return {
-    icon: patchIcon(display.iconOperation),
-    title: display.title,
-    label,
-    tone: display.tone,
-  };
-}
-
-function patchIcon(operation: PatchOperation | undefined): ToolIcon {
-  if (operation === "add") return toolIcons.writeFile;
-  if (operation === "delete") return toolIcons.readFile;
-  if (operation === "move") return toolIcons.files;
-  return toolIcons.editFile;
-}
-
-function getToolDisplay(card: ToolResultCard): ToolDisplay {
-  const label = getToolLabel(card);
-
-  switch (card.tool) {
-    case "open_workspace":
-      return { icon: toolIcons.folderOpen, title: "Workspace", label, tone: "workspace" };
-    case "read":
-      return { icon: toolIcons.readFile, title: "Read File", label, tone: "read" };
-    case "write":
-      return { icon: toolIcons.writeFile, title: "Write File", label, tone: "write" };
-    case "edit":
-      return { icon: toolIcons.editFile, title: "Edit File", label, tone: "edit" };
-    case "apply_patch":
-      return getPatchToolDisplay(card, label);
-    case "grep":
-      return { icon: toolIcons.search, title: "Grep", label, tone: "search" };
-    case "glob":
-      return { icon: toolIcons.files, title: "Glob", label, tone: "search" };
-    case "ls":
-      return { icon: toolIcons.folderTree, title: "List Directory", label, tone: "directory" };
-    case "bash":
-      return { icon: toolIcons.terminalSquare, title: "Bash", label, tone: "shell" };
-    case "exec_command":
-      return { icon: toolIcons.terminalSquare, title: "Exec Command", label, tone: "shell" };
-    case "write_stdin":
-      return { icon: toolIcons.terminal, title: "Process Session", label, tone: "shell" };
-    case "show_changes":
-      return { icon: toolIcons.diff, title: "Show Changes", label, tone: "review" };
-  }
-}
-
-function getToolLabel(card: ToolResultCard): string {
-  if (isShellTool(card.tool)) {
-    return String(card.summary?.command ?? card.summary?.sessionId ?? card.path ?? card.tool);
-  }
-  if (isReviewTool(card.tool)) {
-    const count = Number(card.summary?.files ?? card.files?.length ?? 0);
-    return count === 0 ? "No changes since last review" : `${count} changed ${count === 1 ? "file" : "files"}`;
-  }
-  if (card.path) return card.path;
-  if (card.root) return card.root;
-  if (isSearchTool(card.tool)) {
-    return String(card.summary?.pattern ?? card.tool);
-  }
-
-  return card.tool;
 }
 
 function toolNameFromMeta(result: CallToolResult): ToolName | undefined {
