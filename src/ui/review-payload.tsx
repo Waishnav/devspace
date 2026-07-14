@@ -1,15 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { FileDiffOptions } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
-import type { GitStatusEntry } from "@pierre/trees";
-import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { HostContext, ToolResultCard } from "./card-types.js";
-import {
-  buildReviewFileEntries,
-  initialReviewPath,
-  type ReviewFileEntry,
-} from "./review-model.js";
+import { ReviewFileBody } from "./review-file-body.js";
+import { FullscreenReview } from "./review-fullscreen.js";
+import { buildReviewFileEntries } from "./review-model.js";
+import { StatusLine } from "./review-status-line.js";
 
 type ThemeType = "light" | "dark";
 
@@ -105,118 +101,6 @@ function ReviewPayload({
   );
 }
 
-function FullscreenReview({
-  entries,
-  options,
-}: {
-  entries: ReviewFileEntry[];
-  options: FileDiffOptions<undefined>;
-}) {
-  const [selectedPath, setSelectedPath] = useState(() => initialReviewPath(entries));
-
-  useEffect(() => {
-    setSelectedPath((currentPath) => initialReviewPath(entries, currentPath));
-  }, [entries]);
-
-  const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? entries[0];
-
-  return (
-    <div className="review-workspace">
-      <section className="review-selected-file">
-        <header className="review-selected-file-header">
-          <div className="review-selected-file-title">
-            <strong title={selectedEntry?.path}>{selectedEntry?.path}</strong>
-            {selectedEntry?.previousPath && selectedEntry.previousPath !== selectedEntry.path ? (
-              <span title={selectedEntry.previousPath}>from {selectedEntry.previousPath}</span>
-            ) : null}
-          </div>
-          {selectedEntry ? (
-            <span className="review-diff-file-stats" aria-label="Selected file diff statistics">
-              <span className="add">+{selectedEntry.additions}</span>
-              <span className="remove">-{selectedEntry.removals}</span>
-            </span>
-          ) : null}
-        </header>
-        <div className="review-selected-file-body">
-          {selectedEntry ? (
-            <ReviewFileBody entry={selectedEntry} options={options} />
-          ) : (
-            <StatusLine message="Select a changed file to review it." />
-          )}
-        </div>
-      </section>
-
-      <aside className="review-file-tree-panel" aria-label="Changed files">
-        <div className="review-file-tree-header">
-          <strong>Changed files</strong>
-          <span>{entries.length}</span>
-        </div>
-        <div className="review-file-tree-body">
-          <ReviewFileTree
-            entries={entries}
-            selectedPath={selectedEntry?.path}
-            onSelect={setSelectedPath}
-          />
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function ReviewFileTree({
-  entries,
-  selectedPath,
-  onSelect,
-}: {
-  entries: ReviewFileEntry[];
-  selectedPath?: string;
-  onSelect(path: string): void;
-}) {
-  const paths = useMemo(() => entries.map((entry) => entry.path), [entries]);
-  const gitStatus = useMemo<GitStatusEntry[]>(
-    () => entries.map((entry) => ({ path: entry.path, status: entry.status })),
-    [entries],
-  );
-  const { model } = useFileTree({
-    paths,
-    gitStatus,
-    flattenEmptyDirectories: true,
-    initialExpansion: "open",
-    search: paths.length > 8,
-    onSelectionChange(selectedPaths) {
-      const path = selectedPaths.find((candidate) => paths.includes(candidate));
-      if (path) onSelect(path);
-    },
-  });
-
-  useEffect(() => {
-    if (!selectedPath) return;
-    for (const path of model.getSelectedPaths()) {
-      if (path !== selectedPath) model.getItem(path)?.deselect();
-    }
-    model.getItem(selectedPath)?.select();
-    model.scrollToPath(selectedPath, { focus: false });
-  }, [model, selectedPath]);
-
-  return <FileTree model={model} className="review-file-tree" />;
-}
-
-function ReviewFileBody({
-  entry,
-  options,
-}: {
-  entry: ReviewFileEntry;
-  options: FileDiffOptions<undefined>;
-}) {
-  if (!entry.fileDiff) {
-    return (
-      <StatusLine message="This file changed without a textual diff that can be rendered." />
-    );
-  }
-
-  return <FileDiff fileDiff={entry.fileDiff} options={options} className="pierre-diff" />;
-}
-
 function diffOptions(themeType: ThemeType): FileDiffOptions<undefined> {
   return {
     theme: {
@@ -234,14 +118,4 @@ function diffOptions(themeType: ThemeType): FileDiffOptions<undefined> {
     stickyHeader: false,
     disableFileHeader: true,
   };
-}
-
-function StatusLine({
-  message,
-  tone = "muted",
-}: {
-  message: string;
-  tone?: "muted" | "error";
-}) {
-  return <div className={`status ${tone}`}>{message}</div>;
 }
