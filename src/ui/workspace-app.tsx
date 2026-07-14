@@ -33,6 +33,7 @@ interface MountedPayload {
     hostContext?: HostContext;
     errorMessage?: string | null;
     visibleFileCount?: number;
+    presentation?: "inline" | "fullscreen";
   }): void;
   unmount(): void;
 }
@@ -44,6 +45,8 @@ let hostContext: HostContext | undefined;
 let card: ToolResultCard | null = null;
 let expanded = false;
 let reviewFilesExpanded = false;
+let reviewDisplayModePending = false;
+let reviewDisplayModeError: string | null = null;
 let errorMessage: string | null = null;
 let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
@@ -78,6 +81,8 @@ async function boot(): Promise<void> {
       card = null;
       expanded = false;
       reviewFilesExpanded = false;
+      reviewDisplayModePending = false;
+      reviewDisplayModeError = null;
       errorMessage = "No result card is available for this tool result.";
       render();
       return;
@@ -87,16 +92,27 @@ async function boot(): Promise<void> {
     card = nextCard;
     expanded = isReviewTool(tool) && isExpandableCard(nextCard);
     reviewFilesExpanded = false;
+    reviewDisplayModePending = false;
+    reviewDisplayModeError = null;
     errorMessage = null;
     render();
   };
 
   app.onhostcontextchanged = (ctx) => {
+    const previousDisplayMode = hostContext?.displayMode;
     hostContext = {
       ...hostContext,
       ...ctx,
     };
     applyHostContext();
+    if (
+      previousDisplayMode !== hostContext.displayMode &&
+      card &&
+      isReviewTool(card.tool)
+    ) {
+      render();
+      return;
+    }
     renderPayloadIfNeeded();
   };
 
@@ -216,7 +232,10 @@ function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
 }
 
 async function renderPayloadIfNeeded(): Promise<void> {
-  if (!card || !currentPayloadContainer || !expanded) return;
+  const fullscreenReview = card &&
+    isReviewTool(card.tool) &&
+    hostContext?.displayMode === "fullscreen";
+  if (!card || !currentPayloadContainer || (!expanded && !fullscreenReview)) return;
 
   const target = currentPayloadContainer;
 
@@ -262,12 +281,23 @@ async function renderPayloadIfNeeded(): Promise<void> {
   }
 
   if (isReviewTool(card.tool) || isPatchTool(card.tool)) {
-    const visibleFileCount = isReviewTool(card.tool) && !reviewFilesExpanded
+    const presentation = isReviewTool(card.tool) && hostContext?.displayMode === "fullscreen"
+      ? "fullscreen"
+      : "inline";
+    const visibleFileCount = isReviewTool(card.tool) &&
+        presentation === "inline" &&
+        !reviewFilesExpanded
       ? Math.max(3, (card.files ?? []).slice(0, 3).length)
       : undefined;
 
     if (currentPayload) {
-      currentPayload.update({ card, hostContext, errorMessage, visibleFileCount });
+      currentPayload.update({
+        card,
+        hostContext,
+        errorMessage,
+        visibleFileCount,
+        presentation,
+      });
       return;
     }
 
@@ -281,6 +311,7 @@ async function renderPayloadIfNeeded(): Promise<void> {
       hostContext,
       errorMessage,
       visibleFileCount,
+      presentation,
     });
     return;
   }
@@ -351,12 +382,17 @@ function renderHeaderSummary(card: ToolResultCard): HTMLElement {
 function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   unmountPayload();
 
+  if (hostContext?.displayMode === "fullscreen") {
+    renderFullscreenReview(card, display);
+    return;
+  }
+
   const files = card.files ?? [];
-  const visibleFiles = reviewFilesExpanded ? files : files.slice(0, 3);
-  const hiddenCount = Math.max(0, files.length - visibleFiles.length);
+  const hiddenCount = Math.max(0, files.length - 3);
   const expandable = isExpandableCard(card);
   const main = element("main", { className: "shell" });
   const section = element("section", { className: "tool-card review" });
+  const headerRow = element("div", { className: "review-header-row" });
   const header = element("button", {
     className: "tool-header review-header",
     type: "button",
@@ -390,7 +426,28 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
     renderChevron(expanded, expandable),
   );
 
-  section.append(header);
+  headerRow.append(header);
+  if (files.length > 0 && canRequestDisplayMode("fullscreen")) {
+    const reviewButton = element("button", {
+      className: "review-button",
+      type: "button",
+      text: reviewDisplayModePending ? "Opening…" : "Review",
+      disabled: reviewDisplayModePending,
+    });
+    reviewButton.setAttribute("aria-busy", String(reviewDisplayModePending));
+    reviewButton.addEventListener("click", () => {
+      void requestReviewDisplayMode("fullscreen");
+    });
+    headerRow.append(reviewButton);
+  }
+
+  section.append(headerRow);
+  if (reviewDisplayModeError) {
+    section.append(element("div", {
+      className: "review-mode-error",
+      text: reviewDisplayModeError,
+    }));
+  }
   if (expanded) {
     const body = element("div", { className: "review-summary" });
     const payload = element("div", { className: "review-payload" });
@@ -398,16 +455,24 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
     body.append(payload);
 
     if (hiddenCount > 0) {
-      const showMore = element("button", {
+      const toggleFiles = element("button", {
         className: "review-more",
         type: "button",
-        text: `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
+        ariaExpanded: String(reviewFilesExpanded),
       });
-      showMore.addEventListener("click", () => {
-        reviewFilesExpanded = true;
+      toggleFiles.append(
+        element("span", {
+          text: reviewFilesExpanded
+            ? "Collapse files"
+            : `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
+        }),
+        renderChevron(reviewFilesExpanded, true),
+      );
+      toggleFiles.addEventListener("click", () => {
+        reviewFilesExpanded = !reviewFilesExpanded;
         render();
       });
-      body.append(showMore);
+      body.append(toggleFiles);
     }
 
     section.append(body);
@@ -416,6 +481,86 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   main.append(section);
   appRoot.replaceChildren(main);
   renderPayloadIfNeeded();
+}
+
+function renderFullscreenReview(card: ToolResultCard, display: ToolDisplay): void {
+  const main = element("main", { className: "shell review-fullscreen-shell" });
+  const section = element("section", {
+    className: reviewDisplayModeError
+      ? "review-fullscreen has-mode-error"
+      : "review-fullscreen",
+  });
+  const header = element("header", { className: "review-fullscreen-header" });
+  const titleGroup = element("div", { className: "review-fullscreen-title" });
+  const icon = element("span", { className: "tool-icon", ariaHidden: "true" });
+  icon.append(renderIcon(display.icon));
+
+  const heading = element("div", { className: "review-title-group" });
+  heading.append(element("span", { className: "tool-title", text: "Review changes" }));
+  if (display.label) {
+    heading.append(element("span", {
+      className: "tool-label",
+      text: display.label,
+      title: display.label,
+    }));
+  }
+  titleGroup.append(icon, heading);
+
+  const actions = element("div", { className: "review-fullscreen-actions" });
+  const closeButton = element("button", {
+    className: "review-button",
+    type: "button",
+    text: reviewDisplayModePending ? "Closing…" : "Close review",
+    disabled: reviewDisplayModePending,
+  });
+  closeButton.setAttribute("aria-busy", String(reviewDisplayModePending));
+  closeButton.addEventListener("click", () => {
+    void requestReviewDisplayMode("inline");
+  });
+  actions.append(renderHeaderSummary(card), closeButton);
+  header.append(titleGroup, actions);
+
+  const body = element("div", { className: "review-fullscreen-body" });
+  currentPayloadContainer = body;
+  section.append(header);
+  if (reviewDisplayModeError) {
+    section.append(element("div", {
+      className: "review-mode-error",
+      text: reviewDisplayModeError,
+    }));
+  }
+  section.append(body);
+  main.append(section);
+  appRoot.replaceChildren(main);
+  renderPayloadIfNeeded();
+}
+
+function canRequestDisplayMode(mode: "inline" | "fullscreen"): boolean {
+  return Boolean(hostContext?.availableDisplayModes?.includes(mode));
+}
+
+async function requestReviewDisplayMode(mode: "inline" | "fullscreen"): Promise<void> {
+  if (!app || reviewDisplayModePending) return;
+
+  reviewDisplayModePending = true;
+  reviewDisplayModeError = null;
+  render();
+
+  try {
+    const result = await app.requestDisplayMode({ mode });
+    hostContext = {
+      ...hostContext,
+      displayMode: result.mode,
+    };
+    if (result.mode === "fullscreen") expanded = true;
+  } catch (requestError) {
+    reviewDisplayModeError = requestError instanceof Error
+      ? requestError.message
+      : "Unable to change the review display mode.";
+  } finally {
+    reviewDisplayModePending = false;
+    render();
+  }
 }
 
 function renderChevron(isExpanded: boolean, visible: boolean): HTMLElement {

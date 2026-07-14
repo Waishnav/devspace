@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { parsePatchFiles, type FileDiffMetadata, type FileDiffOptions } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
+import type { FileDiffOptions } from "@pierre/diffs";
 import type { HostContext, ToolResultCard } from "./card-types.js";
+import { ReviewFileBody } from "./review-file-body.js";
+import { FullscreenReview } from "./review-fullscreen.js";
+import { buildReviewFileEntries } from "./review-model.js";
+import { StatusLine } from "./review-status-line.js";
 
 type ThemeType = "light" | "dark";
 
@@ -11,6 +14,7 @@ interface PayloadRendererOptions {
   hostContext?: HostContext;
   errorMessage?: string | null;
   visibleFileCount?: number;
+  presentation?: "inline" | "fullscreen";
 }
 
 interface MountedPayload {
@@ -40,27 +44,30 @@ function ReviewPayload({
   hostContext,
   errorMessage = null,
   visibleFileCount,
+  presentation = "inline",
 }: PayloadRendererOptions) {
-  const patch = card.payload?.patch;
   const themeType: ThemeType = hostContext?.theme === "light" ? "light" : "dark";
-  const files = useMemo(() => parseFiles(patch), [patch]);
-  const visibleFiles = typeof visibleFileCount === "number"
-    ? files.slice(0, visibleFileCount)
-    : files;
+  const entries = useMemo(() => buildReviewFileEntries(card), [card]);
   const [openFiles, setOpenFiles] = useState(() => new Set<string>());
 
   if (errorMessage) return <StatusLine message={errorMessage} tone="error" />;
-  if (!patch) return <StatusLine message="Diff payload is not available." />;
-  if (files.length === 0) return <StatusLine message="No diff hunks to review." />;
+  if (!card.payload?.patch) return <StatusLine message="Diff payload is not available." />;
+  if (entries.length === 0) return <StatusLine message="No diff hunks to review." />;
 
   const options = diffOptions(themeType);
+  if (presentation === "fullscreen") {
+    return <FullscreenReview entries={entries} options={options} />;
+  }
+
+  const visibleEntries = typeof visibleFileCount === "number"
+    ? entries.slice(0, visibleFileCount)
+    : entries;
 
   return (
     <div className="review-diff">
       <div className="review-diff-files">
-        {visibleFiles.map((fileDiff, index) => {
-          const key = fileDiff.cacheKey ?? `${fileDiff.prevName ?? ""}->${fileDiff.name}-${index}`;
-          const stats = diffStats(fileDiff);
+        {visibleEntries.map((entry) => {
+          const key = entry.path;
           const isOpen = openFiles.has(key);
 
           return (
@@ -79,35 +86,18 @@ function ReviewPayload({
                   setOpenFiles(next);
                 }}
               >
-                <span className="review-diff-file-name">{fileDiff.name}</span>
+                <span className="review-diff-file-name">{entry.path}</span>
                 <span className="review-diff-file-stats">
-                  <span className="add">+{stats.additions}</span>
-                  <span className="remove">-{stats.removals}</span>
+                  <span className="add">+{entry.additions}</span>
+                  <span className="remove">-{entry.removals}</span>
                 </span>
               </button>
-              {isOpen ? (
-                <FileDiff fileDiff={fileDiff} options={options} className="pierre-diff" />
-              ) : null}
+              {isOpen ? <ReviewFileBody entry={entry} options={options} /> : null}
             </div>
           );
         })}
       </div>
     </div>
-  );
-}
-
-function parseFiles(patch: string | undefined): FileDiffMetadata[] {
-  if (!patch) return [];
-  return parsePatchFiles(patch, "review", true).flatMap((parsedPatch) => parsedPatch.files);
-}
-
-function diffStats(fileDiff: FileDiffMetadata): { additions: number; removals: number } {
-  return fileDiff.hunks.reduce(
-    (stats, hunk) => ({
-      additions: stats.additions + hunk.additionLines,
-      removals: stats.removals + hunk.deletionLines,
-    }),
-    { additions: 0, removals: 0 },
   );
 }
 
@@ -128,14 +118,4 @@ function diffOptions(themeType: ThemeType): FileDiffOptions<undefined> {
     stickyHeader: false,
     disableFileHeader: true,
   };
-}
-
-function StatusLine({
-  message,
-  tone = "muted",
-}: {
-  message: string;
-  tone?: "muted" | "error";
-}) {
-  return <div className={`status ${tone}`}>{message}</div>;
 }
