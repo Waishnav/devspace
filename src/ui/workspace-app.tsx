@@ -485,7 +485,11 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
 
 function renderFullscreenReview(card: ToolResultCard, display: ToolDisplay): void {
   const main = element("main", { className: "shell review-fullscreen-shell" });
-  const section = element("section", { className: "review-fullscreen" });
+  const section = element("section", {
+    className: reviewDisplayModeError
+      ? "review-fullscreen has-mode-error"
+      : "review-fullscreen",
+  });
   const header = element("header", { className: "review-fullscreen-header" });
   const titleGroup = element("div", { className: "review-fullscreen-title" });
   const icon = element("span", { className: "tool-icon", ariaHidden: "true" });

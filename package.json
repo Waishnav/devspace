@@ -44,6 +44,7 @@
     "@openai/codex-sdk": "^0.142.5",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.2.5",
+    "@pierre/trees": "1.0.0-beta.5",
     "better-sqlite3": "^12.10.0",
     "diff": "^8.0.3",
     "drizzle-orm": "^0.45.2",
