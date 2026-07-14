@@ -352,8 +352,7 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   unmountPayload();
 
   const files = card.files ?? [];
-  const visibleFiles = reviewFilesExpanded ? files : files.slice(0, 3);
-  const hiddenCount = Math.max(0, files.length - visibleFiles.length);
+  const hiddenCount = Math.max(0, files.length - 3);
   const expandable = isExpandableCard(card);
   const main = element("main", { className: "shell" });
   const section = element("section", { className: "tool-card review" });
@@ -398,16 +397,24 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
     body.append(payload);
 
     if (hiddenCount > 0) {
-      const showMore = element("button", {
+      const toggleFiles = element("button", {
         className: "review-more",
         type: "button",
-        text: `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
+        ariaExpanded: String(reviewFilesExpanded),
       });
-      showMore.addEventListener("click", () => {
-        reviewFilesExpanded = true;
+      toggleFiles.append(
+        element("span", {
+          text: reviewFilesExpanded
+            ? "Collapse files"
+            : `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
+        }),
+        renderChevron(reviewFilesExpanded, true),
+      );
+      toggleFiles.addEventListener("click", () => {
+        reviewFilesExpanded = !reviewFilesExpanded;
         render();
       });
-      body.append(showMore);
+      body.append(toggleFiles);
     }
 
     section.append(body);

@@ -222,6 +222,9 @@ body {
 }
 
 .review-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   min-height: 44px;
   padding: 0 16px;
@@ -238,6 +241,10 @@ body {
 .review-more:hover {
   background: var(--tool-card-hover-bg);
   color: var(--color-text-primary, #f5f5f6);
+}
+
+.review-more .chevron {
+  flex: none;
 }
 
 .review-diff {
