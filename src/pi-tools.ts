@@ -120,7 +120,7 @@ function commandExists(command: string): boolean {
   return result.status === 0;
 }
 
-function resolveRunnableShellCommand(mode: ShellMode | undefined): ResolvedShellCommand {
+export function resolveRunnableShellCommand(mode: ShellMode | undefined): ResolvedShellCommand {
   const shellCommand = resolveShellCommand(mode);
   if (
     shellCommand.mode === "powershell" &&
@@ -141,30 +141,65 @@ function resolveRunnableShellCommand(mode: ShellMode | undefined): ResolvedShell
 function findUnsafePowerShellRegexLiteral(command: string): string | undefined {
   if (/\[regex\]::Escape\s*\(/i.test(command)) return undefined;
 
-  const unsafeMatchPattern = /(?:^|[\s|;&({])-match\s*(["'])(?<literal>(?:\\.|(?!\1)[\s\S])*?\\(?:\\.|(?!\1)[\s\S])*?)\1/i;
-  const match = unsafeMatchPattern.exec(command);
-  if (match?.groups?.literal && looksLikeWindowsPathRegexLiteral(match.groups.literal)) {
-    return match.groups.literal;
-  }
+  const unsafeAssignments = collectUnsafePowerShellRegexVariableAssignments(command);
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (char === "'" || char === "\"") {
+      index = skipPowerShellQuotedLiteral(command, index);
+      continue;
+    }
 
-  const unsafeAssignments = unsafePowerShellRegexVariableAssignments(command);
-  for (const [name, literal] of unsafeAssignments) {
-    const variableMatchPattern = new RegExp(`(?:^|[\\s|;&({])-match\\s*\\$${escapeRegExp(name)}\\b`, "i");
-    if (variableMatchPattern.test(command)) return literal;
+    if (!isPowerShellMatchOperatorAt(command, index)) continue;
+    const operandStart = skipWhitespace(command, index + "-match".length);
+    const operand = command[operandStart];
+
+    if (operand === "'" || operand === "\"") {
+      const literal = readPowerShellQuotedLiteral(command, operandStart);
+      if (literal && looksLikeWindowsPathRegexLiteral(literal.value)) return literal.value;
+      index = literal?.end ?? operandStart;
+      continue;
+    }
+
+    if (operand === "$") {
+      const variable = readPowerShellVariableName(command, operandStart + 1);
+      if (variable && unsafeAssignments.has(variable.name)) return unsafeAssignments.get(variable.name);
+      index = variable?.end ?? operandStart;
+    }
   }
 
   return undefined;
 }
 
-function unsafePowerShellRegexVariableAssignments(command: string): Map<string, string> {
+function collectUnsafePowerShellRegexVariableAssignments(command: string): Map<string, string> {
   const assignments = new Map<string, string>();
-  const assignmentPattern = /(?:^|[\s;{(])\$(?<name>[A-Za-z_][\w]*)\s*=\s*(["'])(?<literal>(?:\\.|(?!\2)[\s\S])*?\\(?:\\.|(?!\2)[\s\S])*?)\2/g;
-  let match: RegExpExecArray | null;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (char === "'" || char === "\"") {
+      index = skipPowerShellQuotedLiteral(command, index);
+      continue;
+    }
 
-  while ((match = assignmentPattern.exec(command)) !== null) {
-    const name = match.groups?.name;
-    const literal = match.groups?.literal;
-    if (name && literal && looksLikeWindowsPathRegexLiteral(literal)) assignments.set(name, literal);
+    if (char !== "$" || !isTokenBoundary(command[index - 1])) continue;
+    const variable = readPowerShellVariableName(command, index + 1);
+    if (!variable) continue;
+
+    let next = skipWhitespace(command, variable.end);
+    if (command[next] !== "=") {
+      index = variable.end;
+      continue;
+    }
+
+    next = skipWhitespace(command, next + 1);
+    if (command[next] !== "'" && command[next] !== "\"") {
+      index = next;
+      continue;
+    }
+
+    const literal = readPowerShellQuotedLiteral(command, next);
+    if (literal && looksLikeWindowsPathRegexLiteral(literal.value)) {
+      assignments.set(variable.name, literal.value);
+    }
+    index = literal?.end ?? next;
   }
 
   return assignments;
@@ -181,8 +216,68 @@ function looksLikeWindowsPathRegexLiteral(literal: string): boolean {
   return /\\[A-Za-z]{2,}(?:\\|$)/.test(literal);
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+interface PowerShellQuotedLiteral {
+  value: string;
+  end: number;
+}
+
+interface PowerShellVariableName {
+  name: string;
+  end: number;
+}
+
+function readPowerShellQuotedLiteral(command: string, start: number): PowerShellQuotedLiteral | undefined {
+  const quote = command[start];
+  if (quote !== "'" && quote !== "\"") return undefined;
+
+  let value = "";
+  for (let index = start + 1; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote === "'" && char === "'" && command[index + 1] === "'") {
+      value += "'";
+      index += 1;
+      continue;
+    }
+
+    if (quote === "\"" && char === "`" && index + 1 < command.length) {
+      value += command[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (char === quote) return { value, end: index };
+    value += char;
+  }
+
+  return undefined;
+}
+
+function skipPowerShellQuotedLiteral(command: string, start: number): number {
+  return readPowerShellQuotedLiteral(command, start)?.end ?? command.length - 1;
+}
+
+function readPowerShellVariableName(command: string, start: number): PowerShellVariableName | undefined {
+  const first = command[start];
+  if (!first || !/[A-Za-z_]/.test(first)) return undefined;
+
+  let end = start + 1;
+  while (end < command.length && /[A-Za-z0-9_]/.test(command[end])) end += 1;
+  return { name: command.slice(start, end), end };
+}
+
+function isPowerShellMatchOperatorAt(command: string, index: number): boolean {
+  if (command.slice(index, index + "-match".length).toLowerCase() !== "-match") return false;
+  return isTokenBoundary(command[index - 1]) && isTokenBoundary(command[index + "-match".length]);
+}
+
+function isTokenBoundary(char: string | undefined): boolean {
+  return char === undefined || /\s/.test(char) || "|;&({[,".includes(char);
+}
+
+function skipWhitespace(command: string, start: number): number {
+  let index = start;
+  while (index < command.length && /\s/.test(command[index])) index += 1;
+  return index;
 }
 
 function unsafePowerShellRegexLiteralMessage(literal: string): string {

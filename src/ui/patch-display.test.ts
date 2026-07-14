@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { getPatchDisplayParts } from "./patch-display.js";
 
 assert.deepEqual(getPatchDisplayParts({}), {
-  title: "Apply Patch",
+  title: "Applied patch",
   tone: "edit",
 });
 
 assert.deepEqual(
   getPatchDisplayParts({ files: [{ path: "created.ts", operation: "add" }] }),
   {
-    title: "Write File",
+    title: "Added 1 file",
     iconOperation: "add",
     tone: "write",
   },
@@ -23,7 +23,7 @@ assert.deepEqual(
     ],
   }),
   {
-    title: "Write Files",
+    title: "Added 2 files",
     iconOperation: "add",
     tone: "write",
   },
@@ -37,7 +37,7 @@ assert.deepEqual(
     ],
   }),
   {
-    title: "Write & Edit Files",
+    title: "Changed 2 files",
     tone: "edit",
   },
 );
@@ -50,7 +50,7 @@ assert.deepEqual(
     ],
   }),
   {
-    title: "Write & Edit File",
+    title: "Changed 1 file",
     tone: "edit",
   },
 );
@@ -64,7 +64,7 @@ assert.deepEqual(
     ],
   }),
   {
-    title: "Edit, Move & Delete Files",
+    title: "Changed 3 files",
     tone: "edit",
   },
 );

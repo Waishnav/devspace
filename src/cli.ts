@@ -12,7 +12,7 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig, type ShellMode } from "./config.js";
 import { runLocalAgentProvider } from "./local-agent-adapters.js";
-import { resolveShellCommand } from "./pi-tools.js";
+import { resolveRunnableShellCommand } from "./pi-tools.js";
 import {
   isLocalAgentProvider,
   loadLocalAgentProfiles,
@@ -690,7 +690,7 @@ function checkShellCommand(mode: ShellMode): string {
     return checkBashShell();
   }
 
-  const { command, args } = resolveShellCommand(mode);
+  const { command, args } = resolveRunnableShellCommand(mode);
   return `${command} ${args.join(" ")}`;
 }
 
