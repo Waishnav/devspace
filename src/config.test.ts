@@ -16,6 +16,11 @@ assert.equal(loadConfig(baseEnv).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
+assert.equal(loadConfig(baseEnv).shell, "auto");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL: "auto" }).shell, "auto");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL: "bash" }).shell, "bash");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL: "powershell" }).shell, "powershell");
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SHELL: "cmd" }).shell, "cmd");
 assert.equal(loadConfig(baseEnv).toolMode, "minimal");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).toolMode, "minimal");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "full");
@@ -59,6 +64,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_SHELL: "invalid" }),
+  /Invalid DEVSPACE_SHELL: invalid/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {

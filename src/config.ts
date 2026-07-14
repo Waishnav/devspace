@@ -7,6 +7,7 @@ import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
+export type ShellMode = "auto" | "bash" | "powershell" | "cmd";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -18,6 +19,7 @@ export interface ServerConfig {
   allowedHosts: string[];
   publicBaseUrl: string;
   toolMode: ToolMode;
+  shell: ShellMode;
   widgets: WidgetMode;
   stateDir: string;
   worktreeRoot: string;
@@ -90,6 +92,13 @@ function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
     return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
   }
   return "minimal";
+}
+
+function parseShellMode(value: string | undefined): ShellMode {
+  if (!value || value === "auto") return "auto";
+  if (value === "bash" || value === "powershell" || value === "cmd") return value;
+
+  throw new Error(`Invalid DEVSPACE_SHELL: ${value}`);
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -223,6 +232,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
     toolMode: parseToolMode(env),
+    shell: parseShellMode(env.DEVSPACE_SHELL),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
