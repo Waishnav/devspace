@@ -38,6 +38,7 @@ import {
   type DevspaceUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
+import { shutdownHttpServer } from "./server-shutdown.js";
 
 type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
 const require = createRequire(import.meta.url);
@@ -228,14 +229,21 @@ async function serve(): Promise<void> {
     }
   });
 
-  const shutdown = () => {
-    httpServer.close(() => {
-      close();
-      process.exit(0);
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await shutdownHttpServer(httpServer, close);
+    process.exit(0);
+  };
+  const handleShutdown = () => {
+    void shutdown().catch((error) => {
+      console.error("devspace shutdown failed", error);
+      process.exit(1);
     });
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", handleShutdown);
+  process.once("SIGTERM", handleShutdown);
 }
 
 async function runDoctor(): Promise<void> {
