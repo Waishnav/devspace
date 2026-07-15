@@ -40,9 +40,10 @@ assert.equal(resolveSubagentsFlag({}, { DEVSPACE_SUBAGENTS: "1" }), true);
 assert.deepEqual(
   loadConfig({
     ...baseEnv,
-    DEVSPACE_CONTEXT_IGNORE_PATHS: "readonly, external/vendor, ./cache/data/,readonly",
+    DEVSPACE_CONTEXT_IGNORE_PATHS:
+      "external-resources, vendor/generated, ./cache/data/,external-resources",
   }).contextIgnorePaths,
-  ["readonly", "external/vendor", "cache/data"],
+  ["external-resources", "vendor/generated", "cache/data"],
 );
 
 const seededConfigDir = mkdtempSync(join(tmpdir(), "devspace-seeded-skills-test-"));
@@ -91,7 +92,7 @@ assert.throws(
 assert.throws(
   () => loadConfig({
     ...baseEnv,
-    DEVSPACE_CONTEXT_IGNORE_PATHS: ["readonly", 42] as unknown as string,
+    DEVSPACE_CONTEXT_IGNORE_PATHS: ["external-resources", 42] as unknown as string,
   }),
   /must be a comma-separated string or a config array of strings/,
 );
@@ -197,7 +198,12 @@ writeFileSync(
     port: 8787,
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
-    contextIgnorePaths: ["readonly", " external/vendor ", "./cache/data/", "readonly"],
+    contextIgnorePaths: [
+      "external-resources",
+      " vendor/generated ",
+      "./cache/data/",
+      "external-resources",
+    ],
     subagents: true,
   }),
 );
@@ -213,7 +219,11 @@ assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.equal(fileConfig.subagents, true);
-assert.deepEqual(fileConfig.contextIgnorePaths, ["readonly", "external/vendor", "cache/data"]);
+assert.deepEqual(fileConfig.contextIgnorePaths, [
+  "external-resources",
+  "vendor/generated",
+  "cache/data",
+]);
 assert.deepEqual(
   loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

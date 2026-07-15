@@ -41,15 +41,21 @@ try {
   await mkdir(join(root, "nested"));
   await writeFile(join(root, "nested", "AGENTS.md"), "nested instructions\n");
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
-  await mkdir(join(root, "nested", "readonly"));
-  await writeFile(join(root, "nested", "readonly", "AGENTS.md"), "nested visible instructions\n");
-  await mkdir(join(root, "readonly", "mounted-content"), { recursive: true });
+  await mkdir(join(root, "nested", "external-resources"));
   await writeFile(
-    join(root, "readonly", "mounted-content", "AGENTS.md"),
+    join(root, "nested", "external-resources", "AGENTS.md"),
+    "nested visible instructions\n",
+  );
+  await mkdir(join(root, "external-resources", "mounted-content"), { recursive: true });
+  await writeFile(
+    join(root, "external-resources", "mounted-content", "AGENTS.md"),
     "mounted instructions\n",
   );
-  await mkdir(join(root, "readonly-old"));
-  await writeFile(join(root, "readonly-old", "AGENTS.md"), "prefix visible instructions\n");
+  await mkdir(join(root, "external-resources-old"));
+  await writeFile(
+    join(root, "external-resources-old", "AGENTS.md"),
+    "prefix visible instructions\n",
+  );
   await mkdir(join(root, "node_modules"));
   await writeFile(join(root, "node_modules", "AGENTS.md"), "built-in ignored instructions\n");
 
@@ -58,7 +64,7 @@ try {
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_CONTEXT_IGNORE_PATHS: "readonly",
+    DEVSPACE_CONTEXT_IGNORE_PATHS: "external-resources",
     DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
@@ -80,25 +86,28 @@ try {
   assert.deepEqual(
     availableAgentsFiles.map((file) => file.path),
     [
+      join(root, "external-resources-old", "AGENTS.md"),
       join(root, "nested", "AGENTS.md"),
-      join(root, "nested", "readonly", "AGENTS.md"),
-      join(root, "readonly-old", "AGENTS.md"),
+      join(root, "nested", "external-resources", "AGENTS.md"),
     ],
   );
-  assert.equal(openedDirectories.includes(join(root, "readonly")), false);
+  assert.equal(openedDirectories.includes(join(root, "external-resources")), false);
   assert.equal(openedDirectories.includes(join(root, "node_modules")), false);
-  assert.equal(openedDirectories.includes(join(root, "nested", "readonly")), true);
+  assert.equal(openedDirectories.includes(join(root, "nested", "external-resources")), true);
   assert.equal(
     registry.resolvePath(
       workspace,
-      join("readonly", "mounted-content", "AGENTS.md"),
+      join("external-resources", "mounted-content", "AGENTS.md"),
     ),
-    join(root, "readonly", "mounted-content", "AGENTS.md"),
+    join(root, "external-resources", "mounted-content", "AGENTS.md"),
   );
 
   const unignoredRoot = join(root, "unignored-workspace");
-  await mkdir(join(unignoredRoot, "readonly"), { recursive: true });
-  await writeFile(join(unignoredRoot, "readonly", "AGENTS.md"), "visible instructions\n");
+  await mkdir(join(unignoredRoot, "external-resources"), { recursive: true });
+  await writeFile(
+    join(unignoredRoot, "external-resources", "AGENTS.md"),
+    "visible instructions\n",
+  );
   const unignoredConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".devspace-unignored-home"),
     DEVSPACE_ALLOWED_ROOTS: unignoredRoot,
@@ -110,7 +119,7 @@ try {
   const unignoredWorkspace = await new WorkspaceRegistry(unignoredConfig).openWorkspace(unignoredRoot);
   assert.deepEqual(
     unignoredWorkspace.availableAgentsFiles.map((file) => file.path),
-    [join(unignoredRoot, "readonly", "AGENTS.md")],
+    [join(unignoredRoot, "external-resources", "AGENTS.md")],
   );
   assert.deepEqual(
     workspace.agentProfiles.map((profile) => ({
