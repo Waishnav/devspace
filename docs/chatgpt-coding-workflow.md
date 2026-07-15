@@ -72,6 +72,11 @@ When a workspace opens, DevSpace loads root-level instruction files:
 Nested instruction files are returned as `availableAgentsFiles`. The model
 should read the relevant nested file before working under that directory.
 
+DevSpace treats a top-level or nested directory named `readonly` as an
+instruction-discovery boundary. Use that reserved directory for mounted or
+external resource trees that should not be recursively scanned for project
+instructions. Normal workspace file tools can still access content there.
+
 This keeps instructions explicit and inspectable instead of silently injecting
 new context during later tool calls.
 

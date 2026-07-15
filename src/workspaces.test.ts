@@ -41,6 +41,11 @@ try {
   await mkdir(join(root, "nested"));
   await writeFile(join(root, "nested", "AGENTS.md"), "nested instructions\n");
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
+  await mkdir(join(root, "readonly", "mounted-content"), { recursive: true });
+  await writeFile(
+    join(root, "readonly", "mounted-content", "AGENTS.md"),
+    "mounted instructions\n",
+  );
 
   const config = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
@@ -62,6 +67,13 @@ try {
   assert.deepEqual(
     availableAgentsFiles.map((file) => file.path),
     [join(root, "nested", "AGENTS.md")],
+  );
+  assert.equal(
+    registry.resolvePath(
+      workspace,
+      join("readonly", "mounted-content", "AGENTS.md"),
+    ),
+    join(root, "readonly", "mounted-content", "AGENTS.md"),
   );
   assert.deepEqual(
     workspace.agentProfiles.map((profile) => ({
