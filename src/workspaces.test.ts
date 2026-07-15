@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, opendir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -41,22 +41,35 @@ try {
   await mkdir(join(root, "nested"));
   await writeFile(join(root, "nested", "AGENTS.md"), "nested instructions\n");
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
+  await mkdir(join(root, "nested", "readonly"));
+  await writeFile(join(root, "nested", "readonly", "AGENTS.md"), "nested visible instructions\n");
   await mkdir(join(root, "readonly", "mounted-content"), { recursive: true });
   await writeFile(
     join(root, "readonly", "mounted-content", "AGENTS.md"),
     "mounted instructions\n",
   );
+  await mkdir(join(root, "readonly-old"));
+  await writeFile(join(root, "readonly-old", "AGENTS.md"), "prefix visible instructions\n");
+  await mkdir(join(root, "node_modules"));
+  await writeFile(join(root, "node_modules", "AGENTS.md"), "built-in ignored instructions\n");
 
   const config = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_CONTEXT_IGNORE_PATHS: "readonly",
     DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
-  const registry = new WorkspaceRegistry(config);
+  const openedDirectories: string[] = [];
+  const registry = new WorkspaceRegistry(config, undefined, {
+    opendir: async (path, options) => {
+      openedDirectories.push(path.toString());
+      return await opendir(path, options);
+    },
+  });
   const { workspace, agentsFiles, availableAgentsFiles } = await registry.openWorkspace(root);
 
   assert.equal(workspace.mode, "checkout");
@@ -66,14 +79,38 @@ try {
   );
   assert.deepEqual(
     availableAgentsFiles.map((file) => file.path),
-    [join(root, "nested", "AGENTS.md")],
+    [
+      join(root, "nested", "AGENTS.md"),
+      join(root, "nested", "readonly", "AGENTS.md"),
+      join(root, "readonly-old", "AGENTS.md"),
+    ],
   );
+  assert.equal(openedDirectories.includes(join(root, "readonly")), false);
+  assert.equal(openedDirectories.includes(join(root, "node_modules")), false);
+  assert.equal(openedDirectories.includes(join(root, "nested", "readonly")), true);
   assert.equal(
     registry.resolvePath(
       workspace,
       join("readonly", "mounted-content", "AGENTS.md"),
     ),
     join(root, "readonly", "mounted-content", "AGENTS.md"),
+  );
+
+  const unignoredRoot = join(root, "unignored-workspace");
+  await mkdir(join(unignoredRoot, "readonly"), { recursive: true });
+  await writeFile(join(unignoredRoot, "readonly", "AGENTS.md"), "visible instructions\n");
+  const unignoredConfig = loadConfig({
+    DEVSPACE_CONFIG_DIR: join(root, ".devspace-unignored-home"),
+    DEVSPACE_ALLOWED_ROOTS: unignoredRoot,
+    DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "unignored-worktrees"),
+    DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  const unignoredWorkspace = await new WorkspaceRegistry(unignoredConfig).openWorkspace(unignoredRoot);
+  assert.deepEqual(
+    unignoredWorkspace.availableAgentsFiles.map((file) => file.path),
+    [join(unignoredRoot, "readonly", "AGENTS.md")],
   );
   assert.deepEqual(
     workspace.agentProfiles.map((profile) => ({

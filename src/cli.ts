@@ -160,6 +160,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
+      contextIgnorePaths: files.config.contextIgnorePaths,
       subagents: resolveSubagentsFlag(files.config),
     };
     const auth = {
@@ -218,6 +219,7 @@ async function serve(): Promise<void> {
     console.log(`public base url: ${config.publicBaseUrl}`);
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`context ignore paths: ${config.contextIgnorePaths.join(", ") || "(none)"}`);
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
@@ -256,6 +258,7 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`Context ignore paths: ${config.contextIgnorePaths.join(", ") || "(none)"}`);
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }

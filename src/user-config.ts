@@ -17,6 +17,7 @@ export interface DevspaceUserConfig {
   allowedHosts?: string[];
   stateDir?: string;
   worktreeRoot?: string;
+  contextIgnorePaths?: string[];
   agentDir?: string;
   subagents?: boolean;
 }

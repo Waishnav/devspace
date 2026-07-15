@@ -72,6 +72,9 @@ type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
   mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
 };
+type WorkspaceTraversalOps = {
+  opendir: typeof opendir;
+};
 
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
@@ -79,6 +82,7 @@ export class WorkspaceRegistry {
   constructor(
     private readonly config: ServerConfig,
     private readonly store?: WorkspaceStore,
+    private readonly traversalOps: WorkspaceTraversalOps = { opendir },
   ) {}
 
   async openWorkspace(input: string | OpenWorkspaceInput): Promise<WorkspaceContext> {
@@ -289,7 +293,7 @@ export class WorkspaceRegistry {
     }
     const discovered: AvailableAgentsFile[] = [];
 
-    await walkWorkspace(root, async (path, entry) => {
+    await walkWorkspace(root, new Set(this.config.contextIgnorePaths), this.traversalOps, async (path, entry) => {
       if (!entry.isFile()) return;
       if (!CONTEXT_FILE_NAMES.has(entry.name)) return;
       if (loadedPaths.has(path)) return;
@@ -331,7 +335,6 @@ const SKIPPED_CONTEXT_DIRS = new Set([
   ".next",
   ".turbo",
   ".cache",
-  "readonly",
 ]);
 
 export function formatAgentsPath(path: string, workspaceRoot: string | undefined): string {
@@ -380,20 +383,24 @@ async function tryRealpath(path: string): Promise<string | undefined> {
 
 async function walkWorkspace(
   directory: string,
+  contextIgnorePaths: ReadonlySet<string>,
+  ops: WorkspaceTraversalOps,
   visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
+  relativeDirectory = "",
 ): Promise<void> {
   let entries;
   try {
-    entries = await opendir(directory);
+    entries = await ops.opendir(directory);
   } catch {
     return;
   }
 
   for await (const entry of entries) {
     const path = join(directory, entry.name);
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
-        await walkWorkspace(path, visit);
+      if (!SKIPPED_CONTEXT_DIRS.has(entry.name) && !contextIgnorePaths.has(relativePath)) {
+        await walkWorkspace(path, contextIgnorePaths, ops, visit, relativePath);
       }
       continue;
     }
