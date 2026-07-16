@@ -486,17 +486,17 @@ function testDagValidation(stateDir: string): void {
       two: "pending",
     });
 
-    const nulKeys = store.submit({
-      definition: {
-        version: 1,
-        nodes: [agentNode("a\0b"), agentNode("a"), agentNode("b\0c"), agentNode("c")],
-        edges: [
-          { from: "a\0b", to: "c" },
-          { from: "a", to: "b\0c" },
-        ],
-      },
-    }).workflow;
-    assert.equal(nulKeys.edges.length, 2);
+    assert.throws(
+      () =>
+        store.submit({
+          definition: {
+            version: 1,
+            nodes: [agentNode("a\0b")],
+            edges: [],
+          },
+        }),
+      /node key is unsafe/,
+    );
   } finally {
     store.close();
   }
