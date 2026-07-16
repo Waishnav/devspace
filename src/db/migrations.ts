@@ -27,6 +27,11 @@ const migrations: Migration[] = [
     name: "durable-workflows",
     up: migrateDurableWorkflows,
   },
+  {
+    version: 5,
+    name: "workflow-supervisor",
+    up: migrateWorkflowSupervisor,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -264,9 +269,82 @@ function migrateDurableWorkflows(sqlite: Database.Database): void {
   `);
 }
 
+function migrateWorkflowSupervisor(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_runs", "workspace_id", "text");
+  addColumnIfMissing(sqlite, "workflow_runs", "workspace_root", "text");
+  addColumnIfMissing(sqlite, "workflow_nodes", "supervisor_owner_token", "text");
+  addColumnIfMissing(sqlite, "workflow_nodes", "supervisor_owner_epoch", "integer");
+  addColumnIfMissing(sqlite, "workflow_nodes", "heartbeat_at", "text");
+
+  sqlite.exec(`
+    create table if not exists workflow_supervisor (
+      id integer primary key check (id = 1),
+      owner_token text,
+      owner_epoch integer not null default 0,
+      owner_pid integer,
+      status text not null default 'stopped'
+        check (status in ('stopped', 'starting', 'running', 'stopping')),
+      lease_expires_at text,
+      heartbeat_at text,
+      wake_generation integer not null default 0,
+      started_at text,
+      last_error text
+    );
+
+    insert or ignore into workflow_supervisor (id) values (1);
+
+    create table if not exists workflow_node_attempts (
+      node_id text not null,
+      workflow_run_id text not null,
+      node_key text not null,
+      attempt integer not null,
+      claim_token text not null,
+      supervisor_owner_token text not null,
+      supervisor_owner_epoch integer not null,
+      provider text not null,
+      phase text not null check (phase in ('claimed', 'dispatching', 'running', 'cancelling', 'terminal')),
+      provider_session_id text,
+      heartbeat_at text,
+      cancellation_requested_at text,
+      terminal_status text check (terminal_status in ('succeeded', 'failed', 'cancelled')),
+      result_json text,
+      error_json text,
+      created_at text not null,
+      updated_at text not null,
+      completed_at text,
+      primary key (node_id, attempt),
+      unique (node_id, attempt, claim_token),
+      foreign key (workflow_run_id, node_id)
+        references workflow_nodes(workflow_run_id, id) on delete cascade
+    );
+
+    create index if not exists workflow_node_attempts_run_idx
+      on workflow_node_attempts(workflow_run_id, node_key, attempt);
+
+    create table if not exists workflow_provider_events (
+      node_id text not null,
+      attempt integer not null,
+      source_sequence integer not null,
+      workflow_sequence integer not null,
+      event_type text not null,
+      payload_json text not null,
+      created_at text not null,
+      primary key (node_id, attempt, source_sequence),
+      foreign key (node_id, attempt)
+        references workflow_node_attempts(node_id, attempt) on delete cascade
+    );
+
+    create index if not exists workflow_nodes_claimable_idx
+      on workflow_nodes(status, claim_expires_at, created_at);
+
+    create index if not exists workflow_runs_workspace_idx
+      on workflow_runs(workspace_id, workspace_root, created_at);
+  `);
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions",
+  table: "workspace_sessions" | "local_agent_sessions" | "workflow_runs" | "workflow_nodes",
   column: string,
   definition: string,
 ): void {

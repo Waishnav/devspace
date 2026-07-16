@@ -56,6 +56,7 @@ export interface SubmitWorkflowRequest {
   input?: JsonObject;
   policy?: WorkflowPolicy;
   idempotencyKey?: string;
+  workspace?: WorkflowWorkspaceScope;
 }
 
 export interface WorkflowNodeRecord {
@@ -93,6 +94,8 @@ export interface WorkflowRunRecord {
   policy: WorkflowPolicy;
   idempotencyKey?: string;
   requestHash: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
   result?: JsonValue;
   error?: JsonObject;
   cancellationRequestedAt?: string;
@@ -126,6 +129,55 @@ export interface SubmitWorkflowResult {
 export interface WorkflowWaitOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
+}
+
+export interface WorkflowWorkspaceScope {
+  workspaceId: string;
+  workspaceRoot: string;
+}
+
+export interface WorkflowSupervisorIdentity {
+  ownerToken: string;
+  ownerEpoch: number;
+}
+
+export interface WorkflowSupervisorRecord extends WorkflowSupervisorIdentity {
+  ownerPid?: number;
+  status: "starting" | "running" | "stopping" | "stopped";
+  leaseExpiresAt?: string;
+  heartbeatAt?: string;
+  wakeGeneration: number;
+  startedAt?: string;
+}
+
+export interface WorkflowAttemptIdentity {
+  workflowId: string;
+  nodeKey: string;
+  attempt: number;
+  claimToken: string;
+}
+
+export interface WorkflowNodeAttemptRecord extends WorkflowAttemptIdentity {
+  nodeId: string;
+  supervisorOwnerToken: string;
+  supervisorOwnerEpoch: number;
+  provider: string;
+  phase: "claimed" | "dispatching" | "running" | "cancelling" | "terminal";
+  providerSessionId?: string;
+  heartbeatAt?: string;
+  cancellationRequestedAt?: string;
+  terminalStatus?: "succeeded" | "failed" | "cancelled";
+  result?: JsonValue;
+  error?: JsonObject;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface WorkflowNodeClaimResult {
+  workflow: WorkflowRunRecord;
+  node: WorkflowNodeRecord;
+  attempt: WorkflowNodeAttemptRecord;
 }
 
 export interface WorkflowEventReadOptions {

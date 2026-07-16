@@ -13,7 +13,10 @@ import {
   type WorkflowEvent,
   type WorkflowEventPage,
   type WorkflowEventReadOptions,
+  type WorkflowAttemptIdentity,
+  type WorkflowNodeAttemptRecord,
   type WorkflowNodeClaim,
+  type WorkflowNodeClaimResult,
   type WorkflowNodeDefinitionV1,
   type WorkflowNodeRecord,
   type WorkflowNodeStatus,
@@ -21,7 +24,10 @@ import {
   type WorkflowPolicy,
   type WorkflowRunRecord,
   type WorkflowStatus,
+  type WorkflowSupervisorIdentity,
+  type WorkflowSupervisorRecord,
   type WorkflowTransition,
+  type WorkflowWorkspaceScope,
 } from "./types.js";
 
 const MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -70,6 +76,8 @@ interface WorkflowRunRow {
   policy_json: string;
   idempotency_key: string | null;
   request_hash: string;
+  workspace_id: string | null;
+  workspace_root: string | null;
   result_json: string | null;
   error_json: string | null;
   cancellation_requested_at: string | null;
@@ -90,6 +98,9 @@ interface WorkflowNodeRow {
   claim_token: string | null;
   claimed_at: string | null;
   claim_expires_at: string | null;
+  supervisor_owner_token: string | null;
+  supervisor_owner_epoch: number | null;
+  heartbeat_at: string | null;
   result_json: string | null;
   error_json: string | null;
   created_at: string;
@@ -112,6 +123,38 @@ interface WorkflowEventRow {
   node_id: string | null;
   payload_json: string;
   created_at: string;
+}
+
+interface WorkflowSupervisorRow {
+  owner_token: string | null;
+  owner_epoch: number;
+  owner_pid: number | null;
+  status: WorkflowSupervisorRecord["status"];
+  lease_expires_at: string | null;
+  heartbeat_at: string | null;
+  wake_generation: number;
+  started_at: string | null;
+}
+
+interface WorkflowAttemptRow {
+  node_id: string;
+  workflow_run_id: string;
+  node_key: string;
+  attempt: number;
+  claim_token: string;
+  supervisor_owner_token: string;
+  supervisor_owner_epoch: number;
+  provider: string;
+  phase: WorkflowNodeAttemptRecord["phase"];
+  provider_session_id: string | null;
+  heartbeat_at: string | null;
+  cancellation_requested_at: string | null;
+  terminal_status: WorkflowNodeAttemptRecord["terminalStatus"] | null;
+  result_json: string | null;
+  error_json: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 }
 
 export class WorkflowNotFoundError extends Error {
@@ -172,8 +215,8 @@ export class WorkflowStore {
         .prepare(
           `insert into workflow_runs (
             id, definition_version, status, definition_json, input_json, policy_json,
-            idempotency_key, request_hash, created_at, updated_at
-          ) values (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
+            idempotency_key, request_hash, workspace_id, workspace_root, created_at, updated_at
+          ) values (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           workflowId,
@@ -183,6 +226,8 @@ export class WorkflowStore {
           normalized.policyJson,
           normalized.idempotencyKey ?? null,
           normalized.requestHash,
+          normalized.workspace?.workspaceId ?? null,
+          normalized.workspace?.workspaceRoot ?? null,
           now,
           now,
         );
@@ -237,6 +282,21 @@ export class WorkflowStore {
 
   require(workflowId: string): WorkflowRunRecord {
     const workflow = this.get(workflowId);
+    if (!workflow) throw new WorkflowNotFoundError(workflowId);
+    return workflow;
+  }
+
+  getForWorkspace(workflowId: string, scope: WorkflowWorkspaceScope): WorkflowRunRecord | undefined {
+    const workflow = this.get(workflowId);
+    if (!workflow) return undefined;
+    if (workflow.workspaceId !== scope.workspaceId || workflow.workspaceRoot !== scope.workspaceRoot) {
+      return undefined;
+    }
+    return workflow;
+  }
+
+  requireForWorkspace(workflowId: string, scope: WorkflowWorkspaceScope): WorkflowRunRecord {
+    const workflow = this.getForWorkspace(workflowId, scope);
     if (!workflow) throw new WorkflowNotFoundError(workflowId);
     return workflow;
   }
@@ -505,8 +565,557 @@ export class WorkflowStore {
     return { events, nextCursor: events.at(-1)?.sequence ?? after };
   }
 
+  requestSupervisorWake(): number {
+    const row = this.database.sqlite
+      .prepare(
+        `update workflow_supervisor set wake_generation = wake_generation + 1 where id = 1
+         returning wake_generation`,
+      )
+      .get() as { wake_generation: number };
+    return row.wake_generation;
+  }
+
+  getSupervisor(): WorkflowSupervisorRecord | undefined {
+    const row = this.database.sqlite
+      .prepare("select * from workflow_supervisor where id = 1")
+      .get() as WorkflowSupervisorRow | undefined;
+    return row?.owner_token ? rowToSupervisor(row) : undefined;
+  }
+
+  acquireSupervisor(input: {
+    ownerToken: string;
+    ownerPid: number;
+    leaseMs: number;
+  }): WorkflowSupervisorRecord | undefined {
+    validateLease(input.leaseMs, "Supervisor");
+    if (!input.ownerToken) throw new WorkflowValidationError("Supervisor owner token must not be empty");
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const expiresAt = new Date(nowDate.getTime() + input.leaseMs).toISOString();
+    const acquire = this.database.sqlite.transaction(() => {
+      const current = this.database.sqlite
+        .prepare("select * from workflow_supervisor where id = 1")
+        .get() as WorkflowSupervisorRow;
+      if (current.owner_token && current.lease_expires_at && current.lease_expires_at > now) {
+        return undefined;
+      }
+      const epoch = current.owner_epoch + 1;
+      this.database.sqlite
+        .prepare(
+          `update workflow_supervisor
+           set owner_token = ?, owner_epoch = ?, owner_pid = ?, status = 'running',
+               lease_expires_at = ?, heartbeat_at = ?, started_at = ?, last_error = null
+           where id = 1`,
+        )
+        .run(input.ownerToken, epoch, input.ownerPid, expiresAt, now, now);
+      return this.getSupervisor();
+    });
+    return acquire.immediate();
+  }
+
+  heartbeatSupervisor(identity: WorkflowSupervisorIdentity, leaseMs: number): boolean {
+    validateLease(leaseMs, "Supervisor");
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const expiresAt = new Date(nowDate.getTime() + leaseMs).toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update workflow_supervisor set heartbeat_at = ?, lease_expires_at = ?, status = 'running'
+         where id = 1 and owner_token = ? and owner_epoch = ? and lease_expires_at > ?`,
+      )
+      .run(now, expiresAt, identity.ownerToken, identity.ownerEpoch, now);
+    return result.changes === 1;
+  }
+
+  releaseSupervisor(identity: WorkflowSupervisorIdentity, expectedWakeGeneration?: number): boolean {
+    const now = new Date().toISOString();
+    const wakeFence = expectedWakeGeneration === undefined ? "" : " and wake_generation = ?";
+    const result = this.database.sqlite
+      .prepare(
+        `update workflow_supervisor
+         set owner_token = null, owner_pid = null, status = 'stopped', lease_expires_at = null,
+             heartbeat_at = ?, started_at = null
+         where id = 1 and owner_token = ? and owner_epoch = ?${wakeFence}`,
+      )
+      .run(
+        now,
+        identity.ownerToken,
+        identity.ownerEpoch,
+        ...(expectedWakeGeneration === undefined ? [] : [expectedWakeGeneration]),
+      );
+    return result.changes === 1;
+  }
+
+  claimNextAgentNode(input: {
+    supervisor: WorkflowSupervisorIdentity;
+    claimToken: string;
+    leaseMs: number;
+  }): WorkflowNodeClaimResult | undefined {
+    validateLease(input.leaseMs, "Node claim");
+    if (!input.claimToken) throw new WorkflowValidationError("Node claim token must not be empty");
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const expiresAt = new Date(nowDate.getTime() + input.leaseMs).toISOString();
+    const claim = this.database.sqlite.transaction(() => {
+      this.assertActiveSupervisor(input.supervisor, now);
+      const candidate = this.database.sqlite
+        .prepare(
+          `select n.* from workflow_nodes n
+           join workflow_runs r on r.id = n.workflow_run_id
+           where n.status = 'ready' and n.claim_token is null
+             and r.status in ('queued', 'running') and r.cancellation_requested_at is null
+           order by r.created_at, n.created_at, n.node_key limit 1`,
+        )
+        .get() as WorkflowNodeRow | undefined;
+      if (!candidate) return undefined;
+      const updated = this.database.sqlite
+        .prepare(
+          `update workflow_nodes
+           set status = 'running', claim_token = ?, claimed_at = ?, claim_expires_at = ?,
+               attempt = attempt + 1, supervisor_owner_token = ?, supervisor_owner_epoch = ?,
+               heartbeat_at = ?, updated_at = ?
+           where id = ? and status = 'ready' and claim_token is null`,
+        )
+        .run(
+          input.claimToken,
+          now,
+          expiresAt,
+          input.supervisor.ownerToken,
+          input.supervisor.ownerEpoch,
+          now,
+          now,
+          candidate.id,
+        );
+      if (updated.changes !== 1) return undefined;
+      const node = this.database.sqlite
+        .prepare("select * from workflow_nodes where id = ?")
+        .get(candidate.id) as WorkflowNodeRow;
+      const definition = parseJson<WorkflowNodeDefinitionV1>(node.definition_json);
+      const provider = typeof definition.config?.provider === "string" ? definition.config.provider : "unknown";
+      this.database.sqlite
+        .prepare(
+          `insert into workflow_node_attempts (
+             node_id, workflow_run_id, node_key, attempt, claim_token,
+             supervisor_owner_token, supervisor_owner_epoch, provider, phase,
+             heartbeat_at, created_at, updated_at
+           ) values (?, ?, ?, ?, ?, ?, ?, ?, 'claimed', ?, ?, ?)`,
+        )
+        .run(
+          node.id,
+          node.workflow_run_id,
+          node.node_key,
+          node.attempt,
+          input.claimToken,
+          input.supervisor.ownerToken,
+          input.supervisor.ownerEpoch,
+          provider,
+          now,
+          now,
+          now,
+        );
+      const workflow = this.getWorkflowRow(node.workflow_run_id)!;
+      if (workflow.status === "queued") {
+        this.database.sqlite
+          .prepare(
+            `update workflow_runs set status = 'running', started_at = coalesce(started_at, ?), updated_at = ?
+             where id = ? and status = 'queued'`,
+          )
+          .run(now, now, node.workflow_run_id);
+        this.insertEvent(node.workflow_run_id, "workflow.running", undefined, { status: "running" }, now);
+      }
+      this.insertEvent(
+        node.workflow_run_id,
+        "node.running",
+        node.id,
+        { nodeKey: node.node_key, status: "running", attempt: node.attempt },
+        now,
+      );
+      return {
+        workflow: this.hydrateWorkflow(this.getWorkflowRow(node.workflow_run_id)!),
+        node: rowToWorkflowNode(node),
+        attempt: rowToAttempt(this.getAttemptRow(node.id, node.attempt)!),
+      };
+    });
+    return claim.immediate();
+  }
+
+  heartbeatNode(input: WorkflowAttemptIdentity & { leaseMs: number }): WorkflowNodeRecord | undefined {
+    validateLease(input.leaseMs, "Node claim");
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const expiresAt = new Date(nowDate.getTime() + input.leaseMs).toISOString();
+    const update = this.database.sqlite.transaction(() => {
+      const result = this.database.sqlite
+        .prepare(
+          `update workflow_nodes set heartbeat_at = ?, claim_expires_at = ?, updated_at = ?
+           where workflow_run_id = ? and node_key = ? and status = 'running'
+             and attempt = ? and claim_token = ? and claim_expires_at > ?`,
+        )
+        .run(now, expiresAt, now, input.workflowId, input.nodeKey, input.attempt, input.claimToken, now);
+      if (result.changes !== 1) return undefined;
+      this.database.sqlite
+        .prepare(
+          `update workflow_node_attempts set heartbeat_at = ?, updated_at = ?
+           where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
+             and phase != 'terminal'`,
+        )
+        .run(now, now, input.workflowId, input.nodeKey, input.attempt, input.claimToken);
+      return this.getNodeRow(input.workflowId, input.nodeKey);
+    });
+    const row = update.immediate();
+    return row ? rowToWorkflowNode(row) : undefined;
+  }
+
+  markNodeDispatching(identity: WorkflowAttemptIdentity): WorkflowNodeAttemptRecord | undefined {
+    return this.updateAttemptPhase(identity, "dispatching");
+  }
+
+  markNodeRunning(identity: WorkflowAttemptIdentity): WorkflowNodeAttemptRecord | undefined {
+    return this.updateAttemptPhase(identity, "running");
+  }
+
+  markNodeCancelling(identity: WorkflowAttemptIdentity): WorkflowNodeAttemptRecord | undefined {
+    const now = new Date().toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update workflow_node_attempts set phase = 'cancelling', cancellation_requested_at = ?, updated_at = ?
+         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
+           and phase != 'terminal'`,
+      )
+      .run(now, now, identity.workflowId, identity.nodeKey, identity.attempt, identity.claimToken);
+    return result.changes === 1 ? this.getAttempt(identity) : undefined;
+  }
+
+  recordNodeProviderSession(
+    identity: WorkflowAttemptIdentity,
+    providerSessionId: string,
+  ): WorkflowNodeAttemptRecord | undefined {
+    const now = new Date().toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update workflow_node_attempts set provider_session_id = ?, updated_at = ?
+         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
+           and phase != 'terminal'`,
+      )
+      .run(
+        providerSessionId,
+        now,
+        identity.workflowId,
+        identity.nodeKey,
+        identity.attempt,
+        identity.claimToken,
+      );
+    return result.changes === 1 ? this.getAttempt(identity) : undefined;
+  }
+
+  appendNodeExecutionEvent(input: {
+    identity: WorkflowAttemptIdentity;
+    sourceSequence: number;
+    type: string;
+    payload: JsonObject;
+  }): { event: WorkflowEvent; created: boolean } {
+    const now = new Date().toISOString();
+    const append = this.database.sqlite.transaction(() => {
+      const attempt = this.getAttempt(input.identity);
+      if (!attempt || attempt.phase === "terminal") return undefined;
+      const existing = this.database.sqlite
+        .prepare(
+          `select workflow_sequence from workflow_provider_events
+           where node_id = ? and attempt = ? and source_sequence = ?`,
+        )
+        .get(attempt.nodeId, attempt.attempt, input.sourceSequence) as
+        | { workflow_sequence: number }
+        | undefined;
+      if (existing) return { sequence: existing.workflow_sequence, created: false };
+      const sequence = this.insertEvent(
+        input.identity.workflowId,
+        input.type,
+        attempt.nodeId,
+        input.payload,
+        now,
+      );
+      this.database.sqlite
+        .prepare(
+          `insert into workflow_provider_events (
+             node_id, attempt, source_sequence, workflow_sequence, event_type, payload_json, created_at
+           ) values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          attempt.nodeId,
+          attempt.attempt,
+          input.sourceSequence,
+          sequence,
+          input.type,
+          serializeEventPayload(input.payload),
+          now,
+        );
+      return { sequence, created: true };
+    });
+    const saved = append.immediate();
+    if (!saved) throw new WorkflowValidationError("Workflow attempt is no longer active");
+    return {
+      event: this.readEvents(input.identity.workflowId, { after: saved.sequence - 1, limit: 1 }).events[0]!,
+      created: saved.created,
+    };
+  }
+
+  completeAgentNode(input: WorkflowAttemptIdentity & {
+    status: "succeeded" | "failed" | "cancelled";
+    result?: JsonValue;
+    error?: JsonObject;
+  }): WorkflowRunRecord | undefined {
+    const now = new Date().toISOString();
+    const complete = this.database.sqlite.transaction(() => {
+      const node = this.getNodeRow(input.workflowId, input.nodeKey);
+      if (
+        !node ||
+        node.status !== "running" ||
+        node.attempt !== input.attempt ||
+        node.claim_token !== input.claimToken ||
+        !node.claim_expires_at ||
+        node.claim_expires_at <= now ||
+        !node.supervisor_owner_token ||
+        node.supervisor_owner_epoch === null
+      ) return false;
+      const activeSupervisor = this.database.sqlite
+        .prepare(
+          `select 1 from workflow_supervisor
+           where id = 1 and owner_token = ? and owner_epoch = ? and lease_expires_at > ?`,
+        )
+        .get(node.supervisor_owner_token, node.supervisor_owner_epoch, now);
+      if (!activeSupervisor) return false;
+
+      const workflow = this.getWorkflowRow(input.workflowId);
+      if (!workflow || (workflow.status !== "running" && workflow.status !== "cancelling")) return false;
+      const status = workflow.status === "cancelling" ? "cancelled" : input.status;
+      const resultJson = serializeOptionalJson(input.result);
+      const errorJson = serializeOptionalObject(input.error);
+      const nodeUpdate = this.database.sqlite
+        .prepare(
+          `update workflow_nodes
+           set status = ?, result_json = ?, error_json = ?, claim_expires_at = null,
+               heartbeat_at = ?, updated_at = ?, completed_at = ?
+           where id = ? and status = 'running' and attempt = ? and claim_token = ?`,
+        )
+        .run(status, resultJson, errorJson, now, now, now, node.id, input.attempt, input.claimToken);
+      if (nodeUpdate.changes !== 1) return false;
+      const attemptUpdate = this.database.sqlite
+        .prepare(
+          `update workflow_node_attempts
+           set phase = 'terminal', terminal_status = ?, result_json = ?, error_json = ?,
+               heartbeat_at = ?, updated_at = ?, completed_at = ?
+           where node_id = ? and attempt = ? and claim_token = ? and phase != 'terminal'`,
+        )
+        .run(status, resultJson, errorJson, now, now, now, node.id, input.attempt, input.claimToken);
+      if (attemptUpdate.changes !== 1) {
+        throw new WorkflowValidationError(`Workflow attempt changed during completion: ${node.node_key}`);
+      }
+      this.insertEvent(
+        input.workflowId,
+        `node.${status}`,
+        node.id,
+        { nodeKey: node.node_key, status, attempt: input.attempt },
+        now,
+      );
+
+      let workflowStatus: "succeeded" | "failed" | "cancelled" | undefined;
+      if (status === "succeeded") {
+        this.promoteReadyNodes(input.workflowId, node.id, now);
+        const remaining = this.database.sqlite
+          .prepare(
+            `select count(*) from workflow_nodes
+             where workflow_run_id = ? and status not in ('succeeded', 'skipped')`,
+          )
+          .pluck()
+          .get(input.workflowId) as number;
+        if (remaining === 0) workflowStatus = "succeeded";
+      } else {
+        workflowStatus = status;
+        this.terminalizeOpenNodes(input.workflowId, status, now);
+      }
+      if (!workflowStatus) return true;
+
+      const workflowUpdate = this.database.sqlite
+        .prepare(
+          `update workflow_runs set status = ?, result_json = ?, error_json = ?, updated_at = ?, completed_at = ?
+           where id = ? and status in ('running', 'cancelling')`,
+        )
+        .run(workflowStatus, resultJson, errorJson, now, now, input.workflowId);
+      if (workflowUpdate.changes !== 1) {
+        throw new WorkflowValidationError(`Workflow changed during node completion: ${input.workflowId}`);
+      }
+      this.insertEvent(
+        input.workflowId,
+        `workflow.${workflowStatus}`,
+        undefined,
+        { status: workflowStatus },
+        now,
+      );
+      return true;
+    });
+    return complete.immediate() ? this.require(input.workflowId) : undefined;
+  }
+
+  reconcileExpiredClaims(): number {
+    const now = new Date().toISOString();
+    const reconcile = this.database.sqlite.transaction(() => {
+      const expired = this.database.sqlite
+        .prepare(
+          `select * from workflow_nodes
+           where status = 'running' and claim_expires_at is not null and claim_expires_at <= ?
+           order by created_at`,
+        )
+        .all(now) as WorkflowNodeRow[];
+      let reconciled = 0;
+      for (const node of expired) {
+        const error = { code: "worker_lost", message: "Workflow worker lease expired before completion." };
+        const nodeUpdate = this.database.sqlite
+          .prepare(
+            `update workflow_nodes set status = 'failed', error_json = ?, claim_expires_at = null,
+               updated_at = ?, completed_at = ? where id = ? and status = 'running'`,
+          )
+          .run(canonicalJson(error), now, now, node.id);
+        if (nodeUpdate.changes !== 1) continue;
+        reconciled += 1;
+        this.database.sqlite
+          .prepare(
+            `update workflow_node_attempts
+             set phase = 'terminal', terminal_status = 'failed', error_json = ?, updated_at = ?, completed_at = ?
+             where node_id = ? and attempt = ? and phase != 'terminal'`,
+          )
+          .run(canonicalJson(error), now, now, node.id, node.attempt);
+        this.insertEvent(
+          node.workflow_run_id,
+          "node.failed",
+          node.id,
+          { nodeKey: node.node_key, status: "failed", code: "worker_lost" },
+          now,
+        );
+        this.terminalizeOpenNodes(node.workflow_run_id, "failed", now);
+        const changed = this.database.sqlite
+          .prepare(
+            `update workflow_runs set status = 'failed', error_json = ?, updated_at = ?, completed_at = ?
+             where id = ? and status in ('running', 'cancelling')`,
+          )
+          .run(canonicalJson(error), now, now, node.workflow_run_id);
+        if (changed.changes === 1) {
+          this.insertEvent(
+            node.workflow_run_id,
+            "workflow.failed",
+            undefined,
+            { status: "failed", code: "worker_lost" },
+            now,
+          );
+        }
+      }
+      return reconciled;
+    });
+    return reconcile.immediate();
+  }
+
+  convergeCancellations(): number {
+    const now = new Date().toISOString();
+    const converge = this.database.sqlite.transaction(() => {
+      const runs = this.database.sqlite
+        .prepare("select id from workflow_runs where status = 'cancelling'")
+        .all() as Array<{ id: string }>;
+      let completed = 0;
+      for (const run of runs) {
+        const pending = this.database.sqlite
+          .prepare(
+            `select * from workflow_nodes where workflow_run_id = ? and status in ('pending', 'ready')`,
+          )
+          .all(run.id) as WorkflowNodeRow[];
+        for (const node of pending) {
+          this.database.sqlite
+            .prepare(
+              `update workflow_nodes set status = 'cancelled', updated_at = ?, completed_at = ?
+               where id = ? and status in ('pending', 'ready')`,
+            )
+            .run(now, now, node.id);
+          this.insertEvent(run.id, "node.cancelled", node.id, { nodeKey: node.node_key, status: "cancelled" }, now);
+        }
+        const open = this.database.sqlite
+          .prepare(
+            `select count(*) from workflow_nodes
+             where workflow_run_id = ? and status in ('pending', 'ready', 'running')`,
+          )
+          .pluck()
+          .get(run.id) as number;
+        if (open !== 0) continue;
+        this.database.sqlite
+          .prepare(
+            `update workflow_runs set status = 'cancelled', updated_at = ?, completed_at = ?
+             where id = ? and status = 'cancelling'`,
+          )
+          .run(now, now, run.id);
+        this.insertEvent(run.id, "workflow.cancelled", undefined, { status: "cancelled" }, now);
+        completed += 1;
+      }
+      return completed;
+    });
+    return converge.immediate();
+  }
+
+  isCancellationRequested(workflowId: string): boolean {
+    const row = this.database.sqlite
+      .prepare("select status from workflow_runs where id = ?")
+      .get(workflowId) as { status: string } | undefined;
+    return row?.status === "cancelling";
+  }
+
   close(): void {
     this.database.close();
+  }
+
+  private assertActiveSupervisor(identity: WorkflowSupervisorIdentity, now: string): void {
+    const row = this.database.sqlite
+      .prepare(
+        `select 1 from workflow_supervisor
+         where id = 1 and owner_token = ? and owner_epoch = ? and lease_expires_at > ?`,
+      )
+      .get(identity.ownerToken, identity.ownerEpoch, now);
+    if (!row) throw new WorkflowValidationError("Workflow supervisor lease is not active");
+  }
+
+  private getAttemptRow(nodeId: string, attempt: number): WorkflowAttemptRow | undefined {
+    return this.database.sqlite
+      .prepare("select * from workflow_node_attempts where node_id = ? and attempt = ?")
+      .get(nodeId, attempt) as WorkflowAttemptRow | undefined;
+  }
+
+  private getAttempt(identity: WorkflowAttemptIdentity): WorkflowNodeAttemptRecord | undefined {
+    const row = this.database.sqlite
+      .prepare(
+        `select * from workflow_node_attempts
+         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?`,
+      )
+      .get(identity.workflowId, identity.nodeKey, identity.attempt, identity.claimToken) as
+      | WorkflowAttemptRow
+      | undefined;
+    return row ? rowToAttempt(row) : undefined;
+  }
+
+  private updateAttemptPhase(
+    identity: WorkflowAttemptIdentity,
+    phase: "dispatching" | "running",
+  ): WorkflowNodeAttemptRecord | undefined {
+    const now = new Date().toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update workflow_node_attempts set phase = ?, updated_at = ?
+         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
+           and phase != 'terminal'`,
+      )
+      .run(
+        phase,
+        now,
+        identity.workflowId,
+        identity.nodeKey,
+        identity.attempt,
+        identity.claimToken,
+      );
+    return result.changes === 1 ? this.getAttempt(identity) : undefined;
   }
 
   private hydrateWorkflow(row: WorkflowRunRow): WorkflowRunRecord {
@@ -534,6 +1143,8 @@ export class WorkflowStore {
       policy: parseJson<WorkflowPolicy>(row.policy_json),
       idempotencyKey: row.idempotency_key ?? undefined,
       requestHash: row.request_hash,
+      workspaceId: row.workspace_id ?? undefined,
+      workspaceRoot: row.workspace_root ?? undefined,
       result: parseOptionalJson(row.result_json),
       error: parseOptionalJson<JsonObject>(row.error_json),
       cancellationRequestedAt: row.cancellation_requested_at ?? undefined,
@@ -576,6 +1187,36 @@ export class WorkflowStore {
     if (!row) throw new WorkflowValidationError(`Node ${nodeId} does not belong to ${workflowId}`);
   }
 
+  private promoteReadyNodes(workflowId: string, completedNodeId: string, now: string): void {
+    const rows = this.database.sqlite
+      .prepare(
+        `select target.* from workflow_edges edge
+         join workflow_nodes target
+           on target.workflow_run_id = edge.workflow_run_id and target.id = edge.to_node_id
+         where edge.workflow_run_id = ? and edge.from_node_id = ? and target.status = 'pending'
+           and not exists (
+             select 1 from workflow_edges incoming
+             join workflow_nodes source
+               on source.workflow_run_id = incoming.workflow_run_id and source.id = incoming.from_node_id
+             where incoming.workflow_run_id = edge.workflow_run_id
+               and incoming.to_node_id = edge.to_node_id
+               and source.status not in ('succeeded', 'skipped')
+           )
+         order by target.created_at, target.node_key`,
+      )
+      .all(workflowId, completedNodeId) as WorkflowNodeRow[];
+    const update = this.database.sqlite.prepare(
+      `update workflow_nodes set status = 'ready', updated_at = ? where id = ? and status = 'pending'`,
+    );
+    for (const row of rows) {
+      const changed = update.run(now, row.id);
+      if (changed.changes !== 1) {
+        throw new WorkflowValidationError(`Workflow node changed during dependency promotion: ${row.node_key}`);
+      }
+      this.insertEvent(workflowId, "node.ready", row.id, { nodeKey: row.node_key, status: "ready" }, now);
+    }
+  }
+
   private terminalizeOpenNodes(
     workflowId: string,
     workflowStatus: "failed" | "cancelled",
@@ -599,6 +1240,15 @@ export class WorkflowStore {
       const changed = update.run(nodeStatus, now, now, row.id, row.status);
       if (changed.changes !== 1) {
         throw new WorkflowValidationError(`Workflow node changed during terminal transition: ${row.node_key}`);
+      }
+      if (row.status === "running") {
+        this.database.sqlite
+          .prepare(
+            `update workflow_node_attempts
+             set phase = 'terminal', terminal_status = ?, updated_at = ?, completed_at = ?
+             where node_id = ? and attempt = ? and phase != 'terminal'`,
+          )
+          .run(nodeStatus, now, now, row.id, row.attempt);
       }
       this.insertEvent(
         workflowId,
@@ -645,6 +1295,7 @@ function normalizeSubmission(request: SubmitWorkflowRequest): {
   inputJson: string;
   policyJson: string;
   idempotencyKey?: string;
+  workspace?: WorkflowWorkspaceScope;
   requestHash: string;
 } {
   const definition = normalizeDefinition(request.definition);
@@ -657,10 +1308,16 @@ function normalizeSubmission(request: SubmitWorkflowRequest): {
   if (request.idempotencyKey !== undefined && !idempotencyKey) {
     throw new WorkflowValidationError("Idempotency key must not be empty");
   }
+  const workspace = request.workspace
+    ? {
+        workspaceId: requireNonEmptyString(request.workspace.workspaceId, "Workspace id"),
+        workspaceRoot: requireNonEmptyString(request.workspace.workspaceRoot, "Workspace root"),
+      }
+    : undefined;
   const requestHash = createHash("sha256")
-    .update(canonicalJson({ definition, input, policy }))
+    .update(canonicalJson({ definition, input, policy, workspace: workspace ?? null }))
     .digest("hex");
-  return { definition, definitionJson, inputJson, policyJson, idempotencyKey, requestHash };
+  return { definition, definitionJson, inputJson, policyJson, idempotencyKey, workspace, requestHash };
 }
 
 function normalizeDefinition(definition: WorkflowDefinition): WorkflowDefinition {
@@ -820,6 +1477,42 @@ function rowToWorkflowNode(row: WorkflowNodeRow): WorkflowNodeRecord {
   };
 }
 
+function rowToAttempt(row: WorkflowAttemptRow): WorkflowNodeAttemptRecord {
+  return {
+    nodeId: row.node_id,
+    workflowId: row.workflow_run_id,
+    nodeKey: row.node_key,
+    attempt: row.attempt,
+    claimToken: row.claim_token,
+    supervisorOwnerToken: row.supervisor_owner_token,
+    supervisorOwnerEpoch: row.supervisor_owner_epoch,
+    provider: row.provider,
+    phase: row.phase,
+    providerSessionId: row.provider_session_id ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
+    cancellationRequestedAt: row.cancellation_requested_at ?? undefined,
+    terminalStatus: row.terminal_status ?? undefined,
+    result: parseOptionalJson(row.result_json),
+    error: parseOptionalJson<JsonObject>(row.error_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at ?? undefined,
+  };
+}
+
+function rowToSupervisor(row: WorkflowSupervisorRow): WorkflowSupervisorRecord {
+  return {
+    ownerToken: row.owner_token!,
+    ownerEpoch: row.owner_epoch,
+    ownerPid: row.owner_pid ?? undefined,
+    status: row.status,
+    leaseExpiresAt: row.lease_expires_at ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
+    wakeGeneration: row.wake_generation,
+    startedAt: row.started_at ?? undefined,
+  };
+}
+
 function rowToWorkflowEdge(row: WorkflowEdgeRow): WorkflowEdgeRecord {
   return {
     workflowId: row.workflow_run_id,
@@ -880,6 +1573,20 @@ function readNodeStatus(status: string): WorkflowNodeStatus {
 function readNodeType(type: string): WorkflowNodeDefinitionV1["type"] {
   if (type === "agent") return type;
   throw new WorkflowValidationError(`Unsupported stored workflow node type: ${type}`);
+}
+
+function validateLease(leaseMs: number, label: string): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > MAX_CLAIM_LEASE_MS) {
+    throw new WorkflowValidationError(
+      `${label} lease must be between 1 and ${MAX_CLAIM_LEASE_MS} milliseconds`,
+    );
+  }
+}
+
+function requireNonEmptyString(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new WorkflowValidationError(`${label} must not be empty`);
+  return normalized;
 }
 
 function createId(prefix: "wf_" | "wfn_"): string {

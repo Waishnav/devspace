@@ -116,6 +116,8 @@ export const workflowRuns = sqliteTable(
     policyJson: text("policy_json").notNull(),
     idempotencyKey: text("idempotency_key").unique(),
     requestHash: text("request_hash").notNull(),
+    workspaceId: text("workspace_id"),
+    workspaceRoot: text("workspace_root"),
     resultJson: text("result_json"),
     errorJson: text("error_json"),
     cancellationRequestedAt: text("cancellation_requested_at"),
@@ -143,6 +145,9 @@ export const workflowNodes = sqliteTable(
     claimToken: text("claim_token"),
     claimedAt: text("claimed_at"),
     claimExpiresAt: text("claim_expires_at"),
+    supervisorOwnerToken: text("supervisor_owner_token"),
+    supervisorOwnerEpoch: integer("supervisor_owner_epoch"),
+    heartbeatAt: text("heartbeat_at"),
     resultJson: text("result_json"),
     errorJson: text("error_json"),
     createdAt: text("created_at").notNull(),
@@ -198,6 +203,72 @@ export const workflowEvents = sqliteTable(
       foreignColumns: [workflowNodes.workflowRunId, workflowNodes.id],
     }),
     index("workflow_events_cursor_idx").on(table.workflowRunId, table.sequence),
+  ],
+);
+
+export const workflowSupervisor = sqliteTable("workflow_supervisor", {
+  id: integer("id").primaryKey(),
+  ownerToken: text("owner_token"),
+  ownerEpoch: integer("owner_epoch").notNull().default(0),
+  ownerPid: integer("owner_pid"),
+  status: text("status").notNull().default("stopped"),
+  leaseExpiresAt: text("lease_expires_at"),
+  heartbeatAt: text("heartbeat_at"),
+  wakeGeneration: integer("wake_generation").notNull().default(0),
+  startedAt: text("started_at"),
+  lastError: text("last_error"),
+});
+
+export const workflowNodeAttempts = sqliteTable(
+  "workflow_node_attempts",
+  {
+    nodeId: text("node_id").notNull(),
+    workflowRunId: text("workflow_run_id").notNull(),
+    nodeKey: text("node_key").notNull(),
+    attempt: integer("attempt").notNull(),
+    claimToken: text("claim_token").notNull(),
+    supervisorOwnerToken: text("supervisor_owner_token").notNull(),
+    supervisorOwnerEpoch: integer("supervisor_owner_epoch").notNull(),
+    provider: text("provider").notNull(),
+    phase: text("phase").notNull(),
+    providerSessionId: text("provider_session_id"),
+    heartbeatAt: text("heartbeat_at"),
+    cancellationRequestedAt: text("cancellation_requested_at"),
+    terminalStatus: text("terminal_status"),
+    resultJson: text("result_json"),
+    errorJson: text("error_json"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.nodeId, table.attempt] }),
+    uniqueIndex("workflow_node_attempts_claim_idx").on(table.nodeId, table.attempt, table.claimToken),
+    foreignKey({
+      columns: [table.workflowRunId, table.nodeId],
+      foreignColumns: [workflowNodes.workflowRunId, workflowNodes.id],
+    }).onDelete("cascade"),
+    index("workflow_node_attempts_run_idx").on(table.workflowRunId, table.nodeKey, table.attempt),
+  ],
+);
+
+export const workflowProviderEvents = sqliteTable(
+  "workflow_provider_events",
+  {
+    nodeId: text("node_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    sourceSequence: integer("source_sequence").notNull(),
+    workflowSequence: integer("workflow_sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.nodeId, table.attempt, table.sourceSequence] }),
+    foreignKey({
+      columns: [table.nodeId, table.attempt],
+      foreignColumns: [workflowNodeAttempts.nodeId, workflowNodeAttempts.attempt],
+    }).onDelete("cascade"),
   ],
 );
 

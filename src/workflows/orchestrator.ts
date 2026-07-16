@@ -3,13 +3,15 @@ import type {
   SubmitWorkflowRequest,
   WorkflowEventPage,
   WorkflowEventReadOptions,
+  SubmitWorkflowResult,
   WorkflowRunRecord,
   WorkflowWaitOptions,
+  WorkflowWorkspaceScope,
 } from "./types.js";
 import { WorkflowStore, WorkflowValidationError } from "./store.js";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
-const MAX_WAIT_TIMEOUT_MS = 60_000;
+const MAX_WAIT_TIMEOUT_MS = 300_000;
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const MAX_POLL_INTERVAL_MS = 1_000;
 
@@ -23,13 +25,21 @@ export class WorkflowOrchestrator {
   }
 
   submit(request: SubmitWorkflowRequest): WorkflowRunRecord {
-    const workflow = this.store.submit(request).workflow;
-    this.notify(workflow.id);
-    return workflow;
+    return this.submitDetailed(request).workflow;
+  }
+
+  submitDetailed(request: SubmitWorkflowRequest): SubmitWorkflowResult {
+    const result = this.store.submit(request);
+    this.notify(result.workflow.id);
+    return result;
   }
 
   get(workflowId: string): WorkflowRunRecord | undefined {
     return this.store.get(workflowId);
+  }
+
+  getForWorkspace(workflowId: string, scope: WorkflowWorkspaceScope): WorkflowRunRecord | undefined {
+    return this.store.getForWorkspace(workflowId, scope);
   }
 
   async wait(workflowId: string, options: WorkflowWaitOptions = {}): Promise<WorkflowRunRecord> {
@@ -54,7 +64,26 @@ export class WorkflowOrchestrator {
     return workflow;
   }
 
+  async waitForWorkspace(
+    workflowId: string,
+    scope: WorkflowWorkspaceScope,
+    options: WorkflowWaitOptions = {},
+  ): Promise<WorkflowRunRecord> {
+    this.store.requireForWorkspace(workflowId, scope);
+    const workflow = await this.wait(workflowId, options);
+    return this.store.requireForWorkspace(workflow.id, scope);
+  }
+
   events(workflowId: string, options: WorkflowEventReadOptions = {}): WorkflowEventPage {
+    return this.store.readEvents(workflowId, options);
+  }
+
+  eventsForWorkspace(
+    workflowId: string,
+    scope: WorkflowWorkspaceScope,
+    options: WorkflowEventReadOptions = {},
+  ): WorkflowEventPage {
+    this.store.requireForWorkspace(workflowId, scope);
     return this.store.readEvents(workflowId, options);
   }
 
@@ -62,6 +91,11 @@ export class WorkflowOrchestrator {
     const workflow = this.store.requestCancellation(workflowId);
     this.notify(workflowId);
     return workflow;
+  }
+
+  cancelForWorkspace(workflowId: string, scope: WorkflowWorkspaceScope): WorkflowRunRecord {
+    this.store.requireForWorkspace(workflowId, scope);
+    return this.cancel(workflowId);
   }
 
   close(): void {
