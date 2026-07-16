@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
-import { stdin as input, stdout as output } from "node:process";
+import { stderr as errorOutput, stdin as input, stdout as output } from "node:process";
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -39,8 +39,9 @@ import {
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
+import { runWorkflowsCli } from "./workflows/cli.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
+type Command = "serve" | "init" | "doctor" | "config" | "agents" | "workflows" | "help" | "version";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -67,6 +68,16 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "workflows":
+      process.exitCode = await runWorkflowsCli({
+        argv: args,
+        cwd: process.cwd(),
+        env: process.env,
+        stdout: output,
+        stderr: errorOutput,
+        cliEntrypoint: fileURLToPath(import.meta.url),
+      });
+      return;
     case "help":
       printHelp();
       return;
@@ -78,7 +89,7 @@ async function main(argv: string[]): Promise<void> {
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
-  if (command === "init" || command === "doctor" || command === "config" || command === "agents") return command;
+  if (command === "init" || command === "doctor" || command === "config" || command === "agents" || command === "workflows") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -312,6 +323,8 @@ function printHelp(): void {
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider-or-id> [--model <model>] <prompt>",
       "  devspace agents show <id>",
+      "  devspace workflows run <profile-or-provider> --prompt <task> --json",
+      "  devspace workflows help",
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",

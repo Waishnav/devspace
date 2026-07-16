@@ -43,7 +43,7 @@ const FRONTMATTER_DELIMITER = "---";
 const PROVIDERS = new Set<LocalAgentProvider>(LOCAL_AGENT_PROVIDERS);
 
 export async function loadLocalAgentProfiles(
-  config: ServerConfig,
+  config: Pick<ServerConfig, "subagents" | "devspaceAgentsDir">,
   workspaceRoot: string,
 ): Promise<LocalAgentProfile[]> {
   if (!config.subagents) return [];
