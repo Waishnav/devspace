@@ -11,17 +11,33 @@ export interface KillableProcess {
   kill(signal?: NodeJS.Signals): boolean;
 }
 
-interface ProcessTreeRuntime {
+export interface WaitableProcess extends KillableProcess {
+  exitCode?: number | null;
+  signalCode?: NodeJS.Signals | null;
+  once(event: "close", listener: () => void): unknown;
+  removeListener(event: "close", listener: () => void): unknown;
+}
+
+export interface ProcessTreeRuntime {
   platform: NodeJS.Platform;
   killGroup(pid: number, signal: NodeJS.Signals): void;
-  killWindowsTree(pid: number): boolean;
+  isGroupAlive(pid: number): boolean;
+  killWindowsTree(pid: number, force: boolean): boolean;
 }
 
 const defaultProcessTreeRuntime: ProcessTreeRuntime = {
   platform: process.platform,
   killGroup: (pid, signal) => process.kill(-pid, signal),
-  killWindowsTree: (pid) => {
-    const result = spawnSync("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
+  isGroupAlive: (pid) => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  },
+  killWindowsTree: (pid, force) => {
+    const result = spawnSync("taskkill.exe", ["/pid", String(pid), "/T", ...(force ? ["/F"] : [])], {
       stdio: "ignore",
       windowsHide: true,
     });
@@ -63,7 +79,7 @@ export function terminateProcessTree(
   runtime: ProcessTreeRuntime = defaultProcessTreeRuntime,
 ): void {
   if (runtime.platform === "win32" && child.pid) {
-    if (runtime.killWindowsTree(child.pid)) return;
+    if (runtime.killWindowsTree(child.pid, signal === "SIGKILL")) return;
   } else if (detached && child.pid) {
     try {
       runtime.killGroup(child.pid, signal);
@@ -74,4 +90,60 @@ export function terminateProcessTree(
   }
 
   child.kill(signal);
+}
+
+export async function terminateProcessTreeGracefully(
+  child: WaitableProcess,
+  detached: boolean,
+  graceMs = 1_000,
+  runtime: ProcessTreeRuntime = defaultProcessTreeRuntime,
+): Promise<void> {
+  const tracksGroup = runtime.platform !== "win32" && detached && child.pid !== undefined;
+  if (!tracksGroup && child.exitCode !== null && child.exitCode !== undefined) return;
+  if (!tracksGroup && child.signalCode) return;
+
+  terminateProcessTree(child, "SIGTERM", detached, runtime);
+  if (await waitForProcessTreeExit(child, detached, graceMs, runtime)) return;
+  terminateProcessTree(child, "SIGKILL", detached, runtime);
+  await waitForProcessTreeExit(child, detached, graceMs, runtime);
+}
+
+function waitForProcessTreeExit(
+  child: WaitableProcess,
+  detached: boolean,
+  timeoutMs: number,
+  runtime: ProcessTreeRuntime,
+): Promise<boolean> {
+  if (runtime.platform !== "win32" && detached && child.pid !== undefined) {
+    if (!runtime.isGroupAlive(child.pid)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+      const poll = () => {
+        if (!runtime.isGroupAlive(child.pid as number)) {
+          resolve(true);
+        } else if (Date.now() >= deadline) {
+          resolve(false);
+        } else {
+          setTimeout(poll, Math.min(25, timeoutMs));
+        }
+      };
+      setTimeout(poll, Math.min(25, timeoutMs));
+    });
+  }
+  return waitForProcessClose(child, timeoutMs);
+}
+
+function waitForProcessClose(child: WaitableProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null && child.exitCode !== undefined) return Promise.resolve(true);
+  if (child.signalCode) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (closed: boolean) => {
+      clearTimeout(timer);
+      child.removeListener("close", onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("close", onClose);
+  });
 }
