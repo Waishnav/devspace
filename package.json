@@ -29,7 +29,7 @@
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "start": "node dist/cli.js serve",
     "test": "tsx src/config.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/ui/tool-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts && npm run test:workflows && tsx src/cli.test.ts",
-    "test:workflows": "tsx src/workflows/migrations.test.ts && tsx src/workflows/policy.test.ts && tsx src/workflows/workflows.test.ts",
+    "test:workflows": "tsx src/workflows/migrations.test.ts && tsx src/workflows/policy.test.ts && tsx src/workflows/workflows.test.ts && tsx src/workflows/supervisor.test.ts && tsx src/workflows/cli.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],

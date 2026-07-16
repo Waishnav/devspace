@@ -44,6 +44,7 @@ async function runTests(): Promise<void> {
     await testTransitionsAndClaims(join(root, "transitions"));
     testTerminalInvariantsAndAtomicity(join(root, "terminal-invariants"));
     testDagValidation(join(root, "dag"));
+    testAgentCompletionAdvancesDag(join(root, "dag-completion"));
     await testBoundedAndRepeatedWait(join(root, "wait"));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -365,6 +366,69 @@ function testTerminalInvariantsAndAtomicity(stateDir: string): void {
         }),
       /Cannot transition node after workflow reached terminal status/,
     );
+  } finally {
+    store.close();
+  }
+}
+
+function testAgentCompletionAdvancesDag(stateDir: string): void {
+  const store = new WorkflowStore(stateDir);
+  try {
+    const workflow = store.submit({
+      definition: {
+        version: 1,
+        nodes: [agentNode("first"), agentNode("second")],
+        edges: [{ from: "first", to: "second" }],
+      },
+    }).workflow;
+    const supervisor = store.acquireSupervisor({ ownerToken: "dag", ownerPid: 1, leaseMs: 1_000 })!;
+    const first = store.claimNextAgentNode({ supervisor, claimToken: "first-claim", leaseMs: 1_000 })!;
+    const afterFirst = store.completeAgentNode({
+      workflowId: workflow.id,
+      nodeKey: "first",
+      attempt: first.node.attempt,
+      claimToken: first.node.claimToken!,
+      status: "succeeded",
+      result: { step: 1 },
+    })!;
+    assert.equal(afterFirst.status, "running");
+    assert.deepEqual(Object.fromEntries(afterFirst.nodes.map((node) => [node.key, node.status])), {
+      first: "succeeded",
+      second: "ready",
+    });
+
+    const second = store.claimNextAgentNode({ supervisor, claimToken: "second-claim", leaseMs: 1_000 })!;
+    assert.equal(second.node.key, "second");
+    const completed = store.completeAgentNode({
+      workflowId: workflow.id,
+      nodeKey: "second",
+      attempt: second.node.attempt,
+      claimToken: second.node.claimToken!,
+      status: "succeeded",
+      result: { step: 2 },
+    })!;
+    assert.equal(completed.status, "succeeded");
+    assert.deepEqual(completed.result, { step: 2 });
+
+    const failedWorkflow = store.submit({
+      definition: {
+        version: 1,
+        nodes: [agentNode("first"), agentNode("second")],
+        edges: [{ from: "first", to: "second" }],
+      },
+    }).workflow;
+    const failedClaim = store.claimNextAgentNode({ supervisor, claimToken: "failed-claim", leaseMs: 1_000 })!;
+    const failed = store.completeAgentNode({
+      workflowId: failedWorkflow.id,
+      nodeKey: "first",
+      attempt: failedClaim.node.attempt,
+      claimToken: failedClaim.node.claimToken!,
+      status: "failed",
+      error: { code: "provider_failed" },
+    })!;
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.nodes.find((node) => node.key === "second")!.status, "skipped");
+    store.releaseSupervisor(supervisor);
   } finally {
     store.close();
   }

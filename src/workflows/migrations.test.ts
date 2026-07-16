@@ -25,6 +25,7 @@ function testFreshSchema(stateDir: string): void {
         { version: 2, name: "oauth-state" },
         { version: 3, name: "local-agent-sessions" },
         { version: 4, name: "durable-workflows" },
+        { version: 5, name: "workflow-supervisor" },
       ],
     );
     const tables = database.sqlite
@@ -35,7 +36,15 @@ function testFreshSchema(stateDir: string): void {
       )
       .pluck()
       .all();
-    assert.deepEqual(tables, ["workflow_edges", "workflow_events", "workflow_nodes", "workflow_runs"]);
+    assert.deepEqual(tables, [
+      "workflow_edges",
+      "workflow_events",
+      "workflow_node_attempts",
+      "workflow_nodes",
+      "workflow_provider_events",
+      "workflow_runs",
+      "workflow_supervisor",
+    ]);
 
     const edgeForeignKeys = database.sqlite.prepare("pragma foreign_key_list(workflow_edges)").all() as Array<{
       id: number;
@@ -89,7 +98,7 @@ function testExistingMigrationCompatibility(stateDir: string): void {
   try {
     assert.deepEqual(
       migrated.sqlite.prepare("select version from devspace_schema_migrations order by version").pluck().all(),
-      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5],
     );
     assert.deepEqual(migrated.sqlite.prepare("select * from workspace_sessions").all(), [
       {
@@ -162,7 +171,7 @@ function testExistingMigrationCompatibility(stateDir: string): void {
         .prepare("select count(*) from sqlite_master where type = 'table' and name like 'workflow_%'")
         .pluck()
         .get(),
-      4,
+      7,
     );
   } finally {
     migrated.close();
@@ -213,11 +222,14 @@ function createVersion3Fixture(stateDir: string): void {
   const initialized = openDatabase(stateDir);
   try {
     initialized.sqlite.exec(`
+      drop table workflow_provider_events;
+      drop table workflow_node_attempts;
+      drop table workflow_supervisor;
       drop table workflow_edges;
       drop table workflow_events;
       drop table workflow_nodes;
       drop table workflow_runs;
-      delete from devspace_schema_migrations where version = 4;
+      delete from devspace_schema_migrations where version in (4, 5);
 
       insert into workspace_sessions (
         id, root, status, mode, source_root, base_ref, base_sha, managed, created_at, last_used_at
