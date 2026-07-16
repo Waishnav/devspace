@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { delimiter } from "node:path";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import {
+  ClaudeLocalAgentAdapter,
   claudeCommandEnvironment,
   createLocalAgentAdapter,
   extractOpenCodeFinalResponse,
@@ -9,6 +12,7 @@ import {
   extractPiStreamingText,
   piCommandEnvironment,
   resolveAcpModelConfigUpdate,
+  resolveAcpPermissionRequest,
   resolveAcpThinkingConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
@@ -26,6 +30,7 @@ const providers: LocalAgentProvider[] = [
 for (const provider of providers) {
   const adapter = createLocalAgentAdapter(provider);
   assert.equal(adapter.provider, provider);
+  assert.equal(typeof adapter.start, "function");
   assert.equal(typeof adapter.run, "function");
 }
 
@@ -387,4 +392,186 @@ assert.equal(
   });
 
   assert.equal(env.PATH, [devspaceBin, "/home/user/.local/bin"].join(delimiter));
+}
+
+{
+  const readOnlyPolicy = {
+    version: 1,
+    mode: "workflow",
+    access: "read_only",
+    environment: Object.freeze({ PATH: "/usr/bin", HOME: "/home/user" }),
+  } as const;
+  const denied = resolveAcpPermissionRequest({
+    toolCall: { kind: "edit" },
+    options: [
+      { optionId: "allow", kind: "allow_once" },
+      { optionId: "reject", kind: "reject_once" },
+    ],
+  }, readOnlyPolicy);
+  assert.equal(denied.allowed, false);
+  assert.deepEqual(denied.response, {
+    outcome: { outcome: "selected", optionId: "reject" },
+  });
+
+  const read = resolveAcpPermissionRequest({
+    toolCall: { kind: "read" },
+    options: [{ optionId: "allow", kind: "allow_once" }],
+  }, readOnlyPolicy);
+  assert.equal(read.allowed, true);
+  assert.deepEqual(read.response, {
+    outcome: { outcome: "selected", optionId: "allow" },
+  });
+
+  const noSafeOption = resolveAcpPermissionRequest({
+    toolCall: { kind: "execute" },
+    options: [{ optionId: "allow", kind: "allow_always" }],
+  }, readOnlyPolicy);
+  assert.deepEqual(noSafeOption.response, { outcome: { outcome: "cancelled" } });
+}
+
+{
+  let capturedOptions: Record<string, unknown> | undefined;
+  let closed = 0;
+  const query = (async function* () {
+    yield {
+      type: "stream_event",
+      session_id: "claude-session",
+      event: {
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "Hello " },
+      },
+    } as never;
+    yield {
+      type: "result",
+      subtype: "success",
+      session_id: "claude-session",
+      result: "Hello Claude",
+    } as never;
+  })() as AsyncGenerator<never, void> & { interrupt(): Promise<void>; close(): void };
+  query.interrupt = async () => undefined;
+  query.close = () => { closed += 1; };
+  const adapter = new ClaudeLocalAgentAdapter((parameters) => {
+    capturedOptions = parameters.options as unknown as Record<string, unknown>;
+    return query as never;
+  });
+  const handle = await adapter.start({ prompt: "hello", workspace: "/tmp/project" });
+  const result = await handle.result();
+  assert.equal(result.providerSessionId, "claude-session");
+  assert.equal(result.finalResponse, "Hello Claude");
+  assert.equal(capturedOptions?.includePartialMessages, true);
+  assert.equal(capturedOptions?.permissionMode, "bypassPermissions");
+  const eventTypes: string[] = [];
+  for await (const event of handle.events()) eventTypes.push(event.type);
+  assert.deepEqual(eventTypes, ["lifecycle", "session", "output", "terminal"]);
+  await handle.dispose();
+  await handle.dispose();
+  assert.equal(closed, 1);
+}
+
+{
+  const query = (async function* () {
+    yield {
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "claude-error-session",
+      errors: ["provider unavailable"],
+    } as never;
+  })() as AsyncGenerator<never, void> & { interrupt(): Promise<void>; close(): void };
+  query.interrupt = async () => undefined;
+  query.close = () => undefined;
+  const adapter = new ClaudeLocalAgentAdapter(() => query as never);
+  const handle = await adapter.start({ prompt: "hello", workspace: "/tmp/project" });
+  await assert.rejects(handle.result(), /provider unavailable/);
+  await handle.dispose();
+}
+
+{
+  const compatibility = resolveAcpPermissionRequest({
+    toolCall: { kind: "edit" },
+    options: [
+      { optionId: "always", kind: "allow_always" },
+      { optionId: "once", kind: "allow_once" },
+    ],
+  });
+  assert.deepEqual(compatibility.response, {
+    outcome: { outcome: "selected", optionId: "once" },
+  });
+}
+
+{
+  const workflowPolicy = {
+    version: 1,
+    mode: "workflow",
+    access: "workspace_write",
+    environment: Object.freeze({ PATH: process.env.PATH ?? "" }),
+  } as const;
+  await assert.rejects(
+    createLocalAgentAdapter("cursor").start({
+      prompt: "edit",
+      workspace: "/tmp/project",
+      policy: workflowPolicy,
+    }),
+    /cannot currently enforce DevSpace workflow filesystem policy/,
+  );
+}
+
+{
+  const root = await mkdtemp(join(tmpdir(), "devspace-claude-policy-"));
+  const workspace = join(root, "workspace");
+  const outside = join(root, "outside");
+  await mkdir(workspace);
+  await mkdir(outside);
+  await writeFile(join(outside, "secret.txt"), "secret");
+  await symlink(outside, join(workspace, "escape"));
+
+  let capturedOptions: Record<string, unknown> | undefined;
+  const query = (async function* () {
+    yield {
+      type: "result",
+      subtype: "success",
+      session_id: "claude-workflow-session",
+      result: "ok",
+    } as never;
+  })() as AsyncGenerator<never, void> & { interrupt(): Promise<void>; close(): void };
+  query.interrupt = async () => undefined;
+  query.close = () => undefined;
+  const originalClaudeCommand = process.env.CLAUDE_COMMAND;
+  process.env.CLAUDE_COMMAND = "/ambient/claude-must-not-run";
+  try {
+    const adapter = new ClaudeLocalAgentAdapter((parameters) => {
+      capturedOptions = parameters.options as unknown as Record<string, unknown>;
+      return query as never;
+    });
+    const handle = await adapter.start({
+      prompt: "inspect",
+      workspace,
+      policy: {
+        version: 1,
+        mode: "workflow",
+        access: "workspace_write",
+        environment: Object.freeze({ PATH: process.env.PATH ?? "" }),
+      },
+    });
+    await handle.result();
+    assert.deepEqual(capturedOptions?.settingSources, []);
+    assert.equal(capturedOptions?.strictMcpConfig, true);
+    assert.deepEqual(capturedOptions?.mcpServers, {});
+    assert.deepEqual(capturedOptions?.plugins, []);
+    assert.deepEqual(capturedOptions?.skills, []);
+    assert.deepEqual(capturedOptions?.agents, {});
+    assert.notEqual(capturedOptions?.pathToClaudeCodeExecutable, "/ambient/claude-must-not-run");
+
+    const canUseTool = capturedOptions?.canUseTool as (
+      tool: string,
+      input: Record<string, unknown>,
+    ) => Promise<{ behavior: string }>;
+    assert.equal((await canUseTool("Write", { file_path: join(workspace, "new.txt") })).behavior, "allow");
+    assert.equal((await canUseTool("Write", { file_path: join(workspace, "escape", "secret.txt") })).behavior, "deny");
+    assert.equal((await canUseTool("Write", { file_path: join(workspace, "escape", "new.txt") })).behavior, "deny");
+    await handle.dispose();
+  } finally {
+    if (originalClaudeCommand === undefined) delete process.env.CLAUDE_COMMAND;
+    else process.env.CLAUDE_COMMAND = originalClaudeCommand;
+    await rm(root, { recursive: true, force: true });
+  }
 }
