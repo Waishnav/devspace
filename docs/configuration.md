@@ -38,6 +38,36 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+| `DEVSPACE_CONTEXT_IGNORE_PATHS` | Optional comma-separated workspace-relative directories to exclude from nested instruction discovery. |
+
+## Instruction Discovery
+
+`open_workspace` discovers nested `AGENTS.md` and `CLAUDE.md` files. Use
+`DEVSPACE_CONTEXT_IGNORE_PATHS` to prune mounted, external, or unusually large
+resource trees from that discovery walk. The default is empty, so DevSpace does
+not exclude any additional directories unless you configure them:
+
+```bash
+DEVSPACE_CONTEXT_IGNORE_PATHS="external-resources,vendor/generated" \
+npx @waishnav/devspace serve
+```
+
+Entries are literal workspace-relative directory paths, not globs. Absolute
+paths and parent traversal are rejected. Matching is exact: ignoring
+`external-resources` does not ignore `external-resources-old` or
+`nested/external-resources`. Because the environment variable is
+comma-separated, use the JSON form for a directory name containing a comma. The
+equivalent persisted `config.json` field is an array:
+
+```json
+{
+  "contextIgnorePaths": ["external-resources", "vendor/generated"]
+}
+```
+
+Ignored subtrees remain available to normal workspace file and shell tools;
+only nested instruction discovery skips them. This setting does not enforce
+read-only access and is not a filesystem security boundary.
 
 ## OAuth
 
@@ -158,6 +188,7 @@ DEVSPACE_OAUTH_OWNER_TOKEN="$(openssl rand -base64 32)" \
 DEVSPACE_ALLOWED_ROOTS="$HOME/personal,$HOME/work" \
 DEVSPACE_PUBLIC_BASE_URL="https://devspace.example.com" \
 DEVSPACE_WORKTREE_ROOT="$HOME/.devspace/worktrees" \
+DEVSPACE_CONTEXT_IGNORE_PATHS="external-resources,vendor/generated" \
 DEVSPACE_TOOL_MODE="minimal" \
 DEVSPACE_WIDGETS="full" \
 npx @waishnav/devspace serve

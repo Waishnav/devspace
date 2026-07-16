@@ -21,6 +21,7 @@ export interface ServerConfig {
   widgets: WidgetMode;
   stateDir: string;
   worktreeRoot: string;
+  contextIgnorePaths: string[];
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
@@ -113,6 +114,49 @@ function parsePathList(value: string | undefined): string[] {
       .map((entry) => entry.trim())
       .filter(Boolean) ?? []
   );
+}
+
+function parseContextIgnorePaths(value: unknown): string[] {
+  if (value === undefined) return [];
+  const entries = typeof value === "string" ? value.split(",") : value;
+  if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+    throw new Error(
+      "DEVSPACE_CONTEXT_IGNORE_PATHS must be a comma-separated string or a config array of strings.",
+    );
+  }
+
+  const normalized = entries
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(normalizeContextIgnorePath);
+
+  return Array.from(new Set(normalized));
+}
+
+function normalizeContextIgnorePath(value: string): string {
+  const slashPath = value.replaceAll("\\", "/");
+  const segments = slashPath.split("/");
+  if (
+    slashPath.startsWith("/") ||
+    /^[A-Za-z]:/.test(slashPath) ||
+    slashPath.includes("\0") ||
+    segments.includes("..")
+  ) {
+    throw new Error(
+      `Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry: ${value}. Use workspace-relative directory paths.`,
+    );
+  }
+
+  const normalized = segments
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+  if (!normalized) {
+    throw new Error(
+      `Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry: ${value}. Use workspace-relative directory paths.`,
+    );
+  }
+
+  return normalized;
 }
 
 function parseStringList(value: string | undefined, fallback: string[]): string[] {
@@ -226,6 +270,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
+    contextIgnorePaths: parseContextIgnorePaths(
+      env.DEVSPACE_CONTEXT_IGNORE_PATHS ?? files.config.contextIgnorePaths,
+    ),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),

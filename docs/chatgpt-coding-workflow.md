@@ -72,6 +72,13 @@ When a workspace opens, DevSpace loads root-level instruction files:
 Nested instruction files are returned as `availableAgentsFiles`. The model
 should read the relevant nested file before working under that directory.
 
+Set `DEVSPACE_CONTEXT_IGNORE_PATHS` to a comma-separated list of literal,
+workspace-relative directory paths that should be excluded from nested
+instruction discovery. For example, `external-resources,vendor/generated`
+prunes those subtrees before DevSpace scans for project instructions. The
+default is empty, and normal workspace file tools can still access ignored
+content.
+
 This keeps instructions explicit and inspectable instead of silently injecting
 new context during later tool calls.
 

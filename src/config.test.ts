@@ -26,6 +26,7 @@ assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
 assert.equal(loadConfig(baseEnv).subagents, false);
+assert.deepEqual(loadConfig(baseEnv).contextIgnorePaths, []);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(
@@ -36,6 +37,14 @@ assert.equal(resolveSubagentsFlag({}, {}), undefined);
 assert.equal(resolveSubagentsFlag({ subagents: true }, {}), true);
 assert.equal(resolveSubagentsFlag({ subagents: true }, { DEVSPACE_SUBAGENTS: "0" }), false);
 assert.equal(resolveSubagentsFlag({}, { DEVSPACE_SUBAGENTS: "1" }), true);
+assert.deepEqual(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_CONTEXT_IGNORE_PATHS:
+      "external-resources, vendor/generated, ./cache/data/,external-resources",
+  }).contextIgnorePaths,
+  ["external-resources", "vendor/generated", "cache/data"],
+);
 
 const seededConfigDir = mkdtempSync(join(tmpdir(), "devspace-seeded-skills-test-"));
 const seededSkillPaths = ensureDevspaceDefaultSkills({ DEVSPACE_CONFIG_DIR: seededConfigDir });
@@ -59,6 +68,33 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CONTEXT_IGNORE_PATHS: "../outside" }),
+  /Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CONTEXT_IGNORE_PATHS: "/absolute" }),
+  /Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CONTEXT_IGNORE_PATHS: "C:\\outside" }),
+  /Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CONTEXT_IGNORE_PATHS: "." }),
+  /Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CONTEXT_IGNORE_PATHS: "ignored\0path" }),
+  /Invalid DEVSPACE_CONTEXT_IGNORE_PATHS entry/,
+);
+assert.throws(
+  () => loadConfig({
+    ...baseEnv,
+    DEVSPACE_CONTEXT_IGNORE_PATHS: ["external-resources", 42] as unknown as string,
+  }),
+  /must be a comma-separated string or a config array of strings/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
@@ -162,6 +198,12 @@ writeFileSync(
     port: 8787,
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
+    contextIgnorePaths: [
+      "external-resources",
+      " vendor/generated ",
+      "./cache/data/",
+      "external-resources",
+    ],
     subagents: true,
   }),
 );
@@ -177,6 +219,25 @@ assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.equal(fileConfig.subagents, true);
+assert.deepEqual(fileConfig.contextIgnorePaths, [
+  "external-resources",
+  "vendor/generated",
+  "cache/data",
+]);
+assert.deepEqual(
+  loadConfig({
+    DEVSPACE_CONFIG_DIR: configDir,
+    DEVSPACE_CONTEXT_IGNORE_PATHS: "environment/path",
+  }).contextIgnorePaths,
+  ["environment/path"],
+);
+assert.deepEqual(
+  loadConfig({
+    DEVSPACE_CONFIG_DIR: configDir,
+    DEVSPACE_CONTEXT_IGNORE_PATHS: "",
+  }).contextIgnorePaths,
+  [],
+);
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",
