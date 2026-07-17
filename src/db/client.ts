@@ -5,6 +5,10 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 import { migrateDatabase } from "./migrations.js";
 
+const JOURNAL_MODE_RETRY_TIMEOUT_MS = 5_000;
+const JOURNAL_MODE_RETRY_DELAY_MS = 25;
+const journalModeRetrySignal = new Int32Array(new SharedArrayBuffer(4));
+
 export type SqliteDatabase = Database.Database;
 export type AppDatabase = ReturnType<typeof createDrizzleDatabase>;
 
@@ -26,7 +30,7 @@ export function openDatabase(stateDir: string): DatabaseHandle {
   try {
     chmodSync(path, 0o600);
     sqlite.pragma("busy_timeout = 5000");
-    sqlite.pragma("journal_mode = WAL");
+    enableWriteAheadLogging(sqlite);
     sqlite.pragma("synchronous = NORMAL");
     sqlite.pragma("foreign_keys = ON");
     migrateDatabase(sqlite);
@@ -39,6 +43,22 @@ export function openDatabase(stateDir: string): DatabaseHandle {
   } catch (error) {
     sqlite.close();
     throw error;
+  }
+}
+
+function enableWriteAheadLogging(sqlite: SqliteDatabase): void {
+  const deadline = Date.now() + JOURNAL_MODE_RETRY_TIMEOUT_MS;
+  while (true) {
+    try {
+      sqlite.pragma("journal_mode = WAL");
+      return;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if ((code !== "SQLITE_BUSY" && code !== "SQLITE_LOCKED") || Date.now() >= deadline) {
+        throw error;
+      }
+      Atomics.wait(journalModeRetrySignal, 0, 0, JOURNAL_MODE_RETRY_DELAY_MS);
+    }
   }
 }
 
