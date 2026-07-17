@@ -1,5 +1,9 @@
 import { spawn } from "node:child_process";
-import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
+import {
+  resolveShellCommand,
+  terminateProcessTree,
+  terminateProcessTreeGracefully,
+} from "./process-platform.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -46,7 +50,7 @@ export interface ProcessSnapshot {
 
 interface ManagedProcess {
   write(data: string): void;
-  kill(signal?: NodeJS.Signals): void;
+  kill(signal?: NodeJS.Signals): void | Promise<void>;
   resize?(columns: number, rows: number): void;
 }
 
@@ -259,7 +263,7 @@ export class ProcessSessionManager {
 
     const interruptRequested = chars.includes("\u0003") && session.running;
     if (interruptRequested) {
-      session.process?.kill("SIGINT");
+      await session.process?.kill("SIGINT");
     }
     const writableChars = chars.replaceAll("\u0003", "");
     if (writableChars && session.running) session.process?.write(writableChars);
@@ -339,7 +343,16 @@ export class ProcessSessionManager {
 
     session.process = {
       write: (data) => child.stdin.write(data),
-      kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
+      kill: (signal = "SIGTERM") => {
+        if (process.platform === "win32" && signal === "SIGINT") {
+          terminateProcessTree(child, "SIGKILL", detached);
+          return;
+        }
+        if (process.platform === "win32" && signal !== "SIGKILL") {
+          return terminateProcessTreeGracefully(child, detached);
+        }
+        terminateProcessTree(child, signal, detached);
+      },
       resize: input.tty ? () => undefined : undefined,
     };
     child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
