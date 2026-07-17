@@ -157,7 +157,7 @@ try {
   assert.notEqual(invalidScriptArgs.status, 0);
   assert.equal((JSON.parse(invalidScriptArgs.stdout) as Envelope).error!.code, "invalid_input");
 } finally {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
 }
 
 function runCli(args: string[], env: NodeJS.ProcessEnv) {
