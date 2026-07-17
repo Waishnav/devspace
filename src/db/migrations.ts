@@ -37,6 +37,11 @@ const migrations: Migration[] = [
     name: "workflow-dag-scheduler",
     up: migrateWorkflowDagScheduler,
   },
+  {
+    version: 7,
+    name: "workflow-js-runtime",
+    up: migrateWorkflowJsRuntime,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -377,6 +382,62 @@ function migrateWorkflowDagScheduler(sqlite: Database.Database): void {
 
     create index if not exists workflow_worktrees_cleanup_idx
       on workflow_worktrees(state, retain_until);
+  `);
+}
+
+function migrateWorkflowJsRuntime(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workflow_runtime_runs (
+      id text primary key,
+      workspace_id text not null,
+      workspace_root text not null,
+      source_hash text not null,
+      args_json text not null,
+      metadata_json text not null,
+      budget_json text not null,
+      idempotency_key text,
+      request_hash text not null,
+      status text not null check (status in ('running', 'succeeded', 'failed', 'cancelled')),
+      result_json text,
+      error_json text,
+      created_at text not null,
+      updated_at text not null,
+      completed_at text,
+      unique (workspace_id, workspace_root, idempotency_key)
+    );
+
+    create table if not exists workflow_runtime_calls (
+      runtime_run_id text not null,
+      call_index integer not null,
+      request_hash text not null,
+      request_json text not null,
+      workflow_run_id text,
+      status text not null check (status in ('pending', 'running', 'succeeded', 'failed')),
+      result_json text,
+      error_json text,
+      created_at text not null,
+      updated_at text not null,
+      completed_at text,
+      primary key (runtime_run_id, call_index),
+      foreign key (runtime_run_id) references workflow_runtime_runs(id) on delete cascade,
+      foreign key (workflow_run_id) references workflow_runs(id) on delete set null
+    );
+
+    create table if not exists workflow_runtime_events (
+      runtime_run_id text not null,
+      sequence integer not null,
+      event_type text not null,
+      payload_json text not null,
+      created_at text not null,
+      primary key (runtime_run_id, sequence),
+      foreign key (runtime_run_id) references workflow_runtime_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_runtime_runs_workspace_idx
+      on workflow_runtime_runs(workspace_id, workspace_root, created_at);
+
+    create index if not exists workflow_runtime_calls_workflow_idx
+      on workflow_runtime_calls(workflow_run_id);
   `);
 }
 

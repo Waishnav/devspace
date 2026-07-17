@@ -27,6 +27,7 @@ function testFreshSchema(stateDir: string): void {
         { version: 4, name: "durable-workflows" },
         { version: 5, name: "workflow-supervisor" },
         { version: 6, name: "workflow-dag-scheduler" },
+        { version: 7, name: "workflow-js-runtime" },
       ],
     );
     const tables = database.sqlite
@@ -44,6 +45,9 @@ function testFreshSchema(stateDir: string): void {
       "workflow_nodes",
       "workflow_provider_events",
       "workflow_runs",
+      "workflow_runtime_calls",
+      "workflow_runtime_events",
+      "workflow_runtime_runs",
       "workflow_supervisor",
       "workflow_worktrees",
     ]);
@@ -100,7 +104,7 @@ function testExistingMigrationCompatibility(stateDir: string): void {
   try {
     assert.deepEqual(
       migrated.sqlite.prepare("select version from devspace_schema_migrations order by version").pluck().all(),
-      [1, 2, 3, 4, 5, 6],
+      [1, 2, 3, 4, 5, 6, 7],
     );
     assert.deepEqual(migrated.sqlite.prepare("select * from workspace_sessions").all(), [
       {
@@ -173,7 +177,7 @@ function testExistingMigrationCompatibility(stateDir: string): void {
         .prepare("select count(*) from sqlite_master where type = 'table' and name like 'workflow_%'")
         .pluck()
         .get(),
-      8,
+      11,
     );
   } finally {
     migrated.close();
@@ -224,6 +228,9 @@ function createVersion3Fixture(stateDir: string): void {
   const initialized = openDatabase(stateDir);
   try {
     initialized.sqlite.exec(`
+      drop table workflow_runtime_events;
+      drop table workflow_runtime_calls;
+      drop table workflow_runtime_runs;
       drop table workflow_worktrees;
       drop table workflow_provider_events;
       drop table workflow_node_attempts;
@@ -232,7 +239,7 @@ function createVersion3Fixture(stateDir: string): void {
       drop table workflow_events;
       drop table workflow_nodes;
       drop table workflow_runs;
-      delete from devspace_schema_migrations where version in (4, 5, 6);
+      delete from devspace_schema_migrations where version in (4, 5, 6, 7);
 
       insert into workspace_sessions (
         id, root, status, mode, source_root, base_ref, base_sha, managed, created_at, last_used_at

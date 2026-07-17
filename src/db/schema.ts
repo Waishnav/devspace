@@ -275,6 +275,76 @@ export const workflowProviderEvents = sqliteTable(
   ],
 );
 
+export const workflowRuntimeRuns = sqliteTable(
+  "workflow_runtime_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    workspaceRoot: text("workspace_root").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    argsJson: text("args_json").notNull(),
+    metadataJson: text("metadata_json").notNull(),
+    budgetJson: text("budget_json").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    requestHash: text("request_hash").notNull(),
+    status: text("status").notNull(),
+    resultJson: text("result_json"),
+    errorJson: text("error_json"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("workflow_runtime_runs_idempotency_idx").on(
+      table.workspaceId,
+      table.workspaceRoot,
+      table.idempotencyKey,
+    ),
+    index("workflow_runtime_runs_workspace_idx").on(
+      table.workspaceId,
+      table.workspaceRoot,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const workflowRuntimeCalls = sqliteTable(
+  "workflow_runtime_calls",
+  {
+    runtimeRunId: text("runtime_run_id")
+      .notNull()
+      .references(() => workflowRuntimeRuns.id, { onDelete: "cascade" }),
+    callIndex: integer("call_index").notNull(),
+    requestHash: text("request_hash").notNull(),
+    requestJson: text("request_json").notNull(),
+    workflowRunId: text("workflow_run_id").references(() => workflowRuns.id, { onDelete: "set null" }),
+    status: text("status").notNull(),
+    resultJson: text("result_json"),
+    errorJson: text("error_json"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runtimeRunId, table.callIndex] }),
+    index("workflow_runtime_calls_workflow_idx").on(table.workflowRunId),
+  ],
+);
+
+export const workflowRuntimeEvents = sqliteTable(
+  "workflow_runtime_events",
+  {
+    runtimeRunId: text("runtime_run_id")
+      .notNull()
+      .references(() => workflowRuntimeRuns.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.runtimeRunId, table.sequence] })],
+);
+
 export const workflowWorktrees = sqliteTable(
   "workflow_worktrees",
   {

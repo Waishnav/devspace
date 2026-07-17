@@ -17,7 +17,15 @@ mkdirSync(stateDir, { recursive: true });
 mkdirSync(agentsDir, { recursive: true });
 
 const profilePath = join(agentsDir, "reviewer.md");
+const workflowScriptPath = join(project, "example.workflow.js");
 writeProfile(profilePath, "Original immutable profile.");
+writeFileSync(workflowScriptPath, `
+// @devspace-workflow {"version":1,"name":"cli-test","maxAgentCalls":2,"maxConcurrency":1,"timeoutMs":5000}
+export default function ({ args, budget, log }) {
+  log("script executed", { value: args.value });
+  return { value: args.value, maxAgentCalls: budget.maxAgentCalls };
+}
+`);
 
 const baseEnv = {
   ...process.env,
@@ -117,6 +125,37 @@ try {
   ], baseEnv);
   assert.notEqual(conflict.status, 0);
   assert.equal((JSON.parse(conflict.stdout) as Envelope).error!.code, "idempotency_conflict");
+
+  const scripted = runCli([
+    "workflows", "script", workflowScriptPath, "--args-json", JSON.stringify({ value: "from-cli" }),
+    "--idempotency-key", "script-shell-parent", "--json",
+  ], baseEnv);
+  assert.equal(scripted.status, 0, `${scripted.stderr}\n${scripted.stdout}`);
+  const scriptEnvelope = JSON.parse(scripted.stdout) as Envelope;
+  assert.equal(scriptEnvelope.ok, true);
+  assert.equal(scriptEnvelope.created, true);
+  assert.equal(scriptEnvelope.runtime!.status, "succeeded");
+  assert.deepEqual(scriptEnvelope.runtime!.result, { value: "from-cli", maxAgentCalls: 2 });
+
+  const scriptReplay = runCli([
+    "workflows", "script", workflowScriptPath, "--args-json", JSON.stringify({ value: "from-cli" }),
+    "--idempotency-key", "script-shell-parent", "--json",
+  ], baseEnv);
+  assert.equal(scriptReplay.status, 0, scriptReplay.stderr);
+  assert.equal((JSON.parse(scriptReplay.stdout) as Envelope).created, false);
+
+  const scriptConflict = runCli([
+    "workflows", "script", workflowScriptPath, "--args-json", JSON.stringify({ value: "different" }),
+    "--idempotency-key", "script-shell-parent", "--json",
+  ], baseEnv);
+  assert.notEqual(scriptConflict.status, 0);
+  assert.equal((JSON.parse(scriptConflict.stdout) as Envelope).error!.code, "idempotency_conflict");
+
+  const invalidScriptArgs = runCli([
+    "workflows", "script", workflowScriptPath, "--args-json", "[]", "--json",
+  ], baseEnv);
+  assert.notEqual(invalidScriptArgs.status, 0);
+  assert.equal((JSON.parse(invalidScriptArgs.stdout) as Envelope).error!.code, "invalid_input");
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
@@ -157,5 +196,6 @@ interface Envelope {
     definition: { nodes: Array<{ config: { profileBody: string } }> };
   };
   events?: Array<{ type: string; sequence: number }>;
+  runtime?: { status: string; result?: unknown };
   error?: { code: string; message: string };
 }

@@ -47,6 +47,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 4, name: "durable-workflows" },
       { version: 5, name: "workflow-supervisor" },
       { version: 6, name: "workflow-dag-scheduler" },
+      { version: 7, name: "workflow-js-runtime" },
     ]);
   } finally {
     database.close();

@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
@@ -7,6 +7,7 @@ import { loadLocalAgentProfiles } from "../local-agent-profiles.js";
 import { expandHomePath } from "../roots.js";
 import { createWorkflowSubmission } from "./submission.js";
 import { WorkflowOrchestrator } from "./orchestrator.js";
+import { executeWorkflowRuntime } from "./runtime.js";
 import {
   WorkflowIdempotencyConflictError,
   WorkflowNotFoundError,
@@ -15,6 +16,7 @@ import {
 import { ensureSupervisor } from "./supervisor-launch.js";
 import { runWorkflowSupervisor } from "./supervisor.js";
 import type {
+  JsonObject,
   WorkflowRunRecord,
   WorkflowWorkspaceScope,
 } from "./types.js";
@@ -82,6 +84,8 @@ async function dispatchWorkflowCommand(
     switch (command) {
       case "run":
         return await runCommand(parsed.positionals[0]!, args, context, config, scope, orchestrator);
+      case "script":
+        return await scriptCommand(parsed.positionals[0]!, args, context, config, scope, orchestrator);
       case "status": {
         const workflowId = parsed.positionals[0]!;
         return { workflow: orchestrator.getForWorkspace(workflowId, scope) ?? notFound(workflowId) };
@@ -184,6 +188,49 @@ async function runCommand(
   };
 }
 
+async function scriptCommand(
+  scriptPath: string,
+  args: string[],
+  context: WorkflowsCliContext,
+  config: WorkflowCliConfig,
+  scope: WorkflowWorkspaceScope,
+  orchestrator: WorkflowOrchestrator,
+): Promise<Record<string, unknown>> {
+  const canonicalScript = await canonicalPath(resolve(context.cwd, scriptPath), "workflow script");
+  if (!isInside(canonicalScript, scope.workspaceRoot)) {
+    throw new WorkspaceDeniedError("Workflow script is outside DEVSPACE_WORKSPACE_ROOT.");
+  }
+  if (!canonicalScript.endsWith(".js") && !canonicalScript.endsWith(".mjs")) {
+    throw new CliInputError("Workflow script must use a .js or .mjs extension.");
+  }
+  const source = await readFile(canonicalScript, "utf8");
+  const runtimeArgs = parseJsonObjectOption(args, "--args-json");
+  const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
+  const result = await executeWorkflowRuntime({
+    stateDir: config.stateDir,
+    worktreeRoot: config.worktreeRoot,
+    source,
+    args: runtimeArgs,
+    workspace: scope,
+    profiles,
+    idempotencyKey: optionalOption(args, "--idempotency-key"),
+    environment: context.env,
+    cliEntrypoint: context.cliEntrypoint,
+    orchestrator,
+  });
+  if (result.run.status !== "succeeded") {
+    const message = typeof result.run.error?.message === "string"
+      ? result.run.error.message
+      : `Workflow runtime ${result.run.id} failed`;
+    throw new CliRuntimeError(`Workflow runtime ${result.run.id} failed: ${message}`);
+  }
+  return {
+    runtime: result.run,
+    created: result.created,
+    replayedCalls: result.replayedCalls,
+  };
+}
+
 async function resolveWorkspaceScope(
   context: Pick<WorkflowsCliContext, "cwd" | "env">,
   allowedRoots: string[],
@@ -238,6 +285,10 @@ function validateWorkflowArguments(
         "--access",
         "--idempotency-key",
       ]),
+    },
+    script: {
+      positionals: 1,
+      valueOptions: new Set(["--args-json", "--idempotency-key"]),
     },
     status: { positionals: 1, valueOptions: new Set() },
     events: { positionals: 1, valueOptions: new Set(["--after"]) },
@@ -298,6 +349,22 @@ function optionalOption(args: string[], name: string): string | undefined {
   return undefined;
 }
 
+function parseJsonObjectOption(args: string[], name: string): JsonObject {
+  const raw = optionalOption(args, name);
+  if (raw === undefined) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("value must be a JSON object");
+    }
+    return parsed as JsonObject;
+  } catch (error) {
+    throw new CliInputError(
+      `${name} must be valid JSON object: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function integerOption(args: string[], name: string): number | undefined {
   const raw = optionalOption(args, name);
   if (raw === undefined) return undefined;
@@ -314,6 +381,7 @@ function normalizeCliError(error: unknown): { code: string; message: string; exi
   if (error instanceof WorkspaceDeniedError) return { code: "workspace_denied", message: error.message, exitCode: 3 };
   if (error instanceof WorkflowNotFoundError) return { code: "not_found", message: error.message, exitCode: 4 };
   if (error instanceof WorkflowIdempotencyConflictError) return { code: "idempotency_conflict", message: error.message, exitCode: 5 };
+  if (error instanceof CliRuntimeError) return { code: "runtime_failed", message: error.message, exitCode: 6 };
   if (error instanceof CliInputError || error instanceof WorkflowValidationError) {
     return { code: "invalid_input", message: error.message, exitCode: 2 };
   }
@@ -351,6 +419,7 @@ function workflowsHelp(): string {
     "",
     "Usage:",
     "  devspace workflows run <profile-or-provider> --prompt <task> --json [--idempotency-key <key>]",
+    "  devspace workflows script <file.js> --json [--args-json <object>] [--idempotency-key <key>]",
     "  devspace workflows status <id> --json",
     "  devspace workflows wait <id> --json [--timeout-ms <ms>] [--after <cursor>]",
     "  devspace workflows events <id> --json [--after <cursor>]",
@@ -360,4 +429,5 @@ function workflowsHelp(): string {
 }
 
 class CliInputError extends Error {}
+class CliRuntimeError extends Error {}
 class WorkspaceDeniedError extends Error {}
