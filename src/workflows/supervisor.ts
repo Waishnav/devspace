@@ -11,6 +11,7 @@ import { isLocalAgentProvider } from "../local-agent-profiles.js";
 import type { EffectiveLocalAgentPolicy } from "./policy.js";
 import {
   allocateWorkflowWorktree,
+  cleanupExpiredWorkflowWorktrees,
   cleanupWorkflowWorktree,
   preserveWorkflowWorktree,
 } from "./worktrees.js";
@@ -46,6 +47,7 @@ export interface WorkflowSupervisorOptions {
   ownerPid?: number;
   globalConcurrency?: number;
   handleFactory?: WorkflowHandleFactory;
+  worktreeAllocator?: typeof allocateWorkflowWorktree;
 }
 
 export async function runWorkflowSupervisor(
@@ -75,6 +77,10 @@ export async function runWorkflowSupervisor(
   try {
     store.reconcileExpiredClaims();
     store.convergeCancellations();
+    await cleanupExpiredWorkflowWorktrees({
+      store,
+      beforeCleanup: () => store.heartbeatSupervisor(identity, supervisorLeaseMs),
+    });
     while (store.heartbeatSupervisor(identity, supervisorLeaseMs)) {
       store.reconcileExpiredClaims();
       store.convergeCancellations();
@@ -94,6 +100,7 @@ export async function runWorkflowSupervisor(
           nodeLeaseMs,
           heartbeatMs,
           handleFactory: options.handleFactory ?? defaultHandleFactory,
+          worktreeAllocator: options.worktreeAllocator ?? allocateWorkflowWorktree,
         }).finally(() => {
           active.delete(execution);
           lastWorkAt = Date.now();
@@ -139,6 +146,7 @@ async function executeClaim(
     nodeLeaseMs: number;
     heartbeatMs: number;
     handleFactory: WorkflowHandleFactory;
+    worktreeAllocator: typeof allocateWorkflowWorktree;
   },
 ): Promise<void> {
   const identity: WorkflowAttemptIdentity = {
@@ -159,13 +167,41 @@ async function executeClaim(
   let leaseFailure: Error | undefined;
   let tickRunning = false;
 
+  const tick = async () => {
+    if (tickRunning || leaseFailure) return;
+    tickRunning = true;
+    try {
+      if (!store.heartbeatSupervisor(supervisor, options.supervisorLeaseMs)) {
+        leaseFailure = new Error("Workflow supervisor lease lost.");
+        await handle?.cancel(leaseFailure);
+        return;
+      }
+      if (!store.heartbeatNode({ ...identity, leaseMs: options.nodeLeaseMs })) {
+        leaseFailure = new Error("Workflow node claim lost.");
+        await handle?.cancel(leaseFailure);
+        return;
+      }
+      if (!cancellationObserved && store.isCancellationRequested(identity.workflowId)) {
+        cancellationObserved = true;
+        store.markNodeCancelling(identity);
+        await handle?.cancel(new Error("Workflow cancellation requested."));
+      }
+    } finally {
+      tickRunning = false;
+    }
+  };
+
   try {
+    await tick();
+    if (leaseFailure) throw leaseFailure;
+    heartbeat = setInterval(() => void tick().catch(() => undefined), options.heartbeatMs);
+
     const execution = readExecutionSnapshot(config);
     const fullPrompt = execution.profileBody
       ? `${execution.profileBody}\n\nTask:\n${execution.prompt}`
       : execution.prompt;
     if (execution.effectivePolicy.access === "workspace_write") {
-      const allocation = await allocateWorkflowWorktree({
+      const allocation = await options.worktreeAllocator({
         store,
         identity,
         sourceRoot: execution.workspaceRoot,
@@ -179,33 +215,6 @@ async function executeClaim(
     if (!store.markNodeDispatching(identity)) {
       throw new Error("Workflow node attempt was lost before dispatch.");
     }
-
-    const tick = async () => {
-      if (tickRunning || leaseFailure) return;
-      tickRunning = true;
-      try {
-        if (!store.heartbeatSupervisor(supervisor, options.supervisorLeaseMs)) {
-          leaseFailure = new Error("Workflow supervisor lease lost.");
-          await handle?.cancel(leaseFailure);
-          return;
-        }
-        if (!store.heartbeatNode({ ...identity, leaseMs: options.nodeLeaseMs })) {
-          leaseFailure = new Error("Workflow node claim lost.");
-          await handle?.cancel(leaseFailure);
-          return;
-        }
-        if (!cancellationObserved && store.isCancellationRequested(identity.workflowId)) {
-          cancellationObserved = true;
-          store.markNodeCancelling(identity);
-          await handle?.cancel(new Error("Workflow cancellation requested."));
-        }
-      } finally {
-        tickRunning = false;
-      }
-    };
-    await tick();
-    if (leaseFailure) throw leaseFailure;
-    heartbeat = setInterval(() => void tick().catch(() => undefined), options.heartbeatMs);
 
     handle = await options.handleFactory(execution.provider, {
       prompt: fullPrompt,
@@ -239,6 +248,7 @@ async function executeClaim(
     } finally {
       await drain;
     }
+    if (timeoutObserved) throw new Error("Workflow node timed out.");
     if (result.providerSessionId) {
       store.recordNodeProviderSession(identity, result.providerSessionId);
     }

@@ -171,6 +171,7 @@ const toolNames = {
 interface ToolLogFields {
   tool: string;
   workspaceId?: string;
+  workflowId?: string;
   path?: string;
   workingDirectory?: string;
   command?: string;
@@ -1603,6 +1604,14 @@ function createMcpServer(
       config,
       workspaces,
       orchestrator: workflowOrchestrator,
+      audit: (event) => logToolCall(config, {
+        tool: event.tool,
+        workspaceId: event.workspaceId,
+        workflowId: event.workflowId,
+        success: event.success,
+        durationMs: event.durationMs,
+        error: event.errorCode,
+      }),
     });
   }
 

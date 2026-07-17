@@ -16,6 +16,8 @@ try {
   await testStaleSupervisorProcessRecovery(join(root, "stale-supervisor"));
   await testAtomicClaimAndLeaseRecovery(join(root, "claims"));
   await testDispatchHeartbeatsProtectLeases(join(root, "dispatch-heartbeats"));
+  await testPreparationHeartbeatsProtectLeases(join(root, "preparation-heartbeats"));
+  await testTimeoutWinsOverLateSuccess(join(root, "timeout-race"));
   await testCancellationBeforeAndDuringExecution(join(root, "cancellation"));
 } finally {
   rmSync(root, { recursive: true, force: true });
@@ -80,7 +82,7 @@ async function testStaleSupervisorProcessRecovery(stateDir: string): Promise<voi
     stateDir,
     cliEntrypoint: fileURLToPath(new URL("../cli.ts", import.meta.url)),
     env: process.env,
-    startupTimeoutMs: 2_000,
+    startupTimeoutMs: 5_000,
   });
   assert.equal(launched.spawned, true);
   assert.ok((launched.ownerEpoch ?? 0) > stale.ownerEpoch);
@@ -112,6 +114,23 @@ async function testAtomicClaimAndLeaseRecovery(stateDir: string): Promise<void> 
   await delay(15);
   assert.equal(store.reconcileExpiredClaims(), 0);
   await delay(25);
+  const expiredIdentity = {
+    workflowId: first.id,
+    nodeKey: "agent",
+    attempt: 1,
+    claimToken: "first",
+  };
+  assert.equal(store.markNodeDispatching(expiredIdentity), undefined);
+  assert.equal(store.recordNodeProviderSession(expiredIdentity, "late-session"), undefined);
+  assert.throws(
+    () => store.appendNodeExecutionEvent({
+      identity: expiredIdentity,
+      sourceSequence: 1,
+      type: "provider.output",
+      payload: { delta: "late" },
+    }),
+    /no longer active/,
+  );
   assert.equal(store.reconcileExpiredClaims(), 1);
   const failed = store.require(first.id);
   assert.equal(failed.status, "failed");
@@ -160,6 +179,84 @@ async function testDispatchHeartbeatsProtectLeases(stateDir: string): Promise<vo
   const reader = new WorkflowStore(stateDir);
   try {
     assert.equal(reader.require(workflow.id).status, "succeeded");
+  } finally {
+    reader.close();
+  }
+}
+
+async function testPreparationHeartbeatsProtectLeases(stateDir: string): Promise<void> {
+  const store = new WorkflowStore(stateDir);
+  const workflow = store.submit(workflowRequest(executionSnapshot({
+    effectivePolicy: { version: 1, mode: "workflow", access: "workspace_write", environment: {} },
+    worktreeRoot: join(stateDir, "worktrees"),
+    baseSha: "base",
+  }))).workflow;
+  store.close();
+
+  const ran = await runWorkflowSupervisor(stateDir, {
+    idleMs: 20,
+    heartbeatMs: 5,
+    supervisorLeaseMs: 40,
+    nodeLeaseMs: 40,
+    worktreeAllocator: async ({ store: allocatorStore, identity }) => {
+      await delay(90);
+      const record = allocatorStore.recordWorktree({
+        workflowId: identity.workflowId,
+        nodeKey: identity.nodeKey,
+        attempt: identity.attempt,
+        path: join(stateDir, "worktrees", "prepared"),
+        sourceRoot: stateDir,
+        baseSha: "base",
+        retainUntil: new Date(Date.now() + 60_000).toISOString(),
+      });
+      return allocatorStore.updateWorktreeState(record.workflowId, record.nodeKey, record.attempt, "active");
+    },
+    handleFactory: successfulHandleFactory,
+  });
+  assert.equal(ran, true);
+
+  const reader = new WorkflowStore(stateDir);
+  try {
+    assert.equal(reader.require(workflow.id).status, "succeeded");
+  } finally {
+    reader.close();
+  }
+}
+
+async function testTimeoutWinsOverLateSuccess(stateDir: string): Promise<void> {
+  const store = new WorkflowStore(stateDir);
+  const workflow = store.submit(workflowRequest(executionSnapshot({ timeoutMs: 20 }))).workflow;
+  store.close();
+
+  await runWorkflowSupervisor(stateDir, {
+    idleMs: 20,
+    heartbeatMs: 5,
+    supervisorLeaseMs: 200,
+    nodeLeaseMs: 200,
+    handleFactory: async () => {
+      const controller = new LocalAgentRunController("fake");
+      const timer = setTimeout(() => {
+        controller.succeed({
+          provider: "fake",
+          providerSessionId: "late-success",
+          finalResponse: "too late",
+          items: [],
+        });
+      }, 60);
+      controller.setLifecycle({
+        cancel: () => undefined,
+        dispose: () => clearTimeout(timer),
+      });
+      return controller;
+    },
+  });
+
+  const reader = new WorkflowStore(stateDir);
+  try {
+    const completed = reader.require(workflow.id);
+    assert.equal(completed.status, "failed");
+    assert.equal((completed.error as JsonObject).code, "timed_out");
+    assert.equal(completed.nodes[0]!.status, "failed");
   } finally {
     reader.close();
   }

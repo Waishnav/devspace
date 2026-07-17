@@ -46,6 +46,7 @@ const nodeOutputSchema = z.object({
   attempt: z.number().int(),
   completedAt: z.string().optional(),
   errorCode: z.string().optional(),
+  finalResponse: z.string().optional(),
 });
 
 const workflowOutputSchema = z.object({
@@ -57,7 +58,13 @@ const workflowOutputSchema = z.object({
   completedAt: z.string().optional(),
   cancellationRequestedAt: z.string().optional(),
   errorCode: z.string().optional(),
+  finalResponse: z.string().optional(),
   nodes: z.array(nodeOutputSchema),
+});
+
+const supervisorOutputSchema = z.object({
+  started: z.boolean(),
+  errorCode: z.string().optional(),
 });
 
 const eventOutputSchema = z.object({
@@ -72,13 +79,25 @@ const commonOutput = {
   result: z.string(),
 };
 
+export interface WorkflowToolAuditEvent {
+  tool: string;
+  workspaceId?: string;
+  workflowId?: string;
+  success: boolean;
+  durationMs: number;
+  errorCode?: string;
+}
+
 export function registerWorkflowTools(input: {
   server: McpServer;
   config: ServerConfig;
   workspaces: WorkspaceRegistry;
   orchestrator: WorkflowOrchestrator;
+  launchSupervisor?: typeof ensureSupervisor;
+  audit?: (event: WorkflowToolAuditEvent) => void;
 }): void {
   const { server, config, workspaces, orchestrator } = input;
+  const launchSupervisor = input.launchSupervisor ?? ensureSupervisor;
 
   server.registerTool(
     "workflow_run",
@@ -100,16 +119,17 @@ export function registerWorkflowTools(input: {
       outputSchema: {
         ...commonOutput,
         created: z.boolean(),
+        supervisor: supervisorOutputSchema,
         workflow: workflowOutputSchema,
       },
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
-    async (args) => {
+    async (args) => audited(input.audit, "workflow_run", args.workspaceId, undefined, async () => {
       const hasSingleFields = [
         args.target,
         args.prompt,
@@ -149,13 +169,15 @@ export function registerWorkflowTools(input: {
         worktreeRoot: config.worktreeRoot,
       });
       const submitted = orchestrator.submitDetailed(request);
-      await ensureSupervisor({ stateDir: config.stateDir });
+      const supervisor = await supervisorStartState(() => launchSupervisor({ stateDir: config.stateDir }));
       const workflow = publicWorkflow(submitted.workflow);
-      const result = submitted.created
-        ? `Workflow ${workflow.id} was submitted with status ${workflow.status}.`
-        : `Workflow ${workflow.id} already exists for this idempotency key.`;
-      return response({ version: CONTRACT_VERSION, result, created: submitted.created, workflow });
-    },
+      const result = supervisor.started
+        ? submitted.created
+          ? `Workflow ${workflow.id} was submitted with status ${workflow.status}.`
+          : `Workflow ${workflow.id} already exists for this idempotency key.`
+        : `Workflow ${workflow.id} was durably submitted, but its supervisor could not be started.`;
+      return response({ version: CONTRACT_VERSION, result, created: submitted.created, supervisor, workflow });
+    }),
   );
 
   server.registerTool(
@@ -167,11 +189,11 @@ export function registerWorkflowTools(input: {
       outputSchema: { ...commonOutput, workflow: workflowOutputSchema },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ workspaceId, workflowId }) => {
+    async ({ workspaceId, workflowId }) => audited(input.audit, "workflow_status", workspaceId, workflowId, async () => {
       const workflow = publicWorkflow(requireOwned(orchestrator, workflowId, workspaceScope(workspaces, workspaceId)));
       const result = `Workflow ${workflow.id} is ${workflow.status}.`;
       return response({ version: CONTRACT_VERSION, result, workflow });
-    },
+    }),
   );
 
   server.registerTool(
@@ -187,7 +209,7 @@ export function registerWorkflowTools(input: {
       outputSchema: { ...commonOutput, timedOut: z.boolean(), workflow: workflowOutputSchema },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ workspaceId, workflowId, timeoutMs }) => {
+    async ({ workspaceId, workflowId, timeoutMs }) => audited(input.audit, "workflow_wait", workspaceId, workflowId, async () => {
       const scope = workspaceScope(workspaces, workspaceId);
       const current = requireOwned(orchestrator, workflowId, scope);
       const waited = await orchestrator.waitForWorkspace(workflowId, scope, { timeoutMs });
@@ -197,7 +219,7 @@ export function registerWorkflowTools(input: {
         ? `Workflow ${workflow.id} is still ${workflow.status} after the bounded wait.`
         : `Workflow ${workflow.id} reached ${workflow.status}.`;
       return response({ version: CONTRACT_VERSION, result, timedOut, workflow });
-    },
+    }),
   );
 
   server.registerTool(
@@ -219,7 +241,7 @@ export function registerWorkflowTools(input: {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ workspaceId, workflowId, after, limit }) => {
+    async ({ workspaceId, workflowId, after, limit }) => audited(input.audit, "workflow_events", workspaceId, workflowId, async () => {
       const scope = workspaceScope(workspaces, workspaceId);
       const workflow = requireOwned(orchestrator, workflowId, scope);
       const page = orchestrator.eventsForWorkspace(workflowId, scope, { after, limit });
@@ -232,7 +254,7 @@ export function registerWorkflowTools(input: {
         events,
         cursor: page.nextCursor,
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -241,18 +263,20 @@ export function registerWorkflowTools(input: {
       title: "Cancel workflow",
       description: "Request durable cancellation of a workflow and its active local agents.",
       inputSchema: { workspaceId: z.string().min(1), workflowId: z.string().min(1) },
-      outputSchema: { ...commonOutput, workflow: workflowOutputSchema },
+      outputSchema: { ...commonOutput, supervisor: supervisorOutputSchema, workflow: workflowOutputSchema },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async ({ workspaceId, workflowId }) => {
+    async ({ workspaceId, workflowId }) => audited(input.audit, "workflow_cancel", workspaceId, workflowId, async () => {
       const scope = workspaceScope(workspaces, workspaceId);
       requireOwned(orchestrator, workflowId, scope);
       const cancelled = orchestrator.cancelForWorkspace(workflowId, scope);
-      await ensureSupervisor({ stateDir: config.stateDir });
+      const supervisor = await supervisorStartState(() => launchSupervisor({ stateDir: config.stateDir }));
       const workflow = publicWorkflow(cancelled);
-      const result = `Cancellation was requested for workflow ${workflow.id}; current status is ${workflow.status}.`;
-      return response({ version: CONTRACT_VERSION, result, workflow });
-    },
+      const result = supervisor.started
+        ? `Cancellation was requested for workflow ${workflow.id}; current status is ${workflow.status}.`
+        : `Cancellation was durably requested for workflow ${workflow.id}, but its supervisor could not be started.`;
+      return response({ version: CONTRACT_VERSION, result, supervisor, workflow });
+    }),
   );
 }
 
@@ -281,12 +305,14 @@ function publicWorkflow(workflow: WorkflowRunRecord) {
     completedAt: workflow.completedAt,
     cancellationRequestedAt: workflow.cancellationRequestedAt,
     errorCode: stringField(workflow.error, "code"),
+    finalResponse: stringField(workflow.result, "finalResponse"),
     nodes: workflow.nodes.map((node) => ({
       key: node.key,
       status: node.status,
       attempt: node.attempt,
       completedAt: node.completedAt,
       errorCode: stringField(node.error, "code"),
+      finalResponse: stringField(node.result, "finalResponse"),
     })),
   };
 }
@@ -301,9 +327,64 @@ function publicEvent(event: WorkflowEvent, workflow: WorkflowRunRecord) {
   };
 }
 
-function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
-  const field = value?.[key];
+function stringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const field = (value as Record<string, unknown>)[key];
   return typeof field === "string" ? field : undefined;
+}
+
+async function supervisorStartState(start: () => Promise<unknown>): Promise<{
+  started: boolean;
+  errorCode?: string;
+}> {
+  try {
+    await start();
+    return { started: true };
+  } catch {
+    return { started: false, errorCode: "supervisor_start_failed" };
+  }
+}
+
+async function audited<T>(
+  audit: ((event: WorkflowToolAuditEvent) => void) | undefined,
+  tool: string,
+  workspaceId: string | undefined,
+  workflowId: string | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    const result = await operation();
+    emitAudit(audit, {
+      tool,
+      workspaceId,
+      workflowId,
+      success: true,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return result;
+  } catch (error) {
+    emitAudit(audit, {
+      tool,
+      workspaceId,
+      workflowId,
+      success: false,
+      durationMs: Math.round(performance.now() - startedAt),
+      errorCode: error instanceof Error ? error.name : "Error",
+    });
+    throw error;
+  }
+}
+
+function emitAudit(
+  audit: ((event: WorkflowToolAuditEvent) => void) | undefined,
+  event: WorkflowToolAuditEvent,
+): void {
+  try {
+    audit?.(event);
+  } catch {
+    // Audit failures must not change workflow tool behavior.
+  }
 }
 
 function response<T extends { result: string }>(structuredContent: T) {

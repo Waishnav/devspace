@@ -70,8 +70,7 @@ export class WorkflowOrchestrator {
     options: WorkflowWaitOptions = {},
   ): Promise<WorkflowRunRecord> {
     this.store.requireForWorkspace(workflowId, scope);
-    const workflow = await this.wait(workflowId, options);
-    return this.store.requireForWorkspace(workflow.id, scope);
+    return this.wait(workflowId, options);
   }
 
   events(workflowId: string, options: WorkflowEventReadOptions = {}): WorkflowEventPage {

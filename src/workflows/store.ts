@@ -226,7 +226,7 @@ export class WorkflowStore {
           .prepare("select id, request_hash from workflow_runs where idempotency_key = ?")
           .get(normalized.idempotencyKey) as { id: string; request_hash: string } | undefined;
         if (existing) {
-          if (existing.request_hash !== normalized.requestHash) {
+          if (!normalized.compatibleRequestHashes.has(existing.request_hash)) {
             throw new WorkflowIdempotencyConflictError(normalized.idempotencyKey);
           }
           return { workflowId: existing.id, created: false };
@@ -694,7 +694,10 @@ export class WorkflowStore {
                where active.workflow_run_id = r.id and active.status = 'running'
              ) < r.max_concurrency
            order by case when r.last_dispatched_at is null then 0 else 1 end,
-                    r.last_dispatched_at, r.created_at, n.created_at, n.node_key limit 1`,
+                    r.last_dispatched_at,
+                    (select count(*) from workflow_node_attempts attempts
+                     where attempts.workflow_run_id = r.id),
+                    r.created_at, n.created_at, n.node_key limit 1`,
         )
         .get(now) as WorkflowNodeRow | undefined;
       if (!candidate) return undefined;
@@ -810,14 +813,18 @@ export class WorkflowStore {
 
   markNodeCancelling(identity: WorkflowAttemptIdentity): WorkflowNodeAttemptRecord | undefined {
     const now = new Date().toISOString();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_node_attempts set phase = 'cancelling', cancellation_requested_at = ?, updated_at = ?
-         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
-           and phase != 'terminal'`,
-      )
-      .run(now, now, identity.workflowId, identity.nodeKey, identity.attempt, identity.claimToken);
-    return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    const update = this.database.sqlite.transaction(() => {
+      const attempt = this.getActiveAttempt(identity, now);
+      if (!attempt) return undefined;
+      const result = this.database.sqlite
+        .prepare(
+          `update workflow_node_attempts set phase = 'cancelling', cancellation_requested_at = ?, updated_at = ?
+           where node_id = ? and attempt = ? and claim_token = ? and phase != 'terminal'`,
+        )
+        .run(now, now, attempt.nodeId, attempt.attempt, identity.claimToken);
+      return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    });
+    return update.immediate();
   }
 
   recordNodeProviderSession(
@@ -825,21 +832,18 @@ export class WorkflowStore {
     providerSessionId: string,
   ): WorkflowNodeAttemptRecord | undefined {
     const now = new Date().toISOString();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_node_attempts set provider_session_id = ?, updated_at = ?
-         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
-           and phase != 'terminal'`,
-      )
-      .run(
-        providerSessionId,
-        now,
-        identity.workflowId,
-        identity.nodeKey,
-        identity.attempt,
-        identity.claimToken,
-      );
-    return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    const update = this.database.sqlite.transaction(() => {
+      const attempt = this.getActiveAttempt(identity, now);
+      if (!attempt) return undefined;
+      const result = this.database.sqlite
+        .prepare(
+          `update workflow_node_attempts set provider_session_id = ?, updated_at = ?
+           where node_id = ? and attempt = ? and claim_token = ? and phase != 'terminal'`,
+        )
+        .run(providerSessionId, now, attempt.nodeId, attempt.attempt, identity.claimToken);
+      return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    });
+    return update.immediate();
   }
 
   appendNodeExecutionEvent(input: {
@@ -850,8 +854,8 @@ export class WorkflowStore {
   }): { event: WorkflowEvent; created: boolean } {
     const now = new Date().toISOString();
     const append = this.database.sqlite.transaction(() => {
-      const attempt = this.getAttempt(input.identity);
-      if (!attempt || attempt.phase === "terminal") return undefined;
+      const attempt = this.getActiveAttempt(input.identity, now);
+      if (!attempt) return undefined;
       const existing = this.database.sqlite
         .prepare(
           `select workflow_sequence from workflow_provider_events
@@ -1174,6 +1178,18 @@ export class WorkflowStore {
     return row ? rowToWorktree(row) : undefined;
   }
 
+  listExpiredWorktrees(now = new Date().toISOString()): WorkflowWorktreeRecord[] {
+    const rows = this.database.sqlite
+      .prepare(
+        `select * from workflow_worktrees
+         where state in ('preserved', 'cleanup_failed')
+           and retain_until is not null and retain_until <= ?
+         order by retain_until, created_at`,
+      )
+      .all(now) as WorkflowWorktreeRow[];
+    return rows.map(rowToWorktree);
+  }
+
   updateWorktreeState(
     workflowId: string,
     nodeKey: string,
@@ -1230,26 +1246,54 @@ export class WorkflowStore {
     return row ? rowToAttempt(row) : undefined;
   }
 
+  private getActiveAttempt(
+    identity: WorkflowAttemptIdentity,
+    now: string,
+  ): WorkflowNodeAttemptRecord | undefined {
+    const row = this.database.sqlite
+      .prepare(
+        `select attempts.* from workflow_node_attempts attempts
+         join workflow_nodes nodes on nodes.id = attempts.node_id
+         join workflow_supervisor supervisor on supervisor.id = 1
+         where attempts.workflow_run_id = ? and attempts.node_key = ?
+           and attempts.attempt = ? and attempts.claim_token = ?
+           and attempts.phase != 'terminal'
+           and nodes.status = 'running' and nodes.attempt = attempts.attempt
+           and nodes.claim_token = attempts.claim_token and nodes.claim_expires_at > ?
+           and nodes.supervisor_owner_token = attempts.supervisor_owner_token
+           and nodes.supervisor_owner_epoch = attempts.supervisor_owner_epoch
+           and supervisor.owner_token = attempts.supervisor_owner_token
+           and supervisor.owner_epoch = attempts.supervisor_owner_epoch
+           and supervisor.lease_expires_at > ?`,
+      )
+      .get(
+        identity.workflowId,
+        identity.nodeKey,
+        identity.attempt,
+        identity.claimToken,
+        now,
+        now,
+      ) as WorkflowAttemptRow | undefined;
+    return row ? rowToAttempt(row) : undefined;
+  }
+
   private updateAttemptPhase(
     identity: WorkflowAttemptIdentity,
     phase: "dispatching" | "running",
   ): WorkflowNodeAttemptRecord | undefined {
     const now = new Date().toISOString();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_node_attempts set phase = ?, updated_at = ?
-         where workflow_run_id = ? and node_key = ? and attempt = ? and claim_token = ?
-           and phase != 'terminal'`,
-      )
-      .run(
-        phase,
-        now,
-        identity.workflowId,
-        identity.nodeKey,
-        identity.attempt,
-        identity.claimToken,
-      );
-    return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    const update = this.database.sqlite.transaction(() => {
+      const attempt = this.getActiveAttempt(identity, now);
+      if (!attempt) return undefined;
+      const result = this.database.sqlite
+        .prepare(
+          `update workflow_node_attempts set phase = ?, updated_at = ?
+           where node_id = ? and attempt = ? and claim_token = ? and phase != 'terminal'`,
+        )
+        .run(phase, now, attempt.nodeId, attempt.attempt, identity.claimToken);
+      return result.changes === 1 ? this.getAttempt(identity) : undefined;
+    });
+    return update.immediate();
   }
 
   private hydrateWorkflow(row: WorkflowRunRow): WorkflowRunRecord {
@@ -1434,6 +1478,7 @@ function normalizeSubmission(request: SubmitWorkflowRequest): {
   workspace?: WorkflowWorkspaceScope;
   maxConcurrency: number;
   requestHash: string;
+  compatibleRequestHashes: ReadonlySet<string>;
 } {
   const definition = normalizeDefinition(request.definition);
   const input = normalizeObject(request.input ?? {}, "Workflow input");
@@ -1452,9 +1497,10 @@ function normalizeSubmission(request: SubmitWorkflowRequest): {
       }
     : undefined;
   const maxConcurrency = readBoundedInteger(policy.maxConcurrency, 1, MAX_RUN_CONCURRENCY, "Workflow maxConcurrency");
-  const requestHash = createHash("sha256")
-    .update(canonicalJson({ definition, input, policy, workspace: workspace ?? null }))
-    .digest("hex");
+  const requestHash = hashWorkflowRequest({ definition, input, policy, workspace: workspace ?? null });
+  const compatibleRequestHashes = new Set([requestHash]);
+  const legacyRequest = legacySingleAgentRequest(definition, input, policy, workspace);
+  if (legacyRequest) compatibleRequestHashes.add(hashWorkflowRequest(legacyRequest));
   return {
     definition,
     definitionJson,
@@ -1464,6 +1510,52 @@ function normalizeSubmission(request: SubmitWorkflowRequest): {
     workspace,
     maxConcurrency,
     requestHash,
+    compatibleRequestHashes,
+  };
+}
+
+function hashWorkflowRequest(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function legacySingleAgentRequest(
+  definition: WorkflowDefinition,
+  input: JsonObject,
+  policy: WorkflowPolicy,
+  workspace: WorkflowWorkspaceScope | undefined,
+): JsonObject | undefined {
+  if (
+    input.kind !== "single" ||
+    definition.nodes.length !== 1 ||
+    (definition.edges?.length ?? 0) !== 0 ||
+    policy.maxConcurrency !== 1 ||
+    typeof policy.access !== "string"
+  ) return undefined;
+  const node = definition.nodes[0]!;
+  const config = { ...(node.config ?? {}) } as JsonObject;
+  const prompt = config.prompt;
+  const retry = config.retry;
+  if (
+    typeof prompt !== "string" ||
+    !isObject(retry) ||
+    retry.maxAttempts !== 1 ||
+    !Array.isArray(retry.retryOn) ||
+    retry.retryOn.length !== 0 ||
+    retry.backoffMs !== 0
+  ) return undefined;
+  delete config.worktreeRoot;
+  delete config.baseSha;
+  delete config.retry;
+  const legacyDefinition: WorkflowDefinition = {
+    version: WORKFLOW_DEFINITION_VERSION,
+    nodes: [{ key: node.key, type: "agent", config }],
+    edges: [],
+  };
+  return {
+    definition: legacyDefinition as unknown as JsonObject,
+    input: { prompt },
+    policy: { version: WORKFLOW_POLICY_VERSION, access: policy.access },
+    workspace: workspace ? { ...workspace } : null,
   };
 }
 

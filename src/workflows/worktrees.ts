@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { WorkflowStore, WorkflowValidationError } from "./store.js";
 import type { WorkflowAttemptIdentity, WorkflowWorktreeRecord } from "./types.js";
@@ -82,6 +82,33 @@ export function preserveWorkflowWorktree(
   return store.updateWorktreeState(identity.workflowId, identity.nodeKey, identity.attempt, "preserved");
 }
 
+export async function cleanupExpiredWorkflowWorktrees(input: {
+  store: WorkflowStore;
+  now?: string;
+  beforeCleanup?: () => boolean;
+}): Promise<number> {
+  let removed = 0;
+  for (const record of input.store.listExpiredWorktrees(input.now)) {
+    if (input.beforeCleanup && !input.beforeCleanup()) break;
+    try {
+      await cleanupWorkflowWorktree({
+        store: input.store,
+        identity: {
+          workflowId: record.workflowId,
+          nodeKey: record.nodeKey,
+          attempt: record.attempt,
+          claimToken: "retention-cleanup",
+        },
+        worktreeRoot: dirname(record.path),
+      });
+      removed += 1;
+    } catch {
+      // cleanupWorkflowWorktree persists the failure for a later retry.
+    }
+  }
+  return removed;
+}
+
 export async function cleanupWorkflowWorktree(input: {
   store: WorkflowStore;
   identity: WorkflowAttemptIdentity;
@@ -95,15 +122,20 @@ export async function cleanupWorkflowWorktree(input: {
   if (!record || record.state === "removed") return record;
 
   try {
+    const expectedName = `${safeSegment(basename(record.sourceRoot))}-${safeSegment(record.workflowId)}-${safeSegment(record.nodeKey)}-a${record.attempt}`;
+    if (basename(record.path) !== expectedName) {
+      throw new WorkflowValidationError("Workflow worktree path does not match persisted ownership");
+    }
     const worktreeRoot = await canonicalDirectory(input.worktreeRoot, "workflow worktree root");
     assertContained(record.path, worktreeRoot);
     const canonicalWorktreePath = await canonicalDirectory(record.path, "workflow worktree path");
     assertContained(canonicalWorktreePath, worktreeRoot);
     const registered = await registeredWorktrees(record.sourceRoot);
     const match = registered.find((entry) => resolve(entry.path) === resolve(record.path));
-    if (!match || match.head !== record.baseSha) {
+    if (!match) {
       throw new WorkflowValidationError("Workflow worktree Git registration does not match persisted ownership");
     }
+    await git(["merge-base", "--is-ancestor", record.baseSha, match.head], record.sourceRoot);
     await git(["worktree", "remove", "--force", record.path], record.sourceRoot);
     return input.store.updateWorktreeState(
       record.workflowId,

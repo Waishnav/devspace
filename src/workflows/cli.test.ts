@@ -56,7 +56,7 @@ try {
   ], baseEnv);
   assert.equal(timed.status, 0, timed.stderr);
   const timedEnvelope = JSON.parse(timed.stdout) as Envelope;
-  assert.equal(timedEnvelope.timedOut, true);
+  assert.equal(timedEnvelope.timedOut, true, JSON.stringify(timedEnvelope));
 
   const waited = runCli([
     "workflows", "wait", workflowId, "--timeout-ms", "10000", "--after", "0", "--json",

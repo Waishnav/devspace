@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { shutdownHttpServer } from "./server-shutdown.js";
+import { WorkflowOrchestrator } from "./workflows/orchestrator.js";
 
 let finishHttpClose: (() => void) | undefined;
 let applicationCloseStarted = false;
@@ -95,3 +99,23 @@ await assert.rejects(
   ),
   httpCloseError,
 );
+
+const workflowState = mkdtempSync(join(tmpdir(), "devspace-shutdown-workflow-"));
+try {
+  const orchestrator = new WorkflowOrchestrator(workflowState);
+  const workflow = orchestrator.submit({
+    definition: { version: 1, nodes: [{ key: "agent", type: "agent" }], edges: [] },
+    workspace: { workspaceId: "workspace", workspaceRoot: "/tmp/workspace" },
+  });
+  const waiting = orchestrator.waitForWorkspace(
+    workflow.id,
+    { workspaceId: "workspace", workspaceRoot: "/tmp/workspace" },
+    { timeoutMs: 5_000, pollIntervalMs: 1_000 },
+  );
+  orchestrator.close();
+  const closedSnapshot = await waiting;
+  assert.equal(closedSnapshot.id, workflow.id);
+  assert.equal(closedSnapshot.status, "queued");
+} finally {
+  rmSync(workflowState, { recursive: true, force: true });
+}

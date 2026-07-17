@@ -12,7 +12,7 @@ import {
   WorkflowTransitionError,
   WorkflowValidationError,
 } from "./store.js";
-import type { SubmitWorkflowRequest, WorkflowDefinitionV1 } from "./types.js";
+import type { JsonObject, SubmitWorkflowRequest, WorkflowDefinitionV1 } from "./types.js";
 
 interface WorkerSpec {
   action: "append" | "claim" | "submit";
@@ -37,6 +37,7 @@ async function runTests(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "devspace-workflows-test-"));
   try {
     testSubmissionAndIdempotency(join(root, "submission"));
+    testLegacySingleAgentIdempotencyCompatibility(join(root, "legacy-idempotency"));
     await testConcurrentSubmission(join(root, "concurrent-submission"));
     testMonotonicCursorReads(join(root, "events"));
     await testConcurrentEventSequencing(join(root, "concurrent-events"));
@@ -97,6 +98,49 @@ function testSubmissionAndIdempotency(stateDir: string): void {
         }),
       WorkflowIdempotencyConflictError,
     );
+  } finally {
+    store.close();
+  }
+}
+
+function testLegacySingleAgentIdempotencyCompatibility(stateDir: string): void {
+  const store = new WorkflowStore(stateDir);
+  try {
+    const workspace = { workspaceId: "workspace", workspaceRoot: "/tmp/workspace" };
+    const legacyConfig: JsonObject = {
+      profileBody: "",
+      profileName: "fake",
+      profileHash: "hash",
+      provider: "fake",
+      model: null,
+      thinking: null,
+      effectivePolicy: { version: 1, mode: "workflow", access: "read_only", environment: {} },
+      workspaceRoot: workspace.workspaceRoot,
+      prompt: "same prompt",
+      timeoutMs: null,
+      environmentPolicy: {},
+    };
+    const legacy = store.submit({
+      definition: singleAgentDefinition(legacyConfig),
+      input: { prompt: "same prompt" },
+      policy: { version: 1, access: "read_only" },
+      idempotencyKey: "legacy-key",
+      workspace,
+    });
+    const replay = store.submit({
+      definition: singleAgentDefinition({
+        ...legacyConfig,
+        worktreeRoot: "/tmp/worktrees",
+        baseSha: null,
+        retry: { maxAttempts: 1, retryOn: [], backoffMs: 0 },
+      }),
+      input: { kind: "single" },
+      policy: { version: 1, access: "read_only", maxConcurrency: 1 },
+      idempotencyKey: "legacy-key",
+      workspace,
+    });
+    assert.equal(replay.created, false);
+    assert.equal(replay.workflow.id, legacy.workflow.id);
   } finally {
     store.close();
   }
@@ -655,7 +699,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function singleAgentDefinition(config: Record<string, string | boolean> = {}): WorkflowDefinitionV1 {
+function singleAgentDefinition(config: JsonObject = {}): WorkflowDefinitionV1 {
   return { version: 1, nodes: [{ key: "agent", type: "agent", config }], edges: [] };
 }
 
