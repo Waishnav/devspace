@@ -18,6 +18,15 @@ import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
 import { applyPatch } from "./apply-patch.js";
+import {
+  evaluateClientAccess,
+  extractDeclaredClient,
+  extractJsonRpcId,
+  type ClientAccessConfig,
+  type ClientAccessDecision,
+  type DeclaredClient,
+  type JsonRpcId,
+} from "./client-access.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
 import {
   logEvent,
@@ -282,12 +291,35 @@ function sendJsonRpcError(
   status: number,
   code: number,
   message: string,
+  id: JsonRpcId = null,
 ): void {
   res.status(status).json({
     jsonrpc: "2.0",
     error: { code, message },
-    id: null,
+    id,
   });
+}
+
+export function handleClientAccessInitialize(
+  res: Response,
+  body: unknown,
+  config: ClientAccessConfig,
+): {
+  declaredClient: DeclaredClient | undefined;
+  clientAccess: ClientAccessDecision;
+} {
+  const declaredClient = extractDeclaredClient(body);
+  const clientAccess = evaluateClientAccess(config, declaredClient);
+  if (!clientAccess.allowed) {
+    sendJsonRpcError(
+      res,
+      403,
+      -32003,
+      "MCP client not allowed",
+      extractJsonRpcId(body),
+    );
+  }
+  return { declaredClient, clientAccess };
 }
 
 function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
@@ -1735,6 +1767,38 @@ export function createServer(config = loadConfig()): RunningServer {
       return;
     }
 
+    if (initializeRequest) {
+      const { declaredClient, clientAccess } = handleClientAccessInitialize(
+        res,
+        req.body,
+        config.clientAccess,
+      );
+      const clientFields = {
+        requestId,
+        clientName: declaredClient?.name,
+        clientTitle: declaredClient?.title,
+        clientVersion: declaredClient?.version,
+        clientIdentities: declaredClient?.identities ?? [],
+        oauthClientIdPrefix: req.auth.clientId?.slice(0, 8),
+        accessMode: config.clientAccess.mode,
+        accessReason: clientAccess.reason,
+        matchedClient: clientAccess.matchedClient,
+        ...requestLogFields(req, config),
+      };
+
+      logEvent(
+        config.logging,
+        clientAccess.reason === "allowed" || clientAccess.reason === "disabled" ? "info" : "warn",
+        "mcp_client_observed",
+        clientFields,
+      );
+
+      if (!clientAccess.allowed) {
+        logEvent(config.logging, "warn", "mcp_client_denied", clientFields);
+        return;
+      }
+    }
+
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
@@ -1839,6 +1903,12 @@ if (await isMainModule()) {
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    console.log(
+      `client access: ${config.clientAccess.mode}` +
+        (config.clientAccess.deniedClients.length > 0
+          ? ` deny=${config.clientAccess.deniedClients.join(",")}`
+          : ""),
+    );
     if (config.subagents) {
       console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
     }
