@@ -19,6 +19,10 @@ export interface DevspaceUserConfig {
   worktreeRoot?: string;
   agentDir?: string;
   subagents?: boolean;
+  clientAccess?: {
+    mode?: "off" | "enforce";
+    deniedClients?: string[];
+  };
 }
 
 export interface DevspaceAuthConfig {
