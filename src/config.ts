@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
+import type { ClientAccessConfig, ClientAccessMode } from "./client-access.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
@@ -31,6 +32,7 @@ export interface ServerConfig {
   subagents: boolean;
   agentDir: string;
   logging: LoggingConfig;
+  clientAccess: ClientAccessConfig;
 }
 
 function parsePort(value: string | number | undefined): number {
@@ -125,6 +127,31 @@ function parseStringList(value: string | undefined, fallback: string[]): string[
     .filter(Boolean);
 
   return entries && entries.length > 0 ? entries : fallback;
+}
+
+function parseClientAccessMode(value: string | undefined): ClientAccessMode {
+  if (value === undefined || value === "off") return "off";
+  if (value === "enforce") return value;
+  throw new Error(`Invalid DEVSPACE_CLIENT_ACCESS_MODE: ${value}`);
+}
+
+function parseClientAccessConfig(
+  env: NodeJS.ProcessEnv,
+  fileConfig:
+    | {
+        mode?: ClientAccessMode;
+        deniedClients?: string[];
+      }
+    | undefined,
+): ClientAccessConfig {
+  const mode = parseClientAccessMode(env.DEVSPACE_CLIENT_ACCESS_MODE ?? fileConfig?.mode);
+  return {
+    mode,
+    deniedClients:
+      env.DEVSPACE_DENIED_CLIENTS !== undefined
+        ? parseStringList(env.DEVSPACE_DENIED_CLIENTS, [])
+        : [...(fileConfig?.deniedClients ?? [])],
+  };
 }
 
 function parsePositiveInteger(
@@ -253,6 +280,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
         : parseBoolean(env.DEVSPACE_SUBAGENTS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
+    clientAccess: parseClientAccessConfig(env, files.config.clientAccess),
   };
 }
 
