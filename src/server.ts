@@ -251,6 +251,7 @@ function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
 
 function boundedTextOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return resultOutputSchema({
+    outputReceipt: z.string(),
     outputCharacters: z.number().int().nonnegative(),
     outputLines: z.number().int().nonnegative(),
     inlineOutputCharacters: z.number().int().nonnegative(),
@@ -404,7 +405,8 @@ function boundResponseContent<T extends { content: ToolContent[] }>(
 
 function boundedStructuredContent(preview: OutputPreview, status?: string) {
   return {
-    result: outputReceiptText(preview, status),
+    result: preview.text,
+    outputReceipt: outputReceiptText(preview, status),
     ...outputMetadata(preview),
   };
 }
