@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
+import { DEFAULT_INLINE_OUTPUT_CHARACTERS } from "./tool-output.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
 
 export type ToolMode = "minimal" | "full" | "codex";
@@ -19,6 +20,7 @@ export interface ServerConfig {
   publicBaseUrl: string;
   toolMode: ToolMode;
   widgets: WidgetMode;
+  inlineOutputCharacters: number;
   stateDir: string;
   worktreeRoot: string;
   skillsEnabled: boolean;
@@ -124,8 +126,8 @@ function parseStringList(value: string | undefined, fallback: string[]): string[
   return entries && entries.length > 0 ? entries : fallback;
 }
 
-function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
-  if (!value) return fallback;
+function parsePositiveInteger(value: string | number | undefined, fallback: number, name: string): number {
+  if (value === undefined || value === "") return fallback;
 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -224,6 +226,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     publicBaseUrl,
     toolMode: parseToolMode(env),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
+    inlineOutputCharacters: parsePositiveInteger(
+      env.DEVSPACE_INLINE_OUTPUT_CHARACTERS ?? files.config.inlineOutputCharacters,
+      DEFAULT_INLINE_OUTPUT_CHARACTERS,
+      "DEVSPACE_INLINE_OUTPUT_CHARACTERS",
+    ),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
