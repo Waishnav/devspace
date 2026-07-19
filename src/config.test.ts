@@ -16,6 +16,11 @@ assert.equal(loadConfig(baseEnv).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
+assert.equal(loadConfig(baseEnv).inlineOutputCharacters, 12_000);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_INLINE_OUTPUT_CHARACTERS: "4096" }).inlineOutputCharacters,
+  4096,
+);
 assert.equal(loadConfig(baseEnv).toolMode, "minimal");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).toolMode, "minimal");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "full");
@@ -59,6 +64,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_INLINE_OUTPUT_CHARACTERS: "0" }),
+  /Invalid DEVSPACE_INLINE_OUTPUT_CHARACTERS: 0/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
@@ -162,6 +171,7 @@ writeFileSync(
     port: 8787,
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
+    inlineOutputCharacters: 8192,
     subagents: true,
   }),
 );
@@ -176,6 +186,7 @@ const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
 assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
+assert.equal(fileConfig.inlineOutputCharacters, 8192);
 assert.equal(fileConfig.subagents, true);
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",

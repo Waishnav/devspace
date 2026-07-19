@@ -161,6 +161,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
+      inlineOutputCharacters: files.config.inlineOutputCharacters,
       subagents: resolveSubagentsFlag(files.config),
     };
     const auth = {
@@ -219,6 +220,7 @@ async function serve(): Promise<void> {
     console.log(`public base url: ${config.publicBaseUrl}`);
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`inline output characters: ${config.inlineOutputCharacters}`);
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
@@ -264,6 +266,7 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`Inline output characters: ${config.inlineOutputCharacters}`);
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }

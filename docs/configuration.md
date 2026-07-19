@@ -38,6 +38,7 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+| `DEVSPACE_INLINE_OUTPUT_CHARACTERS` | Maximum characters returned inline for text-heavy tool output. Defaults to `12000`; larger results use a bounded head/tail preview. |
 
 ## OAuth
 
@@ -76,6 +77,31 @@ Codex-mode commands run without a PTY by default. Set `tty: true` on
 `exec_command` for interactive terminal programs. PTY support uses the optional
 `node-pty` dependency; `write_stdin` can send input, poll output, and resize PTY
 sessions.
+
+## Inline Output Limits
+
+Text-heavy tools such as `read`, `grep`, `glob`, `ls`, `bash`, `exec_command`, and
+`write_stdin` return one bounded model-readable preview instead of copying the complete
+output into every MCP response channel.
+
+Configure the ceiling through the environment:
+
+```bash
+DEVSPACE_INLINE_OUTPUT_CHARACTERS=12000 npx @waishnav/devspace serve
+```
+
+or persist it in `~/.devspace/config.json`:
+
+```json
+{
+  "inlineOutputCharacters": 12000
+}
+```
+
+The result metadata reports the original character and line counts, the inline preview
+size, and whether characters were omitted. Narrow the command or request a smaller file
+range when more detail is needed. When widgets are set to `changes` or `off`, text-heavy
+tools also omit their card payload instead of sending an unused second preview to the UI.
 
 ## Widgets
 

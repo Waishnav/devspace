@@ -44,6 +44,12 @@ import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
+import {
+  createOutputPreview,
+  outputMetadata,
+  outputReceiptText,
+  type OutputPreview,
+} from "./tool-output.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
@@ -155,6 +161,17 @@ function toolWidgetDescriptorMeta(
   };
 }
 
+function toolResultMeta(
+  config: ServerConfig,
+  kind: ToolWidgetKind,
+  tool: string,
+  card: Record<string, unknown>,
+): Record<string, unknown> {
+  return shouldAttachWidget(config.widgets, kind)
+    ? { tool, card }
+    : { tool };
+}
+
 const toolNames = {
   openWorkspace: "open_workspace",
   read: "read",
@@ -230,6 +247,18 @@ function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
       ),
     ...extra,
   };
+}
+
+function boundedTextOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
+  return resultOutputSchema({
+    outputReceipt: z.string(),
+    outputCharacters: z.number().int().nonnegative(),
+    outputLines: z.number().int().nonnegative(),
+    inlineOutputCharacters: z.number().int().nonnegative(),
+    inlineOutputTruncated: z.boolean(),
+    omittedOutputCharacters: z.number().int().nonnegative(),
+    ...extra,
+  });
 }
 
 const workspaceSkillOutputSchema = z.object({
@@ -342,6 +371,44 @@ function logFailedToolResponse(
 
 function textBlock(text: string): ToolContent {
   return { type: "text", text };
+}
+
+function boundedToolContent(
+  content: ToolContent[],
+  maxCharacters: number,
+): { content: ToolContent[]; preview: OutputPreview } {
+  const preview = createOutputPreview(contentText(content), maxCharacters);
+  const nonTextContent = content.filter((item) => item.type !== "text");
+  return {
+    content: [textBlock(preview.text), ...nonTextContent],
+    preview,
+  };
+}
+
+function boundedSummary(preview: OutputPreview): Record<string, unknown> {
+  return {
+    lines: preview.originalLines,
+    characters: preview.originalCharacters,
+    inlineCharacters: preview.inlineCharacters,
+    inlineTruncated: preview.truncated,
+    omittedCharacters: preview.omittedCharacters,
+  };
+}
+
+function boundResponseContent<T extends { content: ToolContent[] }>(
+  response: T,
+  maxCharacters: number,
+): T {
+  const bounded = boundedToolContent(response.content, maxCharacters);
+  return { ...response, content: bounded.content };
+}
+
+function boundedStructuredContent(preview: OutputPreview, status?: string) {
+  return {
+    result: preview.text,
+    outputReceipt: outputReceiptText(preview, status),
+    ...outputMetadata(preview),
+  };
 }
 
 function textSummary(content: ToolContent[]): {
@@ -487,17 +554,21 @@ async function assertWorkspaceAppAssets(): Promise<void> {
   }
 }
 
-function processResult(snapshot: ProcessSnapshot): string {
-  const status = snapshot.running
+function processStatus(snapshot: ProcessSnapshot): string {
+  return snapshot.running
     ? `Process running with session ID ${snapshot.sessionId}.`
     : snapshot.signal
       ? `Process exited after signal ${snapshot.signal}.`
       : `Process exited with code ${snapshot.exitCode ?? "unknown"}.`;
+}
+
+function processResult(snapshot: ProcessSnapshot): string {
+  const status = processStatus(snapshot);
   return snapshot.output ? `${snapshot.output.replace(/\n$/, "")}\n${status}` : status;
 }
 
 function processOutputSchema(): z.ZodRawShape {
-  return resultOutputSchema({
+  return boundedTextOutputSchema({
     sessionId: z.number().optional(),
     running: z.boolean(),
     exitCode: z.number().int().optional(),
@@ -508,26 +579,25 @@ function processOutputSchema(): z.ZodRawShape {
 }
 
 function processToolResponse(
+  config: ServerConfig,
   tool: "exec_command" | "write_stdin",
   workspaceId: string,
   snapshot: ProcessSnapshot,
   summary: Record<string, unknown>,
 ) {
-  const result = processResult(snapshot);
-  const content = [textBlock(result)];
-  const outputSummary = textSummary(snapshot.output ? [textBlock(snapshot.output)] : []);
+  const bounded = boundedToolContent(
+    [textBlock(processResult(snapshot))],
+    config.inlineOutputCharacters,
+  );
   return {
-    content,
-    _meta: {
-      tool,
-      card: {
-        workspaceId,
-        summary: { ...summary, ...outputSummary },
-        payload: { content },
-      },
-    },
+    content: bounded.content,
+    _meta: toolResultMeta(config, "shell", tool, {
+      workspaceId,
+      summary: { ...summary, ...boundedSummary(bounded.preview) },
+      payload: { content: bounded.content },
+    }),
     structuredContent: {
-      result,
+      ...boundedStructuredContent(bounded.preview, processStatus(snapshot)),
       sessionId: snapshot.sessionId,
       running: snapshot.running,
       exitCode: snapshot.exitCode,
@@ -609,7 +679,7 @@ function registerCodexProcessTools(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return processToolResponse("exec_command", workspaceId, snapshot, {
+      return processToolResponse(config, "exec_command", workspaceId, snapshot, {
         command: cmd,
         workingDirectory: workingDirectory ?? ".",
         running: snapshot.running,
@@ -671,7 +741,7 @@ function registerCodexProcessTools(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return processToolResponse("write_stdin", workspaceId, snapshot, {
+      return processToolResponse(config, "write_stdin", workspaceId, snapshot, {
         sessionId,
         charactersWritten: chars?.length ?? 0,
         running: snapshot.running,
@@ -932,7 +1002,7 @@ function createMcpServer(
           .optional()
           .describe("Maximum number of lines to read."),
       },
-      outputSchema: resultOutputSchema(),
+      outputSchema: boundedTextOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "read"),
       annotations: { readOnlyHint: true },
     },
@@ -955,12 +1025,16 @@ function createMcpServer(
           workspaceId,
           path: input.path,
         }, response.content, startedAt);
-        return response;
+        return boundResponseContent(response, config.inlineOutputCharacters);
       }
       workspaces.markReadPathLoaded(workspace, readPath);
 
+      const bounded = boundedToolContent(
+        response.content,
+        config.inlineOutputCharacters,
+      );
       const summary = {
-        ...textSummary(response.content),
+        ...boundedSummary(bounded.preview),
         offset: input.offset ?? 1,
         limited: input.limit !== undefined,
       };
@@ -974,18 +1048,14 @@ function createMcpServer(
 
       return {
         ...response,
-        _meta: {
-          tool: toolNames.read,
-          card: {
-            workspaceId,
-            path: input.path,
-            summary,
-            payload: { content: response.content },
-          },
-        },
-        structuredContent: {
-          result: contentText(response.content),
-        },
+        content: bounded.content,
+        _meta: toolResultMeta(config, "read", toolNames.read, {
+          workspaceId,
+          path: input.path,
+          summary,
+          payload: { content: bounded.content },
+        }),
+        structuredContent: boundedStructuredContent(bounded.preview),
       };
     },
   );
@@ -1308,7 +1378,7 @@ function createMcpServer(
             ),
           include: z.string().optional().describe("Optional include glob."),
         },
-        outputSchema: resultOutputSchema(),
+        outputSchema: boundedTextOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "search"),
         annotations: { readOnlyHint: true },
       },
@@ -1327,13 +1397,17 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return boundResponseContent(response, config.inlineOutputCharacters);
         }
 
+        const bounded = boundedToolContent(
+          response.content,
+          config.inlineOutputCharacters,
+        );
         const summary = {
           pattern: input.pattern,
           scope: input.path ?? ".",
-          ...textSummary(response.content),
+          ...boundedSummary(bounded.preview),
         };
         logToolCall(config, {
           tool: toolNames.grep,
@@ -1345,18 +1419,14 @@ function createMcpServer(
 
         return {
           ...response,
-          _meta: {
-            tool: toolNames.grep,
-            card: {
-              workspaceId,
-              path: input.path,
-              summary,
-              payload: { content: response.content },
-            },
-          },
-          structuredContent: {
-            result: contentText(response.content),
-          },
+          content: bounded.content,
+          _meta: toolResultMeta(config, "search", toolNames.grep, {
+            workspaceId,
+            path: input.path,
+            summary,
+            payload: { content: bounded.content },
+          }),
+          structuredContent: boundedStructuredContent(bounded.preview),
         };
       },
     );
@@ -1378,7 +1448,7 @@ function createMcpServer(
             .optional()
             .describe("Optional path scope relative to the workspace root."),
         },
-        outputSchema: resultOutputSchema(),
+        outputSchema: boundedTextOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "search"),
         annotations: { readOnlyHint: true },
       },
@@ -1397,13 +1467,17 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return boundResponseContent(response, config.inlineOutputCharacters);
         }
 
+        const bounded = boundedToolContent(
+          response.content,
+          config.inlineOutputCharacters,
+        );
         const summary = {
           pattern: input.pattern,
           scope: input.path ?? ".",
-          ...textSummary(response.content),
+          ...boundedSummary(bounded.preview),
         };
         logToolCall(config, {
           tool: toolNames.glob,
@@ -1415,18 +1489,14 @@ function createMcpServer(
 
         return {
           ...response,
-          _meta: {
-            tool: toolNames.glob,
-            card: {
-              workspaceId,
-              path: input.path,
-              summary,
-              payload: { content: response.content },
-            },
-          },
-          structuredContent: {
-            result: contentText(response.content),
-          },
+          content: bounded.content,
+          _meta: toolResultMeta(config, "search", toolNames.glob, {
+            workspaceId,
+            path: input.path,
+            summary,
+            payload: { content: bounded.content },
+          }),
+          structuredContent: boundedStructuredContent(bounded.preview),
         };
       },
     );
@@ -1448,7 +1518,7 @@ function createMcpServer(
               "Directory path to list, relative to the workspace root.",
             ),
         },
-        outputSchema: resultOutputSchema(),
+        outputSchema: boundedTextOutputSchema(),
         ...toolWidgetDescriptorMeta(config, "directory"),
         annotations: { readOnlyHint: true },
       },
@@ -1467,10 +1537,14 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return boundResponseContent(response, config.inlineOutputCharacters);
         }
 
-        const summary = textSummary(response.content);
+        const bounded = boundedToolContent(
+          response.content,
+          config.inlineOutputCharacters,
+        );
+        const summary = boundedSummary(bounded.preview);
         logToolCall(config, {
           tool: toolNames.ls,
           workspaceId,
@@ -1481,18 +1555,14 @@ function createMcpServer(
 
         return {
           ...response,
-          _meta: {
-            tool: toolNames.ls,
-            card: {
-              workspaceId,
-              path: input.path,
-              summary,
-              payload: { content: response.content },
-            },
-          },
-          structuredContent: {
-            result: contentText(response.content),
-          },
+          content: bounded.content,
+          _meta: toolResultMeta(config, "directory", toolNames.ls, {
+            workspaceId,
+            path: input.path,
+            summary,
+            payload: { content: bounded.content },
+          }),
+          structuredContent: boundedStructuredContent(bounded.preview),
         };
       },
     );
@@ -1529,7 +1599,7 @@ function createMcpServer(
           .optional()
           .describe("Timeout in seconds. Defaults to 30, max 300."),
       },
-      outputSchema: resultOutputSchema(),
+      outputSchema: boundedTextOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
@@ -1553,13 +1623,17 @@ function createMcpServer(
           command: input.command,
           commandLength: input.command.length,
         }, response.content, startedAt);
-        return response;
+        return boundResponseContent(response, config.inlineOutputCharacters);
       }
 
+      const bounded = boundedToolContent(
+        response.content,
+        config.inlineOutputCharacters,
+      );
       const summary = {
         command: input.command,
         workingDirectory: workingDirectory ?? ".",
-        ...textSummary(response.content),
+        ...boundedSummary(bounded.preview),
       };
       logToolCall(config, {
         tool: toolNames.shell,
@@ -1573,18 +1647,14 @@ function createMcpServer(
 
       return {
         ...response,
-        _meta: {
-          tool: toolNames.shell,
-          card: {
-            workspaceId,
-            path: workingDirectory,
-            summary,
-            payload: { content: response.content },
-          },
-        },
-        structuredContent: {
-          result: contentText(response.content),
-        },
+        content: bounded.content,
+        _meta: toolResultMeta(config, "shell", toolNames.shell, {
+          workspaceId,
+          path: workingDirectory,
+          summary,
+          payload: { content: bounded.content },
+        }),
+        structuredContent: boundedStructuredContent(bounded.preview),
       };
     },
   );
