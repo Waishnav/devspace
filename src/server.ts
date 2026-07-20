@@ -1839,9 +1839,11 @@ export function createServer(config = loadConfig()): RunningServer {
   // Test-only reservation barrier: when enabled, initialize requests pause
   // after tryReserveSlot() succeeds, before transport creation.
   // Released via POST /test/release-barrier or GET /test/release-barrier.
+  // Requires NODE_ENV=test AND DEVSPACE_TEST_BYPASS_AUTH=1.
   let testBarrierPromise: Promise<void> | undefined;
   let testBarrierResolve: (() => void) | undefined;
-  if (process.env.DEVSPACE_TEST_RESERVATION_BARRIER === "1") {
+  const isTestEnv = process.env.NODE_ENV === "test" && process.env.DEVSPACE_TEST_BYPASS_AUTH === "1";
+  if (isTestEnv && process.env.DEVSPACE_TEST_RESERVATION_BARRIER === "1") {
     testBarrierPromise = new Promise<void>((resolve) => {
       testBarrierResolve = resolve;
     });
@@ -1860,8 +1862,10 @@ export function createServer(config = loadConfig()): RunningServer {
     });
   }
 
-  // Test-only close failure injection: marks a session to fail on next transport.close().
-  if (process.env.DEVSPACE_TEST_BYPASS_AUTH === "1") {
+  // Test-only endpoints: require NODE_ENV=test AND DEVSPACE_TEST_BYPASS_AUTH=1.
+  // Production environments never expose /test/* endpoints.
+  if (isTestEnv) {
+    // Close failure injection: marks a session to fail on next transport.close().
     app.post("/test/inject-close-failure", (req, res) => {
       const sid = req.header("mcp-session-id") || (req.body as { sessionId?: string })?.sessionId;
       if (sid) {
@@ -1870,6 +1874,47 @@ export function createServer(config = loadConfig()): RunningServer {
       } else {
         res.status(400).json({ ok: false, error: "missing session ID" });
       }
+    });
+
+    // Close a session directly through the registry (bypasses MCP DELETE).
+    // Used to test transport.close() failure resilience.
+    app.post("/test/close-registry-session", async (req, res) => {
+      const sid = req.header("mcp-session-id") || (req.body as { sessionId?: string })?.sessionId;
+      if (!sid) {
+        res.status(400).json({ ok: false, error: "missing session ID" });
+        return;
+      }
+      const existed = await sessionRegistry.closeSession(sid);
+      const snap = sessionRegistry.snapshot();
+      res.json({
+        ok: true,
+        closed: existed,
+        lastError: snap.lastError,
+        remainingSessions: snap.activeSessions,
+      });
+    });
+  }
+
+  // Test-only request barrier: when enabled, existing-session requests pause
+  // after markActive, before handleRequest. This lets tests verify that all
+  // sessions are genuinely in-flight before sending a new initialize.
+  let requestBarrierPromise: Promise<void> | undefined;
+  let requestBarrierResolve: (() => void) | undefined;
+  let requestBarrierBlockedCount = 0;
+  if (isTestEnv && process.env.DEVSPACE_TEST_REQUEST_BARRIER === "1") {
+    requestBarrierPromise = new Promise<void>((resolve) => {
+      requestBarrierResolve = resolve;
+    });
+    app.all("/test/release-request-barrier", (_req, res) => {
+      if (requestBarrierResolve) {
+        requestBarrierResolve();
+        requestBarrierResolve = undefined;
+        requestBarrierPromise = undefined;
+      }
+      res.json({ ok: true, barrier: "released", wasBlocked: requestBarrierBlockedCount });
+    });
+    app.get("/test/request-barrier-status", (_req, res) => {
+      res.json({ ok: true, blockedRequests: requestBarrierBlockedCount, barrierActive: requestBarrierPromise !== undefined });
     });
   }
 
@@ -1943,8 +1988,9 @@ export function createServer(config = loadConfig()): RunningServer {
       isInitialize: initializeRequest,
     });
 
-    // activeSessionId is set only when markActive is called (existing sessions only).
-    // initialize requests never call markActive, so markIdle is skipped for them.
+    // activeSessionId is set when markActive is called (existing sessions) OR
+    // when commitReservation succeeds (initialize requests, pairing with inFlight=1).
+    // In both cases, finally calls markIdle to decrement inFlight.
     // initReservation is set when a capacity slot is reserved for an initialize request.
     // It is released in finally if the session was never committed (e.g., exception before commit).
     let activeSessionId: string | undefined;
@@ -1963,6 +2009,16 @@ export function createServer(config = loadConfig()): RunningServer {
         // Track session activity — single markActive for existing sessions.
         sessionRegistry.markActive(sessionId);
         activeSessionId = sessionId;
+
+        // Test-only request barrier: pause after markActive, before handleRequest.
+        // Only blocks requests (with id), not notifications (without id).
+        // This lets tests verify all sessions are genuinely in-flight
+        // while still allowing notifications/initialized to complete.
+        if (requestBarrierPromise && req.body?.id !== undefined) {
+          requestBarrierBlockedCount++;
+          await requestBarrierPromise;
+          requestBarrierBlockedCount--;
+        }
       } else if (initializeRequest) {
         // Atomically reserve a capacity slot BEFORE creating the transport.
         // This prevents concurrent initialize requests from exceeding maxSessions.
@@ -2056,7 +2112,8 @@ export function createServer(config = loadConfig()): RunningServer {
       }
     } finally {
       // markIdle must be in finally to ensure inFlight is decremented even on exceptions.
-      // Only call markIdle when markActive was called (existing sessions, not initialize).
+      // activeSessionId is set for both existing sessions (markActive) and initialize
+      // requests (commitReservation sets inFlight=1, activeSessionId pairs with markIdle).
       if (activeSessionId) {
         sessionRegistry.markIdle(activeSessionId);
       }

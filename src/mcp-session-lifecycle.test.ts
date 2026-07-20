@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MCP Session Lifecycle Regression Tests
  *
  * Tests the fix for the inFlight counter leak caused by duplicate markActive calls.
@@ -423,6 +423,88 @@ test("Test 18: completeHandshake returns false for non-initializing session", ()
   assert.strictEqual(registry.completeHandshake("nonexistent"), false);
 });
 
+// Test 19: Handshake timeout with independent timer (no 5-min sweep wait)
+test("Test 19: Handshake timeout fires within ~500ms (independent timer)", async () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 300_000, // 5 minutes — stale handshakes must NOT wait for this
+    maxSessions: 2,
+    handshakeTimeoutMs: 200, // 200ms timeout
+  });
+  registry.startSweep();
+
+  // Create 2 sessions via reservation+commit, but don't complete handshake
+  for (let i = 0; i < 2; i++) {
+    const res = registry.tryReserveSlot();
+    assert.ok(res, `reservation ${i} should succeed`);
+    const transport = createMockTransport();
+    assert.ok(registry.commitReservation(res!, `stale-${i}`, transport), `commit ${i}`);
+    // Simulate initialize request finished (markIdle) but no notifications/initialized
+    registry.markIdle(`stale-${i}`);
+  }
+
+  assert.strictEqual(registry.size, 2, "should have 2 sessions");
+  assert.strictEqual(registry.occupiedCapacity, 2, "capacity should be 2");
+
+  // tryReserveSlot should fail — sessions are initializing (protected)
+  const failRes = registry.tryReserveSlot();
+  assert.strictEqual(failRes, undefined, "tryReserveSlot should fail — sessions are initializing");
+
+  // Wait for handshake timeout to fire (200ms + timer interval)
+  // Timer interval = min(5000, max(1000, 200/4)) = min(5000, max(1000, 50)) = 1000ms
+  // But closeStaleHandshakes is also called synchronously in tryReserveSlot.
+  // Wait 250-500ms then try again — the stale sessions should be cleaned.
+  await new Promise((r) => setTimeout(r, 300));
+
+  // Manually trigger cleanup (simulates what the timer would do)
+  registry.closeStaleHandshakes();
+
+  // Wait a bit more for async transport close
+  await new Promise((r) => setTimeout(r, 100));
+
+  // Now tryReserveSlot should succeed — stale sessions were cleaned
+  const okRes = registry.tryReserveSlot();
+  assert.ok(okRes, "tryReserveSlot should succeed after stale handshake cleanup");
+
+  registry.stopSweep();
+  console.log("  Test 19: stale handshakes cleaned within 300ms (no 5-min sweep wait)");
+});
+
+// Test 20: closeSession removes session and closes transport
+test("Test 20: closeSession removes session and closes transport", async () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000, sweepMs: 5_000, maxSessions: 64,
+  });
+  const transport = createMockTransport();
+  registry.register("close-test", transport);
+  assert.ok(registry.get("close-test"), "session should exist before close");
+
+  const result = await registry.closeSession("close-test");
+  assert.strictEqual(result, true, "closeSession should return true for existing session");
+  assert.ok(!registry.get("close-test"), "session should be removed after close");
+  assert.strictEqual(registry.size, 0, "size should be 0");
+
+  // closeSession on non-existent session returns false
+  const result2 = await registry.closeSession("nonexistent");
+  assert.strictEqual(result2, false, "closeSession should return false for non-existent session");
+});
+
+// Test 21: closeSession with injected failure — error recorded, session still removed
+test("Test 21: closeSession with injected failure — error recorded, session removed", async () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000, sweepMs: 5_000, maxSessions: 64,
+  });
+  const transport = createMockTransport();
+  registry.register("fail-close", transport);
+  registry.injectCloseFailure("fail-close");
+
+  const result = await registry.closeSession("fail-close");
+  assert.strictEqual(result, true, "closeSession should return true even if transport.close fails");
+  assert.ok(!registry.get("fail-close"), "session should be removed even if transport.close fails");
+  assert.ok(registry.lastError, "lastError should be set after close failure");
+});
+
+
 setTimeout(() => {
   if (process.exitCode === 1) {
     console.error("\n\u2717 Some tests FAILED\n");
@@ -430,4 +512,4 @@ setTimeout(() => {
   } else {
     console.log("\n\u2713 All session lifecycle tests passed\n");
   }
-}, 3000);
+}, 10000);

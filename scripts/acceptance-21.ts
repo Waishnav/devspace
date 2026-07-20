@@ -1,4 +1,4 @@
-/**
+﻿/**
  * DevSpace 21-Point Acceptance Test Suite v2 — Strict PASS/SKIP/FAIL
  *
  * Changes from v1:
@@ -383,7 +383,7 @@ async function main(): Promise<void> {
     return `second session=${mcpSessionId!.slice(0, 12)}...`;
   });
 
-  // ─── Test 8: Close failure resilience — actually inject close failure ───
+  // ─── Test 8: Close failure resilience — inject + registry close ───
   await runTest(8, "Close failure resilience (injected)", async () => {
     // Create 3 independent sessions.
     const sid1 = await initializeWithSid();
@@ -402,13 +402,23 @@ async function main(): Promise<void> {
     assert.ok(injectBody.ok, `inject should succeed: ${JSON.stringify(injectBody)}`);
     log(`injected close failure for ${sid1.slice(0, 8)}...`);
 
-    // DELETE sid1 — triggers transport.close() which will fail.
-    const delResp = await fetch(`${BASE}/mcp`, {
-      method: "DELETE",
-      headers: { "mcp-session-id": sid1 },
+    // Close sid1 via registry — triggers closeTransport which will fail.
+    const closeResp = await fetch(`${BASE}/test/close-registry-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "mcp-session-id": sid1 },
+      body: JSON.stringify({ sessionId: sid1 }),
     });
-    // DELETE returns 200 or 406 — the important thing is the server doesn't crash.
-    log(`DELETE sid1: status=${delResp.status}`);
+    assert.ok(closeResp.ok, `close-registry-session should return ok, got ${closeResp.status}`);
+    const closeBody = await closeResp.json();
+    log(`close result: closed=${closeBody.closed}, lastError=${closeBody.lastError}, remaining=${closeBody.remainingSessions}`);
+
+    // Assert lastError contains "Injected close failure"
+    assert.ok(closeBody.closed, "sid1 should have been closed");
+    assert.ok(closeBody.lastError, "lastError should be set after close failure");
+    assert.ok(
+      closeBody.lastError.includes("Injected close failure"),
+      `lastError should contain "Injected close failure", got: ${closeBody.lastError}`
+    );
 
     // Verify sid2 and sid3 still work — this proves close failure resilience.
     const list2 = await rawMcpRequest("tools/list", {}, sid2, 40);
@@ -427,7 +437,7 @@ async function main(): Promise<void> {
     await fetch(`${BASE}/mcp`, { method: "DELETE", headers: { "mcp-session-id": sid2 } });
     await fetch(`${BASE}/mcp`, { method: "DELETE", headers: { "mcp-session-id": sid3 } });
 
-    return `sid1 close failed (injected), sid2+sid3 survived, server healthy`;
+    return `sid1 close failed (injected, lastError="${closeBody.lastError.slice(0, 40)}"), sid2+sid3 survived`;
   });
 
   // ─── Test 18: AGENTS realpath ───

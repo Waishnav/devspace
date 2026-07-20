@@ -62,6 +62,7 @@ export class McpSessionRegistry {
   private readonly sessions = new Map<string, TrackedSession>();
   private readonly options: RegistryOptions;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private handshakeTimer: ReturnType<typeof setInterval> | null = null;
   private closePromise: Promise<void> | null = null;
   private totalClosed = 0;
   private totalEvicted = 0;
@@ -88,21 +89,35 @@ export class McpSessionRegistry {
     this.closeFailureInjection.add(id);
   }
 
-  /** Start the periodic sweep timer. */
+  /** Start the periodic sweep and handshake cleanup timers. */
   startSweep(): void {
     if (this.sweepTimer) return;
+    // Idle sweep timer — runs at sweepMs interval.
     this.sweepTimer = setInterval(() => {
-      this.closeStaleHandshakes();
       this.closeIdle().catch(() => {});
     }, this.options.sweepMs);
     if (this.sweepTimer.unref) this.sweepTimer.unref();
+
+    // Handshake cleanup timer — runs at a shorter interval than sweepMs
+    // so that handshakeTimeoutMs is enforced promptly.
+    // Interval: min(5000, max(1000, handshakeTimeoutMs / 4))
+    const handshakeTimeout = this.options.handshakeTimeoutMs ?? 30_000;
+    const handshakeInterval = Math.min(5000, Math.max(1000, Math.floor(handshakeTimeout / 4)));
+    this.handshakeTimer = setInterval(() => {
+      this.closeStaleHandshakes();
+    }, handshakeInterval);
+    if (this.handshakeTimer.unref) this.handshakeTimer.unref();
   }
 
-  /** Stop the periodic sweep timer. */
+  /** Stop both the periodic sweep and handshake cleanup timers. */
   stopSweep(): void {
     if (this.sweepTimer) {
       clearInterval(this.sweepTimer);
       this.sweepTimer = null;
+    }
+    if (this.handshakeTimer) {
+      clearInterval(this.handshakeTimer);
+      this.handshakeTimer = null;
     }
   }
 
@@ -131,6 +146,11 @@ export class McpSessionRegistry {
    * This method is synchronous and must be called BEFORE creating the transport.
    */
   tryReserveSlot(): SessionReservation | undefined {
+    // Synchronously clean up stale handshakes before checking capacity.
+    // This ensures expired initializing sessions are removed immediately
+    // when a new initialize arrives, without waiting for the timer.
+    this.closeStaleHandshakes();
+
     // Capacity includes both sessions and pending reservations.
     if (this.occupiedCapacity >= this.options.maxSessions) {
       // At capacity — try to evict an idle, fully-handshaked session to make room.
@@ -302,6 +322,21 @@ export class McpSessionRegistry {
     const s = this.sessions.get(id);
     if (s) this.sessions.delete(id);
     return s;
+  }
+
+  /**
+   * Close a specific session: remove from registry and close its transport.
+   * If transport.close() fails, the error is recorded but not thrown —
+   * other sessions are unaffected.
+   * Returns true if the session existed and was removed, false otherwise.
+   */
+  async closeSession(id: string): Promise<boolean> {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    this.sessions.delete(id);
+    await this.closeTransport(s);
+    this.totalClosed++;
+    return true;
   }
 
   /** Get a session by id. */
