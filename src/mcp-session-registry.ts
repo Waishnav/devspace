@@ -14,6 +14,7 @@
  *  - server shutdown waits for both HTTP server close and application cleanup.
  *  - transport_close log emitted at most once per session.
  *  - One transport failure never aborts other session cleanup.
+ *  - Atomic reservation prevents concurrent initialize from exceeding maxSessions.
  */
 
 import type { Server as HttpServer } from "node:http";
@@ -36,6 +37,19 @@ export interface RegistryOptions {
   onSessionClose?: (id: string, error?: Error) => void;
 }
 
+/**
+ * A reservation holds a capacity slot during session initialization.
+ * It must be either committed (turned into a real session) or released.
+ */
+export interface SessionReservation {
+  /** Unique token to prevent double-commit / double-release. */
+  readonly token: string;
+  /** Timestamp the reservation was created. */
+  readonly createdAt: number;
+  /** Whether this reservation has been committed or released. */
+  settled: boolean;
+}
+
 export class McpSessionRegistry {
   private readonly sessions = new Map<string, TrackedSession>();
   private readonly options: RegistryOptions;
@@ -43,7 +57,16 @@ export class McpSessionRegistry {
   private closePromise: Promise<void> | null = null;
   private totalClosed = 0;
   private totalEvicted = 0;
+  private totalReservations = 0;
+  private totalReservationsReleased = 0;
   private lastCloseError: string | null = null;
+
+  /**
+   * Active reservations for in-flight initialize requests.
+   * Capacity = sessions.size + reservations.size.
+   * At most maxSessions reservations + sessions combined.
+   */
+  private readonly reservations = new Set<SessionReservation>();
 
   constructor(options: RegistryOptions) {
     this.options = options;
@@ -66,20 +89,127 @@ export class McpSessionRegistry {
     }
   }
 
+  // ─── Atomic Reservation API ───────────────────────────────────────────
+
   /**
-   * Register a new session. If at capacity, evict the oldest idle session to make room.
-   * Returns false if the registry is at capacity and no idle sessions can be evicted.
-   * The new session is NOT added to the registry if false is returned.
+   * Total occupied capacity: registered sessions + pending reservations.
+   * This is the value capacity checks must use.
    */
-  register(id: string, transport: StreamableHTTPServerTransport): boolean {
-    // If at capacity, evict the oldest idle session to free a slot.
-    if (this.sessions.size >= this.options.maxSessions) {
+  get occupiedCapacity(): number {
+    return this.sessions.size + this.reservations.size;
+  }
+
+  /** Number of pending (unsettled) reservations. */
+  get pendingReservations(): number {
+    return this.reservations.size;
+  }
+
+  /**
+   * Atomically reserve a capacity slot for a new session.
+   *
+   * - If there is room (sessions + reservations < maxSessions), create a reservation.
+   * - If at capacity but idle sessions exist, evict the oldest idle session, then reserve.
+   * - If at capacity and all sessions are busy (inFlight > 0), return undefined.
+   *
+   * This method is synchronous and must be called BEFORE creating the transport.
+   */
+  tryReserveSlot(): SessionReservation | undefined {
+    // Capacity includes both sessions and pending reservations.
+    if (this.occupiedCapacity >= this.options.maxSessions) {
+      // At capacity — try to evict an idle session to make room.
       const eligible: TrackedSession[] = [];
       for (const s of this.sessions.values()) {
         if (s.inFlight === 0) eligible.push(s);
       }
       if (eligible.length === 0) {
-        return false; // No evictable sessions — reject.
+        return undefined; // No evictable sessions — reject.
+      }
+      eligible.sort((a, b) => a.lastActivity - b.lastActivity);
+      const toEvict = eligible[0]!;
+      this.sessions.delete(toEvict.id);
+      this.totalEvicted++;
+      this.closeTransport(toEvict).catch(() => {});
+    }
+
+    const reservation: SessionReservation = {
+      token: `res-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      createdAt: Date.now(),
+      settled: false,
+    };
+    this.reservations.add(reservation);
+    this.totalReservations++;
+    return reservation;
+  }
+
+  /**
+   * Commit a reservation into a fully registered session.
+   * The reservation is removed from the pending set.
+   * Returns true on success, false if the reservation was already settled
+   * (double-commit guard).
+   */
+  commitReservation(
+    reservation: SessionReservation,
+    sessionId: string,
+    transport: StreamableHTTPServerTransport,
+  ): boolean {
+    if (reservation.settled) {
+      return false; // Double-commit guard.
+    }
+    reservation.settled = true;
+    this.reservations.delete(reservation);
+
+    // Defensive: if somehow over capacity (shouldn't happen with reservations),
+    // log the error but still register to avoid losing the session.
+    if (this.sessions.size >= this.options.maxSessions) {
+      // This is an internal state error — reservations should have prevented this.
+      console.error(
+        `[McpSessionRegistry] INTERNAL ERROR: commitReservation called at capacity ` +
+          `(${this.sessions.size}/${this.options.maxSessions}). ` +
+          `Reservation ${reservation.token} may have been double-counted.`,
+      );
+    }
+
+    this.sessions.set(sessionId, {
+      id: sessionId,
+      transport,
+      lastActivity: Date.now(),
+      inFlight: 0,
+    });
+    return true;
+  }
+
+  /**
+   * Release a reservation without committing (e.g., initialize failed).
+   * Safe to call multiple times — second call is a no-op.
+   */
+  releaseReservation(reservation: SessionReservation): void {
+    if (reservation.settled) {
+      return; // Already committed or released — no-op.
+    }
+    reservation.settled = true;
+    this.reservations.delete(reservation);
+    this.totalReservationsReleased++;
+  }
+
+  // ─── Legacy Register (defensive only) ─────────────────────────────────
+
+  /**
+   * Register a new session directly (legacy path).
+   *
+   * With the reservation API, normal initialize flow should use
+   * tryReserveSlot → commitReservation. This method is kept as a
+   * defensive fallback. If it fails, it indicates an internal state error.
+   *
+   * Returns false if at capacity with no evictable idle sessions.
+   */
+  register(id: string, transport: StreamableHTTPServerTransport): boolean {
+    if (this.occupiedCapacity >= this.options.maxSessions) {
+      const eligible: TrackedSession[] = [];
+      for (const s of this.sessions.values()) {
+        if (s.inFlight === 0) eligible.push(s);
+      }
+      if (eligible.length === 0) {
+        return false;
       }
       eligible.sort((a, b) => a.lastActivity - b.lastActivity);
       const toEvict = eligible[0]!;
@@ -98,7 +228,8 @@ export class McpSessionRegistry {
 
   /** Whether the registry is at capacity with no evictable idle sessions. */
   get atCapacity(): boolean {
-    if (this.sessions.size < this.options.maxSessions) return false;
+    if (this.occupiedCapacity < this.options.maxSessions) return false;
+    // At capacity — check if any session is idle (reservations are never idle).
     for (const s of this.sessions.values()) {
       if (s.inFlight === 0) return false;
     }
@@ -135,7 +266,7 @@ export class McpSessionRegistry {
     return this.sessions.get(id);
   }
 
-  /** Current session count. */
+  /** Current registered session count (excludes reservations). */
   get size(): number {
     return this.sessions.size;
   }
@@ -148,6 +279,11 @@ export class McpSessionRegistry {
   /** Total sessions evicted due to cap. */
   get evictedCount(): number {
     return this.totalEvicted;
+  }
+
+  /** Total reservations created since start. */
+  get reservationCount(): number {
+    return this.totalReservations;
   }
 
   /** Last close error, if any. */
@@ -182,24 +318,6 @@ export class McpSessionRegistry {
   }
 
   /**
-   * Evict oldest idle sessions when maxSessions is exceeded.
-   * Only sessions with inFlight === 0 are eligible.
-   */
-  private evictOldestIdle(): void {
-    const eligible: TrackedSession[] = [];
-    for (const s of this.sessions.values()) {
-      if (s.inFlight === 0) eligible.push(s);
-    }
-    eligible.sort((a, b) => a.lastActivity - b.lastActivity);
-    while (this.sessions.size > this.options.maxSessions && eligible.length > 0) {
-      const s = eligible.shift()!;
-      this.sessions.delete(s.id);
-      this.totalEvicted++;
-      this.closeTransport(s).catch(() => {});
-    }
-  }
-
-  /**
    * Close a single session transport. Idempotent per session.
    * Logs transport_close at most once. Failures are recorded but not thrown.
    */
@@ -218,7 +336,7 @@ export class McpSessionRegistry {
   }
 
   /**
-   * Close ALL sessions. Returns a shared Promise on repeated calls.
+   * Close ALL sessions and release all reservations. Returns a shared Promise on repeated calls.
    * One transport failure does NOT abort other cleanup.
    */
   closeAll(): Promise<void> {
@@ -229,9 +347,14 @@ export class McpSessionRegistry {
 
   private async doCloseAll(): Promise<void> {
     this.stopSweep();
+    // Release all pending reservations.
+    for (const r of this.reservations) {
+      r.settled = true;
+    }
+    this.reservations.clear();
+    // Close all sessions.
     const all = [...this.sessions.values()];
     this.sessions.clear();
-    // Close all in parallel; each failure is handled inside closeTransport.
     await Promise.allSettled(all.map((s) => this.closeTransport(s)));
     this.totalClosed += all.length;
   }
@@ -259,18 +382,24 @@ export class McpSessionRegistry {
     // 1. Stop accepting new sweep work
     this.stopSweep();
 
-    // 2. Close all MCP session transports (parallel, failure-tolerant)
+    // 2. Release all pending reservations
+    for (const r of this.reservations) {
+      r.settled = true;
+    }
+    this.reservations.clear();
+
+    // 3. Close all MCP session transports (parallel, failure-tolerant)
     const all = [...this.sessions.values()];
     this.sessions.clear();
     await Promise.allSettled(all.map((s) => this.closeTransport(s)));
     this.totalClosed += all.length;
 
-    // 3. Drain HTTP server
+    // 4. Drain HTTP server
     if (opts.httpServer) {
       await this.shutdownHttpServer(opts.httpServer, opts.drainTimeoutMs ?? 10_000);
     }
 
-    // 4. Application cleanup
+    // 5. Application cleanup
     if (opts.appCleanup) {
       try {
         await opts.appCleanup();
@@ -291,7 +420,6 @@ export class McpSessionRegistry {
         }
       };
       const timer = setTimeout(() => {
-        // Force-close remaining connections after timeout
         server.closeAllConnections?.();
         finish();
       }, timeoutMs);
@@ -310,8 +438,12 @@ export class McpSessionRegistry {
   snapshot() {
     return {
       activeSessions: this.sessions.size,
+      pendingReservations: this.reservations.size,
+      occupiedCapacity: this.occupiedCapacity,
       totalClosed: this.totalClosed,
       totalEvicted: this.totalEvicted,
+      totalReservations: this.totalReservations,
+      totalReservationsReleased: this.totalReservationsReleased,
       idleMs: this.options.idleMs,
       sweepMs: this.options.sweepMs,
       maxSessions: this.options.maxSessions,

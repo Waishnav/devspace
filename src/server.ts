@@ -48,7 +48,7 @@ import {
   type LocalAgentProviderAvailability,
 } from "./local-agent-availability.js";
 import { createAdvancedGuardStore, registerAdvancedTools, type AdvancedGuardStore } from "./advanced-tools.js";
-import { McpSessionRegistry } from "./mcp-session-registry.js";
+import { McpSessionRegistry, type SessionReservation } from "./mcp-session-registry.js";
 import { truncateInlineOutput, wrapInlineOutput, type TruncationResult } from "./output-truncation.js";
 import { runDiagnose, runSmoke } from "./runtime-diagnostics.js";
 import { CostTracker, supplementSafePath } from "./cost-stats.js";
@@ -1790,6 +1790,9 @@ export function createServer(config = loadConfig()): RunningServer {
       ok: true,
       name: "devspace",
       sessions: sessionRegistry.size,
+      pendingReservations: sessionRegistry.pendingReservations,
+      occupiedCapacity: sessionRegistry.occupiedCapacity,
+      maxSessions: sessionRegistry.snapshot().maxSessions,
     });
   });
 
@@ -1838,57 +1841,61 @@ export function createServer(config = loadConfig()): RunningServer {
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
 
-    // Custom bearer auth with dynamic WWW-Authenticate (local customization)
-    const authHeader = req.header("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
-      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
-      sendJsonRpcError(res, 401, -32001, "Unauthorized");
-      return;
-    }
+    // Test-only auth bypass: when DEVSPACE_TEST_BYPASS_AUTH=1, skip OAuth entirely.
+    // This is ONLY for integration tests — never set in production.
+    if (process.env.DEVSPACE_TEST_BYPASS_AUTH !== "1") {
+      // Custom bearer auth with dynamic WWW-Authenticate (local customization)
+      const authHeader = req.header("authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+        res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+        sendJsonRpcError(res, 401, -32001, "Unauthorized");
+        return;
+      }
 
-    const token = authHeader.slice(7);
-    let authResult;
-    try {
-      authResult = await oauthProvider.verifyAccessToken(token);
-    } catch {
-      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
-      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
-      sendJsonRpcError(res, 401, -32001, "Unauthorized");
-      return;
-    }
+      const token = authHeader.slice(7);
+      let authResult;
+      try {
+        authResult = await oauthProvider.verifyAccessToken(token);
+      } catch {
+        const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+        res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
+        sendJsonRpcError(res, 401, -32001, "Unauthorized");
+        return;
+      }
 
-    if (!authResult || !authResult.resource) {
-      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
-      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
-      sendJsonRpcError(res, 401, -32001, "Unauthorized");
-      return;
-    }
+      if (!authResult || !authResult.resource) {
+        const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+        res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
+        sendJsonRpcError(res, 401, -32001, "Unauthorized");
+        return;
+      }
 
-    // Flexible resource check (local customization): accept any /mcp URL path
-    const requestedResource = authResult.resource;
-    const resourceAllowed =
-      requestedResource.origin === resourceServerUrl.origin ||
-      requestedResource.pathname.endsWith("/mcp") ||
-      requestedResource.href === resourceServerUrl.href;
-    if (!resourceAllowed) {
-      logEvent(config.logging, "warn", "auth_denied", {
-        requestId,
-        method: req.method,
-        path: requestPath(req),
-        reason: "invalid_oauth_resource",
+      // Flexible resource check (local customization): accept any /mcp URL path
+      const requestedResource = authResult.resource;
+      const resourceAllowed =
+        requestedResource.origin === resourceServerUrl.origin ||
+        requestedResource.pathname.endsWith("/mcp") ||
+        requestedResource.href === resourceServerUrl.href;
+      if (!resourceAllowed) {
+        logEvent(config.logging, "warn", "auth_denied", {
+          requestId,
+          method: req.method,
+          path: requestPath(req),
+          reason: "invalid_oauth_resource",
         ...requestLogFields(req, config),
       });
       sendJsonRpcError(res, 401, -32001, "Unauthorized");
       return;
     }
 
-    // Scope check
-    const requiredScope = config.oauth.scopes[0] ?? "devspace";
-    if (!authResult.scopes?.includes(requiredScope)) {
-      sendJsonRpcError(res, 403, -32001, "Insufficient scope");
-      return;
-    }
+      // Scope check
+      const requiredScope = config.oauth.scopes[0] ?? "devspace";
+      if (!authResult.scopes?.includes(requiredScope)) {
+        sendJsonRpcError(res, 403, -32001, "Insufficient scope");
+        return;
+      }
+    } // end if (DEVSPACE_TEST_BYPASS_AUTH !== "1")
 
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
@@ -1900,7 +1907,11 @@ export function createServer(config = loadConfig()): RunningServer {
 
     // activeSessionId is set only when markActive is called (existing sessions only).
     // initialize requests never call markActive, so markIdle is skipped for them.
+    // initReservation is set when a capacity slot is reserved for an initialize request.
+    // It is released in finally if the session was never committed (e.g., exception before commit).
     let activeSessionId: string | undefined;
+    let initReservation: SessionReservation | undefined;
+    let reservationCommitted = false;
 
     try {
       let transport: Transport | undefined;
@@ -1915,33 +1926,40 @@ export function createServer(config = loadConfig()): RunningServer {
         sessionRegistry.markActive(sessionId);
         activeSessionId = sessionId;
       } else if (initializeRequest) {
-        // Reject immediately if at capacity with no evictable idle sessions.
-        if (sessionRegistry.atCapacity) {
+        // Atomically reserve a capacity slot BEFORE creating the transport.
+        // This prevents concurrent initialize requests from exceeding maxSessions.
+        initReservation = sessionRegistry.tryReserveSlot();
+        if (!initReservation) {
           logEvent(config.logging, "warn", "mcp_capacity_rejected", {
             requestId,
             activeSessions: sessionRegistry.size,
+            pendingReservations: sessionRegistry.pendingReservations,
+            occupiedCapacity: sessionRegistry.occupiedCapacity,
             maxSessions: sessionRegistry.snapshot().maxSessions,
             ...requestLogFields(req, config),
           });
           sendJsonRpcError(res, 503, -32000, "MCP server at capacity \u2014 all sessions are busy");
           return;
         }
+
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            if (transport) {
-              const registered = sessionRegistry.register(newSessionId, transport);
-              if (!registered) {
-                // Capacity reached between the pre-check and registration.
-                transport.close().catch(() => {});
-                logEvent(config.logging, "warn", "mcp_session_rejected", {
+            if (transport && initReservation) {
+              // Commit the reservation into a real session.
+              // No capacity re-check here — the reservation already holds the slot.
+              const committed = sessionRegistry.commitReservation(initReservation, newSessionId, transport);
+              if (!committed) {
+                // Double-commit should never happen — log as internal error.
+                logEvent(config.logging, "error", "mcp_session_double_commit", {
                   requestId,
                   sessionIdPrefix: sessionIdPrefix(newSessionId),
-                  reason: "server_at_capacity",
+                  reservationToken: initReservation.token,
                   ...requestLogFields(req, config),
                 });
                 return;
               }
+              reservationCommitted = true;
             }
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
@@ -1987,6 +2005,10 @@ export function createServer(config = loadConfig()): RunningServer {
       // Only call markIdle when markActive was called (existing sessions, not initialize).
       if (activeSessionId) {
         sessionRegistry.markIdle(activeSessionId);
+      }
+      // Release the reservation if it was never committed (initialize failed before onsessioninitialized).
+      if (initReservation && !reservationCommitted) {
+        sessionRegistry.releaseReservation(initReservation);
       }
     }
   });

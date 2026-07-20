@@ -2,6 +2,7 @@
  * MCP Session Lifecycle Regression Tests
  *
  * Tests the fix for the inFlight counter leak caused by duplicate markActive calls.
+ * Also tests the atomic reservation API (tryReserveSlot/commitReservation/releaseReservation).
  * Each test simulates the server's request handling pattern (try/catch/finally)
  * to verify that inFlight is correctly balanced.
  */
@@ -32,10 +33,6 @@ function simulateExistingSessionRequest(
   sessionId: string,
   handler: () => Promise<void>,
 ): Promise<void> {
-  // This mirrors the fixed pattern in server.ts:
-  // - activeSessionId declared outside try
-  // - single markActive inside try
-  // - markIdle in finally, only if activeSessionId was set
   let activeSessionId: string | undefined;
   return (async () => {
     try {
@@ -52,6 +49,20 @@ function simulateExistingSessionRequest(
       }
     }
   })();
+}
+
+/** Simulate the server's initialize flow with reservation. */
+function simulateInitializeWithReservation(
+  registry: McpSessionRegistry,
+  sessionId: string,
+): { committed: boolean; reservation: unknown } {
+  const reservation = registry.tryReserveSlot();
+  if (!reservation) {
+    return { committed: false, reservation: undefined };
+  }
+  const transport = createMockTransport();
+  const committed = registry.commitReservation(reservation, sessionId, transport);
+  return { committed, reservation };
 }
 
 function test(name: string, fn: () => void | Promise<void>): void {
@@ -80,7 +91,6 @@ test("Test 1: Normal request — markActive once, markIdle once, inFlight=0", ()
   assert.strictEqual(registry.size, 1, "should have 1 session");
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight should start at 0");
 
-  // Simulate a normal request
   simulateExistingSessionRequest(registry, sessionId, async () => {
     assert.strictEqual(registry.get(sessionId)?.inFlight, 1, "inFlight should be 1 during request");
   }).then(() => {
@@ -109,7 +119,7 @@ test("Test 2: handleRequest throws — finally still executes, inFlight=0", asyn
   assert.strictEqual(session!.inFlight, 0, "inFlight must be 0 even after exception (finally block)");
 });
 
-// Test 3: 100 consecutive sessions — count ≤ 64, new sessions can initialize
+// Test 3: 100 consecutive sessions — count <= 64, new sessions can initialize
 test("Test 3: 100 consecutive ChatGPT-style sessions — count \u2264 64", async () => {
   const registry = new McpSessionRegistry({
     idleMs: 60_000,
@@ -123,7 +133,6 @@ test("Test 3: 100 consecutive ChatGPT-style sessions — count \u2264 64", async
     const registered = registry.register(sessionId, transport);
 
     if (registered) {
-      // Simulate a complete request lifecycle
       await simulateExistingSessionRequest(registry, sessionId, async () => {
         // request handled
       });
@@ -134,8 +143,6 @@ test("Test 3: 100 consecutive ChatGPT-style sessions — count \u2264 64", async
     registry.size <= 64,
     `session count should be \u2264 64, got ${registry.size}`,
   );
-  // After 100 sessions with proper lifecycle, the oldest idle ones get evicted
-  // The newest sessions should be alive
   assert.ok(registry.get("chatgpt-session-99"), "latest session should be alive");
 });
 
@@ -147,14 +154,12 @@ test("Test 4: 64 idle sessions — new session evicts oldest, new survives", () 
     maxSessions: 64,
   });
 
-  // Fill up with 64 idle sessions (inFlight=0)
   for (let i = 0; i < 64; i++) {
     const transport = createMockTransport();
     assert.ok(registry.register(`old-${i}`, transport), `old-${i} should register`);
   }
   assert.strictEqual(registry.size, 64, "should be at capacity");
 
-  // Register a new session — should evict the oldest idle one
   const newTransport = createMockTransport();
   const registered = registry.register("new-session", newTransport);
 
@@ -172,18 +177,15 @@ test("Test 5: 64 active sessions — atCapacity=true, register rejected", () => 
     maxSessions: 64,
   });
 
-  // Fill up with 64 active sessions (inFlight > 0, never markIdle)
   for (let i = 0; i < 64; i++) {
     const transport = createMockTransport();
     registry.register(`active-${i}`, transport);
-    registry.markActive(`active-${i}`); // inFlight = 1, never markIdle
+    registry.markActive(`active-${i}`);
   }
   assert.strictEqual(registry.size, 64, "should be at capacity");
 
-  // atCapacity should be true — no evictable sessions
   assert.ok(registry.atCapacity, "atCapacity must be true when all sessions are busy");
 
-  // Attempt to register a new session — should be rejected (returns false)
   const newTransport = createMockTransport();
   const registered = registry.register("rejected-session", newTransport);
 
@@ -192,7 +194,7 @@ test("Test 5: 64 active sessions — atCapacity=true, register rejected", () => 
   assert.ok(!registry.get("rejected-session"), "rejected session must not be in registry");
 });
 
-// Test 6: Full flow — initialize → notifications/initialized → tools/list → open_workspace
+// Test 6: Full flow — initialize -> notifications/initialized -> tools/list -> open_workspace
 test("Test 6: Full MCP flow — initialize \u2192 notifications/initialized \u2192 tools/list \u2192 open_workspace", async () => {
   const registry = new McpSessionRegistry({
     idleMs: 60_000,
@@ -200,35 +202,33 @@ test("Test 6: Full MCP flow — initialize \u2192 notifications/initialized \u21
     maxSessions: 64,
   });
 
-  // Step 1: initialize — creates a new session (no markActive)
+  // Step 1: initialize using reservation API
   assert.ok(!registry.atCapacity, "should not be at capacity initially");
-  const initTransport = createMockTransport();
-  const sessionId = "full-flow-session";
-  assert.ok(registry.register(sessionId, initTransport), "initialize should register");
+  const initResult = simulateInitializeWithReservation(registry, "full-flow-session");
+  assert.ok(initResult.committed, "initialize should commit reservation");
+  assert.strictEqual(registry.pendingReservations, 0, "no pending reservations after commit");
 
-  // initialize does NOT call markActive (activeSessionId stays undefined in server.ts)
-  // So markIdle is NOT called in finally for initialize
+  const sessionId = "full-flow-session";
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight=0 after initialize");
 
-  // Step 2: notifications/initialized — existing session request
+  // Step 2: notifications/initialized
   await simulateExistingSessionRequest(registry, sessionId, async () => {
     assert.strictEqual(registry.get(sessionId)?.inFlight, 1, "inFlight=1 during notifications/initialized");
   });
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight=0 after notifications/initialized");
 
-  // Step 3: tools/list — existing session request
+  // Step 3: tools/list
   await simulateExistingSessionRequest(registry, sessionId, async () => {
     assert.strictEqual(registry.get(sessionId)?.inFlight, 1, "inFlight=1 during tools/list");
   });
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight=0 after tools/list");
 
-  // Step 4: open_workspace — existing session request
+  // Step 4: open_workspace
   await simulateExistingSessionRequest(registry, sessionId, async () => {
     assert.strictEqual(registry.get(sessionId)?.inFlight, 1, "inFlight=1 during open_workspace");
   });
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight=0 after open_workspace");
 
-  // After full flow, session should still be alive with inFlight=0
   assert.ok(registry.get(sessionId), "session should still exist after full flow");
   assert.strictEqual(registry.get(sessionId)?.inFlight, 0, "inFlight=0 after complete flow");
 });
@@ -245,7 +245,6 @@ test("Test 7 (regression): 70 consecutive requests, inFlight stays 0", async () 
 
   registry.register(sessionId, transport);
 
-  // Simulate 70 consecutive requests (the old bug would leave inFlight=70)
   for (let i = 0; i < 70; i++) {
     await simulateExistingSessionRequest(registry, sessionId, async () => {
       // request handled
@@ -255,8 +254,6 @@ test("Test 7 (regression): 70 consecutive requests, inFlight stays 0", async () 
   const session = registry.get(sessionId);
   assert.ok(session, "session should still exist");
   assert.strictEqual(session!.inFlight, 0, "inFlight must be 0 after 70 requests (was 70 with old bug)");
-
-  // Registry should not be at capacity
   assert.ok(!registry.atCapacity, "should not be at capacity with 1 session");
 });
 
@@ -272,10 +269,9 @@ test("Test 8 (regression): Double markActive + single markIdle leaves inFlight=1
 
   registry.register(sessionId, transport);
 
-  // Simulate the OLD buggy pattern: markActive twice, markIdle once
-  registry.markActive(sessionId); // first markActive (was at line 1534/1911)
-  registry.markActive(sessionId); // second markActive (was at line 1565/1951) — BUG!
-  registry.markIdle(sessionId);   // only one markIdle (was at line 1570/1956)
+  registry.markActive(sessionId);
+  registry.markActive(sessionId);
+  registry.markIdle(sessionId);
 
   assert.strictEqual(
     registry.get(sessionId)?.inFlight,
@@ -283,16 +279,203 @@ test("Test 8 (regression): Double markActive + single markIdle leaves inFlight=1
     "OLD BUG: inFlight=1 after double markActive + single markIdle (should be 0)",
   );
 
-  // Now verify the FIXED pattern gives 0
-  registry.markIdle(sessionId); // clean up
-  registry.markActive(sessionId); // single markActive
-  registry.markIdle(sessionId);   // single markIdle
+  registry.markIdle(sessionId);
+  registry.markActive(sessionId);
+  registry.markIdle(sessionId);
 
   assert.strictEqual(
     registry.get(sessionId)?.inFlight,
     0,
     "FIXED: inFlight=0 after single markActive + single markIdle",
   );
+});
+
+// ─── Reservation API Tests ─────────────────────────────────────────────
+
+// Test 9: tryReserveSlot creates a reservation
+test("Test 9: tryReserveSlot creates reservation, occupiedCapacity increases", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  assert.strictEqual(registry.occupiedCapacity, 0, "initial capacity 0");
+  assert.strictEqual(registry.pendingReservations, 0, "no reservations initially");
+
+  const res = registry.tryReserveSlot();
+  assert.ok(res, "reservation should be created");
+  assert.strictEqual(registry.pendingReservations, 1, "1 pending reservation");
+  assert.strictEqual(registry.occupiedCapacity, 1, "capacity includes reservation");
+  assert.strictEqual(registry.size, 0, "no sessions yet");
+});
+
+// Test 10: commitReservation turns reservation into session
+test("Test 10: commitReservation creates session, clears reservation", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  const res = registry.tryReserveSlot();
+  assert.ok(res);
+
+  const transport = createMockTransport();
+  const committed = registry.commitReservation(res!, "sess-1", transport);
+  assert.strictEqual(committed, true, "commit should succeed");
+  assert.strictEqual(registry.pendingReservations, 0, "reservation cleared");
+  assert.strictEqual(registry.size, 1, "1 session registered");
+  assert.strictEqual(registry.occupiedCapacity, 1, "capacity still 1 (session replaces reservation)");
+  assert.ok(registry.get("sess-1"), "session exists");
+});
+
+// Test 11: releaseReservation returns slot without creating session
+test("Test 11: releaseReservation frees slot without session", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  const res = registry.tryReserveSlot();
+  assert.ok(res);
+  assert.strictEqual(registry.occupiedCapacity, 1);
+
+  registry.releaseReservation(res!);
+  assert.strictEqual(registry.pendingReservations, 0, "reservation cleared");
+  assert.strictEqual(registry.size, 0, "no session created");
+  assert.strictEqual(registry.occupiedCapacity, 0, "capacity back to 0");
+});
+
+// Test 12: Double commit is rejected
+test("Test 12: Double commit is rejected (returns false)", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  const res = registry.tryReserveSlot();
+  assert.ok(res);
+
+  const t1 = createMockTransport();
+  const t2 = createMockTransport();
+  assert.ok(registry.commitReservation(res!, "sess-a", t1), "first commit succeeds");
+  assert.strictEqual(registry.commitReservation(res!, "sess-b", t2), false, "second commit rejected");
+  assert.strictEqual(registry.size, 1, "only 1 session");
+  assert.ok(!registry.get("sess-b"), "second session not created");
+});
+
+// Test 13: Double release is a no-op
+test("Test 13: Double release is a no-op", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  const res = registry.tryReserveSlot();
+  assert.ok(res);
+
+  registry.releaseReservation(res!);
+  assert.strictEqual(registry.occupiedCapacity, 0);
+  // Second release should not throw or affect state
+  registry.releaseReservation(res!);
+  assert.strictEqual(registry.occupiedCapacity, 0, "still 0 after double release");
+});
+
+// Test 14: Reservation prevents exceeding maxSessions under concurrency
+test("Test 14: 100 concurrent tryReserveSlot — at most 64 succeed", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  let successCount = 0;
+  let failCount = 0;
+  const reservations: unknown[] = [];
+
+  for (let i = 0; i < 100; i++) {
+    const res = registry.tryReserveSlot();
+    if (res) {
+      successCount++;
+      reservations.push(res);
+    } else {
+      failCount++;
+    }
+  }
+
+  assert.strictEqual(successCount, 64, `exactly 64 reservations should succeed, got ${successCount}`);
+  assert.strictEqual(failCount, 36, `36 should fail, got ${failCount}`);
+  assert.strictEqual(registry.occupiedCapacity, 64, "capacity at 64");
+  assert.strictEqual(registry.pendingReservations, 64, "64 pending reservations");
+  assert.ok(registry.atCapacity, "atCapacity with all reservations (no idle sessions to evict)");
+});
+
+// Test 15: Reservation + commit + 100 more initialize
+test("Test 15: 64 committed sessions, then 100 tryReserveSlot — evicts idle, stays <=64", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  // Fill with 64 idle sessions via reservation+commit
+  for (let i = 0; i < 64; i++) {
+    const res = registry.tryReserveSlot();
+    assert.ok(res, `reservation ${i} should succeed`);
+    const transport = createMockTransport();
+    assert.ok(registry.commitReservation(res!, `sess-${i}`, transport), `commit ${i}`);
+  }
+  assert.strictEqual(registry.size, 64, "64 sessions");
+  assert.strictEqual(registry.pendingReservations, 0, "no pending");
+
+  // Now 100 more initialize requests — each should evict an idle session
+  for (let i = 0; i < 100; i++) {
+    const res = registry.tryReserveSlot();
+    assert.ok(res, `reservation new-${i} should succeed (evicts idle)`);
+    const transport = createMockTransport();
+    assert.ok(registry.commitReservation(res!, `new-${i}`, transport), `commit new-${i}`);
+    assert.ok(registry.occupiedCapacity <= 64, `capacity must stay <= 64, got ${registry.occupiedCapacity}`);
+  }
+
+  assert.strictEqual(registry.size, 64, "still 64 sessions");
+  assert.ok(registry.get("new-99"), "latest session alive");
+  assert.ok(!registry.get("sess-0"), "oldest evicted");
+});
+
+// Test 16: Release reservation on failure (simulate initialize exception)
+test("Test 16: Initialize fails — reservation released in finally, slot freed", () => {
+  const registry = new McpSessionRegistry({
+    idleMs: 60_000,
+    sweepMs: 5_000,
+    maxSessions: 64,
+  });
+
+  // Simulate the server pattern: reserve -> exception -> release in finally
+  let initReservation: ReturnType<typeof registry.tryReserveSlot> | undefined;
+  let reservationCommitted = false;
+
+  try {
+    initReservation = registry.tryReserveSlot();
+    assert.ok(initReservation, "reservation created");
+    assert.strictEqual(registry.pendingReservations, 1, "1 pending");
+
+    // Simulate server.connect or transport creation throwing
+    throw new Error("server.connect failed");
+  } catch {
+    // error handling
+  } finally {
+    if (initReservation && !reservationCommitted) {
+      registry.releaseReservation(initReservation);
+    }
+  }
+
+  assert.strictEqual(registry.pendingReservations, 0, "reservation released");
+  assert.strictEqual(registry.occupiedCapacity, 0, "capacity back to 0");
+  assert.strictEqual(registry.size, 0, "no session created");
 });
 
 // Wait for all async tests to complete
@@ -303,4 +486,4 @@ setTimeout(() => {
   } else {
     console.log("\n\u2713 All session lifecycle tests passed\n");
   }
-}, 2000);
+}, 3000);
