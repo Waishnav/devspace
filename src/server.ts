@@ -189,7 +189,7 @@ interface ToolLogFields {
 
 function serverInstructions(config: ServerConfig): string {
   const artifactInstruction = config.artifactsEnabled
-    ? " When the user supplies or generates a file that is not present on the DevSpace host, pass its native file value to stage_artifact instead of recreating it through write/edit calls. Paths returned by artifact tools may be passed to local commands. Only use host paths returned by artifact tools; never invent artifact-store paths or place artifact content, signed URLs, or base64 in shell commands or logs. stage_artifact stores privately and never writes into a workspace or repository."
+    ? " When the user supplies or generates a file that is not present on the DevSpace host, pass its native file value to stage_artifact instead of recreating it through write/edit calls. To place a staged artifact in an approved workspace, use artifact_copy_to_workspace with that artifact ID, the existing workspace ID, a relative destination, and an explicit conflict mode. Only use host paths returned by artifact tools; never invent artifact-store paths or place artifact content, signed URLs, or base64 in shell commands or logs. stage_artifact stores privately and never writes into a workspace or repository; artifact_copy_to_workspace is the explicit materialization step and may dirty a repository."
     : "";
   const showChangesInstruction =
     config.widgets === "changes"
@@ -1613,6 +1613,7 @@ function createMcpServer(
     registerArtifactTools(server, {
       config,
       store: artifactStore,
+      workspaces,
       clientId,
       incomingArtifactAdapters,
     });

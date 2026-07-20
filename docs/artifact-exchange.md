@@ -5,9 +5,9 @@ file does not yet exist on the DevSpace host. The opt-in `stage_artifact` MCP
 tool streams the connector-provided file into private local storage and returns
 a host path that local commands can consume.
 
-This is deliberately a narrow handoff seam. It does not copy files into
-workspaces, write repositories, accept generic uploads, or expose a public
-download route.
+This is deliberately a narrow handoff seam. It supports explicit copy of a
+staged artifact into an already-open workspace, but does not automatically write
+repositories, accept generic uploads, or expose a public download route.
 
 ## Enable
 
@@ -58,8 +58,12 @@ A successful result contains metadata, not file content:
 ```
 
 Use `artifact_stat` to re-read owner-scoped metadata and `artifact_delete` to
-remove the record. Local commands may consume `hostPath`; agents must never
-invent paths under the artifact root.
+remove the record. To materialize an image or document, use
+`artifact_copy_to_workspace` with its `artifactId`, an existing `workspaceId`, a
+relative `destination`, and explicit `onConflict` mode (`error`, `rename`, or
+`replace`). The copy verifies bytes and SHA-256, rejects workspace escapes and
+symlink paths, and returns the final workspace path. Agents must never invent
+paths under the artifact root.
 
 ## Supported connector shape
 
@@ -84,6 +88,7 @@ Download URLs must use HTTPS on one of the exact reviewed hosts:
 
 - `files.oaiusercontent.com`
 - `oaisdmntprcentralus.blob.core.windows.net`
+- `oaisdmntprwestcentralus.blob.core.windows.net`
 
 Userinfo, fragments, non-HTTPS ports, and redirects outside those hosts are
 rejected. Redirects are followed manually and revalidated at each hop. Signed
@@ -122,4 +127,5 @@ status. It never logs raw file objects, signed URLs, file IDs, credentials,
 content, or base64 data.
 
 MIME types and filenames are hints only. DevSpace does not execute, unpack,
-publish, or automatically copy staged content into a workspace.
+publish, or automatically copy staged content into a workspace; materialization
+requires the explicit workspace-copy tool.

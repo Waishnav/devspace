@@ -114,23 +114,30 @@ an unauthenticated download route or expose the artifact root with
 Native staging is adapter-gated. The production server declares ChatGPT's
 top-level `openai/fileParams` contract and accepts only the documented
 `download_url`, `file_id`, optional MIME/filename aliases, and optional size.
-Downloads use HTTPS on two exact reviewed hosts:
+Downloads use HTTPS on exact reviewed hosts:
 `files.oaiusercontent.com` and
-`oaisdmntprcentralus.blob.core.windows.net`. Credentials, fragments, alternate
-ports, arbitrary sibling hosts, malformed IDs, extra fields, and redirects
-outside that boundary fail closed. Opaque IDs are bounded metadata and are never
-used as filenames or path components.
+`oaisdmntprcentralus.blob.core.windows.net` and
+`oaisdmntprwestcentralus.blob.core.windows.net`. Credentials, fragments,
+alternate ports, arbitrary sibling hosts, malformed IDs, extra fields, and
+redirects outside that boundary fail closed. Opaque IDs are bounded metadata and
+are never used as filenames or path components.
 
 The staging seam deliberately does not:
 
 - fetch arbitrary URLs
 - expose a generic upload API
-- copy content into a workspace or repository
+- automatically copy content into a workspace or repository
 - extract archives
 - execute transferred content
 - expand workspace allowlists
 - preserve executable permissions
 - publish or permanently retain content
+
+`artifact_copy_to_workspace` is the explicit exception: it reads only an
+owner-scoped staged artifact and writes only within an already-open allowed
+workspace. It requires a relative destination and an explicit conflict mode,
+creates only real contained parent directories, rejects symlink/non-regular-file
+paths, and verifies the final size and SHA-256.
 
 MIME types are hints only. SHA-256 and byte counts are computed and enforced by
 the server. Pinned records require explicit deletion; unpinned records and

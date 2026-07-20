@@ -7,6 +7,7 @@ const ADAPTER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const OPENAI_FILE_HOSTS = new Set([
   "files.oaiusercontent.com",
   "oaisdmntprcentralus.blob.core.windows.net",
+  "oaisdmntprwestcentralus.blob.core.windows.net",
 ]);
 const OPENAI_FILENAME_SAFE_FILE_ID_PATTERN = /^file[-_][A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 const OPENAI_FILE_ID_MAX_LENGTH = 512;

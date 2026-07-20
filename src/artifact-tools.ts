@@ -3,6 +3,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
 import {
+  copyArtifactToWorkspace,
+  type ArtifactCopyConflictMode,
+} from "./artifact-workspace.js";
+import {
   ARTIFACT_CHUNK_BYTES,
   ArtifactError,
   type ArtifactRecord,
@@ -14,6 +18,7 @@ import {
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
 import { logEvent } from "./logger.js";
+import type { WorkspaceRegistry } from "./workspaces.js";
 
 const ARTIFACT_WRITE_ANNOTATIONS = {
   readOnlyHint: false,
@@ -45,11 +50,16 @@ const artifactRecordOutputSchema = {
   pinned: z.boolean(),
 };
 
-type ArtifactToolName = "stage_artifact" | "artifact_stat" | "artifact_delete";
+type ArtifactToolName =
+  | "stage_artifact"
+  | "artifact_stat"
+  | "artifact_copy_to_workspace"
+  | "artifact_delete";
 
 export interface ArtifactToolRegistrationOptions {
   config: ServerConfig;
   store: ArtifactStore;
+  workspaces: WorkspaceRegistry;
   clientId: string;
   incomingArtifactAdapters?: readonly IncomingArtifactAdapter[];
 }
@@ -78,6 +88,7 @@ export function registerArtifactTools(
   {
     config,
     store,
+    workspaces,
     clientId,
     incomingArtifactAdapters = [],
   }: ArtifactToolRegistrationOptions,
@@ -139,6 +150,51 @@ export function registerArtifactTools(
       "artifact_stat",
       { artifactId },
       async () => store.statArtifact(clientId, artifactId),
+    ),
+  );
+
+  registerAppTool(
+    server,
+    "artifact_copy_to_workspace",
+    {
+      title: "Copy artifact into workspace",
+      description:
+        "Copy one owner-scoped private artifact into a path inside an already-open workspace. The destination must stay within that workspace; choose rename or replace explicitly when a file exists.",
+      inputSchema: {
+        artifactId: z.string(),
+        workspaceId: z.string().min(1),
+        destination: z.string().min(1).describe("Relative path inside the selected workspace."),
+        onConflict: z.enum(["error", "rename", "replace"]).default("error"),
+      },
+      outputSchema: {
+        artifactId: z.string(),
+        workspaceId: z.string(),
+        path: z.string(),
+        size: z.number().int().nonnegative(),
+        sha256: z.string(),
+        onConflict: z.enum(["error", "rename", "replace"]),
+        renamed: z.boolean(),
+      },
+      _meta: {},
+      annotations: ARTIFACT_WRITE_ANNOTATIONS,
+    },
+    async (input) => executeArtifactTool(
+      config,
+      "artifact_copy_to_workspace",
+      input,
+      async () => {
+        const workspace = workspaces.getWorkspace(input.workspaceId);
+        const destination = workspaces.resolvePath(workspace, input.destination);
+        return copyArtifactToWorkspace({
+          store,
+          clientId,
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.root,
+          artifactId: input.artifactId,
+          destination,
+          onConflict: input.onConflict as ArtifactCopyConflictMode,
+        });
+      },
     ),
   );
 

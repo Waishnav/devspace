@@ -46,12 +46,14 @@ function testChatGPTFileDescriptor(): void {
   registerArtifactTools(server as never, {
     config: {} as never,
     store: {} as never,
+    workspaces: {} as never,
     clientId: "client-a",
   });
 
   assert.deepEqual([...registered.keys()], [
     "stage_artifact",
     "artifact_stat",
+    "artifact_copy_to_workspace",
     "artifact_delete",
   ]);
   const descriptor = registered.get("stage_artifact");
@@ -119,7 +121,7 @@ async function testOpenAIFileAdapter(testRoot: string): Promise<void> {
     file_name: "generated.png",
   };
   const generatedReference = {
-    download_url: "https://oaisdmntprcentralus.blob.core.windows.net/chatgpt-file/generated-image.png?sig=secret",
+    download_url: "https://oaisdmntprwestcentralus.blob.core.windows.net/chatgpt-file/generated-image.png?sig=secret",
     file_id: "file-service://generated+opaque/abc123",
     mime_type: null,
     file_name: null,
