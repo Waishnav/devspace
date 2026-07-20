@@ -121,7 +121,7 @@ async function testOpenAIFileAdapter(testRoot: string): Promise<void> {
     file_name: "generated.png",
   };
   const generatedReference = {
-    download_url: "https://oaisdmntprwestcentralus.blob.core.windows.net/chatgpt-file/generated-image.png?sig=secret",
+    download_url: "https://oaisdmntprcentralindia.blob.core.windows.net/chatgpt-file/generated-image.png?sig=secret",
     file_id: "file-service://generated+opaque/abc123",
     mime_type: null,
     file_name: null,

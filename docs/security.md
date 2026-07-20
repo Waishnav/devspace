@@ -114,13 +114,14 @@ an unauthenticated download route or expose the artifact root with
 Native staging is adapter-gated. The production server declares ChatGPT's
 top-level `openai/fileParams` contract and accepts only the documented
 `download_url`, `file_id`, optional MIME/filename aliases, and optional size.
-Downloads use HTTPS on exact reviewed hosts:
-`files.oaiusercontent.com` and
-`oaisdmntprcentralus.blob.core.windows.net` and
-`oaisdmntprwestcentralus.blob.core.windows.net`. Credentials, fragments,
-alternate ports, arbitrary sibling hosts, malformed IDs, extra fields, and
-redirects outside that boundary fail closed. Opaque IDs are bounded metadata and
-are never used as filenames or path components.
+Downloads use HTTPS on `files.oaiusercontent.com` or the constrained regional
+OpenAI Azure account family
+`oaisdmntpr<region>.blob.core.windows.net`, where `<region>` is lowercase
+alphanumeric. This permits observed OpenAI regional accounts such as
+`centralus`, `westcentralus`, and `centralindia`, but not arbitrary Azure Blob
+accounts. Credentials, fragments, alternate ports, malformed IDs, extra fields,
+and redirects outside that boundary fail closed. Opaque IDs are bounded metadata
+and are never used as filenames or path components.
 
 The staging seam deliberately does not:
 

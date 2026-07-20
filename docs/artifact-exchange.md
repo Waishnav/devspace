@@ -84,11 +84,11 @@ Required fields are `download_url` and `file_id`. Unknown keys, extra credential
 fields, plain URL strings, filesystem paths, arrays, and malformed values fail
 closed.
 
-Download URLs must use HTTPS on one of the exact reviewed hosts:
+Download URLs must use HTTPS on one of these reviewed OpenAI delivery origins:
 
 - `files.oaiusercontent.com`
-- `oaisdmntprcentralus.blob.core.windows.net`
-- `oaisdmntprwestcentralus.blob.core.windows.net`
+- `oaisdmntpr<region>.blob.core.windows.net`, where `<region>` is lowercase
+  alphanumeric (for example `centralus`, `westcentralus`, or `centralindia`)
 
 Userinfo, fragments, non-HTTPS ports, and redirects outside those hosts are
 rejected. Redirects are followed manually and revalidated at each hop. Signed
