@@ -1666,6 +1666,7 @@ export function createServer(config = loadConfig()): RunningServer {
         logEvent(config.logging, "info", "mcp_session_sweep", { closed, evicted });
       }
     },
+    handshakeTimeoutMs: Number.parseInt(process.env.DEVSPACE_SESSION_HANDSHAKE_TIMEOUT_MS ?? "30000", 10),
   });
   sessionRegistry.startSweep();
 
@@ -1835,6 +1836,43 @@ export function createServer(config = loadConfig()): RunningServer {
     res.json(result);
   });
 
+  // Test-only reservation barrier: when enabled, initialize requests pause
+  // after tryReserveSlot() succeeds, before transport creation.
+  // Released via POST /test/release-barrier or GET /test/release-barrier.
+  let testBarrierPromise: Promise<void> | undefined;
+  let testBarrierResolve: (() => void) | undefined;
+  if (process.env.DEVSPACE_TEST_RESERVATION_BARRIER === "1") {
+    testBarrierPromise = new Promise<void>((resolve) => {
+      testBarrierResolve = resolve;
+    });
+    // The barrier starts blocked; release endpoint unblocks it.
+    // Reset barrier after release so subsequent requests don't block.
+    app.all("/test/release-barrier", (_req, res) => {
+      if (testBarrierResolve) {
+        testBarrierResolve();
+        testBarrierResolve = undefined;
+        testBarrierPromise = undefined;
+      }
+      res.json({ ok: true, barrier: "released" });
+    });
+    app.get("/test/barrier-status", (_req, res) => {
+      res.json({ ok: true, barrierActive: testBarrierPromise !== undefined });
+    });
+  }
+
+  // Test-only close failure injection: marks a session to fail on next transport.close().
+  if (process.env.DEVSPACE_TEST_BYPASS_AUTH === "1") {
+    app.post("/test/inject-close-failure", (req, res) => {
+      const sid = req.header("mcp-session-id") || (req.body as { sessionId?: string })?.sessionId;
+      if (sid) {
+        sessionRegistry.injectCloseFailure(sid);
+        res.json({ ok: true, injected: sid });
+      } else {
+        res.status(400).json({ ok: false, error: "missing session ID" });
+      }
+    });
+  }
+
   // MCP endpoint with session management and output truncation
   app.all("/mcp", async (req, res) => {
     const requestId = res.locals.requestId as string | undefined;
@@ -1942,12 +1980,19 @@ export function createServer(config = loadConfig()): RunningServer {
           return;
         }
 
+        // Test-only barrier: pause here so tests can verify capacity state.
+        if (testBarrierPromise) {
+          await testBarrierPromise;
+        }
+
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
             if (transport && initReservation) {
               // Commit the reservation into a real session.
               // No capacity re-check here — the reservation already holds the slot.
+              // commitReservation sets inFlight=1 and initializing=true to protect
+              // the session from eviction during the initialize handshake.
               const committed = sessionRegistry.commitReservation(initReservation, newSessionId, transport);
               if (!committed) {
                 // Double-commit should never happen — log as internal error.
@@ -1960,6 +2005,9 @@ export function createServer(config = loadConfig()): RunningServer {
                 return;
               }
               reservationCommitted = true;
+              // Set activeSessionId so finally will call markIdle for the initialize request.
+              // This pairs with the inFlight=1 set by commitReservation.
+              activeSessionId = newSessionId;
             }
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
@@ -1992,6 +2040,12 @@ export function createServer(config = loadConfig()): RunningServer {
       }
 
       await transport.handleRequest(req, res, req.body);
+
+      // After handleRequest, check if this was a notifications/initialized request.
+      // If so, complete the handshake to unprotect the session from eviction.
+      if (sessionId && req.body?.method === "notifications/initialized") {
+        sessionRegistry.completeHandshake(sessionId);
+      }
     } catch (error) {
       logEvent(config.logging, "error", "mcp_request_error", {
         requestId,

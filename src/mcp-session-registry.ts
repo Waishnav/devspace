@@ -1,4 +1,4 @@
-/**
+﻿/**
  * McpSessionRegistry — PR #71 formal session lifecycle management.
  *
  * Responsibilities:
@@ -27,12 +27,20 @@ export interface TrackedSession {
   inFlight: number;
   closeStarted?: boolean;
   closed?: boolean;
+  /** True while the initialize handshake is in progress (initialize sent, notifications/initialized not yet received). */
+  initializing?: boolean;
+  /** Timestamp the session was committed (initialize response sent). */
+  initializedAt?: number;
+  /** Deadline after which a stuck initializing session can be force-cleaned. */
+  handshakeDeadline?: number;
 }
 
 export interface RegistryOptions {
   idleMs: number;
   sweepMs: number;
   maxSessions: number;
+  /** Max time (ms) a session can stay in initializing state before force-cleanup. Default 30000. */
+  handshakeTimeoutMs?: number;
   onSweep?: (closed: number, evicted: number) => void;
   onSessionClose?: (id: string, error?: Error) => void;
 }
@@ -68,14 +76,23 @@ export class McpSessionRegistry {
    */
   private readonly reservations = new Set<SessionReservation>();
 
+  /** Test-only: session IDs that should fail when closeTransport is called. */
+  private readonly closeFailureInjection = new Set<string>();
+
   constructor(options: RegistryOptions) {
     this.options = options;
+  }
+
+  /** Test-only: inject a close failure for a specific session. */
+  injectCloseFailure(id: string): void {
+    this.closeFailureInjection.add(id);
   }
 
   /** Start the periodic sweep timer. */
   startSweep(): void {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => {
+      this.closeStaleHandshakes();
       this.closeIdle().catch(() => {});
     }, this.options.sweepMs);
     if (this.sweepTimer.unref) this.sweepTimer.unref();
@@ -116,10 +133,11 @@ export class McpSessionRegistry {
   tryReserveSlot(): SessionReservation | undefined {
     // Capacity includes both sessions and pending reservations.
     if (this.occupiedCapacity >= this.options.maxSessions) {
-      // At capacity — try to evict an idle session to make room.
+      // At capacity — try to evict an idle, fully-handshaked session to make room.
+      // Sessions that are initializing or have inFlight > 0 are protected.
       const eligible: TrackedSession[] = [];
       for (const s of this.sessions.values()) {
-        if (s.inFlight === 0) eligible.push(s);
+        if (s.inFlight === 0 && !s.initializing) eligible.push(s);
       }
       if (eligible.length === 0) {
         return undefined; // No evictable sessions — reject.
@@ -169,12 +187,32 @@ export class McpSessionRegistry {
       );
     }
 
+    const now = Date.now();
+    const handshakeTimeout = this.options.handshakeTimeoutMs ?? 30_000;
     this.sessions.set(sessionId, {
       id: sessionId,
       transport,
-      lastActivity: Date.now(),
-      inFlight: 0,
+      lastActivity: now,
+      inFlight: 1, // initialize request is still in flight
+      initializing: true,
+      initializedAt: now,
+      handshakeDeadline: now + handshakeTimeout,
     });
+    return true;
+  }
+
+  /**
+   * Complete the initialization handshake for a session.
+   * Called after notifications/initialized is received.
+   * Sets initializing=false and refreshes lastActivity.
+   * Returns true on success, false if session not found or not initializing.
+   */
+  completeHandshake(id: string): boolean {
+    const s = this.sessions.get(id);
+    if (!s || !s.initializing) return false;
+    s.initializing = false;
+    s.handshakeDeadline = undefined;
+    s.lastActivity = Date.now();
     return true;
   }
 
@@ -206,7 +244,7 @@ export class McpSessionRegistry {
     if (this.occupiedCapacity >= this.options.maxSessions) {
       const eligible: TrackedSession[] = [];
       for (const s of this.sessions.values()) {
-        if (s.inFlight === 0) eligible.push(s);
+        if (s.inFlight === 0 && !s.initializing) eligible.push(s);
       }
       if (eligible.length === 0) {
         return false;
@@ -217,11 +255,16 @@ export class McpSessionRegistry {
       this.totalEvicted++;
       this.closeTransport(toEvict).catch(() => {});
     }
+    const now = Date.now();
+    const handshakeTimeout = this.options.handshakeTimeoutMs ?? 30_000;
     this.sessions.set(id, {
       id,
       transport,
-      lastActivity: Date.now(),
+      lastActivity: now,
       inFlight: 0,
+      initializing: false,
+      initializedAt: now,
+      handshakeDeadline: undefined,
     });
     return true;
   }
@@ -229,9 +272,9 @@ export class McpSessionRegistry {
   /** Whether the registry is at capacity with no evictable idle sessions. */
   get atCapacity(): boolean {
     if (this.occupiedCapacity < this.options.maxSessions) return false;
-    // At capacity — check if any session is idle (reservations are never idle).
+    // At capacity — check if any session is idle AND fully handshaked.
     for (const s of this.sessions.values()) {
-      if (s.inFlight === 0) return false;
+      if (s.inFlight === 0 && !s.initializing) return false;
     }
     return true;
   }
@@ -299,7 +342,13 @@ export class McpSessionRegistry {
     const now = Date.now();
     const toClose: TrackedSession[] = [];
     for (const s of this.sessions.values()) {
-      if (s.inFlight > 0) continue;
+      // Clean up stale handshakes: initializing sessions past their deadline with inFlight=0.
+      if (s.initializing && s.inFlight === 0 && s.handshakeDeadline && now >= s.handshakeDeadline) {
+        toClose.push(s);
+        continue;
+      }
+      // Normal idle cleanup: skip sessions with inFlight > 0 or still initializing.
+      if (s.inFlight > 0 || s.initializing) continue;
       if (now - s.lastActivity >= this.options.idleMs) {
         toClose.push(s);
       }
@@ -318,6 +367,26 @@ export class McpSessionRegistry {
   }
 
   /**
+   * Force-close sessions stuck in initializing state past their handshake deadline.
+   * This handles cases where the client disconnected after initialize but before
+   * sending notifications/initialized, and inFlight has returned to 0.
+   * Returns the number of sessions cleaned up.
+   */
+  closeStaleHandshakes(): number {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const s of this.sessions.values()) {
+      if (s.initializing && s.inFlight === 0 && s.handshakeDeadline && now >= s.handshakeDeadline) {
+        this.sessions.delete(s.id);
+        this.closeTransport(s).catch(() => {});
+        this.totalClosed++;
+        cleaned++;
+      }
+    }
+    return cleaned;
+  }
+
+  /**
    * Close a single session transport. Idempotent per session.
    * Logs transport_close at most once. Failures are recorded but not thrown.
    */
@@ -325,6 +394,9 @@ export class McpSessionRegistry {
     if (s.closeStarted) return;
     s.closeStarted = true;
     try {
+      if (this.closeFailureInjection.has(s.id)) {
+        throw new Error(`Injected close failure for session ${s.id}`);
+      }
       await s.transport.close();
       s.closed = true;
       this.options.onSessionClose?.(s.id);
@@ -332,6 +404,8 @@ export class McpSessionRegistry {
       const msg = err instanceof Error ? err.message : String(err);
       this.lastCloseError = `Session ${s.id} transport.close failed: ${msg}`;
       this.options.onSessionClose?.(s.id, err instanceof Error ? err : new Error(msg));
+    } finally {
+      this.closeFailureInjection.delete(s.id);
     }
   }
 
@@ -436,10 +510,15 @@ export class McpSessionRegistry {
 
   /** Diagnostic snapshot for runtime diagnostics (PR #69). */
   snapshot() {
+    let initializingCount = 0;
+    for (const s of this.sessions.values()) {
+      if (s.initializing) initializingCount++;
+    }
     return {
       activeSessions: this.sessions.size,
       pendingReservations: this.reservations.size,
       occupiedCapacity: this.occupiedCapacity,
+      initializingSessions: initializingCount,
       totalClosed: this.totalClosed,
       totalEvicted: this.totalEvicted,
       totalReservations: this.totalReservations,
@@ -447,6 +526,7 @@ export class McpSessionRegistry {
       idleMs: this.options.idleMs,
       sweepMs: this.options.sweepMs,
       maxSessions: this.options.maxSessions,
+      handshakeTimeoutMs: this.options.handshakeTimeoutMs ?? 30_000,
       lastError: this.lastCloseError,
     };
   }
