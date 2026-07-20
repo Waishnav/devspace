@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import type { WorkspaceMode, WorkspaceStore } from "./workspace-store.js";
-import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
@@ -47,6 +47,8 @@ export interface Workspace {
   skillDiagnostics: LoadedSkills["diagnostics"];
   agentProfiles: LocalAgentProfile[];
   activatedSkillDirs: Set<string>;
+  loadedAgentsPaths: Set<string>;
+  loadedAgentsRealPaths: Set<string>;
 }
 
 export interface WorkspaceContext {
@@ -124,6 +126,8 @@ export class WorkspaceRegistry {
       ...this.loadSkillsForWorkspace(root),
       agentProfiles: [],
       activatedSkillDirs: new Set(),
+      loadedAgentsPaths: new Set(),
+      loadedAgentsRealPaths: new Set(),
     };
     this.store?.touchSession(workspaceId);
     this.workspaces.set(restoredWorkspace.id, restoredWorkspace);
@@ -173,6 +177,71 @@ export class WorkspaceRegistry {
     return assertAllowedPath(directory, [workspace.root]);
   }
 
+  /**
+   * Loads instruction files that apply to a path and have not already been returned.
+   *
+   * @param workspace The active workspace.
+   * @param absolutePath An absolute, workspace-contained path.
+   * @param pathType Whether the path itself is a directory or a file path.
+   * @returns Newly discovered instruction files ordered from workspace root to target.
+   */
+  async loadAgentsFilesForPath(
+    workspace: Workspace,
+    absolutePath: string,
+    pathType: "auto" | "directory" | "file" = "auto",
+  ): Promise<LoadedAgentsFile[]> {
+    const root = resolve(workspace.root);
+    const resolvedRoot = (await tryRealpath(root)) ?? root;
+    const resolvedPath = resolve(absolutePath);
+    let directory = pathType === "directory" ? resolvedPath : dirname(resolvedPath);
+    if (pathType === "auto") {
+      try {
+        directory = (await stat(resolvedPath)).isDirectory()
+          ? resolvedPath
+          : dirname(resolvedPath);
+      } catch {
+        directory = dirname(resolvedPath);
+      }
+    }
+    const directories: string[] = [];
+
+    while (isPathInsideRoot(directory, root)) {
+      directories.push(directory);
+      if (directory === root) break;
+
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+
+    const discovered: LoadedAgentsFile[] = [];
+    for (const contextDirectory of directories.reverse()) {
+      for (const fileName of CONTEXT_FILE_NAMES) {
+        const path = join(contextDirectory, fileName);
+        const resolvedPath = resolve(path);
+        if (workspace.loadedAgentsPaths.has(resolvedPath)) continue;
+
+        const realPath = await tryRealpath(path);
+        if (!realPath || !isPathInsideRoot(realPath, resolvedRoot)) continue;
+        if (workspace.loadedAgentsRealPaths.has(realPath)) {
+          workspace.loadedAgentsPaths.add(resolvedPath);
+          continue;
+        }
+
+        try {
+          const content = await readFile(realPath, "utf8");
+          const file = { path: resolvedPath, content };
+          await this.rememberAgentsFiles(workspace, [file], [realPath]);
+          discovered.push(file);
+        } catch {
+          // A context file may disappear or become unreadable between realpath and readFile.
+        }
+      }
+    }
+
+    return discovered;
+  }
+
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
     const root = assertAllowedPath(path, this.config.allowedRoots);
     const rootStats = await ensureCheckoutWorkspaceRoot(root);
@@ -213,6 +282,8 @@ export class WorkspaceRegistry {
       ...this.loadSkillsForWorkspace(input.root),
       agentProfiles: await loadLocalAgentProfiles(this.config, input.root),
       activatedSkillDirs: new Set(),
+      loadedAgentsPaths: new Set(),
+      loadedAgentsRealPaths: new Set(),
     };
 
     this.store?.createSession({
@@ -226,9 +297,9 @@ export class WorkspaceRegistry {
     });
     this.workspaces.set(workspace.id, workspace);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
-    const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
+    await this.rememberAgentsFiles(workspace, agentsFiles);
 
-    return { workspace, agentsFiles, availableAgentsFiles };
+    return { workspace, agentsFiles, availableAgentsFiles: [] };
   }
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {
@@ -277,29 +348,16 @@ export class WorkspaceRegistry {
     return loadedFiles;
   }
 
-  private async findAvailableAgentsFiles(
-    root: string,
-    loadedFiles: LoadedAgentsFile[],
-  ): Promise<AvailableAgentsFile[]> {
-    const loadedPaths = new Set(loadedFiles.map((file) => resolve(file.path)));
-    const loadedRealPaths = new Set<string>();
-    for (const file of loadedFiles) {
-      const realPath = await tryRealpath(file.path);
-      if (realPath) loadedRealPaths.add(realPath);
+  private async rememberAgentsFiles(
+    workspace: Workspace,
+    files: LoadedAgentsFile[],
+    realPaths?: string[],
+  ): Promise<void> {
+    for (const [index, file] of files.entries()) {
+      workspace.loadedAgentsPaths.add(resolve(file.path));
+      const realPath = realPaths?.[index] ?? await tryRealpath(file.path);
+      if (realPath) workspace.loadedAgentsRealPaths.add(realPath);
     }
-    const discovered: AvailableAgentsFile[] = [];
-
-    await walkWorkspace(root, async (path, entry) => {
-      if (!entry.isFile()) return;
-      if (!CONTEXT_FILE_NAMES.has(entry.name)) return;
-      if (loadedPaths.has(path)) return;
-      const realPath = await tryRealpath(path);
-      if (realPath && loadedRealPaths.has(realPath)) return;
-
-      discovered.push({ path });
-    });
-
-    return discovered.sort((a, b) => a.path.localeCompare(b.path));
   }
 }
 
@@ -320,18 +378,6 @@ export async function ensureCheckoutWorkspaceRoot(
 }
 
 const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-const SKIPPED_CONTEXT_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".devspace",
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  ".turbo",
-  ".cache",
-]);
 
 export function formatAgentsPath(path: string, workspaceRoot: string | undefined): string {
   if (!workspaceRoot) return path.split(sep).join("/");
@@ -374,30 +420,6 @@ async function tryRealpath(path: string): Promise<string | undefined> {
     return await realpath(path);
   } catch {
     return undefined;
-  }
-}
-
-async function walkWorkspace(
-  directory: string,
-  visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
-): Promise<void> {
-  let entries;
-  try {
-    entries = await opendir(directory);
-  } catch {
-    return;
-  }
-
-  for await (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
-        await walkWorkspace(path, visit);
-      }
-      continue;
-    }
-
-    await visit(path, entry);
   }
 }
 
