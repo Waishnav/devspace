@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -47,6 +47,11 @@ import {
   getLocalAgentProviderAvailabilitySnapshot,
   type LocalAgentProviderAvailability,
 } from "./local-agent-availability.js";
+import { createAdvancedGuardStore, registerAdvancedTools, type AdvancedGuardStore } from "./advanced-tools.js";
+import { McpSessionRegistry } from "./mcp-session-registry.js";
+import { truncateInlineOutput, wrapInlineOutput, type TruncationResult } from "./output-truncation.js";
+import { runDiagnose, runSmoke } from "./runtime-diagnostics.js";
+import { CostTracker, supplementSafePath } from "./cost-stats.js";
 
 type Transport = StreamableHTTPServerTransport;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
@@ -679,6 +684,8 @@ function createMcpServer(
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
   localAgentProviders: LocalAgentProviderAvailability[],
+  advancedGuards: AdvancedGuardStore,
+  costTracker: CostTracker,
 ): McpServer {
   const server = new McpServer(
     {
@@ -1560,19 +1567,35 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
+      // PR #85: Apply inline output truncation to bash tool results
+      const inlineLimit = config.inlineOutputCharacters;
+      const originalText = contentText(response.content);
+      const truncation = truncateInlineOutput(originalText, inlineLimit);
+      const truncatedContent = truncation.truncated
+        ? [{ type: "text" as const, text: truncation.text }]
+        : response.content;
+
       return {
         ...response,
+        content: truncatedContent,
         _meta: {
           tool: toolNames.shell,
-          card: {
-            workspaceId,
-            path: workingDirectory,
-            summary,
-            payload: { content: response.content },
-          },
+          ...(config.widgets === "changes" ? {
+            card: {
+              workspaceId,
+              path: workingDirectory,
+              summary,
+              payload: { content: response.content },
+            },
+          } : {}),
         },
         structuredContent: {
-          result: contentText(response.content),
+          result: truncation.text,
+          truncated: truncation.truncated,
+          originalChars: truncation.originalChars,
+          originalLines: truncation.originalLines,
+          inlineChars: truncation.inlineChars,
+          omittedChars: truncation.omittedChars,
         },
       };
     },
@@ -1583,26 +1606,72 @@ function createMcpServer(
     registerCodexProcessTools(server, config, workspaces, processSessions);
   }
 
+  // Register advanced tools (read_many, search_text, etc.) from local advanced-tools module
+  // NOTE: registerAdvancedTools expects (server, dependencies) 鈥?not positional args.
+  // Dependencies: { z, registerAppTool, workspaces, processSessions, guards }
+  registerAdvancedTools(server, {
+    z,
+    registerAppTool,
+    workspaces,
+    processSessions,
+    guards: advancedGuards,
+  });
+
   return server;
 }
 
+/**
+ * New createServer function for server.ts — incorporates all local customizations + PRs.
+ * This replaces the original createServer function (lines 1589-1774).
+ */
 export function createServer(config = loadConfig()): RunningServer {
-  const allowedHosts = config.allowedHosts.includes("*")
-    ? undefined
-    : Array.from(new Set([config.host, ...config.allowedHosts]));
-  const app = createMcpExpressApp({
-    host: config.host,
-    ...(allowedHosts ? { allowedHosts } : {}),
+  // PR #69 F: Safe PATH supplement (Windows only, no user startup scripts)
+  if (process.platform === "win32") {
+    process.env.PATH = supplementSafePath(process.env.PATH ?? "");
+  }
+
+  // PR #69 E: Cost tracker
+  const costTracker = new CostTracker();
+
+  // Advanced guards from local advanced-tools module
+  const advancedGuards = createAdvancedGuardStore();
+
+  // Custom host validation: when "*" is in allowedHosts, bypass host validation entirely.
+  // This uses plain express + json instead of createMcpExpressApp with host validation.
+  const bypassHostValidation = config.allowedHosts.includes("*");
+  const app = bypassHostValidation
+    ? express()
+    : createMcpExpressApp({
+        host: config.host,
+        allowedHosts: Array.from(new Set([config.host, ...config.allowedHosts])),
+      });
+
+  if (bypassHostValidation) {
+    app.use(express.json());
+  }
+
+  // PR #71: Session registry with configurable idle/sweep/max parameters
+  const sessionRegistry = new McpSessionRegistry({
+    idleMs: parseInt(process.env.DEVSPACE_SESSION_IDLE_MS ?? "86400000", 10),
+    sweepMs: parseInt(process.env.DEVSPACE_SESSION_SWEEP_MS ?? "300000", 10),
+    maxSessions: parseInt(process.env.DEVSPACE_MAX_SESSIONS ?? "64", 10),
+    onSessionClose: (id, error) => {
+      logEvent(config.logging, error ? "warn" : "info", "mcp_session_closed", {
+        sessionIdPrefix: sessionIdPrefix(id),
+        ...(error ? { error: error.message } : {}),
+      });
+    },
+    onSweep: (closed, evicted) => {
+      if (closed > 0 || evicted > 0) {
+        logEvent(config.logging, "info", "mcp_session_sweep", { closed, evicted });
+      }
+    },
   });
-  const transports = new Map<string, Transport>();
+  sessionRegistry.startSweep();
+
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
-  const bearerAuth = requireBearerAuth({
-    verifier: oauthProvider,
-    requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
-  });
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
@@ -1615,6 +1684,27 @@ export function createServer(config = loadConfig()): RunningServer {
     app.set("trust proxy", true);
   }
 
+  // CORS + dynamic public URL resolution middleware (local customization).
+  // Resolves the public URL from x-forwarded-proto/host headers for dynamic tunnels.
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id, mcp-protocol-version");
+    res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+
+    // Resolve dynamic public URL from request headers
+    const proto = (req.header("x-forwarded-proto") ?? req.protocol ?? "https").split(",")[0].trim();
+    const host = req.header("x-forwarded-host") ?? req.header("host") ?? "";
+    if (host) {
+      (req as any).dynamicPublicUrl = `${proto}://${host}`;
+    }
+    next();
+  });
+
+  // Request logging middleware
   app.use((req, res, next) => {
     const requestId = randomUUID();
     const startedAt = performance.now();
@@ -1638,6 +1728,36 @@ export function createServer(config = loadConfig()): RunningServer {
     next();
   });
 
+  // Dynamic OAuth metadata endpoints (local customization).
+  // Returns the resource/authorization server URL based on the request's origin,
+  // enabling dynamic tunnels (Cloudflare, Tailscale) without reconfiguration.
+  app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
+    const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+    const resourceUrl = new URL("/mcp", origin).href;
+    res.json({
+      resource: resourceUrl,
+      authorization_servers: [origin],
+      bearer_methods: ["header"],
+      resource_documentation: `${origin}/.well-known/oauth-protected-resource/mcp`,
+    });
+  });
+
+  app.get("/.well-known/oauth-authorization-server", (req, res) => {
+    const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+    res.json({
+      issuer: origin,
+      authorization_endpoint: `${origin}/authorize`,
+      token_endpoint: `${origin}/token`,
+      registration_endpoint: `${origin}/register`,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_methods_supported: ["none"],
+      code_challenge_methods_supported: ["S256"],
+      scopes_supported: config.oauth.scopes,
+    });
+  });
+
+  // mcpAuthRouter for standard OAuth routes (/authorize, /token, /register)
   app.use(
     mcpAuthRouter({
       provider: oauthProvider,
@@ -1664,24 +1784,94 @@ export function createServer(config = loadConfig()): RunningServer {
     }),
   );
 
+  // Healthz endpoint with session info
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    res.json({
+      ok: true,
+      name: "devspace",
+      sessions: sessionRegistry.size,
+    });
   });
 
+  // PR #69 D: Runtime diagnostics endpoint
+  app.get("/devspace-runtime/diagnose", (_req, res) => {
+    const diag = runDiagnose({
+      registrySnapshot: sessionRegistry.snapshot(),
+      costSnapshot: costTracker.getSummary() as unknown as Record<string, unknown>,
+      configInfo: {
+        port: config.port,
+        inlineOutputCharacters: config.inlineOutputCharacters,
+        contextIgnorePaths: config.contextIgnorePaths,
+        shell: config.shell,
+        widgets: config.widgets,
+        publicBaseUrl: config.publicBaseUrl,
+      },
+      recentErrors: [],
+    });
+    res.json(diag);
+  });
+
+  app.get("/devspace-runtime/costs", (_req, res) => {
+    res.json(costTracker.getSummary());
+  });
+
+  app.get("/devspace-runtime/smoke", async (_req, res) => {
+    const result = await runSmoke([
+      {
+        name: "healthz",
+        fn: async () => {
+          try {
+            const r = await fetch(`http://127.0.0.1:${config.port}/healthz`);
+            return { ok: r.ok, detail: `status ${r.status}` };
+          } catch (e) {
+            return { ok: false, detail: String(e) };
+          }
+        },
+      },
+    ]);
+    res.json(result);
+  });
+
+  // MCP endpoint with session management and output truncation
   app.all("/mcp", async (req, res) => {
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
 
-    await new Promise<void>((resolve, reject) => {
-      bearerAuth(req, res, (error?: unknown) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-    if (res.headersSent) return;
+    // Custom bearer auth with dynamic WWW-Authenticate (local customization)
+    const authHeader = req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+      sendJsonRpcError(res, 401, -32001, "Unauthorized");
+      return;
+    }
 
-    if (!req.auth?.resource || !checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl })) {
+    const token = authHeader.slice(7);
+    let authResult;
+    try {
+      authResult = await oauthProvider.verifyAccessToken(token);
+    } catch {
+      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
+      sendJsonRpcError(res, 401, -32001, "Unauthorized");
+      return;
+    }
+
+    if (!authResult || !authResult.resource) {
+      const origin = (req as any).dynamicPublicUrl ?? config.publicBaseUrl;
+      res.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`);
+      sendJsonRpcError(res, 401, -32001, "Unauthorized");
+      return;
+    }
+
+    // Flexible resource check (local customization): accept any /mcp URL path
+    const requestedResource = authResult.resource;
+    const resourceAllowed =
+      requestedResource.origin === resourceServerUrl.origin ||
+      requestedResource.pathname.endsWith("/mcp") ||
+      requestedResource.href === resourceServerUrl.href;
+    if (!resourceAllowed) {
       logEvent(config.logging, "warn", "auth_denied", {
         requestId,
         method: req.method,
@@ -1693,6 +1883,13 @@ export function createServer(config = loadConfig()): RunningServer {
       return;
     }
 
+    // Scope check
+    const requiredScope = config.oauth.scopes[0] ?? "devspace";
+    if (!authResult.scopes?.includes(requiredScope)) {
+      sendJsonRpcError(res, 403, -32001, "Insufficient scope");
+      return;
+    }
+
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
@@ -1701,20 +1898,51 @@ export function createServer(config = loadConfig()): RunningServer {
       isInitialize: initializeRequest,
     });
 
+    // activeSessionId is set only when markActive is called (existing sessions only).
+    // initialize requests never call markActive, so markIdle is skipped for them.
+    let activeSessionId: string | undefined;
+
     try {
       let transport: Transport | undefined;
 
       if (sessionId) {
-        transport = transports.get(sessionId);
+        transport = sessionRegistry.get(sessionId)?.transport;
         if (!transport) {
           sendJsonRpcError(res, 404, -32000, "Unknown MCP session");
           return;
         }
+        // Track session activity — single markActive for existing sessions.
+        sessionRegistry.markActive(sessionId);
+        activeSessionId = sessionId;
       } else if (initializeRequest) {
+        // Reject immediately if at capacity with no evictable idle sessions.
+        if (sessionRegistry.atCapacity) {
+          logEvent(config.logging, "warn", "mcp_capacity_rejected", {
+            requestId,
+            activeSessions: sessionRegistry.size,
+            maxSessions: sessionRegistry.snapshot().maxSessions,
+            ...requestLogFields(req, config),
+          });
+          sendJsonRpcError(res, 503, -32000, "MCP server at capacity \u2014 all sessions are busy");
+          return;
+        }
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            if (transport) transports.set(newSessionId, transport);
+            if (transport) {
+              const registered = sessionRegistry.register(newSessionId, transport);
+              if (!registered) {
+                // Capacity reached between the pre-check and registration.
+                transport.close().catch(() => {});
+                logEvent(config.logging, "warn", "mcp_session_rejected", {
+                  requestId,
+                  sessionIdPrefix: sessionIdPrefix(newSessionId),
+                  reason: "server_at_capacity",
+                  ...requestLogFields(req, config),
+                });
+                return;
+              }
+            }
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
               sessionIdPrefix: sessionIdPrefix(newSessionId),
@@ -1726,10 +1954,7 @@ export function createServer(config = loadConfig()): RunningServer {
         transport.onclose = () => {
           const closedSessionId = transport?.sessionId;
           if (closedSessionId) {
-            transports.delete(closedSessionId);
-            logEvent(config.logging, "info", "mcp_session_closed", {
-              sessionIdPrefix: sessionIdPrefix(closedSessionId),
-            });
+            sessionRegistry.forget(closedSessionId);
           }
         };
 
@@ -1739,6 +1964,8 @@ export function createServer(config = loadConfig()): RunningServer {
           reviewCheckpoints,
           processSessions,
           localAgentProviders,
+          advancedGuards,
+          costTracker,
         );
         await server.connect(transport);
       } else {
@@ -1755,23 +1982,37 @@ export function createServer(config = loadConfig()): RunningServer {
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
+    } finally {
+      // markIdle must be in finally to ensure inFlight is decremented even on exceptions.
+      // Only call markIdle when markActive was called (existing sessions, not initialize).
+      if (activeSessionId) {
+        sessionRegistry.markIdle(activeSessionId);
+      }
     }
   });
 
   let closed = false;
+  const close = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    closed = true;
+    return sessionRegistry.shutdown({
+      httpServer: null,
+      appCleanup: async () => {
+        processSessions.shutdown();
+        oauthProvider.close();
+        workspaceStore.close?.();
+      },
+    });
+  };
+
   return {
     app,
     config,
     localAgentProviders,
-    close: () => {
-      if (closed) return;
-      closed = true;
-      processSessions.shutdown();
-      oauthProvider.close();
-      workspaceStore.close?.();
-    },
+    close,
   };
 }
+
 
 async function isMainModule(): Promise<boolean> {
   if (!process.argv[1]) return false;

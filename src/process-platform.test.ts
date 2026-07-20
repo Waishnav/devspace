@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
 
+// PR #41: Windows default is now PowerShell (not cmd.exe)
 assert.deepEqual(resolveShellCommand("echo ok", "win32", { ComSpec: "C:\\Windows\\cmd.exe" }), {
+  executable: "powershell.exe",
+  args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "echo ok"],
+});
+
+// Explicit cmd mode still works
+assert.deepEqual(resolveShellCommand("echo ok", "win32", { ComSpec: "C:\\Windows\\cmd.exe", DEVSPACE_SHELL: "cmd" }), {
   executable: "C:\\Windows\\cmd.exe",
   args: ["/d", "/s", "/c", "echo ok"],
+});
+
+// Explicit powershell mode
+assert.deepEqual(resolveShellCommand("echo ok", "win32", { DEVSPACE_SHELL: "powershell" }), {
+  executable: "powershell.exe",
+  args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "echo ok"],
 });
 
 assert.deepEqual(resolveShellCommand("echo ok", "darwin", { SHELL: "/bin/zsh" }), {

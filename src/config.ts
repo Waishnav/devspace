@@ -7,8 +7,11 @@ import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
+export type ShellMode = "auto" | "bash" | "powershell" | "cmd";
+
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_INLINE_OUTPUT_CHARACTERS = 12000;
 
 export interface ServerConfig {
   host: string;
@@ -28,6 +31,9 @@ export interface ServerConfig {
   subagents: boolean;
   agentDir: string;
   logging: LoggingConfig;
+  shell: ShellMode;
+  inlineOutputCharacters: number;
+  contextIgnorePaths: string[];
 }
 
 function parsePort(value: string | number | undefined): number {
@@ -71,10 +77,25 @@ function parseAllowedHosts(value: string | string[] | undefined, derivedHosts: s
   return normalizeAllowedHosts(rawHosts, derivedHosts);
 }
 
+/**
+ * Normalize allowed hosts.
+ * Customization: strip URL schemes (http://, https://) to get clean hostname.
+ * This allows config.json and env vars to contain full URLs which get normalized
+ * to just the hostname for comparison.
+ */
 function normalizeAllowedHosts(rawHosts: string[], derivedHosts: string[]): string[] {
   const hosts = rawHosts.length > 0 ? rawHosts : derivedHosts;
   if (hosts.includes("*")) return ["*"];
-  return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)));
+  const cleaned = hosts.map((host) => {
+    const trimmed = host.trim();
+    if (!trimmed) return "";
+    // Strip http:// or https:// scheme
+    const withoutScheme = trimmed.replace(/^https?:\/\//i, "");
+    // Strip port and path — keep just hostname for Host header comparison
+    const hostname = withoutScheme.split(/[:/]/)[0];
+    return hostname || trimmed;
+  }).filter(Boolean);
+  return Array.from(new Set(cleaned));
 }
 
 function parseBoolean(value: string | undefined): boolean {
@@ -90,6 +111,14 @@ function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
     return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
   }
   return "minimal";
+}
+
+function parseShellMode(env: NodeJS.ProcessEnv): ShellMode {
+  const mode = env.DEVSPACE_SHELL;
+  if (mode === "auto" || mode === "bash" || mode === "powershell" || mode === "cmd") return mode;
+  if (mode) throw new Error(`Invalid DEVSPACE_SHELL: ${mode}`);
+  // Windows default: powershell; other platforms: auto
+  return process.platform === "win32" ? "powershell" : "auto";
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -133,6 +162,36 @@ function parsePositiveInteger(value: string | undefined, fallback: number, name:
   }
 
   return parsed;
+}
+
+function parseInlineOutputCharacters(env: NodeJS.ProcessEnv, configValue: number | undefined): number {
+  const raw = env.DEVSPACE_INLINE_OUTPUT_CHARACTERS ?? configValue ?? DEFAULT_INLINE_OUTPUT_CHARACTERS;
+  const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 100) return DEFAULT_INLINE_OUTPUT_CHARACTERS;
+  if (n > 200000) return 200000;
+  return n;
+}
+
+function parseContextIgnorePaths(env: NodeJS.ProcessEnv, configValue: string[] | undefined): string[] {
+  const envPaths = env.DEVSPACE_CONTEXT_IGNORE_PATHS
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean) ?? [];
+  const source = envPaths.length > 0 ? envPaths : (configValue ?? []);
+  // Validate: reject absolute paths, drive letters, parent traversal, empty, null bytes
+  const accepted = new Set<string>();
+  for (const raw of source) {
+    const input = String(raw ?? "").trim();
+    if (!input || input.includes("\0")) continue;
+    if (input.startsWith("/") || input.startsWith("\\")) continue;
+    if (/^[a-zA-Z]:[\\/]/.test(input)) continue;
+    if (input === ".." || input.startsWith("../") || input.startsWith("..\\")) continue;
+    const normalized = input.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (normalized && normalized !== ".." && !normalized.startsWith("../")) {
+      accepted.add(normalized);
+    }
+  }
+  return [...accepted].sort();
 }
 
 function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
@@ -236,6 +295,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
         : parseBoolean(env.DEVSPACE_SUBAGENTS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
+    shell: parseShellMode(env),
+    inlineOutputCharacters: parseInlineOutputCharacters(env, files.config.inlineOutputCharacters),
+    contextIgnorePaths: parseContextIgnorePaths(env, files.config.contextIgnorePaths),
   };
 }
 

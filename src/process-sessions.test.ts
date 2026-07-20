@@ -28,6 +28,10 @@ assert.equal(unicodeResult.truncated, true);
 assert.match(unicodeResult.output, /^a🙂/);
 assert.match(unicodeResult.output, /🙂c$/);
 
+// Use cmd.exe for this test 鈥?commands use cmd-style quoting (quoted paths without & call operator).
+// PowerShell execution is tested in process-platform.test.ts and candidate validation.
+process.env.DEVSPACE_SHELL = 'cmd';
+
 const manager = new ProcessSessionManager({
   maxBufferCharacters: 1_024,
   completedSessionTtlMs: 1_000,

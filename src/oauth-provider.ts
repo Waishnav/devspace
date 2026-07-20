@@ -12,6 +12,21 @@ import type {
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 
+
+/**
+ * Flexible resource check 鈥?local customization.
+ * Accepts any URL whose pathname ends with /mcp, instead of exact checkResourceAllowed.
+ * This allows dynamic tunnels (Cloudflare, Tailscale) to work without reconfiguration.
+ */
+function isFlexibleResourceAllowed(requested: URL, configured: URL): boolean {
+  // Same origin: always allowed
+  if (requested.origin === configured.origin) return true;
+  // Any URL whose pathname ends with /mcp is allowed (dynamic tunnels)
+  if (requested.pathname.endsWith("/mcp")) return true;
+  // Fall back to exact check for safety
+  return requested.href === configured.href;
+}
+
 export interface OAuthConfig {
   ownerToken: string;
   accessTokenTtlSeconds: number;
@@ -132,7 +147,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !checkResourceAllowed({ requestedResource: params.resource, configuredResource: this.resourceServerUrl })) {
+    if (!params.resource || !isFlexibleResourceAllowed(params.resource, this.resourceServerUrl)) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
@@ -199,7 +214,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     if (redirectUri && redirectUri !== record.params.redirectUri) {
       throw new InvalidGrantError("redirect_uri does not match the authorization request");
     }
-    if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
+    if (resource && !isFlexibleResourceAllowed(resource, this.resourceServerUrl)) {
       throw new InvalidGrantError("Invalid resource");
     }
 
@@ -218,7 +233,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidGrantError("Invalid refresh token");
     }
-    if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
+    if (resource && !isFlexibleResourceAllowed(resource, this.resourceServerUrl)) {
       throw new InvalidGrantError("Invalid resource");
     }
 

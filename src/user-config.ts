@@ -19,6 +19,8 @@ export interface DevspaceUserConfig {
   worktreeRoot?: string;
   agentDir?: string;
   subagents?: boolean;
+  inlineOutputCharacters?: number;
+  contextIgnorePaths?: string[];
 }
 
 export interface DevspaceAuthConfig {

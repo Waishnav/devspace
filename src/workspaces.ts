@@ -6,6 +6,9 @@ import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
 import { assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
+import { assertAllowedPathRealpath } from "./roots.js";
+import { shouldSkipForContext } from "./context-ignore.js";
+import { deduplicateByRealpathSync, safeRealpathSync } from "./realpath-utils.js";
 import {
   loadWorkspaceSkills,
   markSkillActivated,

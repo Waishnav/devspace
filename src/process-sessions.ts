@@ -325,17 +325,31 @@ export class ProcessSessionManager {
   private startPipe(session: ProcessSession, input: StartCommandInput): void {
     const shell = resolveShellCommand(input.command);
     const detached = process.platform !== "win32";
-    const child = spawn(input.command, {
-      cwd: input.cwd,
-      env: processEnvironment({
-        workspaceId: input.workspaceId,
-        workspaceRoot: input.workspaceRoot,
-      }),
-      stdio: "pipe",
-      windowsHide: true,
-      detached,
-      shell: shell.executable,
-    });
+    // PR #41: cmd.exe works with Node.js shell option (uses /d /s /c internally).
+    // PowerShell needs direct spawn with -Command flag (Node.js shell option hardcodes /d /s /c which PowerShell doesn't understand).
+    const isCmdShell = shell.executable.toLowerCase().includes("cmd");
+    const child = isCmdShell
+      ? spawn(input.command, {
+          cwd: input.cwd,
+          env: processEnvironment({
+            workspaceId: input.workspaceId,
+            workspaceRoot: input.workspaceRoot,
+          }),
+          stdio: "pipe",
+          windowsHide: true,
+          detached,
+          shell: shell.executable,
+        })
+      : spawn(shell.executable, shell.args, {
+          cwd: input.cwd,
+          env: processEnvironment({
+            workspaceId: input.workspaceId,
+            workspaceRoot: input.workspaceRoot,
+          }),
+          stdio: "pipe",
+          windowsHide: true,
+          detached,
+        });
 
     session.process = {
       write: (data) => child.stdin.write(data),
