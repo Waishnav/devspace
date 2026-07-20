@@ -47,6 +47,7 @@ export async function copyArtifactToWorkspace(
 
   const tempPath = join(parent, `.devspace-artifact-${randomUUID()}.partial`);
   let finalPath = input.destination;
+  let materialized = false;
   try {
     const copied = await copyVerifiedArtifactToTemp(artifact.hostPath, tempPath, artifact.size, artifact.sha256);
     await assertContainedWorkspaceRegularFile(input.workspaceRoot, tempPath);
@@ -58,6 +59,7 @@ export async function copyArtifactToWorkspace(
       }
       await ensureContainedWorkspaceDirectory(input.workspaceRoot, parent);
       await rename(tempPath, finalPath);
+      materialized = true;
     } else {
       let linked = false;
       const attempts = input.onConflict === "rename" ? MAX_RENAME_ATTEMPTS : 1;
@@ -79,6 +81,7 @@ export async function copyArtifactToWorkspace(
       if (!linked) {
         throw new ArtifactError("workspace_rename_exhausted", "Could not find an available destination filename.");
       }
+      materialized = true;
       await unlink(tempPath);
     }
 
@@ -99,6 +102,9 @@ export async function copyArtifactToWorkspace(
     };
   } catch (error) {
     await unlink(tempPath).catch(() => undefined);
+    if (materialized) {
+      await unlink(finalPath).catch(() => undefined);
+    }
     throw error;
   }
 }
