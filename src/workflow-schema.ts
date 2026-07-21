@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { WORKFLOW_MAX_SCHEMA_RETRIES } from "./workflow-types.js";
 import { tryExtractJson, WorkflowEngineError } from "./workflow-api.js";
 import type { WorkflowProviderRunResult, WorkflowRunProvider } from "./workflow-api.js";
+import { isProviderSchemaUnsupportedError } from "./local-agent-runtime.js";
 
 const require = createRequire(import.meta.url);
 
@@ -38,7 +39,10 @@ export interface EnforceSchemaInput {
   provider?: string;
   run: (
     prompt: string,
-    opts?: { mode: SchemaEnforceMode },
+    opts: {
+      mode: SchemaEnforceMode;
+      providerSessionId?: string;
+    },
   ) => Promise<WorkflowProviderRunResult>;
   onRetry?: (info: {
     attempt: number;
@@ -71,6 +75,7 @@ export async function enforceAgentSchema(
   const basePrompt = augmentPromptForSchema(input.prompt, input.schema);
 
   let lastErrors = "unknown validation error";
+  let providerSessionId: string | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const mode: SchemaEnforceMode = native && attempt === 0 ? "native" : "prompt";
@@ -82,32 +87,45 @@ export async function enforceAgentSchema(
           ? basePrompt
           : `${basePrompt}\n\nPrevious JSON failed validation:\n${lastErrors}\nReturn only corrected JSON.`;
 
-    const result = await input.run(prompt, { mode });
+    let result: WorkflowProviderRunResult;
+    try {
+      result = await input.run(prompt, { mode, providerSessionId });
+    } catch (error) {
+      if (mode === "native" && isProviderSchemaUnsupportedError(error) && attempt < maxRetries) {
+        lastErrors = error.message;
+        input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+        continue;
+      }
+      throw error;
+    }
+    providerSessionId = result.providerSessionId ?? providerSessionId;
 
-    const extracted =
-      result.structured !== undefined
-        ? result.structured
-        : tryExtractJson(result.finalResponse);
-
-    if (extracted === undefined) {
+    const candidates = structuredCandidates(result);
+    if (candidates.length === 0) {
       lastErrors = "Response was not valid JSON";
-      input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+      if (attempt < maxRetries) {
+        input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+      }
       continue;
     }
 
-    const ok = validate(extracted);
-    if (ok) {
-      return {
-        value: extracted,
-        finalResponse: result.finalResponse,
-        providerSessionId: result.providerSessionId,
-        attempts: attempt + 1,
-        mode,
+    for (const candidate of candidates) {
+      const ok = validate(candidate);
+      if (ok) {
+        return {
+          value: candidate,
+          finalResponse: result.finalResponse,
+          providerSessionId,
+          attempts: attempt + 1,
+          mode,
+        };
       };
     }
 
     lastErrors = formatAjvErrors(validate.errors);
-    input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+    if (attempt < maxRetries) {
+      input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+    }
   }
 
   throw new WorkflowEngineError(
@@ -149,11 +167,26 @@ export function schemaAwareRunProvider(
     prompt: base.prompt,
     provider: base.provider,
     onRetry,
-    run: (prompt) =>
+    run: (prompt, options) =>
       runProvider({
         ...base,
         prompt,
-        schema,
+        providerSessionId: options.providerSessionId,
+        ...(options.mode === "native" ? { schema } : {}),
       }),
   });
+}
+
+function structuredCandidates(result: WorkflowProviderRunResult): unknown[] {
+  const candidates: unknown[] = [];
+  if (result.structured !== undefined) {
+    candidates.push(result.structured);
+    if (typeof result.structured === "string") {
+      const parsed = tryExtractJson(result.structured);
+      if (parsed !== undefined && parsed !== result.structured) candidates.push(parsed);
+    }
+  }
+  const fromText = tryExtractJson(result.finalResponse);
+  if (fromText !== undefined) candidates.push(fromText);
+  return candidates;
 }

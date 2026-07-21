@@ -6,6 +6,8 @@ import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
   createCodexSdkLocalAgentRuntime,
+  isNativeSchemaUnsupportedFailure,
+  ProviderSchemaUnsupportedError,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
 } from "./local-agent-runtime.js";
@@ -59,47 +61,56 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
     const claudeExecutable = process.env.CLAUDE_COMMAND ?? resolveExecutable("claude");
-    const messages = query({
-      prompt: input.prompt,
-      options: {
-        cwd: input.workspace,
-        model: input.model,
-        ...(input.effort ? { thinking: { type: "adaptive" } as const, effort: input.effort as EffortLevel } : {}),
-        resume: input.providerSessionId,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        env: claudeCommandEnvironment(process.env),
-        ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
-        ...claudeOutputFormatOptions(input.schema),
-      },
-    });
+    try {
+      const messages = query({
+        prompt: input.prompt,
+        options: {
+          cwd: input.workspace,
+          model: input.model,
+          ...(input.effort
+            ? { thinking: { type: "adaptive" } as const, effort: input.effort as EffortLevel }
+            : {}),
+          resume: input.providerSessionId,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          env: claudeCommandEnvironment(process.env),
+          ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+          ...claudeOutputFormatOptions(input.schema),
+        },
+      });
 
-    let providerSessionId = input.providerSessionId ?? null;
-    let finalResponse = "";
-    let structured: unknown | undefined;
-    const items: unknown[] = [];
-    for await (const message of messages) {
-      items.push(message);
-      const record = message as Record<string, unknown>;
-      if (typeof record.session_id === "string") providerSessionId = record.session_id;
-      if (record.type !== "result") continue;
-      const resultError = claudeResultError(record);
-      if (resultError) throw new Error(resultError);
-      const extracted = extractClaudeResultPayload(record);
-      if (extracted) {
-        finalResponse = extracted.finalResponse;
-        structured = extracted.structured;
+      let providerSessionId = input.providerSessionId ?? null;
+      let finalResponse = "";
+      let structured: unknown | undefined;
+      const items: unknown[] = [];
+      for await (const message of messages) {
+        items.push(message);
+        const record = message as Record<string, unknown>;
+        if (typeof record.session_id === "string") providerSessionId = record.session_id;
+        if (record.type !== "result") continue;
+        const resultError = claudeResultError(record);
+        if (resultError) throw new Error(resultError);
+        const extracted = extractClaudeResultPayload(record);
+        if (extracted) {
+          finalResponse = extracted.finalResponse;
+          structured = extracted.structured;
+        }
       }
-    }
 
-    finalResponse = requireFinalResponse("Claude", finalResponse);
-    return {
-      provider: this.provider,
-      providerSessionId,
-      finalResponse,
-      items,
-      ...(structured !== undefined ? { structured } : {}),
-    };
+      finalResponse = requireFinalResponse("Claude", finalResponse);
+      return {
+        provider: this.provider,
+        providerSessionId,
+        finalResponse,
+        items,
+        ...(structured !== undefined ? { structured } : {}),
+      };
+    } catch (error) {
+      if (input.schema && isNativeSchemaUnsupportedFailure(error)) {
+        throw new ProviderSchemaUnsupportedError(this.provider, error);
+      }
+      throw error;
+    }
   }
 }
 

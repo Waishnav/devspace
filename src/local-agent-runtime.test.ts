@@ -3,6 +3,7 @@ import type { RunResult, ThreadOptions } from "@openai/codex-sdk";
 import {
   CodexSdkLocalAgentRuntime,
   createCodexSdkLocalAgentRuntime,
+  isNativeSchemaUnsupportedFailure,
 } from "./local-agent-runtime.js";
 
 const emptyTurn = (finalResponse: string): RunResult => ({
@@ -127,3 +128,11 @@ assert.deepEqual(codex.resumed, [
 
 const created = await createCodexSdkLocalAgentRuntime(undefined, () => new FakeCodex());
 assert.equal(created.provider, "codex");
+
+assert.equal(
+  isNativeSchemaUnsupportedFailure(
+    new Error("Invalid output schema: keyword is not supported"),
+  ),
+  true,
+);
+assert.equal(isNativeSchemaUnsupportedFailure(new Error("authentication failed")), false);

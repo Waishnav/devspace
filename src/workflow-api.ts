@@ -19,6 +19,7 @@ import {
 export interface WorkflowProviderRunInput {
   provider: string;
   prompt: string;
+  providerSessionId?: string;
   model?: string;
   effort?: string;
   workspace: string;
@@ -351,12 +352,12 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
           schema: agentOpts.schema,
           prompt,
           provider,
-          run: (p) =>
+          run: (p, options) =>
             deps.runProvider({
               ...providerBase,
               prompt: p,
-              // Keep schema on adapter for codex/claude native+repair attempts.
-              schema: agentOpts.schema,
+              providerSessionId: options.providerSessionId,
+              ...(options.mode === "native" ? { schema: agentOpts.schema } : {}),
             }),
           onRetry: ({ attempt, errors, mode }) => {
             deps.journal.appendEvent({

@@ -326,6 +326,7 @@ export async function runWorkflowWorker(
         const providerResult = await runLocalAgentProvider(input.provider, {
           prompt: input.prompt,
           workspace: input.workspace,
+          providerSessionId: input.providerSessionId,
           model: input.model,
           effort: input.effort,
           writeMode: "allowed",

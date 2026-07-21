@@ -280,6 +280,59 @@ import { createStubBudget } from "./workflow-types.js";
 }
 
 // ---------------------------------------------------------------------------
+// schema retry: native schema only on first attempt + provider session reuse
+// ---------------------------------------------------------------------------
+{
+  const dir = await mkdtemp(join(tmpdir(), "wf-schema-retry-"));
+  const store = new WorkflowStore(dir);
+  const run = store.createRun({
+    name: "schema-retry",
+    source: "inline",
+    scriptPath: "inline",
+    scriptHash: "h",
+    workspaceRoot: dir,
+  });
+  const calls: WorkflowProviderRunInput[] = [];
+  const api = createWorkflowApi({
+    runId: run.id,
+    journal: store,
+    meta: { name: "schema-retry", description: "d" },
+    args: undefined,
+    concurrency: 1,
+    signal: new AbortController().signal,
+    workspaceRoot: dir,
+    enabledProviders: ["codex"],
+    runProvider: async (input) => {
+      calls.push(input);
+      if (calls.length === 1) {
+        return {
+          finalResponse: '{"n":"bad"}',
+          structured: { n: "bad" },
+          providerSessionId: "sess-1",
+        };
+      }
+      return { finalResponse: '{"n":2}', providerSessionId: "sess-1" };
+    },
+  });
+
+  const out = await api.agent("give n", {
+    schema: {
+      type: "object",
+      properties: { n: { type: "number" } },
+      required: ["n"],
+    },
+  });
+  assert.deepEqual(out, { n: 2 });
+  assert.ok(calls[0]?.schema);
+  assert.equal(calls[0]?.providerSessionId, undefined);
+  assert.equal(calls[1]?.schema, undefined);
+  assert.equal(calls[1]?.providerSessionId, "sess-1");
+
+  store.close();
+  await rm(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // executeWorkflow end-to-end with sandbox + nest depth
 // ---------------------------------------------------------------------------
 {

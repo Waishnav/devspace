@@ -6,6 +6,7 @@ import {
   NATIVE_SCHEMA_PROVIDERS,
 } from "./workflow-schema.js";
 import { WorkflowEngineError } from "./workflow-api.js";
+import { ProviderSchemaUnsupportedError } from "./local-agent-runtime.js";
 
 {
   const prompt = augmentPromptForSchema("find bugs", {
@@ -64,7 +65,7 @@ assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
 
 // Native provider: structured on attempt 0 → single attempt, raw prompt.
 {
-  const seen: Array<{ prompt: string; mode?: string }> = [];
+  const seen: Array<{ prompt: string; mode?: string; providerSessionId?: string }> = [];
   const result = await enforceAgentSchema({
     schema: {
       type: "object",
@@ -90,7 +91,11 @@ assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
 
 // Native fail then prompt repair.
 {
-  const seen: Array<{ prompt: string; mode?: string }> = [];
+  const seen: Array<{
+    prompt: string;
+    mode?: string;
+    providerSessionId?: string;
+  }> = [];
   const retries: Array<{ attempt: number; mode: string }> = [];
   const result = await enforceAgentSchema({
     schema: {
@@ -105,9 +110,17 @@ assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
       retries.push({ attempt, mode });
     },
     run: async (prompt, opts) => {
-      seen.push({ prompt, mode: opts?.mode });
-      if (opts?.mode === "native") {
-        return { finalResponse: '{"n":"bad"}', structured: { n: "bad" } };
+      seen.push({
+        prompt,
+        mode: opts.mode,
+        providerSessionId: opts.providerSessionId,
+      });
+      if (opts.mode === "native") {
+        return {
+          finalResponse: '{"n":"bad"}',
+          structured: { n: "bad" },
+          providerSessionId: "sess-native",
+        };
       }
       return { finalResponse: '{"n":3}', structured: { n: 3 } };
     },
@@ -117,8 +130,87 @@ assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
   assert.equal(result.mode, "prompt");
   assert.equal(seen[0]?.mode, "native");
   assert.equal(seen[1]?.mode, "prompt");
+  assert.equal(seen[1]?.providerSessionId, "sess-native");
   assert.ok(seen[1]?.prompt.includes("ONLY a JSON"));
   assert.deepEqual(retries[0], { attempt: 1, mode: "native" });
+}
+
+// Native structured strings are parsed when the schema expects a non-string value.
+{
+  const result = await enforceAgentSchema({
+    schema: {
+      type: "object",
+      properties: { n: { type: "number" } },
+      required: ["n"],
+    },
+    prompt: "give n",
+    provider: "claude",
+    run: async () => ({
+      finalResponse: '{"n":4}',
+      structured: '{"n":4}',
+    }),
+  });
+  assert.deepEqual(result.value, { n: 4 });
+}
+
+// A classified native-schema capability failure falls back to prompt mode.
+{
+  const modes: string[] = [];
+  const result = await enforceAgentSchema({
+    schema: {
+      type: "object",
+      properties: { n: { type: "number" } },
+      required: ["n"],
+    },
+    prompt: "give n",
+    provider: "codex",
+    run: async (_prompt, opts) => {
+      modes.push(opts.mode);
+      if (opts.mode === "native") {
+        throw new ProviderSchemaUnsupportedError(
+          "codex",
+          new Error("output schema is not supported"),
+        );
+      }
+      return { finalResponse: '{"n":5}' };
+    },
+  });
+  assert.deepEqual(result.value, { n: 5 });
+  assert.deepEqual(modes, ["native", "prompt"]);
+}
+
+// Arbitrary provider failures are not disguised as schema fallback.
+{
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      enforceAgentSchema({
+        schema: { type: "object" },
+        prompt: "x",
+        provider: "codex",
+        run: async () => {
+          calls += 1;
+          throw new Error("authentication failed");
+        },
+      }),
+    /authentication failed/,
+  );
+  assert.equal(calls, 1);
+}
+
+// Do not report a retry when the retry budget is exhausted.
+{
+  const retries: number[] = [];
+  await assert.rejects(() =>
+    enforceAgentSchema({
+      schema: { type: "object" },
+      prompt: "x",
+      maxRetries: 0,
+      onRetry: ({ attempt }) => retries.push(attempt),
+      run: async () => ({ finalResponse: "not json" }),
+    }),
+  );
+  assert.deepEqual(retries, []);
 }
 
 // Non-native never gets native mode.
@@ -133,7 +225,7 @@ assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
     prompt: "give n",
     provider: "opencode",
     run: async (prompt, opts) => {
-      modes.push(opts?.mode ?? "missing");
+      modes.push(opts.mode);
       assert.ok(prompt.includes("ONLY a JSON"));
       return { finalResponse: '{"n":1}' };
     },
