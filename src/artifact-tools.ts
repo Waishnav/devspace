@@ -496,8 +496,6 @@ async function publishDestination(
   await assertDirectoryHandle(directory.handle);
   const candidate = join(directory.anchorPath, filename);
   try {
-    await handle.chmod(0o644);
-    await handle.sync();
     await publishLink(partialPath, candidate);
     assertPublishedArtifactEntry(await lstat(candidate), writtenEntry);
   } catch (error) {

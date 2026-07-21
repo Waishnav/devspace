@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   unlink,
   utimes,
@@ -39,6 +40,7 @@ try {
     await testCrashLeftoverCleanup(join(root, "stale-partials"));
     await testSymlinkRejection(join(root, "symlinks"));
     await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
+    await testPublishedPermissions(join(root, "permissions"));
   } else {
     await testUnsupportedPlatform(join(root, "unsupported-platform"));
   }
@@ -310,6 +312,29 @@ async function testPublicationFailurePreservesReplacement(testRoot: string): Pro
 
   assert.equal(await readFile(destinationPath, "utf8"), "replacement");
   assert.deepEqual(await readdir(workspaceRoot), ["generated.txt"]);
+}
+
+async function testPublishedPermissions(testRoot: string): Promise<void> {
+  const workspaceRoot = join(testRoot, "workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const previousUmask = process.umask(0o077);
+  try {
+    await downloadIncomingArtifact({
+      registry: registryFor({
+        name: "private.txt",
+        stream: Readable.from(["private"]),
+      }),
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 1024,
+      file: { native: true },
+      path: "private.txt",
+    });
+  } finally {
+    process.umask(previousUmask);
+  }
+
+  assert.equal((await stat(join(workspaceRoot, "private.txt"))).mode & 0o777, 0o600);
 }
 
 function testLogRedaction(): void {

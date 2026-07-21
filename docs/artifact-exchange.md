@@ -71,7 +71,7 @@ The download is never buffered wholesale in memory. DevSpace:
 5. verifies any supplied size hint and fsyncs the partial;
 6. publishes the verified inode with an atomic hard link to the exact requested path;
 7. verifies that the published inode is the downloaded inode;
-8. chmods and fsyncs through the still-open file descriptor;
+8. retains owner-only mode `0600` on the published file;
 9. removes the temporary partial.
 
 There is no persistent artifact database, completed-object store, upload/chunk API, quota ledger, TTL, pinning, artifact ID, signed download route, or reusable artifact lifecycle.
@@ -86,7 +86,10 @@ traversal, symlinked parents, non-directories, and existing destination files
 fail closed. Existing directories are inspected but never chmodded as a startup
 side effect.
 
-Published files are not path-chmodded or path-hashed after publication. Temporary partial cleanup is bounded within the requested destination directory, only considers DevSpace partial names, and ignores symlinks and non-regular files.
+Published files retain owner-only mode `0600` and are not path-chmodded or
+path-hashed after publication. Temporary partial cleanup is bounded within the
+requested destination directory, only considers DevSpace partial names, and
+ignores symlinks and non-regular files.
 
 ## Logging
 

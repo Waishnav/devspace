@@ -126,8 +126,9 @@ Bytes stream into an exclusive mode-`0600` partial under the configured per-file
 limit. DevSpace computes SHA-256 while writing, verifies any size hint, then
 publishes the verified inode with a no-overwrite atomic hard link at the
 requested path and verifies the published inode identity. Permissions and sync
-are applied through the still-open descriptor. It does not path-chmod or
-path-hash the published file. Partials are removed on success or failure;
+are fixed before publication, and the published file retains owner-only mode
+`0600`. It does not path-chmod or path-hash the published file. Partials are
+removed on success or failure;
 crash-leftover cleanup is bounded within the requested destination directory and
 only considers owned, regular DevSpace partial files.
 
