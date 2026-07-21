@@ -218,6 +218,17 @@ export class WorkflowStore {
    * Atomically claim a starting run for the worker.
    * Returns undefined if the run is missing or not claimable.
    */
+  setScriptPath(id: string, scriptPath: string): WorkflowRunRecord {
+    this.requireRun(id);
+    const now = isoNow();
+    this.database.sqlite
+      .prepare(
+        `UPDATE workflow_runs SET script_path = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(scriptPath, now, id);
+    return this.requireRun(id);
+  }
+
   claimRun(id: string, pid: number): WorkflowRunRecord | undefined {
     const now = isoNow();
     const result = this.database.sqlite
