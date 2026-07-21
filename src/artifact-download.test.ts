@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  link,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rm,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -33,6 +35,7 @@ try {
   await testSizeLimitAndCleanup(join(root, "size-limit"));
   await testCrashLeftoverCleanup(join(root, "stale-partials"));
   await testSymlinkRejection(join(root, "symlinks"));
+  await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
   testLogRedaction();
 } finally {
   await rm(root, { recursive: true, force: true });
@@ -247,6 +250,35 @@ async function testSymlinkRejection(testRoot: string): Promise<void> {
     }),
     "artifact_destination_parent_unsafe",
   );
+}
+
+async function testPublicationFailurePreservesReplacement(testRoot: string): Promise<void> {
+  const workspaceRoot = join(testRoot, "workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const destinationPath = join(workspaceRoot, "generated.txt");
+
+  await expectArtifactError(
+    downloadIncomingArtifact({
+      registry: registryFor({
+        name: "generated.txt",
+        stream: Readable.from(["downloaded"]),
+      }),
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 1024,
+      file: { native: true },
+      path: "generated.txt",
+      publishLink: async (partialPath, candidatePath) => {
+        await link(partialPath, candidatePath);
+        await unlink(candidatePath);
+        await writeFile(candidatePath, "replacement");
+      },
+    }),
+    "artifact_destination_publish_failed",
+  );
+
+  assert.equal(await readFile(destinationPath, "utf8"), "replacement");
+  assert.deepEqual(await readdir(workspaceRoot), ["generated.txt"]);
 }
 
 function testLogRedaction(): void {

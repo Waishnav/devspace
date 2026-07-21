@@ -141,6 +141,7 @@ export async function downloadIncomingArtifact({
   maxFileBytes,
   file,
   path,
+  publishLink = link,
 }: {
   registry: IncomingArtifactAdapterRegistry;
   workspaceId: string;
@@ -148,6 +149,7 @@ export async function downloadIncomingArtifact({
   maxFileBytes: number;
   file: unknown;
   path: string;
+  publishLink?: typeof link;
 }): Promise<DownloadIncomingArtifactResult> {
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new ArtifactError(
@@ -249,6 +251,7 @@ export async function downloadIncomingArtifact({
       destination.name,
       writtenEntry,
       handle,
+      publishLink,
     );
     await unlink(partialPath).catch(() => undefined);
     partialPath = undefined;
@@ -469,26 +472,25 @@ async function publishDestination(
   filename: string,
   writtenEntry: Awaited<ReturnType<FileHandle["stat"]>>,
   handle: FileHandle,
+  publishLink: typeof link,
 ): Promise<void> {
   await assertDirectoryHandle(directory.handle);
   const candidate = join(directory.anchorPath, filename);
-  let published = false;
   try {
-    await link(partialPath, candidate);
-    published = true;
-    const publishedEntry = await lstat(candidate);
-    assertPublishedArtifactEntry(publishedEntry, writtenEntry);
     await handle.chmod(0o644);
     await handle.sync();
+    await publishLink(partialPath, candidate);
     assertPublishedArtifactEntry(await lstat(candidate), writtenEntry);
   } catch (error) {
-    if (published) await unlink(candidate).catch(() => undefined);
     if (isNodeError(error) && error.code === "EEXIST") {
       throw new ArtifactError(
         "artifact_destination_exists",
         "Artifact destination already exists.",
       );
     }
+    // Once the destination path exists, never unlink it during failure cleanup.
+    // Another process may have replaced that path after publication, and a
+    // path-based verification followed by unlink would introduce another race.
     throw error;
   }
 }
