@@ -47,6 +47,7 @@ import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
+import { registerWorkflowTools } from "./workflow-tools.js";
 import {
   formatLocalAgentProviderAvailabilitySummary,
   getLocalAgentProviderAvailabilitySnapshot,
@@ -1592,6 +1593,10 @@ function createMcpServer(
 
   if (config.toolMode === "codex") {
     registerCodexProcessTools(server, config, workspaces, processSessions);
+  }
+
+  if (config.subagents) {
+    registerWorkflowTools(server, config, workspaces);
   }
 
   return server;
