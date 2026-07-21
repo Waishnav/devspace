@@ -43,6 +43,10 @@ import { expandHomePath } from "./roots.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 
 import { runWorkflowCommand } from "./workflow-cli.js";
+import {
+  isWorkflowOperationError,
+  workflowCliExitCode,
+} from "./workflow-errors.js";
 
 type Command = "serve" | "init" | "doctor" | "config" | "agents" | "workflow" | "help" | "version";
 const require = createRequire(import.meta.url);
@@ -775,5 +779,5 @@ function checkBashShell(): string {
 
 main(process.argv.slice(2)).catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = isWorkflowOperationError(error) ? workflowCliExitCode(error) : 1;
 });

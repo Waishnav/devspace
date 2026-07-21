@@ -242,6 +242,52 @@ import { createStubBudget } from "./workflow-types.js";
 }
 
 // ---------------------------------------------------------------------------
+// worktree setup failure preserves the primary error before journal begin
+// ---------------------------------------------------------------------------
+{
+  const dir = await mkdtemp(join(tmpdir(), "wf-iso-fail-"));
+  const store = new WorkflowStore(dir);
+  const run = store.createRun({
+    name: "iso-fail",
+    source: "inline",
+    scriptPath: "inline",
+    scriptHash: "h",
+    workspaceRoot: dir,
+  });
+  const api = createWorkflowApi({
+    runId: run.id,
+    journal: store,
+    meta: { name: "iso-fail", description: "d" },
+    args: undefined,
+    concurrency: 1,
+    signal: new AbortController().signal,
+    workspaceRoot: dir,
+    enabledProviders: ["codex"],
+    createWorktree: async () => {
+      throw new Error("expected worktree setup failure");
+    },
+    runProvider: async () => ({ finalResponse: "unreachable" }),
+  });
+
+  const runIsolated = api.agent as (
+    prompt: string,
+    opts: { isolation: "worktree" },
+  ) => Promise<string>;
+  await assert.rejects(
+    () => runIsolated("do", { isolation: "worktree" }),
+    /expected worktree setup failure/,
+  );
+  assert.equal(store.listAgentCalls(run.id).length, 0);
+  const failed = store
+    .drainEvents(run.id)
+    .events.find((event) => event.type === "agent_call_failed");
+  assert.ok(failed);
+
+  store.close();
+  await rm(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // provider resolve order + no writeMode
 // ---------------------------------------------------------------------------
 {

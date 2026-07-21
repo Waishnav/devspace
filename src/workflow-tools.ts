@@ -6,9 +6,9 @@ import type { ServerConfig } from "./config.js";
 import { jsonValueSchema, parseJsonText, type JsonValue } from "./json-types.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import {
-  persistWorkflowScript,
-  resolveNamedWorkflowScript,
-  readWorkflowScriptFile,
+  persistWorkflowScriptResult,
+  resolveNamedWorkflowScriptResult,
+  readWorkflowScriptFileResult,
 } from "./workflow-files.js";
 import { parseWorkflowScript } from "./workflow-script.js";
 import { createWorkflowStore } from "./workflow-store.js";
@@ -27,6 +27,13 @@ import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import {
+  InvalidWorkflowInputError,
+  isWorkflowOperationError,
+  serializeWorkflowError,
+  WorkflowNotFoundError,
+  WorkflowStoredDataError,
+} from "./workflow-errors.js";
 
 const WORKFLOW_API_CHEATSHEET = `
 Workflow scripts (JS only):
@@ -81,7 +88,10 @@ export function registerWorkflowTools(
       try {
         const provided = [script, name, resumeFromRunId].filter((v) => v !== undefined);
         if (provided.length !== 1) {
-          throw new Error("Provide exactly one of script, name, or resumeFromRunId");
+          throw new InvalidWorkflowInputError({
+            code: provided.length === 0 ? "missing_source" : "ambiguous_source",
+            message: "Provide exactly one of script, name, or resumeFromRunId",
+          });
         }
 
         let source: string;
@@ -93,10 +103,12 @@ export function registerWorkflowTools(
 
         if (resumeFromRunId) {
           const prior = store.getRun(resumeFromRunId);
-          if (!prior) throw new Error(`Unknown run: ${resumeFromRunId}`);
+          if (!prior) throw new WorkflowNotFoundError(resumeFromRunId);
           priorRunId = prior.id;
           priorScriptPath = prior.scriptPath;
-          const resolved = await readWorkflowScriptFile(prior.scriptPath);
+          const resolvedResult = await readWorkflowScriptFileResult(prior.scriptPath);
+          if (resolvedResult.isErr()) throw resolvedResult.error;
+          const resolved = resolvedResult.value;
           source = resolved.source;
           scriptHash = prior.scriptHash;
           nameHint = prior.name;
@@ -104,16 +116,18 @@ export function registerWorkflowTools(
           if (args === undefined && prior.argsJson && prior.argsJson !== "null") {
             try {
               args = parseJsonText(prior.argsJson);
-            } catch {
-              // keep undefined
+            } catch (cause) {
+              throw new WorkflowStoredDataError(`${prior.id}.argsJson`, cause);
             }
           }
         } else if (name) {
-          const resolved = await resolveNamedWorkflowScript({
+          const resolvedResult = await resolveNamedWorkflowScriptResult({
             name,
             workspaceRoot: workspace.root,
             stateDir: config.stateDir,
           });
+          if (resolvedResult.isErr()) throw resolvedResult.error;
+          const resolved = resolvedResult.value;
           source = resolved.source;
           scriptHash = resolved.scriptHash;
           nameHint = resolved.nameHint;
@@ -140,15 +154,19 @@ export function registerWorkflowTools(
           baseSha,
         });
 
-        const persisted =
-          priorScriptPath ??
-          (await persistWorkflowScript({
+        let persisted = priorScriptPath;
+        if (!persisted) {
+          const persistedResult = await persistWorkflowScriptResult({
             stateDir: config.stateDir,
             runId: run.id,
             source,
             preferredName: parsed.meta.name || nameHint,
-          }));
-        if (!priorScriptPath) store.setScriptPath(run.id, persisted);
+          });
+          if (persistedResult.isErr()) throw persistedResult.error;
+          persisted = persistedResult.value;
+          const updated = store.setScriptPathResult(run.id, persisted);
+          if (updated.isErr()) throw updated.error;
+        }
 
         const cliEntry = fileURLToPath(
           import.meta.url.replace(/workflow-tools\.(ts|js)$/, "cli.$1"),
@@ -158,6 +176,9 @@ export function registerWorkflowTools(
         const yieldMs = yieldTimeMs ?? 2_000;
         const page = await yieldEvents(store, run.id, 0, yieldMs);
         return toolResult(page);
+      } catch (error) {
+        if (isWorkflowOperationError(error)) return workflowToolError(error);
+        throw error;
       } finally {
         store.close();
       }
@@ -187,9 +208,12 @@ export function registerWorkflowTools(
     async ({ runId, sinceSeq, yieldTimeMs }) => {
       const store = createWorkflowStore(config);
       try {
-        if (!store.getRun(runId)) throw new Error(`Unknown workflow run: ${runId}`);
+        if (!store.getRun(runId)) throw new WorkflowNotFoundError(runId);
         const page = await yieldEvents(store, runId, sinceSeq ?? 0, yieldTimeMs ?? 0);
         return toolResult(page);
+      } catch (error) {
+        if (isWorkflowOperationError(error)) return workflowToolError(error);
+        throw error;
       } finally {
         store.close();
       }
@@ -211,7 +235,9 @@ export function registerWorkflowTools(
     async ({ runId }) => {
       const store = createWorkflowStore(config);
       try {
-        const run = store.requestCancel(runId);
+        const requested = store.requestCancelResult(runId);
+        if (requested.isErr()) throw requested.error;
+        const run = requested.value;
         if (run.pid && (run.status === "running" || run.status === "starting")) {
           try {
             process.kill(run.pid, "SIGTERM");
@@ -224,6 +250,9 @@ export function registerWorkflowTools(
           content: [{ type: "text" as const, text: JSON.stringify({ runId, status: latest.status }) }],
           structuredContent: { runId, status: latest.status },
         };
+      } catch (error) {
+        if (isWorkflowOperationError(error)) return workflowToolError(error);
+        throw error;
       } finally {
         store.close();
       }
@@ -286,6 +315,15 @@ function toolResult(page: {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
+  };
+}
+
+function workflowToolError(error: Parameters<typeof serializeWorkflowError>[0]) {
+  const payload = { error: serializeWorkflowError(error) };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload,
+    isError: true,
   };
 }
 

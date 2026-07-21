@@ -1,6 +1,7 @@
 import type { WorkflowAgentCallRecord } from "./workflow-types.js";
 import type { WorkflowReplay, WorkflowReplayHit } from "./workflow-api.js";
 import { parseJsonText } from "./json-types.js";
+import { WorkflowStoredDataError } from "./workflow-errors.js";
 
 /**
  * Resume matcher:
@@ -69,8 +70,11 @@ function toHit(call: WorkflowAgentCallRecord): WorkflowReplayHit {
         structuredJson: call.structuredJson,
         providerSessionId: call.providerSessionId,
       };
-    } catch {
-      // fall through to text
+    } catch (cause) {
+      throw new WorkflowStoredDataError(
+        `${call.runId}.agentCalls[${call.callIndex}].structuredJson`,
+        cause,
+      );
     }
   }
   return {
