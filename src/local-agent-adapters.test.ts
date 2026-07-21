@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
+  claudeOutputFormatOptions,
   createLocalAgentAdapter,
+  extractClaudeResultPayload,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
   extractPiProviderError,
@@ -387,4 +389,42 @@ assert.equal(
   });
 
   assert.equal(env.PATH, [devspaceBin, "/home/user/.local/bin"].join(delimiter));
+}
+
+{
+  assert.deepEqual(claudeOutputFormatOptions(undefined), {});
+  const schema = {
+    type: "object",
+    properties: { n: { type: "number" } },
+    required: ["n"],
+  };
+  assert.deepEqual(claudeOutputFormatOptions(schema), {
+    outputFormat: { type: "json_schema", schema },
+  });
+}
+
+{
+  assert.deepEqual(
+    extractClaudeResultPayload({
+      type: "result",
+      result: '{"n":1}',
+      structured_output: { n: 1 },
+    }),
+    { finalResponse: '{"n":1}', structured: { n: 1 } },
+  );
+  assert.deepEqual(
+    extractClaudeResultPayload({
+      type: "result",
+      structured_output: { n: 2 },
+    }),
+    { finalResponse: '{"n":2}', structured: { n: 2 } },
+  );
+  assert.deepEqual(
+    extractClaudeResultPayload({
+      type: "result",
+      result: "plain text only",
+    }),
+    { finalResponse: "plain text only" },
+  );
+  assert.equal(extractClaudeResultPayload({ type: "assistant" }), undefined);
 }

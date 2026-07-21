@@ -70,20 +70,25 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
         allowDangerouslySkipPermissions: true,
         env: claudeCommandEnvironment(process.env),
         ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+        ...claudeOutputFormatOptions(input.schema),
       },
     });
 
     let providerSessionId = input.providerSessionId ?? null;
     let finalResponse = "";
+    let structured: unknown | undefined;
     const items: unknown[] = [];
     for await (const message of messages) {
       items.push(message);
       const record = message as Record<string, unknown>;
       if (typeof record.session_id === "string") providerSessionId = record.session_id;
-      if (record.type === "result" && typeof record.result === "string") {
-        const resultError = claudeResultError(record);
-        if (resultError) throw new Error(resultError);
-        finalResponse = record.result;
+      if (record.type !== "result") continue;
+      const resultError = claudeResultError(record);
+      if (resultError) throw new Error(resultError);
+      const extracted = extractClaudeResultPayload(record);
+      if (extracted) {
+        finalResponse = extracted.finalResponse;
+        structured = extracted.structured;
       }
     }
 
@@ -93,8 +98,50 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       providerSessionId,
       finalResponse,
       items,
+      ...(structured !== undefined ? { structured } : {}),
     };
   }
+}
+
+/** Build Claude SDK outputFormat when a JSON Schema is requested. */
+export function claudeOutputFormatOptions(
+  schema: object | undefined,
+): { outputFormat: { type: "json_schema"; schema: Record<string, unknown> } } | Record<string, never> {
+  if (!schema) return {};
+  return {
+    outputFormat: {
+      type: "json_schema",
+      schema: schema as Record<string, unknown>,
+    },
+  };
+}
+
+/**
+ * Prefer structured_output from a Claude result message; fall back to text result.
+ * When only structured is present, stringify it for journal finalResponse.
+ */
+export function extractClaudeResultPayload(
+  record: Record<string, unknown>,
+): { finalResponse: string; structured?: unknown } | undefined {
+  const hasStructured = Object.prototype.hasOwnProperty.call(record, "structured_output");
+  const structured = hasStructured ? record.structured_output : undefined;
+  const text = typeof record.result === "string" ? record.result : undefined;
+
+  if (hasStructured && structured !== undefined) {
+    return {
+      finalResponse:
+        text && text.trim()
+          ? text
+          : typeof structured === "string"
+            ? structured
+            : JSON.stringify(structured),
+      structured,
+    };
+  }
+  if (text !== undefined) {
+    return { finalResponse: text };
+  }
+  return undefined;
 }
 
 function claudeResultError(record: Record<string, unknown>): string | undefined {
@@ -516,6 +563,9 @@ async function promptOpencodeSession(
   sessionId: string,
   input: LocalAgentRunInput,
 ): Promise<unknown> {
+  // OpenCode SessionPrompt accepts format: { type: 'json_schema', schema }, but
+  // per-model support is not programmatically discoverable — workflow agent({ schema })
+  // keeps the prompt+Ajv path for opencode (no native structured output here).
   const session = (client as {
     session: {
       prompt(parameters?: unknown, options?: unknown): Promise<unknown>;
