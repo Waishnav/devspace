@@ -25,11 +25,15 @@ export interface WorkflowProviderRunInput {
   signal?: AbortSignal;
   label?: string;
   phase?: string;
+  /** JSON Schema for native structured output (codex/claude). */
+  schema?: object;
 }
 
 export interface WorkflowProviderRunResult {
   finalResponse: string;
   providerSessionId?: string;
+  /** Provider-native structured object when schema was requested. */
+  structured?: unknown;
 }
 
 export type WorkflowRunProvider = (
@@ -346,14 +350,21 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         const enforced = await enforceAgentSchema({
           schema: agentOpts.schema,
           prompt,
-          run: (p) => deps.runProvider({ ...providerBase, prompt: p }),
-          onRetry: ({ attempt, errors }) => {
+          provider,
+          run: (p) =>
+            deps.runProvider({
+              ...providerBase,
+              prompt: p,
+              // Keep schema on adapter for codex/claude native+repair attempts.
+              schema: agentOpts.schema,
+            }),
+          onRetry: ({ attempt, errors, mode }) => {
             deps.journal.appendEvent({
               runId: deps.runId,
               type: "schema_retry",
               phase,
               label: agentOpts.label,
-              data: { callIndex: index, attempt, errors },
+              data: { callIndex: index, attempt, errors, mode },
             });
           },
         });
@@ -362,6 +373,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         result = {
           finalResponse: enforced.finalResponse,
           providerSessionId: enforced.providerSessionId,
+          structured: enforced.value,
         };
       } else {
         result = await deps.runProvider(providerBase);

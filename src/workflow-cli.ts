@@ -329,10 +329,12 @@ export async function runWorkflowWorker(
           model: input.model,
           effort: input.effort,
           writeMode: "allowed",
+          schema: input.schema,
         });
         return {
           finalResponse: providerResult.finalResponse,
           providerSessionId: providerResult.providerSessionId ?? undefined,
+          structured: providerResult.structured,
         };
       },
       resolveNestedSource: async (ref) => {

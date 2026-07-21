@@ -77,6 +77,7 @@ const out = await agent('Return JSON findings', {
   },
 })
 // out is validated object; engine retries ≤2 on invalid JSON
+// codex/claude: native structured output first, then prompt repair; others: prompt+Ajv
 ```
 
 ### Providers
