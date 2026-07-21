@@ -205,16 +205,16 @@ function formatVisibleAgent(agent: {
   name: string;
   provider: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
   providerAvailable?: boolean;
   providerUnavailableReason?: string;
 }): string {
   const model = agent.model ? `, model ${agent.model}` : "";
-  const thinking = agent.thinking ? `, thinking ${agent.thinking}` : "";
+  const effort = agent.effort ? `, effort ${agent.effort}` : "";
   const availability = agent.providerAvailable === false
     ? `, unavailable: ${agent.providerUnavailableReason ?? "provider unavailable"}`
     : "";
-  return `${agent.name} (${agent.provider}${model}${thinking}${availability})`;
+  return `${agent.name} (${agent.provider}${model}${effort}${availability})`;
 }
 
 function formatUnavailableAgentProvider(provider: LocalAgentProviderAvailability): string {
@@ -248,7 +248,7 @@ const workspaceLocalAgentOutputSchema = z.object({
   description: z.string(),
   provider: z.string(),
   model: z.string().optional(),
-  thinking: z.string().optional(),
+  effort: z.string().optional(),
   providerAvailable: z.boolean().optional(),
   providerUnavailableReason: z.string().optional(),
 });

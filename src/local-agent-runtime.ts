@@ -15,7 +15,8 @@ export interface LocalAgentRunInput {
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
   model?: string;
-  thinking?: string;
+  /** Provider-native effort / reasoning level (was thinking). */
+  effort?: string;
 }
 
 export interface LocalAgentRunResult {
@@ -60,7 +61,7 @@ function threadOptionsFor(input: LocalAgentRunInput): ThreadOptions {
     sandboxMode: sandboxModeFor(input.writeMode),
     approvalPolicy: "never",
     model: input.model,
-    modelReasoningEffort: input.thinking as ModelReasoningEffort | undefined,
+    modelReasoningEffort: input.effort as ModelReasoningEffort | undefined,
   };
 }
 

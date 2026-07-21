@@ -63,7 +63,7 @@ await runtime.run({
   workspace: "/tmp/project",
   writeMode: "allowed",
   model: "gpt-5.4",
-  thinking: "high",
+  effort: "high",
 });
 
 assert.deepEqual(codex.started[1], {

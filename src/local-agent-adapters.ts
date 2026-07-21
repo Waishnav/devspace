@@ -64,7 +64,7 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       options: {
         cwd: input.workspace,
         model: input.model,
-        ...(input.thinking ? { thinking: { type: "adaptive" } as const, effort: input.thinking as EffortLevel } : {}),
+        ...(input.effort ? { thinking: { type: "adaptive" } as const, effort: input.effort as EffortLevel } : {}),
         resume: input.providerSessionId,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -209,8 +209,8 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
               const config = resolveAcpModelConfigUpdate(session, input.model, this.provider);
               await context.request(methods.agent.session.setConfigOption, config);
             }
-            if (input.thinking) {
-              const config = resolveAcpThinkingConfigUpdate(session, input.thinking, this.provider);
+            if (input.effort) {
+              const config = resolveAcpEffortConfigUpdate(session, input.effort, this.provider);
               await context.request(methods.agent.session.setConfigOption, config);
             }
             const prompt = session.prompt(input.prompt);
@@ -258,18 +258,21 @@ export function resolveAcpModelConfigUpdate(
   });
 }
 
-export function resolveAcpThinkingConfigUpdate(
+export function resolveAcpEffortConfigUpdate(
   session: unknown,
-  thinking: string,
+  effort: string,
   provider: string,
 ): { sessionId: string; configId: string; value: string } {
   return resolveAcpSelectConfigUpdate(session, {
     category: "thought_level",
-    label: "thinking option",
+    label: "effort option",
     provider,
-    value: thinking,
+    value: effort,
   });
 }
+
+/** @deprecated Use resolveAcpEffortConfigUpdate */
+export const resolveAcpThinkingConfigUpdate = resolveAcpEffortConfigUpdate;
 
 function resolveAcpSelectConfigUpdate(
   session: unknown,
@@ -336,7 +339,7 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
     const args = ["--mode", "rpc"];
     if (input.model) args.push("--model", input.model);
-    if (input.thinking) args.push("--thinking", input.thinking);
+    if (input.effort) args.push("--thinking", input.effort);
     if (input.providerSessionId) args.push("--session", input.providerSessionId);
     const child = spawn(process.env.PI_COMMAND ?? "pi", args, {
       cwd: input.workspace,
@@ -524,7 +527,7 @@ async function promptOpencodeSession(
     prompt: { parts: [{ type: "text", text: input.prompt }] },
     parts: [{ type: "text", text: input.prompt }],
     ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
-    ...(input.thinking ? { variant: input.thinking } : {}),
+    ...(input.effort ? { variant: input.effort } : {}),
   };
   return session.prompt(promptInput, { throwOnError: true });
 }

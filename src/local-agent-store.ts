@@ -12,7 +12,7 @@ export interface LocalAgentRecord {
   profileName: string;
   provider: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
   providerSessionId?: string;
   status: LocalAgentStatus;
   latestResponse?: string;
@@ -27,7 +27,7 @@ export interface CreateLocalAgentRecordInput {
   profileName: string;
   provider: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
 }
 
 export interface LocalAgentListScope {
@@ -42,7 +42,7 @@ interface LocalAgentRow {
   profile_name: string;
   provider: string;
   model: string | null;
-  thinking: string | null;
+  effort: string | null;
   provider_session_id: string | null;
   status: string;
   latest_response: string | null;
@@ -94,7 +94,7 @@ export class LocalAgentStore {
       profileName: input.profileName,
       provider: input.provider,
       model: input.model,
-      thinking: input.thinking,
+      effort: input.effort,
       status: "starting",
       createdAt: now,
       updatedAt: now,
@@ -109,7 +109,7 @@ export class LocalAgentStore {
           profile_name,
           provider,
           model,
-          thinking,
+          effort,
           status,
           created_at,
           updated_at
@@ -122,7 +122,7 @@ export class LocalAgentStore {
         record.profileName,
         record.provider,
         record.model ?? null,
-        record.thinking ?? null,
+        record.effort ?? null,
         record.status,
         record.createdAt,
         record.updatedAt,
@@ -170,7 +170,7 @@ export class LocalAgentStore {
           profile_name = ?,
           provider = ?,
           model = ?,
-          thinking = ?,
+          effort = ?,
           provider_session_id = ?,
           status = ?,
           latest_response = ?,
@@ -184,7 +184,7 @@ export class LocalAgentStore {
         updated.profileName,
         updated.provider,
         updated.model ?? null,
-        updated.thinking ?? null,
+        updated.effort ?? null,
         updated.providerSessionId ?? null,
         updated.status,
         updated.latestResponse ?? null,
@@ -220,7 +220,7 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     profileName: row.profile_name,
     provider: row.provider,
     model: row.model ?? undefined,
-    thinking: row.thinking ?? undefined,
+    effort: row.effort ?? undefined,
     providerSessionId: row.provider_session_id ?? undefined,
     status: readStatus(row.status),
     latestResponse: row.latest_response ?? undefined,

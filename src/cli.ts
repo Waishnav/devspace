@@ -379,7 +379,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
     store.update(existing.id, {
       status: "starting",
       model: parsed.model ?? existing.model,
-      thinking: parsed.thinking ?? existing.thinking,
+      effort: parsed.effort ?? existing.effort,
       latestResponse: undefined,
       error: undefined,
     });
@@ -388,13 +388,13 @@ async function runAgentsRun(args: string[]): Promise<void> {
       ...existing,
       status: "running",
       model: parsed.model ?? existing.model,
-      thinking: parsed.thinking ?? existing.thinking,
+      effort: parsed.effort ?? existing.effort,
     }));
     return;
   }
 
   const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
-  const target = resolveLocalAgentTarget(parsed.target, profiles, parsed.model, parsed.thinking);
+  const target = resolveLocalAgentTarget(parsed.target, profiles, parsed.model, parsed.effort);
   if (!target) {
     throw new Error(
       `Unknown subagent profile, provider, or id: ${parsed.target}. Available ${formatAvailableLocalAgentTargets(profiles)}`,
@@ -409,7 +409,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
     profileName: target.name,
     provider: target.provider,
     model: target.model,
-    thinking: target.thinking,
+    effort: target.effort,
   });
 
   spawnAgentWorker(record.id, promptFile);
@@ -491,7 +491,7 @@ async function runLocalAgentProfile(
     providerSessionId: record.providerSessionId,
     writeMode: "allowed",
     model: record.model ?? profile.model,
-    thinking: record.thinking ?? profile.thinking,
+    effort: record.effort ?? profile.effort,
   });
 }
 
@@ -509,7 +509,7 @@ async function runRawLocalAgentProvider(
     providerSessionId: record.providerSessionId,
     writeMode: "allowed",
     model: record.model,
-    thinking: record.thinking,
+    effort: record.effort,
   });
 }
 
@@ -550,11 +550,11 @@ function resolveCurrentWorkspaceScope(): { workspaceId?: string; workspaceRoot: 
 
 function formatAgentLine(agent: Pick<
   LocalAgentRecord,
-  "id" | "status" | "profileName" | "provider" | "model" | "thinking"
+  "id" | "status" | "profileName" | "provider" | "model" | "effort"
 >): string {
   const model = agent.model ? ` ${agent.model}` : "";
-  const thinking = agent.thinking ? ` thinking=${agent.thinking}` : "";
-  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${thinking}`;
+  const effort = agent.effort ? ` effort=${agent.effort}` : "";
+  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${effort}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -568,7 +568,7 @@ function printAgentsHelp(): void {
       "",
       "Usage:",
       "  devspace agents ls",
-      "  devspace agents run <profile-or-provider-or-id> [--model <model>] [--thinking <level>] <prompt>",
+      "  devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents show <id>",
     ].join("\n"),
   );
