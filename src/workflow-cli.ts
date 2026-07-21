@@ -326,13 +326,16 @@ export async function runWorkflowWorker(
         const providerResult = await runLocalAgentProvider(input.provider, {
           prompt: input.prompt,
           workspace: input.workspace,
+          providerSessionId: input.providerSessionId,
           model: input.model,
           effort: input.effort,
           writeMode: "allowed",
+          schema: input.schema,
         });
         return {
           finalResponse: providerResult.finalResponse,
           providerSessionId: providerResult.providerSessionId ?? undefined,
+          structured: providerResult.structured,
         };
       },
       resolveNestedSource: async (ref) => {

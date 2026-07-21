@@ -32,7 +32,7 @@ import { hashSource } from "./workflow-script.js";
     source: "export const meta = { name: 'x', description: 'd' }\nreturn 1\n",
     preferredName: "demo",
   });
-  assert.match(path, /workflow-scripts\/wfr_test\/demo\.js$/);
+  assert.match(path.replaceAll("\\", "/"), /workflow-scripts\/wfr_test\/demo\.js$/);
 
   const file = await resolveWorkflowScriptFromPathOrName({
     file: path,

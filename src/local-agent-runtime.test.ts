@@ -3,6 +3,7 @@ import type { RunResult, ThreadOptions } from "@openai/codex-sdk";
 import {
   CodexSdkLocalAgentRuntime,
   createCodexSdkLocalAgentRuntime,
+  isNativeSchemaUnsupportedFailure,
 } from "./local-agent-runtime.js";
 
 const emptyTurn = (finalResponse: string): RunResult => ({
@@ -13,11 +14,19 @@ const emptyTurn = (finalResponse: string): RunResult => ({
 
 class FakeThread {
   prompts: string[] = [];
+  turnOptions: Array<{ outputSchema?: unknown; signal?: AbortSignal } | undefined> = [];
 
   constructor(readonly id: string | null) {}
 
-  async run(prompt: string): Promise<RunResult> {
+  async run(
+    prompt: string,
+    turnOptions?: { outputSchema?: unknown; signal?: AbortSignal },
+  ): Promise<RunResult> {
     this.prompts.push(prompt);
+    this.turnOptions.push(turnOptions);
+    if (turnOptions?.outputSchema) {
+      return emptyTurn('{"ok":true}');
+    }
     return emptyTurn(`response:${prompt}`);
   }
 }
@@ -49,7 +58,9 @@ const readOnly = await runtime.run({
 assert.equal(readOnly.provider, "codex");
 assert.equal(readOnly.providerSessionId, "new-thread");
 assert.equal(readOnly.finalResponse, "response:inspect only");
+assert.equal(readOnly.structured, undefined);
 assert.deepEqual(codex.startThreadInstance.prompts, ["inspect only"]);
+assert.deepEqual(codex.startThreadInstance.turnOptions, [undefined]);
 assert.deepEqual(codex.started[0], {
   workingDirectory: "/tmp/project",
   sandboxMode: "read-only",
@@ -74,6 +85,24 @@ assert.deepEqual(codex.started[1], {
   modelReasoningEffort: "high",
 });
 
+const schema = {
+  type: "object",
+  properties: { ok: { type: "boolean" } },
+  required: ["ok"],
+} as const;
+
+const structured = await runtime.run({
+  prompt: "return structured",
+  workspace: "/tmp/project",
+  schema,
+});
+
+assert.equal(structured.finalResponse, '{"ok":true}');
+assert.deepEqual(structured.structured, { ok: true });
+assert.deepEqual(codex.startThreadInstance.turnOptions.at(-1), {
+  outputSchema: schema,
+});
+
 const resumed = await runtime.run({
   prompt: "continue",
   workspace: "/tmp/project",
@@ -83,6 +112,7 @@ const resumed = await runtime.run({
 
 assert.equal(resumed.providerSessionId, "resumed-thread");
 assert.deepEqual(codex.resumeThreadInstance.prompts, ["continue"]);
+assert.deepEqual(codex.resumeThreadInstance.turnOptions, [undefined]);
 assert.deepEqual(codex.resumed, [
   {
     id: "existing-thread",
@@ -98,3 +128,11 @@ assert.deepEqual(codex.resumed, [
 
 const created = await createCodexSdkLocalAgentRuntime(undefined, () => new FakeCodex());
 assert.equal(created.provider, "codex");
+
+assert.equal(
+  isNativeSchemaUnsupportedFailure(
+    new Error("Invalid output schema: keyword is not supported"),
+  ),
+  true,
+);
+assert.equal(isNativeSchemaUnsupportedFailure(new Error("authentication failed")), false);

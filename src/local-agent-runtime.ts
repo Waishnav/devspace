@@ -5,6 +5,7 @@ import type {
   RunResult,
   SandboxMode,
   ThreadOptions,
+  TurnOptions,
 } from "@openai/codex-sdk";
 
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
@@ -17,6 +18,8 @@ export interface LocalAgentRunInput {
   model?: string;
   /** Provider-native effort / reasoning level (was thinking). */
   effort?: string;
+  /** JSON Schema for native structured output (codex/claude). */
+  schema?: object;
 }
 
 export interface LocalAgentRunResult {
@@ -24,6 +27,8 @@ export interface LocalAgentRunResult {
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
+  /** Provider-native structured object when schema was requested. */
+  structured?: unknown;
 }
 
 export interface LocalAgentRuntime {
@@ -31,9 +36,42 @@ export interface LocalAgentRuntime {
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
 }
 
+export class ProviderSchemaUnsupportedError extends Error {
+  constructor(
+    readonly provider: string,
+    readonly cause: unknown,
+  ) {
+    super(`${provider} does not support the requested native output schema: ${errorMessage(cause)}`);
+    this.name = "ProviderSchemaUnsupportedError";
+  }
+}
+
+export function isProviderSchemaUnsupportedError(
+  error: unknown,
+): error is ProviderSchemaUnsupportedError {
+  return error instanceof ProviderSchemaUnsupportedError;
+}
+
+export function isNativeSchemaUnsupportedFailure(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  const mentionsSchema =
+    /output[ _-]?schema/.test(message) ||
+    /json[ _-]?schema/.test(message) ||
+    /structured[ _-]?output/.test(message) ||
+    /output[ _-]?format/.test(message);
+  const unsupported =
+    /not supported/.test(message) ||
+    /unsupported/.test(message) ||
+    /invalid (?:output|json )?schema/.test(message) ||
+    /schema (?:is )?invalid/.test(message) ||
+    /unknown (?:field|parameter|option)/.test(message) ||
+    /not available/.test(message);
+  return mentionsSchema && unsupported;
+}
+
 interface CodexThreadLike {
   readonly id: string | null;
-  run(prompt: string): Promise<RunResult>;
+  run(prompt: string, turnOptions?: TurnOptions): Promise<RunResult>;
 }
 
 interface CodexClientLike {
@@ -78,14 +116,32 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
     const thread = input.providerSessionId
       ? this.codex.resumeThread(input.providerSessionId, options)
       : this.codex.startThread(options);
-    const turn = await thread.run(input.prompt);
+    const turnOptions = input.schema ? { outputSchema: input.schema } : undefined;
+    let turn: RunResult;
+    try {
+      turn = await thread.run(input.prompt, turnOptions);
+    } catch (error) {
+      if (input.schema && isNativeSchemaUnsupportedFailure(error)) {
+        throw new ProviderSchemaUnsupportedError(this.provider, error);
+      }
+      throw error;
+    }
 
     return {
       provider: this.provider,
       providerSessionId: thread.id,
       finalResponse: turn.finalResponse,
       items: turn.items,
+      ...(input.schema ? { structured: tryParseJson(turn.finalResponse) } : {}),
     };
+  }
+}
+
+function tryParseJson(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
   }
 }
 
@@ -100,4 +156,8 @@ export async function createCodexSdkLocalAgentRuntime(
 async function defaultCodexFactory(): Promise<CodexFactory> {
   const module = await import("@openai/codex-sdk");
   return (options) => new module.Codex(options) as Codex;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
