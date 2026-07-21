@@ -15,11 +15,13 @@ import { runLocalAgentProvider } from "./local-agent-adapters.js";
 import {
   isLocalAgentProvider,
   loadLocalAgentProfiles,
+  LOCAL_AGENT_PROVIDERS,
   type LocalAgentProfile,
 } from "./local-agent-profiles.js";
 import {
   assertLocalAgentProviderAvailable,
   formatLocalAgentProviderAvailabilitySummary,
+  getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
 import {
   formatAvailableLocalAgentTargets,
@@ -169,12 +171,18 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       validate: validateRequiredPublicBaseUrl,
     }));
 
+    const subagents = resolveSubagentsFlag(files.config);
+    const agentProviders =
+      subagents === true
+        ? probeAndBuildAgentProviders(files.config.agentProviders)
+        : files.config.agentProviders;
     const config: DevspaceUserConfig = {
       host: files.config.host ?? "127.0.0.1",
       port,
       allowedRoots,
       publicBaseUrl,
-      subagents: resolveSubagentsFlag(files.config),
+      subagents,
+      ...(agentProviders ? { agentProviders } : {}),
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -277,9 +285,69 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`Subagents: ${config.subagents ? "enabled" : "disabled"}`);
+    if (config.subagents) {
+      const snapshot = getLocalAgentProviderAvailabilitySnapshot();
+      console.log(
+        `Agent providers (live): ${formatLocalAgentProviderAvailabilitySummary(snapshot)}`,
+      );
+      if (config.agentProviders) {
+        console.log(
+          `Agent providers (enabled): ${
+            config.agentProviders.enabled.length
+              ? config.agentProviders.enabled.join(", ")
+              : "(empty — no providers)"
+          }`,
+        );
+        if (config.agentProviders.detectedAt) {
+          console.log(`Agent providers last probe: ${config.agentProviders.detectedAt}`);
+        }
+      } else {
+        console.log("Agent providers (config): missing (compat = all available)");
+      }
+
+      // Refresh lastProbe write-back when subagents on and config exists
+      if (files.configExists) {
+        const refreshed = probeAndBuildAgentProviders(files.config.agentProviders);
+        writeDevspaceConfig({
+          ...files.config,
+          agentProviders: {
+            // keep user enable-list if set; only refresh probe metadata + available adds when empty
+            enabled:
+              files.config.agentProviders?.enabled ?? refreshed.enabled,
+            detectedAt: refreshed.detectedAt,
+            lastProbe: refreshed.lastProbe,
+          },
+        });
+        console.log(`Agent providers probe written to ${files.configPath}`);
+      }
+    }
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** Probe PATH and build AgentProvidersConfig (available ids in product order). */
+function probeAndBuildAgentProviders(
+  existing?: DevspaceUserConfig["agentProviders"],
+): NonNullable<DevspaceUserConfig["agentProviders"]> {
+  const snapshot = getLocalAgentProviderAvailabilitySnapshot();
+  const available = new Set(
+    snapshot.filter((row) => row.available).map((row) => row.name),
+  );
+  const enabled =
+    existing?.enabled && existing.enabled.length > 0
+      ? existing.enabled.filter((id) => LOCAL_AGENT_PROVIDERS.includes(id as never))
+      : LOCAL_AGENT_PROVIDERS.filter((id) => available.has(id));
+  return {
+    enabled,
+    detectedAt: new Date().toISOString(),
+    lastProbe: snapshot.map((row) => ({
+      id: row.name,
+      available: row.available,
+      detail: row.reason,
+    })),
+  };
 }
 
 function runConfigCommand(args: string[]): void {
