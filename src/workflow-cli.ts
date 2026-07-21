@@ -281,7 +281,7 @@ export async function runWorkflowWorker(
   try {
     const source = await readFile(claimed.scriptPath, "utf8");
     const parsed = parseWorkflowScript(source, { filename: claimed.scriptPath });
-    const enabledProviders = resolveEnabledProviders();
+    const enabledProviders = resolveEnabledProviders(config.agentProviders);
     const concurrency = resolveWorkflowConcurrency(
       parsed.meta.concurrency,
       availableParallelism(),
@@ -474,10 +474,15 @@ function formatRunLine(
   return `${run.id} ${run.status} ${run.name}${err}`;
 }
 
-function resolveEnabledProviders(): string[] {
+function resolveEnabledProviders(
+  agentProviders?: ServerConfig["agentProviders"],
+): string[] {
   const snapshot = getLocalAgentProviderAvailabilitySnapshot();
   const live = new Set(snapshot.filter((row) => row.available).map((row) => row.name));
-  return LOCAL_AGENT_PROVIDERS.filter((id) => live.has(id));
+  if (!agentProviders) {
+    return LOCAL_AGENT_PROVIDERS.filter((id) => live.has(id));
+  }
+  return agentProviders.enabled.filter((id) => live.has(id as never));
 }
 
 function splitFlags(args: string[]): {

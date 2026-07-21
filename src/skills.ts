@@ -22,26 +22,25 @@ export interface SkillReadResolution {
 }
 
 const SUBAGENT_DELEGATION_NAME = "subagent-delegation";
-const SUBAGENT_DELEGATION_SKILL = join(SUBAGENT_DELEGATION_NAME, "SKILL.md");
+const DYNAMIC_WORKFLOWS_NAME = "dynamic-workflows";
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function hasSubagentDelegationSkill(skillDir: string): boolean {
-  return existsSync(join(skillDir, SUBAGENT_DELEGATION_SKILL));
-}
-
+/**
+ * Always include the bundled skills root when subagents are enabled.
+ * Previously the whole dir was dropped if the user had seeded
+ * subagent-delegation — that hid later skills (e.g. dynamic-workflows).
+ * User/devspace copies still win via earlier path order + name collisions.
+ */
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
-  const bundledSkills = bundledSkillsDir();
   const defaultPathCandidates = [
     join(homedir(), ".agents", "skills"),
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
-      ? bundledSkills
-      : undefined,
+    config.subagents ? bundledSkillsDir() : undefined,
   ];
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
@@ -73,11 +72,15 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
 
   if (config.subagents) return result;
 
+  const gated = new Set<string>([SUBAGENT_DELEGATION_NAME, DYNAMIC_WORKFLOWS_NAME]);
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),
+    skills: result.skills.filter((skill) => !gated.has(skill.name)),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
-      return !(collision?.resourceType === "skill" && collision.name === SUBAGENT_DELEGATION_NAME);
+      return !(
+        collision?.resourceType === "skill" &&
+        gated.has(collision.name)
+      );
     }),
   };
 }

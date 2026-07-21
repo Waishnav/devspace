@@ -39,9 +39,14 @@ assert.equal(resolveSubagentsFlag({}, { DEVSPACE_SUBAGENTS: "1" }), true);
 
 const seededConfigDir = mkdtempSync(join(tmpdir(), "devspace-seeded-skills-test-"));
 const seededSkillPaths = ensureDevspaceDefaultSkills({ DEVSPACE_CONFIG_DIR: seededConfigDir });
-assert.deepEqual(seededSkillPaths, [join(seededConfigDir, "skills", "subagent-delegation", "SKILL.md")]);
+assert.deepEqual(seededSkillPaths, [
+  join(seededConfigDir, "skills", "subagent-delegation", "SKILL.md"),
+  join(seededConfigDir, "skills", "dynamic-workflows", "SKILL.md"),
+]);
 assert.equal(existsSync(seededSkillPaths[0]), true);
+assert.equal(existsSync(seededSkillPaths[1]), true);
 assert.match(readFileSync(seededSkillPaths[0], "utf8"), /name: subagent-delegation/);
+assert.match(readFileSync(seededSkillPaths[1], "utf8"), /name: dynamic-workflows/);
 assert.deepEqual(ensureDevspaceDefaultSkills({ DEVSPACE_CONFIG_DIR: seededConfigDir }), []);
 
 assert.throws(

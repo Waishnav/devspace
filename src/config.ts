@@ -4,6 +4,12 @@ import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
+import type { AgentProvidersConfig } from "./workflow-types.js";
+import {
+  isLocalAgentProvider,
+  LOCAL_AGENT_PROVIDERS,
+  type LocalAgentProvider,
+} from "./local-agent-profiles.js";
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
@@ -26,6 +32,12 @@ export interface ServerConfig {
   devspaceSkillsDir: string;
   devspaceAgentsDir: string;
   subagents: boolean;
+  /**
+   * Resolved enable-list for agent providers.
+   * Missing user config → undefined (compat: all live providers).
+   * Explicit empty → no providers.
+   */
+  agentProviders?: AgentProvidersConfig;
   agentDir: string;
   logging: LoggingConfig;
 }
@@ -234,9 +246,44 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       env.DEVSPACE_SUBAGENTS === undefined
         ? files.config.subagents === true
         : parseBoolean(env.DEVSPACE_SUBAGENTS),
+    agentProviders: parseAgentProvidersConfig(
+      env.DEVSPACE_AGENT_PROVIDERS,
+      files.config.agentProviders,
+    ),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
   };
+}
+
+/**
+ * Env `DEVSPACE_AGENT_PROVIDERS=codex,claude` replaces enabled list.
+ * Missing config → undefined (compat all-available).
+ * Explicit enabled: [] stays empty.
+ */
+export function parseAgentProvidersConfig(
+  envValue: string | undefined,
+  fileConfig: AgentProvidersConfig | undefined,
+): AgentProvidersConfig | undefined {
+  if (envValue !== undefined) {
+    const enabled = envValue
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry): entry is LocalAgentProvider => isLocalAgentProvider(entry));
+    return { enabled };
+  }
+  if (!fileConfig) return undefined;
+  const enabled = (fileConfig.enabled ?? []).filter((id): id is LocalAgentProvider =>
+    isLocalAgentProvider(id),
+  );
+  return {
+    enabled,
+    detectedAt: fileConfig.detectedAt,
+    lastProbe: fileConfig.lastProbe,
+  };
+}
+
+export function defaultAgentProvidersOrder(): LocalAgentProvider[] {
+  return [...LOCAL_AGENT_PROVIDERS];
 }
 
 function parsePublicBaseUrl(value: string): string {
