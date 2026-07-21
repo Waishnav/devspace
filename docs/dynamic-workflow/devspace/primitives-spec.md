@@ -753,7 +753,7 @@ IMPLEMENTER (parallel):
 | Shared workspace; later agents see prior edits on disk | Yes |
 | Return structured paths/findings between stages | Yes (schema) |
 | Auto git snapshot / diff after each agent | **No** |
-| Per-agent worktree | **No** (follow-up) |
+| Per-agent worktree (`isolation: 'worktree'`) | **Yes v1** (must-have; §7.1b) |
 | Host `show_changes` after whole workflow | Optional host behavior; not engine |
 
 ---
