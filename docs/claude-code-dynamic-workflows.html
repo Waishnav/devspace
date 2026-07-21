@@ -1,0 +1,1150 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="In-depth reference for Claude Code dynamic workflows: the Workflow tool, script contract, agent/pipeline/parallel primitives, resume, budget, and one-level-above multi-agent orchestration." />
+  <title>Claude Code Dynamic Workflows — API &amp; Primitives Reference</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0b0f14',
+            panel: '#121820',
+            steel: '#1a2330',
+            line: '#2a3648',
+            bone: '#e8eef6',
+            mute: '#8b9bb0',
+            cyan: '#4fd1ff',
+            violet: '#a78bfa',
+            mint: '#5eead4',
+            peach: '#fbbf77',
+            rose: '#fb7185',
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
+            body: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, rgba(79,209,255,.12), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 90% 0%, rgba(167,139,250,.10), transparent 45%),
+        #0b0f14;
+      color: #e8eef6;
+    }
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(79,209,255,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,209,255,.04) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+    .card {
+      border: 1px solid #2a3648;
+      background: linear-gradient(160deg, rgba(26,35,48,.92), rgba(12,16,22,.96));
+      border-radius: 1rem;
+    }
+    .card-cyan { box-shadow: inset 3px 0 0 #4fd1ff; }
+    .card-violet { box-shadow: inset 3px 0 0 #a78bfa; }
+    .card-mint { box-shadow: inset 3px 0 0 #5eead4; }
+    .card-peach { box-shadow: inset 3px 0 0 #fbbf77; }
+    .card-rose { box-shadow: inset 3px 0 0 #fb7185; }
+    .tag {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .68rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .code {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .82rem;
+      line-height: 1.55;
+      white-space: pre;
+      overflow-x: auto;
+      tab-size: 2;
+    }
+    .tok-k { color: #fbbf77; }
+    .tok-f { color: #4fd1ff; }
+    .tok-s { color: #5eead4; }
+    .tok-c { color: #64748b; }
+    .tok-n { color: #fb7185; }
+    .tok-p { color: #a78bfa; }
+    .toc a:hover { color: #4fd1ff; }
+    .api-sig {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .85rem;
+      color: #4fd1ff;
+      background: #0a1018;
+      border: 1px solid #2a3648;
+      border-radius: .75rem;
+      padding: .85rem 1rem;
+      overflow-x: auto;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      padding: .15rem .55rem;
+      font: 600 .65rem "IBM Plex Mono", monospace;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .flow-node {
+      border: 1px solid #2a3648;
+      background: #121820;
+      border-radius: .65rem;
+      padding: .7rem .9rem;
+      font: 600 .72rem "IBM Plex Mono", monospace;
+      text-align: center;
+      min-width: 7.5rem;
+    }
+    .flow-arrow {
+      color: #64748b;
+      font: 500 .75rem "IBM Plex Mono", monospace;
+      display: flex;
+      align-items: center;
+      gap: .25rem;
+    }
+    .flow-arrow::after { content: "→"; font-size: 1.1rem; }
+    table.matrix th, table.matrix td {
+      border-bottom: 1px solid #2a3648;
+      vertical-align: top;
+      padding: .75rem .85rem;
+    }
+    table.matrix th {
+      position: sticky;
+      top: 0;
+      background: #121820;
+      font: 600 .72rem "IBM Plex Mono", monospace;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #8b9bb0;
+    }
+    .callout {
+      border-left: 3px solid #fbbf77;
+      background: rgba(251,191,119,.06);
+      border-radius: 0 .75rem .75rem 0;
+    }
+    .callout-info {
+      border-left-color: #4fd1ff;
+      background: rgba(79,209,255,.06);
+    }
+    .callout-danger {
+      border-left-color: #fb7185;
+      background: rgba(251,113,133,.06);
+    }
+    nav.side a.active { color: #4fd1ff; border-left-color: #4fd1ff; }
+    ::selection { background: #4fd1ff; color: #0b0f14; }
+  </style>
+</head>
+<body class="font-body antialiased grid-bg">
+  <!-- Header -->
+  <header class="border-b border-line/80 bg-ink/80 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="tag text-cyan mb-1">Claude Code · 2.1.x</div>
+        <h1 class="font-display text-xl md:text-2xl font-semibold tracking-tight">Dynamic Workflows — API &amp; Primitives</h1>
+      </div>
+      <div class="flex flex-wrap gap-2 text-mute">
+        <span class="pill text-cyan">Workflow tool</span>
+        <span class="pill text-violet">agent / pipeline / parallel</span>
+        <span class="pill text-mint">resume + budget</span>
+        <span class="pill text-peach">orchestrator tier</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="max-w-7xl mx-auto px-5 py-10 grid lg:grid-cols-[240px_1fr] gap-10">
+    <!-- Side TOC -->
+    <nav class="side hidden lg:block sticky top-24 self-start max-h-[calc(100vh-7rem)] overflow-y-auto text-sm toc">
+      <p class="tag text-mute mb-3">Contents</p>
+      <ul class="space-y-1.5 border-l border-line pl-3 text-mute">
+        <li><a href="#thesis" class="block py-0.5 hover:text-cyan">1. Thesis</a></li>
+        <li><a href="#architecture" class="block py-0.5 hover:text-cyan">2. Architecture</a></li>
+        <li><a href="#opt-in" class="block py-0.5 hover:text-cyan">3. Opt-in &amp; Ultracode</a></li>
+        <li><a href="#workflow-tool" class="block py-0.5 hover:text-cyan">4. Workflow tool API</a></li>
+        <li><a href="#script-contract" class="block py-0.5 hover:text-cyan">5. Script contract</a></li>
+        <li><a href="#primitives" class="block py-0.5 hover:text-cyan">6. Script primitives</a></li>
+        <li><a href="#agent" class="block py-0.5 hover:text-cyan pl-2">6.1 agent()</a></li>
+        <li><a href="#pipeline" class="block py-0.5 hover:text-cyan pl-2">6.2 pipeline()</a></li>
+        <li><a href="#parallel" class="block py-0.5 hover:text-cyan pl-2">6.3 parallel()</a></li>
+        <li><a href="#phase-log" class="block py-0.5 hover:text-cyan pl-2">6.4 phase / log</a></li>
+        <li><a href="#args-budget" class="block py-0.5 hover:text-cyan pl-2">6.5 args / budget</a></li>
+        <li><a href="#nested-workflow" class="block py-0.5 hover:text-cyan pl-2">6.6 workflow()</a></li>
+        <li><a href="#limits" class="block py-0.5 hover:text-cyan">7. Limits &amp; sandbox</a></li>
+        <li><a href="#resume" class="block py-0.5 hover:text-cyan">8. Resume &amp; journal</a></li>
+        <li><a href="#patterns" class="block py-0.5 hover:text-cyan">9. Quality patterns</a></li>
+        <li><a href="#lifecycle" class="block py-0.5 hover:text-cyan">10. Lifecycle &amp; UX</a></li>
+        <li><a href="#one-level-above" class="block py-0.5 hover:text-cyan">11. One level above</a></li>
+        <li><a href="#usecases" class="block py-0.5 hover:text-cyan">12. Use cases enabled</a></li>
+        <li><a href="#cheatsheet" class="block py-0.5 hover:text-cyan">13. Cheatsheet</a></li>
+      </ul>
+    </nav>
+
+    <main class="min-w-0 space-y-16">
+
+      <!-- 1 Thesis -->
+      <section id="thesis" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">01 · Thesis</p>
+          <h2 class="font-display text-3xl md:text-4xl font-semibold tracking-tight leading-tight">
+            Deterministic control flow.<br />
+            <span class="text-mute">Stochastic workers. One orchestrator brain.</span>
+          </h2>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="card card-cyan p-5">
+            <p class="tag text-cyan mb-2">Problem</p>
+            <p class="text-sm text-bone/90 leading-relaxed">A single agent loop confuses <em>what to do next</em> with <em>how to do the work</em>. Fan-out, verification, and synthesis become ad-hoc tool calls that the model re-invents every turn.</p>
+          </div>
+          <div class="card card-violet p-5">
+            <p class="tag text-violet mb-2">Mechanism</p>
+            <p class="text-sm text-bone/90 leading-relaxed">Claude Code exposes a <strong>Workflow</strong> tool. The model authors a short plain-JS script. The harness runs that script: loops, conditionals, and fan-out are code — not free-form model decisions mid-orchestration.</p>
+          </div>
+          <div class="card card-mint p-5">
+            <p class="tag text-mint mb-2">Payoff</p>
+            <p class="text-sm text-bone/90 leading-relaxed">A stronger “orchestrator” model designs the graph once. Weaker/cheaper or specialized subagents execute units of work. Scale, confidence, and isolation become programmable.</p>
+          </div>
+        </div>
+        <div class="callout p-4 text-sm text-bone/90 leading-relaxed">
+          <strong class="text-peach">Key insight.</strong> Dynamic workflows are not “another agent.” They are a <em>programmable multi-agent runtime</em> the model can call. The script is the plan; <code class="text-cyan">agent()</code> is the only way work escapes into a model.
+        </div>
+      </section>
+
+      <!-- 2 Architecture -->
+      <section id="architecture" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">02 · Architecture</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Three layers</h2>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3 md:gap-4 py-2">
+          <div class="flow-node border-cyan/40 text-cyan">Main session<br /><span class="text-mute font-normal">orchestrator model</span></div>
+          <div class="flow-arrow text-mute">Workflow tool</div>
+          <div class="flow-node border-violet/40 text-violet">JS runtime<br /><span class="text-mute font-normal">script + hooks</span></div>
+          <div class="flow-arrow text-mute">agent()</div>
+          <div class="flow-node border-mint/40 text-mint">Subagents<br /><span class="text-mute font-normal">N isolated workers</span></div>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-cyan">1. Coordinator (main loop)</h3>
+            <ul class="text-mute space-y-1.5 list-disc pl-4">
+              <li>Talks to the user</li>
+              <li>Scouts the repo / work-list</li>
+              <li>Authors or selects a workflow script</li>
+              <li>Calls the <code class="text-cyan">Workflow</code> tool</li>
+              <li>Synthesizes the returned result</li>
+            </ul>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-violet">2. Workflow engine</h3>
+            <ul class="text-mute space-y-1.5 list-disc pl-4">
+              <li>Parses <code class="text-cyan">export const meta</code></li>
+              <li>Runs the script in an async JS context</li>
+              <li>Hosts <code class="text-cyan">agent / pipeline / parallel / phase / log / budget / workflow</code></li>
+              <li>Enforces concurrency &amp; agent caps</li>
+              <li>Journals each agent call for resume</li>
+            </ul>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-mint">3. Subagents</h3>
+            <ul class="text-mute space-y-1.5 list-disc pl-4">
+              <li>Own tool loops (Read, Bash, Edit, …)</li>
+              <li>Optional structured output via schema</li>
+              <li>Optional worktree isolation</li>
+              <li>Optional model / effort / agentType overrides</li>
+              <li>Final text (or validated object) is the return value</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card p-5">
+          <p class="tag text-mute mb-3">Mental model</p>
+          <div class="code text-mute"><span class="tok-c">// Coordinator decides STRUCTURE</span>
+<span class="tok-f">Workflow</span>({ script, args })
+  → JS engine runs control flow
+    → <span class="tok-f">agent</span>(prompt, opts) × N   <span class="tok-c">// workers decide CONTENT</span>
+  → script <span class="tok-k">return</span> value
+→ coordinator narrates to user</div>
+        </div>
+      </section>
+
+      <!-- 3 Opt-in -->
+      <section id="opt-in" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">03 · Opt-in policy</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">When the model may call Workflow</h2>
+        </div>
+        <p class="text-mute text-sm max-w-3xl leading-relaxed">
+          Workflows can spawn dozens of agents and burn large token budgets. Claude Code therefore gates the tool behind <strong class="text-bone">explicit user opt-in</strong>. A task that would “benefit from parallelism” is not enough.
+        </p>
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card card-mint p-5">
+            <p class="tag text-mint mb-2">Allowed triggers</p>
+            <ul class="space-y-2 text-mute list-disc pl-4">
+              <li>User prompt contains the keyword <code class="text-cyan">ultracode</code> (system-reminder confirms).</li>
+              <li>Session ultracode is on (standing opt-in for every substantive task).</li>
+              <li>User asks in their own words: “use a workflow”, “fan out agents”, “orchestrate with subagents”, etc.</li>
+              <li>A skill / slash command’s instructions tell the model to call Workflow.</li>
+              <li>User asks for a specific named / saved workflow.</li>
+            </ul>
+          </div>
+          <div class="card card-rose p-5">
+            <p class="tag text-rose mb-2">Not enough</p>
+            <ul class="space-y-2 text-mute list-disc pl-4">
+              <li>“This would be faster in parallel.”</li>
+              <li>The model silently deciding multi-agent is better.</li>
+              <li>Inferring opt-in from task complexity alone.</li>
+            </ul>
+            <p class="mt-3 text-mute">Fallback: use the single <code class="text-cyan">Agent</code> tool, or describe the multi-agent plan + rough cost and ask.</p>
+          </div>
+        </div>
+
+        <div class="card card-peach p-5 space-y-3">
+          <p class="tag text-peach">Ultracode mode</p>
+          <p class="text-sm text-mute leading-relaxed">When ultracode is on, opt-in is standing. The model should author and run a workflow for every substantive task. Token cost is not a constraint; the goal is the most exhaustive correct answer. Multi-phase work is often <em>several workflows in sequence</em> (understand → design → implement → review) so the coordinator stays in the loop between phases. Solo only for pure conversation or trivial mechanical edits.</p>
+        </div>
+
+        <div class="callout-info callout p-4 text-sm text-mute">
+          <strong class="text-cyan">Hybrid default.</strong> Scout inline first (list files, scope the diff, discover the work-list), then call Workflow to pipeline over that list. You need the shape before the <em>orchestration step</em>, not before the whole task.
+        </div>
+      </section>
+
+      <!-- 4 Workflow tool -->
+      <section id="workflow-tool" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">04 · Workflow tool API</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Tool surface the model calls</h2>
+        </div>
+        <p class="text-sm text-mute max-w-3xl">Tool name: <code class="text-cyan">Workflow</code> (alias <code class="text-cyan">RunWorkflow</code>). Search hint: <em>orchestrate subagents with deterministic JavaScript workflow</em>. Runs in the background — returns immediately with a task ID; a <code class="text-cyan">&lt;task-notification&gt;</code> arrives on completion. Live progress: <code class="text-cyan">/workflows</code>.</p>
+
+        <h3 class="font-semibold text-lg mt-6">Input fields</h3>
+        <div class="overflow-x-auto card">
+          <table class="matrix w-full text-sm">
+            <thead>
+              <tr>
+                <th class="text-left">Field</th>
+                <th class="text-left">Type</th>
+                <th class="text-left">Role</th>
+              </tr>
+            </thead>
+            <tbody class="text-mute">
+              <tr>
+                <td><code class="text-cyan">script</code></td>
+                <td>string (optional, max-bounded)</td>
+                <td>Inline self-contained workflow script. Must start with pure-literal <code class="text-cyan">export const meta = {...}</code>. Preferred first invocation — do not Write a file first.</td>
+              </tr>
+              <tr>
+                <td><code class="text-cyan">name</code></td>
+                <td>string (optional)</td>
+                <td>Named workflow from built-ins or <code class="text-cyan">.claude/workflows/</code>. Resolves to a script.</td>
+              </tr>
+              <tr>
+                <td><code class="text-cyan">scriptPath</code></td>
+                <td>string (optional)</td>
+                <td>Path to a persisted script on disk. Every invocation writes one under the session dir and returns the path. Iterate with Write/Edit + re-invoke. Takes precedence over <code class="text-cyan">script</code> / <code class="text-cyan">name</code>.</td>
+              </tr>
+              <tr>
+                <td><code class="text-cyan">args</code></td>
+                <td>any (optional)</td>
+                <td>Value exposed to the script as global <code class="text-cyan">args</code>, <strong>verbatim</strong>. Pass real JSON arrays/objects — not stringified JSON (stringified lists break <code class="text-cyan">args.map</code>).</td>
+              </tr>
+              <tr>
+                <td><code class="text-cyan">resumeFromRunId</code></td>
+                <td>string matching <code class="text-cyan">^wf_[a-z0-9-]{6,}$</code></td>
+                <td>Prior run ID. Unchanged prefix of <code class="text-cyan">agent()</code> calls replays from cache; first changed/new call and after run live. Same-session only. Stop the prior run first.</td>
+              </tr>
+              <tr>
+                <td><code class="text-mute">description</code> / <code class="text-mute">title</code></td>
+                <td>ignored</td>
+                <td>Set display name/description in script <code class="text-cyan">meta</code>, not these fields.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-sm text-mute">Validation: at least one of <code class="text-cyan">script</code>, <code class="text-cyan">name</code>, or <code class="text-cyan">scriptPath</code> is required.</p>
+
+        <h3 class="font-semibold text-lg">Return envelope (conceptual)</h3>
+        <div class="card p-4">
+          <div class="code"><span class="tok-c">// async launch — tool returns before script finishes</span>
+{
+  <span class="tok-k">status</span>: <span class="tok-s">"async_launched"</span> | <span class="tok-s">"remote_launched"</span>,
+  <span class="tok-k">taskId</span>: <span class="tok-s">"..."</span>,
+  <span class="tok-k">taskType</span>: <span class="tok-s">"local_workflow"</span> | <span class="tok-s">"remote_agent"</span>,
+  <span class="tok-k">workflowName</span>: <span class="tok-s">"review-changes"</span>,       <span class="tok-c">// meta.name</span>
+  <span class="tok-k">runId</span>: <span class="tok-s">"wf_…"</span>,                      <span class="tok-c">// for resumeFromRunId</span>
+  <span class="tok-k">transcriptDir</span>: <span class="tok-s">"/…/…"</span>,              <span class="tok-c">// subagent transcripts + journal.jsonl</span>
+  <span class="tok-k">scriptPath</span>: <span class="tok-s">"/…/workflows/scripts/….js"</span>,
+  <span class="tok-k">summary</span>?: <span class="tok-s">"…"</span>,
+  <span class="tok-k">warning</span>?: <span class="tok-s">"…"</span>,
+  <span class="tok-k">error</span>?: <span class="tok-s">"…"</span>                         <span class="tok-c">// e.g. syntax check failed</span>
+}</div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card p-5">
+            <p class="tag text-cyan mb-2">First run</p>
+            <div class="code text-xs">Workflow({
+  script: `export const meta = {…}
+…`,
+  args: { files: changed }
+})</div>
+          </div>
+          <div class="card p-5">
+            <p class="tag text-violet mb-2">Iterate</p>
+            <div class="code text-xs"><span class="tok-c">// edit the returned scriptPath, then:</span>
+Workflow({
+  scriptPath: returnedPath,
+  resumeFromRunId: runId, <span class="tok-c">// optional cache</span>
+  args: { files: changed }
+})</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 Script contract -->
+      <section id="script-contract" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">05 · Script contract</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">What a valid workflow script is</h2>
+        </div>
+
+        <div class="card p-5 space-y-4">
+          <div class="code"><span class="tok-k">export const</span> meta = {
+  <span class="tok-k">name</span>: <span class="tok-s">'find-flaky-tests'</span>,
+  <span class="tok-k">description</span>: <span class="tok-s">'Find flaky tests and propose fixes'</span>,
+  <span class="tok-k">phases</span>: [
+    { <span class="tok-k">title</span>: <span class="tok-s">'Scan'</span>, <span class="tok-k">detail</span>: <span class="tok-s">'grep test logs for retries'</span> },
+    { <span class="tok-k">title</span>: <span class="tok-s">'Fix'</span>, <span class="tok-k">detail</span>: <span class="tok-s">'one agent per flaky test'</span>, <span class="tok-k">model</span>: <span class="tok-s">'sonnet'</span> },
+  ],
+  <span class="tok-c">// optional: whenToUse (workflow list), model on a phase</span>
+}
+
+<span class="tok-c">// body runs in an async context — await freely</span>
+<span class="tok-f">phase</span>(<span class="tok-s">'Scan'</span>)
+<span class="tok-k">const</span> flaky = <span class="tok-k">await</span> <span class="tok-f">agent</span>(<span class="tok-s">'…'</span>, { schema: FLAKY_SCHEMA })
+<span class="tok-c">// …</span>
+<span class="tok-k">return</span> { flaky }</div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold">meta rules</h3>
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li>Must be the <strong class="text-bone">first statement</strong>.</li>
+              <li><strong class="text-bone">Pure literal only</strong> — no variables, function calls, spreads, or template interpolation.</li>
+              <li>Required: <code class="text-cyan">name</code>, <code class="text-cyan">description</code>.</li>
+              <li>Optional: <code class="text-cyan">whenToUse</code>, <code class="text-cyan">phases[]</code> with <code class="text-cyan">title</code>, <code class="text-cyan">detail</code>, optional per-phase <code class="text-cyan">model</code>.</li>
+              <li>Phase titles in <code class="text-cyan">meta.phases</code> must match <code class="text-cyan">phase()</code> calls exactly for UI grouping.</li>
+              <li><code class="text-cyan">description</code> is shown in the permission dialog.</li>
+            </ul>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold">Language &amp; environment</h3>
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li><strong class="text-bone">Plain JavaScript only</strong> — not TypeScript. Type annotations, interfaces, generics fail to parse.</li>
+              <li>Standard built-ins: <code class="text-cyan">JSON</code>, <code class="text-cyan">Math</code>, <code class="text-cyan">Array</code>, etc.</li>
+              <li><strong class="text-rose">Forbidden for determinism:</strong> <code class="text-cyan">Date.now()</code>, <code class="text-cyan">Math.random()</code>, argless <code class="text-cyan">new Date()</code> — they throw (would break resume).</li>
+              <li>No filesystem, no Node APIs, no network from the script.</li>
+              <li>Only escape hatch into models/tools: <code class="text-cyan">agent()</code> (and nested <code class="text-cyan">workflow()</code>).</li>
+              <li>Pass timestamps via <code class="text-cyan">args</code>; stamp wall-clock after the workflow returns.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout-danger callout p-4 text-sm text-mute">
+          <strong class="text-rose">Why non-determinism is banned.</strong> Resume replays the longest unchanged prefix of <code class="text-cyan">agent()</code> calls by hashing prompt + opts. If the script could branch on time or random, cache identity would lie. Keep control flow pure; put entropy in agent prompts (vary by index) or in post-processing outside the script.
+        </div>
+      </section>
+
+      <!-- 6 Primitives -->
+      <section id="primitives" class="space-y-10">
+        <div>
+          <p class="tag text-cyan mb-2">06 · Script primitives</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Every hook the script can call</h2>
+          <p class="text-sm text-mute mt-2 max-w-3xl">These are the only APIs injected into the script body. Together they form a small concurrent orchestration language.</p>
+        </div>
+
+        <!-- agent -->
+        <article id="agent" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-cyan">core</span>
+            <h3 class="font-display text-xl font-semibold">agent()</h3>
+          </div>
+          <div class="api-sig">agent(prompt: string, opts?: {
+  label?: string,
+  phase?: string,
+  schema?: object,          // JSON Schema
+  model?: string,           // e.g. 'sonnet' | 'opus' | 'haiku' | session ids
+  effort?: 'low'|'medium'|'high'|'xhigh'|'max',
+  isolation?: 'worktree',
+  agentType?: string        // registry name, e.g. 'general-purpose', 'code-reviewer', 'claude'
+}): Promise&lt;any&gt;</div>
+
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="card p-5 space-y-2">
+              <p class="tag text-cyan">Semantics</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Spawns one subagent with its own tool loop.</li>
+                <li>Without <code class="text-cyan">schema</code>: resolves to the agent’s final text (string).</li>
+                <li>With <code class="text-cyan">schema</code>: forces a StructuredOutput tool call; returns the <strong class="text-bone">validated object</strong> — no fragile JSON parsing.</li>
+                <li>Returns <code class="text-cyan">null</code> if the user skips the agent or it dies after terminal API retries. Always <code class="text-cyan">.filter(Boolean)</code> before use.</li>
+                <li>Subagents are told: final text/object <em>is</em> the return value, not a user-facing message.</li>
+              </ul>
+            </div>
+            <div class="card p-5 space-y-2">
+              <p class="tag text-violet">Options in practice</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li><code class="text-cyan">label</code> — UI/progress label (<code class="text-cyan">review:security</code>).</li>
+                <li><code class="text-cyan">phase</code> — assign progress group inside pipeline/parallel (avoids races on global <code class="text-cyan">phase()</code>).</li>
+                <li><code class="text-cyan">model</code> — omit by default (inherit session model). Override only when tier fit is clear.</li>
+                <li><code class="text-cyan">effort</code> — <code class="text-cyan">low</code> for mechanical stages; higher only for hard verify/judge stages.</li>
+                <li><code class="text-cyan">isolation: 'worktree'</code> — expensive (~200–500ms + disk). Use only when parallel mutators would conflict. Unchanged worktrees auto-remove.</li>
+                <li><code class="text-cyan">agentType</code> — custom subagent from the same registry as the Agent tool; composes with schema.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="card p-4">
+            <div class="code"><span class="tok-k">const</span> FINDINGS = {
+  <span class="tok-k">type</span>: <span class="tok-s">'object'</span>,
+  <span class="tok-k">properties</span>: {
+    findings: {
+      <span class="tok-k">type</span>: <span class="tok-s">'array'</span>,
+      items: {
+        <span class="tok-k">type</span>: <span class="tok-s">'object'</span>,
+        <span class="tok-k">properties</span>: {
+          file: { <span class="tok-k">type</span>: <span class="tok-s">'string'</span> },
+          line: { <span class="tok-k">type</span>: <span class="tok-s">'integer'</span> },
+          issue: { <span class="tok-k">type</span>: <span class="tok-s">'string'</span> },
+        },
+        <span class="tok-k">required</span>: [<span class="tok-s">'file'</span>, <span class="tok-s">'line'</span>, <span class="tok-s">'issue'</span>],
+        <span class="tok-k">additionalProperties</span>: <span class="tok-n">false</span>,
+      },
+    },
+  },
+  <span class="tok-k">required</span>: [<span class="tok-s">'findings'</span>],
+  <span class="tok-k">additionalProperties</span>: <span class="tok-n">false</span>,
+}
+
+<span class="tok-k">const</span> result = <span class="tok-k">await</span> <span class="tok-f">agent</span>(
+  <span class="tok-s">'Review auth changes for session fixation. Read-only.'</span>,
+  {
+    label: <span class="tok-s">'review:auth'</span>,
+    phase: <span class="tok-s">'Review'</span>,
+    schema: FINDINGS,
+    effort: <span class="tok-s">'medium'</span>,
+    agentType: <span class="tok-s">'claude'</span>,
+  }
+)
+<span class="tok-c">// result.findings is already typed-shaped JSON</span></div>
+          </div>
+
+          <div class="callout-info callout p-4 text-sm text-mute">
+            <strong class="text-cyan">MCP access.</strong> Workflow subagents can reach session-connected MCP tools via ToolSearch (schemas load on demand). Interactively authenticated MCP servers may be missing in headless/cron runs.
+          </div>
+        </article>
+
+        <!-- pipeline -->
+        <article id="pipeline" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-mint">default multi-stage</span>
+            <h3 class="font-display text-xl font-semibold">pipeline()</h3>
+          </div>
+          <div class="api-sig">pipeline(items: any[], stage1, stage2, ...): Promise&lt;any[]&gt;
+// each stage: (prevResult, originalItem, index) =&gt; Promise&lt;any&gt; | any</div>
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="card p-5 space-y-2">
+              <p class="tag text-mint">Semantics</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Each <em>item</em> flows through all stages <strong class="text-bone">independently</strong>.</li>
+                <li><strong class="text-bone">No barrier</strong> between stages: item A can be in stage 3 while item B is still in stage 1.</li>
+                <li>Wall-clock ≈ slowest single-item chain — not sum of per-stage slowest times.</li>
+                <li>Stage callbacks receive <code class="text-cyan">(prevResult, originalItem, index)</code> so later stages can label work without stuffing identity into stage-1 returns.</li>
+                <li>A throwing stage drops that item to <code class="text-cyan">null</code> and skips remaining stages for it.</li>
+              </ul>
+            </div>
+            <div class="card p-5 space-y-2">
+              <p class="tag text-peach">When to use</p>
+              <p class="text-mute">Default for multi-stage work. Prefer over barrier-then-map whenever each item’s next stage does not need the full previous stage’s result set.</p>
+              <p class="text-mute mt-2"><strong class="text-bone">Smell test:</strong> if you wrote parallel → transform → parallel with no cross-item dependency, rewrite as pipeline with the transform inside a stage.</p>
+            </div>
+          </div>
+          <div class="card p-4">
+            <div class="code"><span class="tok-k">const</span> DIMENSIONS = [
+  { key: <span class="tok-s">'bugs'</span>, prompt: <span class="tok-s">'…'</span> },
+  { key: <span class="tok-s">'perf'</span>, prompt: <span class="tok-s">'…'</span> },
+]
+<span class="tok-k">const</span> results = <span class="tok-k">await</span> <span class="tok-f">pipeline</span>(
+  DIMENSIONS,
+  d =&gt; <span class="tok-f">agent</span>(d.prompt, {
+    label: <span class="tok-s">`review:${d.key}`</span>,
+    phase: <span class="tok-s">'Review'</span>,
+    schema: FINDINGS_SCHEMA,
+  }),
+  review =&gt; <span class="tok-f">parallel</span>(
+    review.findings.map(f =&gt; () =&gt;
+      <span class="tok-f">agent</span>(<span class="tok-s">`Adversarially verify: ${f.title}`</span>, {
+        label: <span class="tok-s">`verify:${f.file}`</span>,
+        phase: <span class="tok-s">'Verify'</span>,
+        schema: VERDICT_SCHEMA,
+      }).then(v =&gt; ({ ...f, verdict: v }))
+    )
+  )
+)
+<span class="tok-c">// bugs findings verify while perf is still reviewing</span>
+<span class="tok-k">const</span> confirmed = results.flat().filter(Boolean)
+  .filter(f =&gt; f.verdict?.isReal)</div>
+          </div>
+        </article>
+
+        <!-- parallel -->
+        <article id="parallel" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-peach">barrier</span>
+            <h3 class="font-display text-xl font-semibold">parallel()</h3>
+          </div>
+          <div class="api-sig">parallel(thunks: Array&lt;() =&gt; Promise&lt;any&gt;&gt;): Promise&lt;any[]&gt;</div>
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="card p-5 space-y-2">
+              <p class="tag text-peach">Semantics</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Runs thunks concurrently.</li>
+                <li><strong class="text-bone">Barrier:</strong> awaits all before returning.</li>
+                <li>Throwing thunk / agent error → that slot is <code class="text-cyan">null</code>. The call itself never rejects — always <code class="text-cyan">.filter(Boolean)</code>.</li>
+                <li>Use only when you genuinely need <em>all</em> results together.</li>
+              </ul>
+            </div>
+            <div class="card p-5 space-y-2">
+              <p class="tag text-mint">Barrier is correct when…</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Dedup / merge across the full set before expensive work.</li>
+                <li>Early-exit if total count is zero.</li>
+                <li>Next stage’s prompt references “the other findings.”</li>
+              </ul>
+              <p class="tag text-rose mt-3">Not justified by…</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>“I need to flatten first” — do it inside a pipeline stage.</li>
+                <li>“Stages are conceptually separate” — pipeline already models that.</li>
+                <li>“Cleaner code” — barrier latency is real.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="card p-4">
+            <div class="code"><span class="tok-c">// Correct barrier: need ALL findings before expensive verification</span>
+<span class="tok-k">const</span> all = <span class="tok-k">await</span> <span class="tok-f">parallel</span>(
+  DIMENSIONS.map(d =&gt; () =&gt; <span class="tok-f">agent</span>(d.prompt, { schema: FINDINGS_SCHEMA }))
+)
+<span class="tok-k">const</span> deduped = dedupeByFileAndLine(
+  all.filter(Boolean).flatMap(r =&gt; r.findings)
+)
+<span class="tok-k">const</span> verified = <span class="tok-k">await</span> <span class="tok-f">parallel</span>(
+  deduped.map(f =&gt; () =&gt; <span class="tok-f">agent</span>(verifyPrompt(f), { schema: VERDICT_SCHEMA }))
+)</div>
+          </div>
+        </article>
+
+        <!-- phase / log -->
+        <article id="phase-log" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-violet">progress UX</span>
+            <h3 class="font-display text-xl font-semibold">phase() · log()</h3>
+          </div>
+          <div class="api-sig">phase(title: string): void
+log(message: string): void</div>
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="card p-5 space-y-2">
+              <p class="font-semibold text-violet">phase(title)</p>
+              <p class="text-mute">Starts a progress group. Subsequent <code class="text-cyan">agent()</code> calls without explicit <code class="text-cyan">opts.phase</code> group under this title in <code class="text-cyan">/workflows</code>. Inside concurrent stages, prefer <code class="text-cyan">opts.phase</code> to avoid races on the global phase state. Same string → same group box.</p>
+            </div>
+            <div class="card p-5 space-y-2">
+              <p class="font-semibold text-violet">log(message)</p>
+              <p class="text-mute">Narrator line above the progress tree. Use for counts, dropped coverage, early-exit reasons — anything a silent cap would hide. “No silent caps” is a first-class quality rule.</p>
+            </div>
+          </div>
+        </article>
+
+        <!-- args / budget -->
+        <article id="args-budget" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-peach">inputs &amp; cost</span>
+            <h3 class="font-display text-xl font-semibold">args · budget</h3>
+          </div>
+          <div class="api-sig">args: any
+// value of Workflow({ args }) — undefined if omitted
+
+budget: {
+  total: number | null,
+  spent(): number,
+  remaining(): number   // max(0, total - spent) or Infinity if no target
+}</div>
+          <div class="grid md:grid-cols-2 gap-4 text-sm">
+            <div class="card p-5 space-y-2">
+              <p class="tag text-peach">args</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Parameterize named workflows: research question, file list, config object.</li>
+                <li>Pass real JSON: <code class="text-cyan">args: ["a.ts", "b.ts"]</code> — not a stringified list.</li>
+                <li>Only channel for non-deterministic / external inputs that must stay stable across resume (timestamps, seeds as fixed values).</li>
+              </ul>
+            </div>
+            <div class="card p-5 space-y-2">
+              <p class="tag text-rose">budget</p>
+              <ul class="text-mute list-disc pl-4 space-y-1.5">
+                <li>Turn token target from user “+500k”-style directives.</li>
+                <li><code class="text-cyan">budget.total</code> is null when no target was set.</li>
+                <li><code class="text-cyan">spent()</code> is <strong class="text-bone">shared</strong> across main loop + all workflows this turn.</li>
+                <li><strong class="text-bone">Hard ceiling:</strong> further <code class="text-cyan">agent()</code> calls throw once spent ≥ total.</li>
+                <li>Always guard loops with <code class="text-cyan">budget.total &amp;&amp;</code> — else <code class="text-cyan">remaining()</code> is Infinity and you hit the 1000-agent cap.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="card p-4">
+            <div class="code"><span class="tok-c">// Scale depth to budget</span>
+<span class="tok-k">const</span> bugs = []
+<span class="tok-k">while</span> (budget.total &amp;&amp; budget.remaining() &gt; 50_000) {
+  <span class="tok-k">const</span> result = <span class="tok-k">await</span> <span class="tok-f">agent</span>(<span class="tok-s">'Find bugs…'</span>, { schema: BUGS_SCHEMA })
+  bugs.push(...result.bugs)
+  <span class="tok-f">log</span>(<span class="tok-s">`${bugs.length} found, ${Math.round(budget.remaining()/1000)}k remaining`</span>)
+}
+
+<span class="tok-c">// Or static fleet sizing</span>
+<span class="tok-k">const</span> FLEET = budget.total
+  ? Math.floor(budget.total / 100_000)
+  : 5</div>
+          </div>
+        </article>
+
+        <!-- nested workflow -->
+        <article id="nested-workflow" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="pill text-cyan">composition</span>
+            <h3 class="font-display text-xl font-semibold">workflow()</h3>
+          </div>
+          <div class="api-sig">workflow(
+  nameOrRef: string | { scriptPath: string },
+  args?: any
+): Promise&lt;any&gt;</div>
+          <div class="card p-5 text-sm space-y-2">
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li>Run another workflow inline as a sub-step; return whatever it returns.</li>
+              <li>String name → saved/built-in registry (same as <code class="text-cyan">Workflow({ name })</code>).</li>
+              <li><code class="text-cyan">{ scriptPath }</code> → run a script file already on disk.</li>
+              <li>Child shares parent’s concurrency cap, agent counter, abort signal, and token budget.</li>
+              <li>Child agents appear under a nested group in <code class="text-cyan">/workflows</code>.</li>
+              <li><strong class="text-bone">Nesting is one level only</strong> — <code class="text-cyan">workflow()</code> inside a child throws.</li>
+              <li>Throws on unknown name / unreadable path / child syntax error; catch to handle.</li>
+            </ul>
+          </div>
+        </article>
+      </section>
+
+      <!-- 7 Limits -->
+      <section id="limits" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">07 · Limits &amp; sandbox</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Hard bounds the engine enforces</h2>
+        </div>
+        <div class="overflow-x-auto card">
+          <table class="matrix w-full text-sm">
+            <thead>
+              <tr>
+                <th class="text-left">Limit</th>
+                <th class="text-left">Value</th>
+                <th class="text-left">Notes</th>
+              </tr>
+            </thead>
+            <tbody class="text-mute">
+              <tr>
+                <td>Concurrent <code class="text-cyan">agent()</code> calls</td>
+                <td><code class="text-cyan">min(16, cpu_cores - 2)</code> per workflow</td>
+                <td>Excess queues; all items still complete.</td>
+              </tr>
+              <tr>
+                <td>Lifetime agent count</td>
+                <td>1000</td>
+                <td>Runaway-loop backstop.</td>
+              </tr>
+              <tr>
+                <td>Items per parallel/pipeline call</td>
+                <td>4096 max</td>
+                <td>More → explicit error, not silent truncate.</td>
+              </tr>
+              <tr>
+                <td>Workflow size guideline</td>
+                <td>user /config: small≈5, medium≈15, large≈50, unrestricted</td>
+                <td>Guideline, not hard engine cap (unless user configures otherwise).</td>
+              </tr>
+              <tr>
+                <td>Script determinism</td>
+                <td>no Date.now / Math.random / bare new Date</td>
+                <td>Required for resume cache identity.</td>
+              </tr>
+              <tr>
+                <td>Script I/O</td>
+                <td>none</td>
+                <td>No FS/network/Node; only agent/workflow escapes.</td>
+              </tr>
+              <tr>
+                <td>Worktree isolation</td>
+                <td>opt-in per agent</td>
+                <td>Expensive; auto-clean if unchanged.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 8 Resume -->
+      <section id="resume" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">08 · Resume &amp; journal</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Edit the plan without redoing finished work</h2>
+        </div>
+        <p class="text-sm text-mute max-w-3xl leading-relaxed">
+          Every launch returns a <code class="text-cyan">runId</code> and persists the script. After a pause, kill, or script edit: stop the prior run, then relaunch with <code class="text-cyan">Workflow({ scriptPath, resumeFromRunId })</code>.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div class="card card-mint p-5">
+            <p class="tag text-mint mb-2">Cache hit rule</p>
+            <p class="text-mute">Longest unchanged prefix of <code class="text-cyan">agent()</code> calls (same prompt + opts) returns cached results instantly. First edited/new call and everything after runs live.</p>
+          </div>
+          <div class="card card-cyan p-5">
+            <p class="tag text-cyan mb-2">Perfect replay</p>
+            <p class="text-mute">Same script + same args → 100% cache hit. Use this for pure post-processing edits after a completed run.</p>
+          </div>
+          <div class="card card-peach p-5">
+            <p class="tag text-peach mb-2">journal.jsonl</p>
+            <p class="text-mute">Under <code class="text-cyan">transcriptDir</code>. Records each agent’s actual return value. Before diagnosing empty/weird results, read the journal — do not assume cached results are non-empty.</p>
+          </div>
+        </div>
+        <div class="card p-4">
+          <div class="code">Workflow({
+  scriptPath: <span class="tok-s">'/…/workflows/scripts/review-wf_abc.js'</span>,
+  resumeFromRunId: <span class="tok-s">'wf_abc…'</span>,
+  args: previousArgs,
+})</div>
+        </div>
+        <div class="callout callout-info p-4 text-sm text-mute">
+          <strong class="text-cyan">Fallback.</strong> If no journal is available, read <code class="text-cyan">agent-&lt;id&gt;.jsonl</code> files in the transcript directory and hand-author a continuation script.
+        </div>
+      </section>
+
+      <!-- 9 Patterns -->
+      <section id="patterns" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">09 · Quality patterns</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Composable harness shapes</h2>
+          <p class="text-sm text-mute mt-2">These are not special APIs — they are recipes built from the primitives. Pick by task; compose freely.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-cyan">Adversarial verify</h3>
+            <p class="text-mute">N independent skeptics per claim, prompted to <em>refute</em>. Kill if ≥ majority refute. Kills plausible-but-wrong findings.</p>
+            <div class="code text-xs mt-2"><span class="tok-k">const</span> votes = <span class="tok-k">await</span> <span class="tok-f">parallel</span>(Array.from({length: 3}, () =&gt; () =&gt;
+  <span class="tok-f">agent</span>(<span class="tok-s">`Try to refute: ${claim}. Default refuted=true if uncertain.`</span>, { schema: VERDICT })
+))
+<span class="tok-k">const</span> survives = votes.filter(Boolean)
+  .filter(v =&gt; !v.refuted).length &gt;= 2</div>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-violet">Perspective-diverse verify</h3>
+            <p class="text-mute">Distinct lenses (correctness, security, repro, perf) instead of N identical refuters. Diversity catches failure modes redundancy cannot.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-mint">Judge panel</h3>
+            <p class="text-mute">N independent attempts from different angles (MVP-first, risk-first, user-first). Score in parallel; synthesize from winner while grafting runner-up ideas. Beats single-attempt iteration when the solution space is wide.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-peach">Loop-until-dry</h3>
+            <p class="text-mute">Unknown-size discovery: keep finding until K consecutive rounds return nothing new. Dedup against <em>all seen</em>, not only confirmed — else rejected findings reappear forever.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-cyan">Multi-modal sweep</h3>
+            <p class="text-mute">Parallel agents each search a different way (by-container, by-content, by-entity, by-time). Each is blind to the others — covers angles one search cannot.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-rose">Completeness critic</h3>
+            <p class="text-mute">Final agent asks: modality not run? claim unverified? source unread? Output becomes the next work round.</p>
+          </div>
+        </div>
+
+        <div class="card p-4">
+          <p class="tag text-mute mb-2">Exhaustive review composition</p>
+          <div class="code text-xs"><span class="tok-k">const</span> seen = <span class="tok-k">new</span> <span class="tok-f">Set</span>(), confirmed = []
+<span class="tok-k">let</span> dry = 0
+<span class="tok-k">while</span> (dry &lt; 2) {
+  <span class="tok-k">const</span> found = (<span class="tok-k">await</span> <span class="tok-f">parallel</span>(FINDERS.map(f =&gt; () =&gt;
+    <span class="tok-f">agent</span>(f.prompt, { phase: <span class="tok-s">'Find'</span>, schema: BUGS })
+  ))).filter(Boolean).flatMap(r =&gt; r.bugs)
+  <span class="tok-k">const</span> fresh = found.filter(b =&gt; !seen.has(key(b)))
+  <span class="tok-k">if</span> (!fresh.length) { dry++; <span class="tok-k">continue</span> }
+  dry = 0; fresh.forEach(b =&gt; seen.add(key(b)))
+  <span class="tok-k">const</span> judged = <span class="tok-k">await</span> <span class="tok-f">parallel</span>(fresh.map(b =&gt; () =&gt;
+    <span class="tok-f">parallel</span>([<span class="tok-s">'correctness'</span>,<span class="tok-s">'security'</span>,<span class="tok-s">'repro'</span>].map(lens =&gt; () =&gt;
+      <span class="tok-f">agent</span>(<span class="tok-s">`Judge "${b.desc}" via ${lens} — real?`</span>, {
+        phase: <span class="tok-s">'Verify'</span>, schema: VERDICT
+      })
+    )).then(vs =&gt; ({
+      b,
+      real: vs.filter(Boolean).filter(v =&gt; v.real).length &gt;= 2
+    }))
+  ))
+  confirmed.push(...judged.filter(v =&gt; v.real).map(v =&gt; v.b))
+}
+<span class="tok-k">return</span> confirmed</div>
+        </div>
+
+        <div class="callout p-4 text-sm text-mute">
+          <strong class="text-peach">Scale to the ask.</strong> “Find any bugs” → few finders, single-vote verify. “Thoroughly audit” → larger pool, 3–5 vote adversarial pass, synthesis stage. When unsure on research/review/audit: lean thorough; on quick checks: lean brief.
+        </div>
+      </section>
+
+      <!-- 10 Lifecycle -->
+      <section id="lifecycle" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">10 · Lifecycle &amp; operator UX</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">How a run feels from the outside</h2>
+        </div>
+        <ol class="space-y-3 text-sm text-mute list-decimal pl-5 max-w-3xl">
+          <li><strong class="text-bone">Authoring.</strong> Coordinator scouts, then writes inline <code class="text-cyan">script</code> (or picks <code class="text-cyan">name</code>).</li>
+          <li><strong class="text-bone">Permission.</strong> User sees <code class="text-cyan">meta.description</code> (and size guideline if set).</li>
+          <li><strong class="text-bone">Launch.</strong> Tool returns immediately with <code class="text-cyan">taskId</code>, <code class="text-cyan">runId</code>, <code class="text-cyan">scriptPath</code>, <code class="text-cyan">transcriptDir</code>.</li>
+          <li><strong class="text-bone">Progress.</strong> <code class="text-cyan">/workflows</code> shows phase groups, labels, nested child workflows, narrator <code class="text-cyan">log()</code> lines.</li>
+          <li><strong class="text-bone">Completion.</strong> <code class="text-cyan">&lt;task-notification&gt;</code> delivers the script’s return value to the coordinator.</li>
+          <li><strong class="text-bone">Synthesis.</strong> Coordinator may run another workflow, resume with edits, or answer the user.</li>
+        </ol>
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card p-5">
+            <p class="tag text-cyan mb-2">Common single-phase workflows</p>
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li><strong class="text-bone">Understand</strong> — parallel readers → structured map</li>
+              <li><strong class="text-bone">Design</strong> — judge panel of N approaches → scored synthesis</li>
+              <li><strong class="text-bone">Review</strong> — dimensions → find → adversarially verify</li>
+              <li><strong class="text-bone">Research</strong> — multi-modal sweep → deep-read → synthesize</li>
+              <li><strong class="text-bone">Migrate</strong> — discover sites → transform (worktree) → verify</li>
+            </ul>
+          </div>
+          <div class="card p-5">
+            <p class="tag text-violet mb-2">Multi-phase product work</p>
+            <p class="text-mute">Run several workflows in sequence across turns. The coordinator reads each result before choosing the next phase. Each workflow stays a well-scoped fan-out — not a giant forever-script.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 11 One level above -->
+      <section id="one-level-above" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">11 · One level above agents</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Bigger brain orchestrates smaller hands</h2>
+        </div>
+        <p class="text-sm text-mute max-w-3xl leading-relaxed">
+          Classic multi-agent demos put several peers in a chat room and hope coordination emerges. Dynamic workflows invert that: <strong class="text-bone">coordination is a program</strong> written by a high-capability model; workers are replaceable execution units.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card card-cyan p-5 space-y-3">
+            <p class="tag text-cyan">Orchestrator responsibilities</p>
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li>Understand user intent and constraints</li>
+              <li>Discover the work-list (files, bugs, APIs, modules)</li>
+              <li>Choose pattern (pipeline vs barrier, depth vs breadth)</li>
+              <li>Author the script + schemas + prompts</li>
+              <li>Allocate model/effort tiers per stage</li>
+              <li>Interpret structured returns; decide next phase</li>
+              <li>Talk to the human; own correctness narrative</li>
+            </ul>
+          </div>
+          <div class="card card-mint p-5 space-y-3">
+            <p class="tag text-mint">Worker responsibilities</p>
+            <ul class="text-mute list-disc pl-4 space-y-1.5">
+              <li>Execute one bounded prompt with tools</li>
+              <li>Return raw data or schema-validated objects</li>
+              <li>Stay isolated (optional worktree)</li>
+              <li>Do not redesign the global plan</li>
+              <li>May be cheaper/faster models for mechanical stages</li>
+              <li>May be specialized agentTypes (reviewer, explorer)</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card p-5 space-y-4">
+          <p class="tag text-peach">Why this is “one level above”</p>
+          <div class="grid md:grid-cols-3 gap-4 text-sm text-mute">
+            <div>
+              <p class="text-bone font-semibold mb-1">Control altitude</p>
+              The orchestrator reasons about graphs, budgets, and verification policy — not about every file read. Workers absorb token-heavy tool churn inside their own contexts.
+            </div>
+            <div>
+              <p class="text-bone font-semibold mb-1">Context isolation</p>
+              Each agent() gets a clean context for its unit of work. The script aggregates only return values. One agent’s rabbit hole cannot pollute another’s prompt.
+            </div>
+            <div>
+              <p class="text-bone font-semibold mb-1">Deterministic spine</p>
+              Loops, fan-out, early-exit, and majority votes are code. They do not “forget” to verify on a bad day. The model invents the harness once; the engine executes it faithfully.
+            </div>
+          </div>
+        </div>
+
+        <div class="callout-info callout p-4 text-sm text-mute">
+          <strong class="text-cyan">Model tiering pattern.</strong> Keep the session model strong for orchestration (authoring scripts, reading results, deciding phases). Inside the workflow, omit <code class="text-cyan">model</code> for most calls (inherit), or pin <code class="text-cyan">effort: 'low'</code> / smaller models for mechanical map stages and reserve high effort for adversarial judges. The orchestrator’s context stays small; total work scales with fleet size.
+        </div>
+
+        <div class="card p-4">
+          <p class="tag text-mute mb-2">Altitude diagram</p>
+          <div class="code text-xs text-mute">User intent
+   │
+   ▼
+┌──────────────────────────────────────────┐
+│  Orchestrator model (main session)       │
+│  · plans · schemas · phase selection     │
+│  · Workflow({ script, args })            │
+└───────────────────┬──────────────────────┘
+                    │ deterministic JS spine
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   agent()      agent()      agent()
+   worker A     worker B     worker C
+   (tools)      (tools)      (tools)
+        │           │           │
+        └───────────┼───────────┘
+                    ▼
+            structured returns
+                    │
+                    ▼
+          orchestrator synthesizes
+                    │
+                    ▼
+              user-facing answer</div>
+        </div>
+      </section>
+
+      <!-- 12 Use cases -->
+      <section id="usecases" class="space-y-5">
+        <div>
+          <p class="tag text-cyan mb-2">12 · What this feature enables</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Workloads that were awkward before</h2>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-cyan">Comprehensive code review</h3>
+            <p class="text-mute">Fan out by dimension (security, correctness, tests, perf). Verify each finding adversarially. Merge only survivors. Scale vote count to thoroughness of the ask.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-violet">Large migrations / refactors</h3>
+            <p class="text-mute">Discover call sites, pipeline each site through transform + verify with <code class="text-cyan">isolation: 'worktree'</code> so parallel mutators do not clobber each other. Resume after fixing one stage’s prompt.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-mint">Research &amp; multi-source synthesis</h3>
+            <p class="text-mute">Multi-modal sweep (web, code, docs, git history), deep-read promising hits, completeness critic, then cited synthesis — with budget-bounded loops.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-peach">Design exploration</h3>
+            <p class="text-mute">Judge panel: N independent designs from different angles, scored in parallel, grafted synthesis. Better than iterating one design in a single context.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-rose">Unknown-size bug hunts</h3>
+            <p class="text-mute">Loop-until-dry finders + diverse-lens judges. Dedup against seen set. Stop when two dry rounds pass. Depth scales with budget.total.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-cyan">Self-repair implementation loops</h3>
+            <p class="text-mute">Implement → multi-reviewer parallel → repair from structured findings → verify gates. Same shape as real engineering process, encoded as a script the orchestrator can re-run with resume.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-violet">Heterogeneous agent fleets</h3>
+            <p class="text-mute">Mix agentTypes and models: explorer for map, implementer for edit, reviewer for audit. Orchestrator stays vendor of truth; workers stay specialists.</p>
+          </div>
+          <div class="card p-5 space-y-2">
+            <h3 class="font-semibold text-mint">Phased product delivery under ultracode</h3>
+            <p class="text-mute">Standing multi-agent mode: every substantive step is a workflow. Human watches /workflows; orchestrator chains phases across turns without stuffing everything into one mega-context.</p>
+          </div>
+        </div>
+
+        <div class="card card-peach p-5 text-sm space-y-2">
+          <p class="tag text-peach">What it deliberately is not</p>
+          <ul class="text-mute list-disc pl-4 space-y-1.5">
+            <li>Not a durable multi-day job system with external supervisors (that is a different control plane).</li>
+            <li>Not free-form multi-agent chat; workers do not negotiate plan changes with each other.</li>
+            <li>Not automatic: user must opt in (or enable ultracode).</li>
+            <li>Not a replacement for single-agent work on small tasks — overhead is real.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 13 Cheatsheet -->
+      <section id="cheatsheet" class="space-y-5 pb-16">
+        <div>
+          <p class="tag text-cyan mb-2">13 · Cheatsheet</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold">Quick reference</h2>
+        </div>
+        <div class="card p-5 overflow-x-auto">
+          <div class="code text-xs"><span class="tok-c">// Tool</span>
+Workflow({ script | name | scriptPath, args?, resumeFromRunId? })
+
+<span class="tok-c">// Script header (pure literal)</span>
+<span class="tok-k">export const</span> meta = { name, description, phases? }
+
+<span class="tok-c">// Primitives</span>
+<span class="tok-f">agent</span>(prompt, { label, phase, schema, model, effort, isolation, agentType })
+<span class="tok-f">pipeline</span>(items, stage1, stage2, …)      <span class="tok-c">// no barrier — default</span>
+<span class="tok-f">parallel</span>([ () =&gt; …, … ])               <span class="tok-c">// barrier — rare</span>
+<span class="tok-f">phase</span>(title)
+<span class="tok-f">log</span>(message)
+args                                      <span class="tok-c">// Workflow args, verbatim</span>
+budget.{ total, spent(), remaining() }    <span class="tok-c">// hard token ceiling</span>
+<span class="tok-f">workflow</span>(name | { scriptPath }, args?)  <span class="tok-c">// one-level nest</span>
+
+<span class="tok-c">// Rules of thumb</span>
+<span class="tok-c">// 1. Default to pipeline; barrier only for cross-item merge.</span>
+<span class="tok-c">// 2. Always .filter(Boolean) on parallel/agent results.</span>
+<span class="tok-c">// 3. Prefer schema for structured returns.</span>
+<span class="tok-c">// 4. Guard budget loops with budget.total &amp;&amp; …</span>
+<span class="tok-c">// 5. No Date.now / Math.random in scripts.</span>
+<span class="tok-c">// 6. isolation:'worktree' only for parallel mutators.</span>
+<span class="tok-c">// 7. log() anything a silent cap would hide.</span>
+<span class="tok-c">// 8. Hybrid: scout → Workflow → synthesize → maybe next phase.</span></div>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div class="card p-4">
+            <p class="tag text-cyan mb-1">Primitive count</p>
+            <p class="text-2xl font-display font-semibold">8</p>
+            <p class="text-mute text-xs">agent · pipeline · parallel · phase · log · args · budget · workflow</p>
+          </div>
+          <div class="card p-4">
+            <p class="tag text-violet mb-1">Tool inputs</p>
+            <p class="text-2xl font-display font-semibold">5</p>
+            <p class="text-mute text-xs">script · name · scriptPath · args · resumeFromRunId</p>
+          </div>
+          <div class="card p-4">
+            <p class="tag text-mint mb-1">Design goal</p>
+            <p class="text-2xl font-display font-semibold">Altitude</p>
+            <p class="text-mute text-xs">Strong model plans; many workers execute; engine enforces the graph</p>
+          </div>
+        </div>
+
+        <p class="text-xs text-mute pt-6 border-t border-line">
+          Source of truth for this document: Claude Code binary tool description for the Workflow tool (v2.1.x family), observed script examples under session <code class="text-mute">workflows/scripts/</code>, and the runtime rules encoded in the tool prompt (opt-in, ultracode, resume, budget, concurrency). This is a model-facing API reference, not Anthropic product documentation.
+        </p>
+      </section>
+
+    </main>
+  </div>
+</body>
+</html>
