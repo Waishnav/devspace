@@ -139,7 +139,6 @@ The native download seam deliberately does not:
 - extract archives or execute transferred content;
 - expand workspace allowlists;
 - preserve executable permissions;
-- opportunistically delete legacy artifact tables or bytes.
 
 ## Logs
 

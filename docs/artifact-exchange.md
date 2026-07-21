@@ -87,7 +87,3 @@ Published files are not path-chmodded or path-hashed after publication. Temporar
 ## Logging
 
 Tool logs contain bounded metadata such as workspace ID, validated download hostname, workspace-relative output path, byte count, SHA-256, duration, and stable error code. They never contain signed URLs, native file IDs, credentials, file contents, base64 data, host paths, or temporary paths.
-
-## Migration behavior
-
-Older DevSpace builds may have created artifact tables or private artifact bytes. The one-shot implementation does not read, mutate, or delete that legacy data. Existing users can remove it manually after confirming they no longer need it; DevSpace does not opportunistically delete user data during migration.
