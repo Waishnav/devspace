@@ -11,7 +11,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import {
   registerAppResource,
-  registerAppTool,
+  registerAppTool as registerUiTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import express from "express";
@@ -155,6 +155,32 @@ function toolWidgetDescriptorMeta(
   };
 }
 
+const widgetModeByServer = new WeakMap<McpServer, WidgetMode>();
+
+function stripAppMeta<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  const { _meta: _discardedMeta, ...nativeValue } = value as Record<string, unknown>;
+  return nativeValue as T;
+}
+
+// Preserve the upstream MCP App path for changes/full, but use native
+// MCP tools in off mode so hosts do not allocate embedded UI cards.
+const registerAppTool = ((
+  server: McpServer,
+  name: string,
+  definition: any,
+  handler: (...args: any[]) => any,
+) => {
+  if (widgetModeByServer.get(server) !== "off") {
+    return registerUiTool(server, name, definition, handler);
+  }
+
+  return server.registerTool(
+    name,
+    stripAppMeta(definition),
+    async (...args: any[]) => stripAppMeta(await handler(...args)),
+  );
+}) as typeof registerUiTool;
 const toolNames = {
   openWorkspace: "open_workspace",
   read: "read",
@@ -701,8 +727,10 @@ function createMcpServer(
       instructions: serverInstructions(config),
     },
   );
+  widgetModeByServer.set(server, config.widgets);
 
-  registerAppResource(
+  if (config.widgets !== "off") {
+    registerAppResource(
     server,
     "DevSpace Diff Card",
     WORKSPACE_APP_URI,
@@ -732,6 +760,7 @@ function createMcpServer(
       };
     },
   );
+  }
 
   registerAppTool(
     server,

@@ -12,7 +12,7 @@ const baseEnv = {
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
+assert.equal(loadConfig(baseEnv).widgets, "off");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
@@ -162,6 +162,7 @@ writeFileSync(
     port: 8787,
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
+    widgets: "changes",
     subagents: true,
   }),
 );
@@ -176,6 +177,11 @@ const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
 assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
+assert.equal(fileConfig.widgets, "changes");
+assert.equal(
+  loadConfig({ DEVSPACE_CONFIG_DIR: configDir, DEVSPACE_WIDGETS: "full" }).widgets,
+  "full",
+);
 assert.equal(fileConfig.subagents, true);
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
