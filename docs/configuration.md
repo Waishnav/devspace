@@ -56,12 +56,12 @@ DEVSPACE_ARTIFACTS=1 npx @waishnav/devspace serve
 The same settings may be persisted in `~/.devspace/config.json` as
 `artifactsEnabled` and `artifactMaxFileBytes`.
 
-`download_artifact` accepts only the native file object supplied by the MCP
-connector plus a `workspaceId` returned by `open_workspace`. DevSpace chooses a
-collision-free path under `.devspace/incoming/` and returns only that
-workspace-relative path. It does not accept destinations, conflict modes,
-expected hashes, arbitrary URL strings, local paths, embedded credentials, or
-extra object fields.
+`download_artifact` accepts the native file object supplied by the MCP connector,
+a `workspaceId` returned by `open_workspace`, and a relative workspace `path`.
+DevSpace safely creates missing parent directories, refuses to overwrite an
+existing destination, and returns only the normalized workspace-relative path.
+It does not accept conflict modes, expected hashes, arbitrary URL strings, local
+paths, embedded credentials, or extra object fields.
 
 There is no artifact root, total quota, TTL, pinning, persistent database record,
 or background artifact cleanup service. See [Native File Download](artifact-exchange.md)
