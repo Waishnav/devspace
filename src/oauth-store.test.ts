@@ -44,13 +44,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 1, name: "workspace-state" },
       { version: 2, name: "oauth-state" },
       { version: 3, name: "local-agent-sessions" },
-      { version: 4, name: "artifact-exchange-retired" },
     ]);
-    const artifactTables = database.sqlite
-      .prepare("select name from sqlite_master where type = 'table' and name in ('artifacts', 'artifact_uploads')")
-      .pluck()
-      .all();
-    assert.deepEqual(artifactTables, []);
   } finally {
     database.close();
   }

@@ -22,14 +22,6 @@ const migrations: Migration[] = [
     name: "local-agent-sessions",
     up: migrateLocalAgentSessions,
   },
-  {
-    version: 4,
-    name: "artifact-exchange-retired",
-    // Preserve the historical migration version without creating new
-    // persistent artifact tables. Existing user tables and bytes are left
-    // untouched; the one-shot download path does not read or mutate them.
-    up: () => undefined,
-  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
