@@ -18,6 +18,7 @@ import * as z from "zod/v4";
 import {
   artifactToolLogFields,
   downloadIncomingArtifact,
+  isArtifactDownloadSupportedPlatform,
   registerArtifactTools,
 } from "./artifact-tools.js";
 import { ArtifactError } from "./artifact-error.js";
@@ -30,12 +31,17 @@ const root = await mkdtemp(join(tmpdir(), "devspace-artifact-download-test-"));
 
 try {
   testOneToolContract();
-  await testSafeDownloadAndConflict(join(root, "downloads"));
-  await testDestinationValidation(join(root, "destinations"));
-  await testSizeLimitAndCleanup(join(root, "size-limit"));
-  await testCrashLeftoverCleanup(join(root, "stale-partials"));
-  await testSymlinkRejection(join(root, "symlinks"));
-  await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
+  testPlatformSupportContract();
+  if (isArtifactDownloadSupportedPlatform()) {
+    await testSafeDownloadAndConflict(join(root, "downloads"));
+    await testDestinationValidation(join(root, "destinations"));
+    await testSizeLimitAndCleanup(join(root, "size-limit"));
+    await testCrashLeftoverCleanup(join(root, "stale-partials"));
+    await testSymlinkRejection(join(root, "symlinks"));
+    await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
+  } else {
+    await testUnsupportedPlatform(join(root, "unsupported-platform"));
+  }
   testLogRedaction();
 } finally {
   await rm(root, { recursive: true, force: true });
@@ -79,6 +85,31 @@ function testOneToolContract(): void {
   };
   assert.deepEqual(fileSchema.parse(valid), valid);
   assert.throws(() => fileSchema.parse({ file_id: "file_123" }));
+}
+
+function testPlatformSupportContract(): void {
+  assert.equal(isArtifactDownloadSupportedPlatform("linux"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("darwin"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("freebsd"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("openbsd"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("netbsd"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("win32"), false);
+}
+
+async function testUnsupportedPlatform(testRoot: string): Promise<void> {
+  const workspaceRoot = join(testRoot, "workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  await expectArtifactError(
+    downloadIncomingArtifact({
+      registry: registryFor({ name: "blocked.txt", stream: Readable.from(["blocked"]) }),
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 1024,
+      file: { native: true },
+      path: "blocked.txt",
+    }),
+    "artifact_platform_unsupported",
+  );
 }
 
 async function testSafeDownloadAndConflict(testRoot: string): Promise<void> {

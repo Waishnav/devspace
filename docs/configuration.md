@@ -48,6 +48,10 @@ an attached or generated file into an already-open workspace:
 DEVSPACE_ARTIFACTS=1 npx @waishnav/devspace serve
 ```
 
+This feature currently supports Linux, macOS, FreeBSD, OpenBSD, and NetBSD. It
+is not registered on Windows because the secure publication path depends on
+descriptor-anchored directory operations.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DEVSPACE_ARTIFACTS` | `0` | Expose `download_artifact` for trusted native files. |

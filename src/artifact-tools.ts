@@ -35,6 +35,13 @@ const PARTIAL_PREFIX = ".devspace-download-";
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_STALE_PARTIAL_CLEANUP = 32;
+const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>([
+  "linux",
+  "darwin",
+  "freebsd",
+  "openbsd",
+  "netbsd",
+]);
 
 const openAIFileReferenceInputSchema = z.object({
   download_url: z.string(),
@@ -61,6 +68,12 @@ export interface DownloadIncomingArtifactResult {
   path: string;
   size: number;
   sha256: string;
+}
+
+export function isArtifactDownloadSupportedPlatform(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return ARTIFACT_DOWNLOAD_PLATFORMS.has(platform);
 }
 
 interface SecureDestinationDirectory {
@@ -151,6 +164,12 @@ export async function downloadIncomingArtifact({
   path: string;
   publishLink?: typeof link;
 }): Promise<DownloadIncomingArtifactResult> {
+  if (!isArtifactDownloadSupportedPlatform()) {
+    throw new ArtifactError(
+      "artifact_platform_unsupported",
+      "Native file download requires descriptor-anchored directory operations on this platform.",
+    );
+  }
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new ArtifactError(
       "artifact_limit_invalid",
@@ -357,7 +376,7 @@ async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
 
 function descriptorDirectoryPath(handle: FileHandle): string {
   if (process.platform === "linux") return `/proc/self/fd/${handle.fd}`;
-  if (["darwin", "freebsd", "openbsd", "netbsd"].includes(process.platform)) {
+  if (isArtifactDownloadSupportedPlatform()) {
     return `/dev/fd/${handle.fd}`;
   }
   throw new ArtifactError(

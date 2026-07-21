@@ -18,7 +18,10 @@ import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
 import { applyPatch } from "./apply-patch.js";
-import { registerArtifactTools } from "./artifact-tools.js";
+import {
+  isArtifactDownloadSupportedPlatform,
+  registerArtifactTools,
+} from "./artifact-tools.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
 import {
   createOpenAIIncomingArtifactAdapter,
@@ -184,7 +187,7 @@ interface ToolLogFields {
 }
 
 function serverInstructions(config: ServerConfig): string {
-  const artifactInstruction = config.artifactsEnabled
+  const artifactInstruction = config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
     ? " When the user supplies or generates a file that is not present on the DevSpace host, use download_artifact with its native file value, the existing workspace ID, and a suitable relative destination path chosen from the user's request and project structure. The tool refuses to overwrite an existing destination and returns the normalized workspace-relative path. Use normal workspace tools when explicit inspection, replacement, movement, renaming, or deletion is needed. Do not recreate binary files with write/edit calls or place signed URLs, native file objects, base64 content, or invented host paths in shell commands or logs."
     : "";
   const showChangesInstruction =
@@ -1603,7 +1606,7 @@ function createMcpServer(
     registerCodexProcessTools(server, config, workspaces, processSessions);
   }
 
-  if (config.artifactsEnabled) {
+  if (config.artifactsEnabled && isArtifactDownloadSupportedPlatform()) {
     registerArtifactTools(server, {
       config,
       workspaces,
@@ -1866,7 +1869,12 @@ if (await isMainModule()) {
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
-    console.log(`native artifact download: ${config.artifactsEnabled ? "enabled" : "disabled"}`);
+    const artifactDownloadStatus = !config.artifactsEnabled
+      ? "disabled"
+      : isArtifactDownloadSupportedPlatform()
+        ? "enabled"
+        : `unsupported on ${process.platform}`;
+    console.log(`native artifact download: ${artifactDownloadStatus}`);
     if (config.subagents) {
       console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
     }
