@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { loadLocalAgentProfiles, summarizeLocalAgentProfile } from "./local-agent-profiles.js";
+import type { ServerConfig } from "./config.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
 
@@ -35,7 +36,7 @@ try {
       'description: "Project reviewer #1."',
       "provider: claude",
       "model: sonnet",
-      "thinking: high",
+      "effort: high",
       "---",
       "",
       "Project body.",
@@ -70,14 +71,14 @@ try {
   assert.equal(profiles[0]?.description, "Project reviewer #1.");
   assert.equal(profiles[0]?.provider, "claude");
   assert.equal(profiles[0]?.model, "sonnet");
-  assert.equal(profiles[0]?.thinking, "high");
+  assert.equal(profiles[0]?.effort, "high");
   assert.equal(profiles[0]?.body, "Project body.");
   assert.deepEqual(summarizeLocalAgentProfile(profiles[0]!), {
     name: "reviewer",
     description: "Project reviewer #1.",
     provider: "claude",
     model: "sonnet",
-    thinking: "high",
+    effort: "high",
   });
 
   await writeFile(
@@ -105,4 +106,37 @@ try {
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
 } finally {
   await rm(root, { recursive: true, force: true });
+}
+
+// legacy thinking: maps to effort
+{
+  const legacyRoot = await mkdtemp(join(tmpdir(), "devspace-profile-legacy-"));
+  try {
+    const dir = join(legacyRoot, "agents");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "legacy.md"),
+      [
+        "---",
+        "name: legacy",
+        "description: Legacy thinking key.",
+        "provider: codex",
+        "thinking: medium",
+        "---",
+        "",
+        "Body.",
+        "",
+      ].join("\n"),
+    );
+    const profiles = await loadLocalAgentProfiles(
+      {
+        subagents: true,
+        devspaceAgentsDir: dir,
+      } as ServerConfig,
+      legacyRoot,
+    );
+    assert.equal(profiles[0]?.effort, "medium");
+  } finally {
+    await rm(legacyRoot, { recursive: true, force: true });
+  }
 }

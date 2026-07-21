@@ -20,7 +20,7 @@ export interface LocalAgentProfile {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
-  thinking?: string;
+  effort?: string;
   filePath: string;
   body: string;
   disabled: boolean;
@@ -31,7 +31,7 @@ export interface LocalAgentProfileSummary {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
-  thinking?: string;
+  effort?: string;
 }
 
 interface ParsedFrontmatter {
@@ -73,7 +73,7 @@ export function summarizeLocalAgentProfile(
     description: profile.description,
     provider: profile.provider,
     model: profile.model,
-    thinking: profile.thinking,
+    effort: profile.effort,
   };
 }
 
@@ -157,7 +157,8 @@ function profileFromFrontmatter(
     description,
     provider,
     model: readString(frontmatter, "model"),
-    thinking: readString(frontmatter, "thinking"),
+    // Prefer effort; accept legacy thinking for one release.
+    effort: readString(frontmatter, "effort") ?? readString(frontmatter, "thinking"),
     filePath,
     body,
     disabled: frontmatter.disabled === true,

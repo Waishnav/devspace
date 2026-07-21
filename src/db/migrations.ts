@@ -22,6 +22,11 @@ const migrations: Migration[] = [
     name: "local-agent-sessions",
     up: migrateLocalAgentSessions,
   },
+  {
+    version: 4,
+    name: "local-agent-effort-rename",
+    up: migrateLocalAgentEffortRename,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -172,6 +177,20 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
   `);
 
   addColumnIfMissing(sqlite, "local_agent_sessions", "thinking", "text");
+}
+
+/** Rename thinking → effort on local_agent_sessions (SQLite 3.25+). */
+function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
+  const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(columns.map((column) => column.name));
+  if (names.has("effort")) return;
+  if (!names.has("thinking")) {
+    addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
+    return;
+  }
+  sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
 function addColumnIfMissing(

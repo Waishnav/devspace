@@ -4,7 +4,7 @@ name: claude-implementer
 description: Implementation profile for multi-file changes, careful refactors, and failing test repair.
 provider: claude
 model: sonnet
-thinking: high
+effort: high
 ---
 
 Take ownership of the requested implementation while keeping the change narrow.

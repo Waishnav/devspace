@@ -48,18 +48,18 @@ Choose profiles from the compact subagent profile catalog returned by
 profile fits and delegation is still appropriate, use a built-in provider name
 from `open_workspace`.
 
-Profiles may declare a model and optional thinking level. To override the
-configured/default provider model or thinking level for a run, pass `--model`
-or `--thinking`:
+Profiles may declare a model and optional effort level. To override the
+configured/default provider model or effort for a run, pass `--model`
+or `--effort` (legacy `--thinking` is accepted as an alias):
 
 ```bash
 devspace agents run <profile-or-provider> --model <model> "<prompt>"
-devspace agents run <profile-or-provider> --thinking <level> "<prompt>"
+devspace agents run <profile-or-provider> --effort <level> "<prompt>"
 ```
 
-Use `--thinking` only when the user asks for a specific reasoning depth or when
+Use `--effort` only when the user asks for a specific reasoning depth or when
 the task clearly needs a different effort than the configured profile default.
-Thinking values are provider-specific passthrough values. Use names supported by
+Effort values are provider-specific passthrough values. Use names supported by
 the selected local agent harness; DevSpace does not translate values between
 providers.
 

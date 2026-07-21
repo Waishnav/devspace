@@ -9,7 +9,7 @@ import {
   extractPiStreamingText,
   piCommandEnvironment,
   resolveAcpModelConfigUpdate,
-  resolveAcpThinkingConfigUpdate,
+  resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
@@ -111,7 +111,7 @@ assert.throws(
 );
 
 assert.deepEqual(
-  resolveAcpThinkingConfigUpdate({
+  resolveAcpEffortConfigUpdate({
     sessionId: "session_1",
     newSessionResponse: {
       configOptions: [
@@ -131,7 +131,7 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
-  resolveAcpThinkingConfigUpdate({
+  resolveAcpEffortConfigUpdate({
     sessionId: "session_2",
     newSessionResponse: {
       configOptions: [
@@ -157,7 +157,7 @@ assert.deepEqual(
 );
 
 assert.throws(
-  () => resolveAcpThinkingConfigUpdate({
+  () => resolveAcpEffortConfigUpdate({
     sessionId: "session_3",
     newSessionResponse: {
       configOptions: [
@@ -174,21 +174,21 @@ assert.throws(
 );
 
 assert.throws(
-  () => resolveAcpThinkingConfigUpdate(undefined, "high", "copilot"),
+  () => resolveAcpEffortConfigUpdate(undefined, "high", "copilot"),
   /session metadata/,
 );
 
 assert.throws(
-  () => resolveAcpThinkingConfigUpdate({ newSessionResponse: { configOptions: [] } }, "high", "copilot"),
+  () => resolveAcpEffortConfigUpdate({ newSessionResponse: { configOptions: [] } }, "high", "copilot"),
   /session id/,
 );
 
 assert.throws(
-  () => resolveAcpThinkingConfigUpdate({
+  () => resolveAcpEffortConfigUpdate({
     sessionId: "session_4",
     newSessionResponse: { configOptions: [] },
   }, "high", "copilot"),
-  /does not expose a thinking option/,
+  /does not expose a effort option/,
 );
 
 {
