@@ -325,7 +325,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
       });
 
       const cwd = worktreePath ?? deps.workspaceRoot;
-      const result = await deps.runProvider({
+      const providerBase = {
         provider,
         prompt,
         model: agentOpts.model,
@@ -334,24 +334,41 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         signal: deps.signal,
         label: agentOpts.label,
         phase,
-      });
+      };
+
+      let returnValue: unknown;
+      let structuredJson: string | undefined;
+      let result: WorkflowProviderRunResult;
+
+      if (agentOpts.schema) {
+        // Lazy import keeps non-schema paths free of ajv load cost.
+        const { enforceAgentSchema } = await import("./workflow-schema.js");
+        const enforced = await enforceAgentSchema({
+          schema: agentOpts.schema,
+          prompt,
+          run: (p) => deps.runProvider({ ...providerBase, prompt: p }),
+          onRetry: ({ attempt, errors }) => {
+            deps.journal.appendEvent({
+              runId: deps.runId,
+              type: "schema_retry",
+              phase,
+              label: agentOpts.label,
+              data: { callIndex: index, attempt, errors },
+            });
+          },
+        });
+        returnValue = enforced.value;
+        structuredJson = JSON.stringify(enforced.value);
+        result = {
+          finalResponse: enforced.finalResponse,
+          providerSessionId: enforced.providerSessionId,
+        };
+      } else {
+        result = await deps.runProvider(providerBase);
+        returnValue = result.finalResponse;
+      }
 
       throwIfCancelled(deps);
-
-      let returnValue: unknown = result.finalResponse;
-      let structuredJson: string | undefined;
-      if (agentOpts.schema) {
-        // Full Ajv enforcement lands in M6; for now extract JSON object when schema set.
-        const extracted = tryExtractJson(result.finalResponse);
-        if (extracted === undefined) {
-          throw new WorkflowEngineError(
-            "schema",
-            "agent() schema set but response was not valid JSON",
-          );
-        }
-        returnValue = extracted;
-        structuredJson = JSON.stringify(extracted);
-      }
 
       let dirty: boolean | undefined;
       if (worktree) {
