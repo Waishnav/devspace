@@ -1,0 +1,675 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+import type { WorkflowSandboxApi } from "./workflow-sandbox.js";
+import {
+  WORKFLOW_LIMITS,
+  WORKFLOW_MAX_ITEMS,
+  WORKFLOW_MAX_NEST_DEPTH,
+  buildAgentCacheKeyInput,
+  createStubBudget,
+  type AgentIsolationMode,
+  type AgentOpts,
+  type WorkflowMeta,
+} from "./workflow-types.js";
+
+// ---------------------------------------------------------------------------
+// Host deps (injected by engine; fakes OK in tests)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowProviderRunInput {
+  provider: string;
+  prompt: string;
+  model?: string;
+  effort?: string;
+  workspace: string;
+  signal?: AbortSignal;
+  label?: string;
+  phase?: string;
+}
+
+export interface WorkflowProviderRunResult {
+  finalResponse: string;
+  providerSessionId?: string;
+}
+
+export type WorkflowRunProvider = (
+  input: WorkflowProviderRunInput,
+) => Promise<WorkflowProviderRunResult>;
+
+export interface WorkflowWorktreeHandle {
+  path: string;
+  /** Called after agent returns or fails. Success+clean may remove; dirty/failure preserves. */
+  finalize: (outcome: "success" | "failure") => Promise<{ dirty: boolean; removed: boolean }>;
+}
+
+export type CreateAgentWorktree = (input: {
+  runId: string;
+  callIndex: number;
+  workspaceRoot: string;
+  baseSha?: string;
+}) => Promise<WorkflowWorktreeHandle>;
+
+export interface WorkflowReplayHit {
+  value: unknown;
+  responseText?: string;
+  structuredJson?: string;
+  providerSessionId?: string;
+}
+
+export interface WorkflowReplay {
+  match(callIndex: number, cacheKey: string): WorkflowReplayHit | null;
+}
+
+export interface WorkflowJournal {
+  appendEvent(input: {
+    runId: string;
+    type:
+      | "phase_started"
+      | "log"
+      | "agent_call_started"
+      | "agent_call_completed"
+      | "agent_call_failed"
+      | "agent_call_cached"
+      | "schema_retry"
+      | "worktree_created"
+      | "worktree_finalized";
+    phase?: string;
+    label?: string;
+    data?: unknown;
+  }): unknown;
+  beginAgentCall(input: {
+    runId: string;
+    callIndex: number;
+    cacheKey: string;
+    provider: string;
+    model?: string;
+    effort?: string;
+    label?: string;
+    phase?: string;
+    isolation?: AgentIsolationMode;
+    worktreePath?: string;
+  }): unknown;
+  completeAgentCall(input: {
+    runId: string;
+    callIndex: number;
+    responseText?: string;
+    structuredJson?: string;
+    providerSessionId?: string;
+    dirty?: boolean;
+    worktreePath?: string;
+    fromCache?: boolean;
+  }): unknown;
+  failAgentCall(input: {
+    runId: string;
+    callIndex: number;
+    error: string;
+    worktreePath?: string;
+    dirty?: boolean;
+  }): unknown;
+  isCancelRequested(runId: string): boolean;
+}
+
+export interface WorkflowApiDeps {
+  runId: string;
+  journal: WorkflowJournal;
+  meta: WorkflowMeta;
+  args: unknown;
+  concurrency: number;
+  signal: AbortSignal;
+  workspaceRoot: string;
+  baseSha?: string;
+  /** Already-filtered enabled ∩ live provider ids, preference order. */
+  enabledProviders: string[];
+  runProvider: WorkflowRunProvider;
+  createWorktree?: CreateAgentWorktree;
+  replay?: WorkflowReplay;
+  /** Nested workflow source loader; required for workflow(). */
+  resolveNestedSource?: (nameOrRef: string | { scriptPath: string }) => string | Promise<string>;
+  /** Run a nested script sharing semaphore/callIndex. */
+  executeNested?: (input: {
+    source: string;
+    args: unknown;
+    nestDepth: number;
+  }) => Promise<unknown>;
+  nestDepth?: number;
+}
+
+export interface WorkflowApi extends WorkflowSandboxApi {
+  getCallCount(): number;
+  getNestDepth(): number;
+}
+
+export class WorkflowEngineError extends Error {
+  constructor(
+    readonly kind:
+      | "cancelled"
+      | "provider_disabled"
+      | "provider_unavailable"
+      | "no_provider"
+      | "nest_depth"
+      | "worktree"
+      | "schema"
+      | "path"
+      | "internal",
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkflowEngineError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Semaphore
+// ---------------------------------------------------------------------------
+
+export class WorkflowSemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(readonly limit: number) {
+    if (!Number.isFinite(limit) || limit < 1) {
+      throw new Error("WorkflowSemaphore limit must be >= 1");
+    }
+  }
+
+  async acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw cancelledError();
+    if (this.active < this.limit) {
+      this.active += 1;
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        const idx = this.waiters.indexOf(wake);
+        if (idx >= 0) this.waiters.splice(idx, 1);
+        reject(cancelledError());
+      };
+      const wake = () => {
+        signal?.removeEventListener("abort", onAbort);
+        this.active += 1;
+        resolve();
+      };
+      this.waiters.push(wake);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  release(): void {
+    this.active = Math.max(0, this.active - 1);
+    const next = this.waiters.shift();
+    if (next) next();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API factory
+// ---------------------------------------------------------------------------
+
+const phaseAls = new AsyncLocalStorage<string>();
+
+export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
+  const nestDepth = deps.nestDepth ?? 0;
+  const semaphore = new WorkflowSemaphore(Math.max(1, deps.concurrency));
+  let callIndex = 0;
+
+  const agent = async (prompt: unknown, opts: unknown = {}): Promise<unknown> => {
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      throw new WorkflowEngineError("internal", "agent(prompt) requires a non-empty string");
+    }
+    const agentOpts = normalizeAgentOpts(opts);
+    throwIfCancelled(deps);
+
+    const provider = resolveProvider(agentOpts.provider, deps.meta, deps.enabledProviders);
+    const phase = agentOpts.phase ?? phaseAls.getStore();
+    const isolation: AgentIsolationMode =
+      agentOpts.isolation === "worktree" ? "worktree" : "shared";
+    const index = callIndex;
+    callIndex += 1;
+
+    const cacheKeyInput = buildAgentCacheKeyInput({
+      prompt,
+      provider,
+      model: agentOpts.model,
+      effort: agentOpts.effort,
+      schema: agentOpts.schema,
+      isolation,
+    });
+    const cacheKey = hashCacheKey(cacheKeyInput);
+
+    if (deps.replay) {
+      const hit = deps.replay.match(index, cacheKey);
+      if (hit) {
+        deps.journal.beginAgentCall({
+          runId: deps.runId,
+          callIndex: index,
+          cacheKey,
+          provider,
+          model: agentOpts.model,
+          effort: agentOpts.effort,
+          label: agentOpts.label,
+          phase,
+          isolation,
+        });
+        deps.journal.completeAgentCall({
+          runId: deps.runId,
+          callIndex: index,
+          responseText: hit.responseText,
+          structuredJson: hit.structuredJson,
+          providerSessionId: hit.providerSessionId,
+          fromCache: true,
+        });
+        deps.journal.appendEvent({
+          runId: deps.runId,
+          type: "agent_call_cached",
+          phase,
+          label: agentOpts.label,
+          data: { callIndex: index, cacheKey, provider },
+        });
+        return hit.value;
+      }
+    }
+
+    await semaphore.acquire(deps.signal);
+    let worktree: WorkflowWorktreeHandle | null = null;
+    let worktreePath: string | undefined;
+    try {
+      throwIfCancelled(deps);
+
+      if (isolation === "worktree") {
+        if (!deps.createWorktree) {
+          throw new WorkflowEngineError(
+            "worktree",
+            "isolation: 'worktree' requires createWorktree host support",
+          );
+        }
+        worktree = await deps.createWorktree({
+          runId: deps.runId,
+          callIndex: index,
+          workspaceRoot: deps.workspaceRoot,
+          baseSha: deps.baseSha,
+        });
+        worktreePath = worktree.path;
+        deps.journal.appendEvent({
+          runId: deps.runId,
+          type: "worktree_created",
+          phase,
+          label: agentOpts.label,
+          data: { callIndex: index, worktreePath, isolation },
+        });
+      }
+
+      deps.journal.beginAgentCall({
+        runId: deps.runId,
+        callIndex: index,
+        cacheKey,
+        provider,
+        model: agentOpts.model,
+        effort: agentOpts.effort,
+        label: agentOpts.label,
+        phase,
+        isolation,
+        worktreePath,
+      });
+      deps.journal.appendEvent({
+        runId: deps.runId,
+        type: "agent_call_started",
+        phase,
+        label: agentOpts.label,
+        data: {
+          callIndex: index,
+          cacheKey,
+          provider,
+          isolation,
+          worktreePath,
+        },
+      });
+
+      const cwd = worktreePath ?? deps.workspaceRoot;
+      const result = await deps.runProvider({
+        provider,
+        prompt,
+        model: agentOpts.model,
+        effort: agentOpts.effort,
+        workspace: cwd,
+        signal: deps.signal,
+        label: agentOpts.label,
+        phase,
+      });
+
+      throwIfCancelled(deps);
+
+      let returnValue: unknown = result.finalResponse;
+      let structuredJson: string | undefined;
+      if (agentOpts.schema) {
+        // Full Ajv enforcement lands in M6; for now extract JSON object when schema set.
+        const extracted = tryExtractJson(result.finalResponse);
+        if (extracted === undefined) {
+          throw new WorkflowEngineError(
+            "schema",
+            "agent() schema set but response was not valid JSON",
+          );
+        }
+        returnValue = extracted;
+        structuredJson = JSON.stringify(extracted);
+      }
+
+      let dirty: boolean | undefined;
+      if (worktree) {
+        const finalized = await worktree.finalize("success");
+        dirty = finalized.dirty;
+        deps.journal.appendEvent({
+          runId: deps.runId,
+          type: "worktree_finalized",
+          phase,
+          label: agentOpts.label,
+          data: {
+            callIndex: index,
+            worktreePath,
+            dirty: finalized.dirty,
+            removed: finalized.removed,
+          },
+        });
+        worktree = null;
+      }
+
+      deps.journal.completeAgentCall({
+        runId: deps.runId,
+        callIndex: index,
+        responseText: truncate(result.finalResponse, WORKFLOW_LIMITS.responseTextBytes),
+        structuredJson: structuredJson
+          ? truncate(structuredJson, WORKFLOW_LIMITS.structuredJsonBytes)
+          : undefined,
+        providerSessionId: result.providerSessionId,
+        dirty,
+        worktreePath,
+      });
+      deps.journal.appendEvent({
+        runId: deps.runId,
+        type: "agent_call_completed",
+        phase,
+        label: agentOpts.label,
+        data: {
+          callIndex: index,
+          provider,
+          isolation,
+          worktreePath,
+          dirty,
+          fromCache: false,
+        },
+      });
+      return returnValue;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (worktree) {
+        try {
+          const finalized = await worktree.finalize("failure");
+          deps.journal.appendEvent({
+            runId: deps.runId,
+            type: "worktree_finalized",
+            phase,
+            label: agentOpts.label,
+            data: {
+              callIndex: index,
+              worktreePath,
+              dirty: finalized.dirty,
+              removed: finalized.removed,
+              outcome: "failure",
+            },
+          });
+        } catch {
+          // preserve original error
+        }
+      }
+      deps.journal.failAgentCall({
+        runId: deps.runId,
+        callIndex: index,
+        error: message,
+        worktreePath,
+      });
+      deps.journal.appendEvent({
+        runId: deps.runId,
+        type: "agent_call_failed",
+        phase,
+        label: agentOpts.label,
+        data: { callIndex: index, error: message, isolation, worktreePath },
+      });
+      throw error;
+    } finally {
+      semaphore.release();
+    }
+  };
+
+  const parallel = async (...args: unknown[]): Promise<Array<unknown | null>> => {
+    const thunks = args[0];
+    if (!Array.isArray(thunks)) {
+      throw new WorkflowEngineError("internal", "parallel(thunks) requires an array of functions");
+    }
+    assertMaxItems(thunks.length, "parallel");
+    return Promise.all(
+      thunks.map(async (thunk, index) => {
+        if (typeof thunk !== "function") {
+          throw new WorkflowEngineError(
+            "internal",
+            `parallel thunks[${index}] must be a function`,
+          );
+        }
+        try {
+          return await (thunk as () => Promise<unknown>)();
+        } catch {
+          return null;
+        }
+      }),
+    );
+  };
+
+  const pipeline = async (...args: unknown[]): Promise<Array<unknown | null>> => {
+    const items = args[0];
+    const stages = args.slice(1);
+    if (!Array.isArray(items)) {
+      throw new WorkflowEngineError("internal", "pipeline(items, ...stages) requires an items array");
+    }
+    assertMaxItems(items.length, "pipeline");
+    for (let i = 0; i < stages.length; i += 1) {
+      if (typeof stages[i] !== "function") {
+        throw new WorkflowEngineError("internal", `pipeline stage[${i}] must be a function`);
+      }
+    }
+    return Promise.all(
+      items.map(async (item, index) => {
+        let prev: unknown = item;
+        for (const stage of stages) {
+          try {
+            prev = await (stage as (prev: unknown, item: unknown, index: number) => unknown)(
+              prev,
+              item,
+              index,
+            );
+          } catch {
+            return null;
+          }
+        }
+        return prev;
+      }),
+    );
+  };
+
+  const phase = (...args: unknown[]): void => {
+    const title = args[0];
+    if (typeof title !== "string" || !title.trim()) {
+      throw new WorkflowEngineError("internal", "phase(title) requires a non-empty string");
+    }
+    phaseAls.enterWith(title);
+    deps.journal.appendEvent({
+      runId: deps.runId,
+      type: "phase_started",
+      phase: title,
+      data: { title },
+    });
+  };
+
+  const log = (...args: unknown[]): void => {
+    const message = args.map(String).join(" ");
+    deps.journal.appendEvent({
+      runId: deps.runId,
+      type: "log",
+      phase: phaseAls.getStore(),
+      data: { message: truncate(message, WORKFLOW_LIMITS.eventDataJsonBytes) },
+    });
+  };
+
+  const workflow = async (...args: unknown[]): Promise<unknown> => {
+    if (nestDepth >= WORKFLOW_MAX_NEST_DEPTH) {
+      throw new WorkflowEngineError(
+        "nest_depth",
+        `workflow() nesting limited to ${WORKFLOW_MAX_NEST_DEPTH} level`,
+      );
+    }
+    if (!deps.resolveNestedSource || !deps.executeNested) {
+      throw new WorkflowEngineError("internal", "nested workflow() is not configured on this host");
+    }
+    const nameOrRef = args[0] as string | { scriptPath: string };
+    const childArgs = args[1];
+    const source = await deps.resolveNestedSource(nameOrRef);
+    return deps.executeNested({
+      source,
+      args: childArgs,
+      nestDepth: nestDepth + 1,
+    });
+  };
+
+  return {
+    agent: agent as WorkflowSandboxApi["agent"],
+    parallel: parallel as WorkflowSandboxApi["parallel"],
+    pipeline: pipeline as WorkflowSandboxApi["pipeline"],
+    phase: phase as WorkflowSandboxApi["phase"],
+    log: log as WorkflowSandboxApi["log"],
+    args: deps.args,
+    budget: createStubBudget(),
+    workflow: workflow as WorkflowSandboxApi["workflow"],
+    meta: deps.meta,
+    getCallCount: () => callIndex,
+    getNestDepth: () => nestDepth,
+  };
+}
+
+/** Test helper: read current ALS phase (undefined outside phase). */
+export function getCurrentWorkflowPhase(): string | undefined {
+  return phaseAls.getStore();
+}
+
+export function hashCacheKey(input: ReturnType<typeof buildAgentCacheKeyInput>): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+export function resolveProvider(
+  optsProvider: string | undefined,
+  meta: WorkflowMeta,
+  enabledProviders: string[],
+): string {
+  if (optsProvider) {
+    if (!enabledProviders.includes(optsProvider)) {
+      throw new WorkflowEngineError(
+        "provider_disabled",
+        `Provider ${optsProvider} is not enabled or not available`,
+      );
+    }
+    return optsProvider;
+  }
+  if (meta.defaultProvider) {
+    if (!enabledProviders.includes(meta.defaultProvider)) {
+      throw new WorkflowEngineError(
+        "provider_unavailable",
+        `meta.defaultProvider ${meta.defaultProvider} is not enabled or not available`,
+      );
+    }
+    return meta.defaultProvider;
+  }
+  const first = enabledProviders[0];
+  if (!first) {
+    throw new WorkflowEngineError("no_provider", "No agent providers enabled");
+  }
+  return first;
+}
+
+function normalizeAgentOpts(opts: unknown): AgentOpts {
+  if (opts === undefined || opts === null) return {};
+  if (typeof opts !== "object" || Array.isArray(opts)) {
+    throw new WorkflowEngineError("internal", "agent opts must be an object");
+  }
+  const record = opts as Record<string, unknown>;
+  const out: AgentOpts = {};
+  if (typeof record.label === "string") out.label = record.label;
+  if (typeof record.phase === "string") out.phase = record.phase;
+  if (record.schema !== undefined) {
+    if (!record.schema || typeof record.schema !== "object" || Array.isArray(record.schema)) {
+      throw new WorkflowEngineError("schema", "agent opts.schema must be an object");
+    }
+    out.schema = record.schema as object;
+  }
+  if (typeof record.model === "string") out.model = record.model;
+  if (typeof record.effort === "string") out.effort = record.effort;
+  if (typeof record.provider === "string") out.provider = record.provider;
+  if (record.isolation !== undefined) {
+    if (record.isolation !== "worktree") {
+      throw new WorkflowEngineError("worktree", 'agent opts.isolation must be "worktree" when set');
+    }
+    out.isolation = "worktree";
+  }
+  if ("writeMode" in record) {
+    throw new WorkflowEngineError("internal", "writeMode is not supported on agent() (v1)");
+  }
+  return out;
+}
+
+function assertMaxItems(count: number, label: string): void {
+  if (count > WORKFLOW_MAX_ITEMS) {
+    throw new WorkflowEngineError(
+      "internal",
+      `${label} exceeds max items ${WORKFLOW_MAX_ITEMS} (got ${count})`,
+    );
+  }
+}
+
+function throwIfCancelled(deps: WorkflowApiDeps): void {
+  if (deps.signal.aborted || deps.journal.isCancelRequested(deps.runId)) {
+    throw cancelledError();
+  }
+}
+
+function cancelledError(): WorkflowEngineError {
+  return new WorkflowEngineError("cancelled", "Workflow cancelled");
+}
+
+function truncate(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  // rough char truncate for journal safety
+  let end = Math.min(text.length, maxBytes);
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > maxBytes) end -= 1;
+  return `${text.slice(0, end)}…`;
+}
+
+/** Minimal JSON extract for schema path until Ajv module lands. */
+export function tryExtractJson(text: string): unknown | undefined {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // strip fenced block
+    const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence?.[1]) {
+      try {
+        return JSON.parse(fence[1].trim());
+      } catch {
+        // fall through
+      }
+    }
+    const start = trimmed.search(/[{\[]/);
+    if (start < 0) return undefined;
+    const slice = trimmed.slice(start);
+    try {
+      return JSON.parse(slice);
+    } catch {
+      return undefined;
+    }
+  }
+}
