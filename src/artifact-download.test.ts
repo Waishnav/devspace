@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -33,9 +32,7 @@ try {
   await testDestinationValidation(join(root, "destinations"));
   await testSizeLimitAndCleanup(join(root, "size-limit"));
   await testCrashLeftoverCleanup(join(root, "stale-partials"));
-  await testUnsafeDirectoryPermissions(join(root, "unsafe-permissions"));
   await testSymlinkRejection(join(root, "symlinks"));
-  await testPrivateStagingPermissions(join(root, "permissions"));
   testLogRedaction();
 } finally {
   await rm(root, { recursive: true, force: true });
@@ -117,7 +114,7 @@ async function testSafeDownloadAndConflict(testRoot: string): Promise<void> {
     "artifact_destination_exists",
   );
   assert.deepEqual(await readFile(join(workspaceRoot, first.path)), bytes);
-  assert.deepEqual(await readdir(join(workspaceRoot, ".devspace", "incoming")), []);
+  assert.deepEqual(await readdir(workspaceRoot), ["public"]);
 }
 
 async function testDestinationValidation(testRoot: string): Promise<void> {
@@ -174,8 +171,7 @@ async function testSizeLimitAndCleanup(testRoot: string): Promise<void> {
     "artifact_file_too_large",
   );
 
-  const incoming = join(workspaceRoot, ".devspace", "incoming");
-  assert.deepEqual(await readdir(incoming), []);
+  assert.deepEqual(await readdir(workspaceRoot), []);
 }
 
 async function testCrashLeftoverCleanup(testRoot: string): Promise<void> {
@@ -187,13 +183,13 @@ async function testCrashLeftoverCleanup(testRoot: string): Promise<void> {
     workspaceRoot,
     maxFileBytes: 1024,
     file: { native: true },
-    path: "first.txt",
+    path: "downloads/first.txt",
   });
 
-  const incoming = join(workspaceRoot, ".devspace", "incoming");
-  const stalePartial = join(incoming, ".devspace-download-stale.partial");
-  const recentPartial = join(incoming, ".devspace-download-recent.partial");
-  const unrelated = join(incoming, "keep-me.partial");
+  const destinationDirectory = join(workspaceRoot, "downloads");
+  const stalePartial = join(destinationDirectory, ".devspace-download-stale.partial");
+  const recentPartial = join(destinationDirectory, ".devspace-download-recent.partial");
+  const unrelated = join(destinationDirectory, "keep-me.partial");
   await writeFile(stalePartial, "stale");
   await writeFile(recentPartial, "recent");
   await writeFile(unrelated, "unrelated");
@@ -206,34 +202,15 @@ async function testCrashLeftoverCleanup(testRoot: string): Promise<void> {
     workspaceRoot,
     maxFileBytes: 1024,
     file: { native: true },
-    path: "second.txt",
+    path: "downloads/second.txt",
   });
 
-  const entries = await readdir(incoming);
+  const entries = await readdir(destinationDirectory);
   assert.equal(entries.includes(".devspace-download-stale.partial"), false);
   assert.equal(entries.includes(".devspace-download-recent.partial"), true);
   assert.equal(entries.includes("keep-me.partial"), true);
-}
-
-async function testUnsafeDirectoryPermissions(testRoot: string): Promise<void> {
-  if (process.platform === "win32") return;
-
-  const workspaceRoot = join(testRoot, "workspace");
-  const devspaceDirectory = join(workspaceRoot, ".devspace");
-  await mkdir(devspaceDirectory, { recursive: true, mode: 0o700 });
-  await chmod(devspaceDirectory, 0o777);
-
-  await expectArtifactError(
-    downloadIncomingArtifact({
-      registry: registryFor({ name: "blocked.txt", stream: Readable.from(["blocked"]) }),
-      workspaceId: "ws_test",
-      workspaceRoot,
-      maxFileBytes: 1024,
-      file: { native: true },
-      path: "blocked.txt",
-    }),
-    "artifact_directory_permissions_unsafe",
-  );
+  assert.equal(entries.includes("first.txt"), true);
+  assert.equal(entries.includes("second.txt"), true);
 }
 
 async function testSymlinkRejection(testRoot: string): Promise<void> {
@@ -242,37 +219,18 @@ async function testSymlinkRejection(testRoot: string): Promise<void> {
   const outside = join(testRoot, "outside");
   await mkdir(outside, { recursive: true, mode: 0o700 });
 
-  const linkedDevspaceRoot = join(testRoot, "linked-devspace-workspace");
-  await mkdir(linkedDevspaceRoot, { recursive: true, mode: 0o700 });
-  await symlink(outside, join(linkedDevspaceRoot, ".devspace"), "dir");
+  const linkedWorkspaceRoot = join(testRoot, "linked-workspace");
+  await symlink(outside, linkedWorkspaceRoot, "dir");
   await expectArtifactError(
     downloadIncomingArtifact({
       registry: registryFor({ name: "blocked.txt", stream: Readable.from(["blocked"]) }),
       workspaceId: "ws_test",
-      workspaceRoot: linkedDevspaceRoot,
+      workspaceRoot: linkedWorkspaceRoot,
       maxFileBytes: 1024,
       file: { native: true },
       path: "blocked.txt",
     }),
-    "artifact_directory_unsafe",
-  );
-
-  const linkedIncomingRoot = join(testRoot, "linked-incoming-workspace");
-  await mkdir(join(linkedIncomingRoot, ".devspace"), {
-    recursive: true,
-    mode: 0o700,
-  });
-  await symlink(outside, join(linkedIncomingRoot, ".devspace", "incoming"), "dir");
-  await expectArtifactError(
-    downloadIncomingArtifact({
-      registry: registryFor({ name: "blocked.txt", stream: Readable.from(["blocked"]) }),
-      workspaceId: "ws_test",
-      workspaceRoot: linkedIncomingRoot,
-      maxFileBytes: 1024,
-      file: { native: true },
-      path: "blocked.txt",
-    }),
-    "artifact_directory_unsafe",
+    "artifact_workspace_unsafe",
   );
 
   const linkedDestinationRoot = join(testRoot, "linked-destination-workspace");
@@ -288,27 +246,6 @@ async function testSymlinkRejection(testRoot: string): Promise<void> {
       path: "assets/blocked.txt",
     }),
     "artifact_destination_parent_unsafe",
-  );
-}
-
-async function testPrivateStagingPermissions(testRoot: string): Promise<void> {
-  if (process.platform === "win32") return;
-
-  const workspaceRoot = join(testRoot, "workspace");
-  const incoming = join(workspaceRoot, ".devspace", "incoming");
-  await mkdir(incoming, { recursive: true });
-  await chmod(incoming, 0o755);
-
-  await expectArtifactError(
-    downloadIncomingArtifact({
-      registry: registryFor({ name: "private.txt", stream: Readable.from(["private"]) }),
-      workspaceId: "ws_test",
-      workspaceRoot,
-      maxFileBytes: 1024,
-      file: { native: true },
-      path: "private.txt",
-    }),
-    "artifact_directory_permissions_unsafe",
   );
 }
 

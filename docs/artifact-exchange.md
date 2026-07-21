@@ -61,30 +61,28 @@ The tool retains the MCP metadata declaration `openai/fileParams: ["file"]` so c
 The download is never buffered wholesale in memory. DevSpace:
 
 1. validates the trusted native reference and redirect chain;
-2. opens a private exclusive partial below `.devspace/incoming/`;
-3. streams bytes under `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` while computing SHA-256;
-4. verifies any supplied size hint;
-5. chmods and fsyncs through the still-open file descriptor;
-6. opens or creates each requested destination parent without following symlinks;
-7. publishes the verified inode with an atomic hard link to the exact requested path;
-8. verifies that the published inode is the downloaded inode;
-9. removes the private partial.
+2. opens or creates each requested destination parent without following symlinks;
+3. opens an exclusive mode-`0600` partial beside the requested destination;
+4. streams bytes under `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` while computing SHA-256;
+5. verifies any supplied size hint and fsyncs the partial;
+6. publishes the verified inode with an atomic hard link to the exact requested path;
+7. verifies that the published inode is the downloaded inode;
+8. chmods and fsyncs through the still-open file descriptor;
+9. removes the temporary partial.
 
 There is no persistent artifact database, completed-object store, upload/chunk API, quota ledger, TTL, pinning, artifact ID, signed download route, or reusable artifact lifecycle.
 
 ## Directory safety
 
-DevSpace opens the selected workspace without following symlinks, then creates
-or opens `.devspace` and its private `incoming` staging directory through
-already-open parent directory descriptors. Destination parent components are
-also created or opened one at a time through descriptor anchors. Absolute paths,
-traversal, symlinked parents, non-directories, non-private staging directories,
-and existing destination files fail closed. Existing directories are inspected
-but never chmodded as a startup side effect. The staging directory and requested
-destination must reside on the same filesystem so publication can remain
-no-overwrite and atomic.
+DevSpace opens the selected workspace without following symlinks. Destination
+parent components are then created or opened one at a time through descriptor
+anchors. The temporary partial is created in that exact destination directory,
+so DevSpace does not create a project-level staging area. Absolute paths,
+traversal, symlinked parents, non-directories, and existing destination files
+fail closed. Existing directories are inspected but never chmodded as a startup
+side effect.
 
-Published files are not path-chmodded or path-hashed after publication. Temporary partial cleanup is bounded, only considers DevSpace partial names, and ignores symlinks and non-regular files.
+Published files are not path-chmodded or path-hashed after publication. Temporary partial cleanup is bounded within the requested destination directory, only considers DevSpace partial names, and ignores symlinks and non-regular files.
 
 ## Logging
 

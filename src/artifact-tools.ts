@@ -63,14 +63,6 @@ export interface DownloadIncomingArtifactResult {
   sha256: string;
 }
 
-interface SecureIncomingDirectory {
-  rootHandle: FileHandle;
-  devspaceHandle: FileHandle;
-  incomingHandle: FileHandle;
-  anchorPath: string;
-  close(): Promise<void>;
-}
-
 interface SecureDestinationDirectory {
   handle: FileHandle;
   anchorPath: string;
@@ -138,10 +130,9 @@ export function registerArtifactTools(
 /**
  * Stream a trusted native file directly into one already-open workspace.
  *
- * Bytes are written to an exclusive private partial, hashed and size-checked,
- * chmodded through the still-open file descriptor, fsynced, and only then
- * published without overwriting the requested workspace destination. No
- * path-based chmod or hashing is performed after publication.
+ * Bytes are written to an exclusive partial beside the requested destination,
+ * hashed and size-checked, fsynced, and only then published without overwriting
+ * the requested workspace path. No project-level staging directory is created.
  */
 export async function downloadIncomingArtifact({
   registry,
@@ -173,7 +164,7 @@ export async function downloadIncomingArtifact({
 
   const destination = normalizeArtifactDestination(path);
   const opened = await registry.open(file);
-  let secureDirectory: SecureIncomingDirectory | undefined;
+  let workspaceHandle: FileHandle | undefined;
   let destinationDirectory: SecureDestinationDirectory | undefined;
   let partialPath: string | undefined;
   let handle: FileHandle | undefined;
@@ -186,12 +177,19 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    secureDirectory = await prepareIncomingDirectory(workspaceRoot);
-    await cleanupStalePartials(secureDirectory);
-    await assertPrivateDirectoryHandle(secureDirectory.incomingHandle);
+    workspaceHandle = await openDirectoryNoFollow(
+      workspaceRoot,
+      "artifact_workspace_unsafe",
+      "Selected workspace root is not a real directory.",
+    );
+    destinationDirectory = await prepareDestinationDirectory(
+      workspaceHandle,
+      destination.parentParts,
+    );
+    await cleanupStalePartials(destinationDirectory);
 
     partialPath = join(
-      secureDirectory.anchorPath,
+      destinationDirectory.anchorPath,
       `${PARTIAL_PREFIX}${randomUUID()}${PARTIAL_SUFFIX}`,
     );
     handle = await open(
@@ -222,7 +220,6 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    await handle.chmod(0o644);
     await handle.sync();
     const writtenEntry = await handle.stat();
     if (!writtenEntry.isFile() || writtenEntry.size !== size) {
@@ -232,7 +229,6 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    await assertPrivateDirectoryHandle(secureDirectory.incomingHandle);
     const partialEntry = await lstat(partialPath);
     if (
       partialEntry.isSymbolicLink()
@@ -247,15 +243,12 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    destinationDirectory = await prepareDestinationDirectory(
-      secureDirectory.rootHandle,
-      destination.parentParts,
-    );
     await publishDestination(
       destinationDirectory,
       partialPath,
       destination.name,
       writtenEntry,
+      handle,
     );
     await unlink(partialPath).catch(() => undefined);
     partialPath = undefined;
@@ -272,7 +265,7 @@ export async function downloadIncomingArtifact({
     await handle?.close().catch(() => undefined);
     if (partialPath) await unlink(partialPath).catch(() => undefined);
     await destinationDirectory?.close().catch(() => undefined);
-    await secureDirectory?.close().catch(() => undefined);
+    await workspaceHandle?.close().catch(() => undefined);
   }
 }
 
@@ -332,107 +325,6 @@ function artifactToolResponse(result: { path: string }) {
   };
 }
 
-async function prepareIncomingDirectory(
-  workspaceRoot: string,
-): Promise<SecureIncomingDirectory> {
-  let rootHandle: FileHandle | undefined;
-  let devspaceHandle: FileHandle | undefined;
-  let incomingHandle: FileHandle | undefined;
-
-  try {
-    rootHandle = await openDirectoryNoFollow(
-      workspaceRoot,
-      "artifact_workspace_unsafe",
-      "Selected workspace root is not a real directory.",
-    );
-    const rootAnchor = descriptorDirectoryPath(rootHandle);
-    devspaceHandle = await ensureChildDirectory(
-      rootHandle,
-      rootAnchor,
-      ".devspace",
-      false,
-    );
-    const devspaceAnchor = descriptorDirectoryPath(devspaceHandle);
-    incomingHandle = await ensureChildDirectory(
-      devspaceHandle,
-      devspaceAnchor,
-      "incoming",
-      true,
-    );
-    const anchorPath = descriptorDirectoryPath(incomingHandle);
-
-    return {
-      rootHandle,
-      devspaceHandle,
-      incomingHandle,
-      anchorPath,
-      async close() {
-        await incomingHandle?.close().catch(() => undefined);
-        await devspaceHandle?.close().catch(() => undefined);
-        await rootHandle?.close().catch(() => undefined);
-      },
-    };
-  } catch (error) {
-    await incomingHandle?.close().catch(() => undefined);
-    await devspaceHandle?.close().catch(() => undefined);
-    await rootHandle?.close().catch(() => undefined);
-    throw error;
-  }
-}
-
-async function ensureChildDirectory(
-  parentHandle: FileHandle,
-  parentAnchor: string,
-  name: string,
-  privateAccess: boolean,
-): Promise<FileHandle> {
-  await assertDirectoryHandle(parentHandle);
-  const path = join(parentAnchor, name);
-  try {
-    await mkdir(path, { mode: 0o700 });
-  } catch (error) {
-    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-  }
-
-  const child = await openDirectoryNoFollow(
-    path,
-    "artifact_directory_unsafe",
-    "Artifact destination parent is not a real directory.",
-  );
-  try {
-    if (privateAccess) {
-      await assertPrivateDirectoryHandle(child);
-    } else {
-      await assertOwnedDirectoryHandle(child);
-    }
-    return child;
-  } catch (error) {
-    await child.close().catch(() => undefined);
-    throw error;
-  }
-}
-
-async function assertOwnedDirectoryHandle(handle: FileHandle): Promise<void> {
-  const entry = await handle.stat();
-  if (!entry.isDirectory()) {
-    throw new ArtifactError(
-      "artifact_directory_unsafe",
-      "Artifact staging parent is not a directory.",
-    );
-  }
-  if (process.platform === "win32") return;
-  const currentUid = process.getuid?.();
-  if (
-    (currentUid !== undefined && entry.uid !== currentUid)
-    || (Number(entry.mode) & 0o022) !== 0
-  ) {
-    throw new ArtifactError(
-      "artifact_directory_permissions_unsafe",
-      "Artifact staging parent must be owned by the current user and not group/world writable.",
-    );
-  }
-}
-
 async function openDirectoryNoFollow(
   path: string,
   code: string,
@@ -456,27 +348,6 @@ async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
     throw new ArtifactError(
       "artifact_directory_unsafe",
       "Artifact destination parent is not a directory.",
-    );
-  }
-}
-
-async function assertPrivateDirectoryHandle(handle: FileHandle): Promise<void> {
-  const entry = await handle.stat();
-  if (!entry.isDirectory()) {
-    throw new ArtifactError(
-      "artifact_directory_unsafe",
-      "Artifact destination parent is not a directory.",
-    );
-  }
-  if (process.platform === "win32") return;
-  const currentUid = process.getuid?.();
-  if (
-    (currentUid !== undefined && entry.uid !== currentUid)
-    || (Number(entry.mode) & 0o777) !== 0o700
-  ) {
-    throw new ArtifactError(
-      "artifact_directory_permissions_unsafe",
-      "Artifact staging directory must be owned by and accessible only to the current user.",
     );
   }
 }
@@ -597,6 +468,7 @@ async function publishDestination(
   partialPath: string,
   filename: string,
   writtenEntry: Awaited<ReturnType<FileHandle["stat"]>>,
+  handle: FileHandle,
 ): Promise<void> {
   await assertDirectoryHandle(directory.handle);
   const candidate = join(directory.anchorPath, filename);
@@ -605,18 +477,10 @@ async function publishDestination(
     await link(partialPath, candidate);
     published = true;
     const publishedEntry = await lstat(candidate);
-    if (
-      publishedEntry.isSymbolicLink()
-      || !publishedEntry.isFile()
-      || publishedEntry.dev !== writtenEntry.dev
-      || publishedEntry.ino !== writtenEntry.ino
-      || publishedEntry.size !== writtenEntry.size
-    ) {
-      throw new ArtifactError(
-        "artifact_destination_publish_failed",
-        "Published artifact did not match the verified download.",
-      );
-    }
+    assertPublishedArtifactEntry(publishedEntry, writtenEntry);
+    await handle.chmod(0o644);
+    await handle.sync();
+    assertPublishedArtifactEntry(await lstat(candidate), writtenEntry);
   } catch (error) {
     if (published) await unlink(candidate).catch(() => undefined);
     if (isNodeError(error) && error.code === "EEXIST") {
@@ -625,20 +489,32 @@ async function publishDestination(
         "Artifact destination already exists.",
       );
     }
-    if (isNodeError(error) && error.code === "EXDEV") {
-      throw new ArtifactError(
-        "artifact_destination_filesystem_unsupported",
-        "Artifact staging and destination must be on the same filesystem.",
-      );
-    }
     throw error;
   }
 }
 
+function assertPublishedArtifactEntry(
+  entry: Awaited<ReturnType<typeof lstat>>,
+  writtenEntry: Awaited<ReturnType<FileHandle["stat"]>>,
+): void {
+  if (
+    entry.isSymbolicLink()
+    || !entry.isFile()
+    || entry.dev !== writtenEntry.dev
+    || entry.ino !== writtenEntry.ino
+    || entry.size !== writtenEntry.size
+  ) {
+    throw new ArtifactError(
+      "artifact_destination_publish_failed",
+      "Published artifact did not match the verified download.",
+    );
+  }
+}
+
 async function cleanupStalePartials(
-  directory: SecureIncomingDirectory,
+  directory: SecureDestinationDirectory,
 ): Promise<void> {
-  await assertPrivateDirectoryHandle(directory.incomingHandle);
+  await assertDirectoryHandle(directory.handle);
   const entries = await readdir(directory.anchorPath, { withFileTypes: true });
   let inspected = 0;
   const cutoff = Date.now() - STALE_PARTIAL_AGE_MS;
