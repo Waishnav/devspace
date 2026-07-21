@@ -186,6 +186,7 @@ export const workflowEventPayloadSchemas = {
     .object({
       callIndex: z.number().int().nonnegative(),
       error: z.string(),
+      cleanupError: z.string().optional(),
       isolation: agentIsolationModeSchema,
       worktreePath: z.string().optional(),
     })

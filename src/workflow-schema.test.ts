@@ -37,6 +37,7 @@ assert.ok(!supportsNativeStructuredOutput("opencode"));
       additionalProperties: false,
     },
     prompt: "give n",
+    provider: "opencode",
     run: async () => {
       attempts += 1;
       if (attempts === 1) return { finalResponse: '{"n":"x"}' };
@@ -55,6 +56,7 @@ assert.ok(!supportsNativeStructuredOutput("opencode"));
       enforceAgentSchema({
         schema: { type: "object", properties: { n: { type: "number" } }, required: ["n"] },
         prompt: "x",
+        provider: "opencode",
         maxRetries: 1,
         run: async () => ({ finalResponse: "not json" }),
       }),
@@ -205,6 +207,7 @@ assert.ok(!supportsNativeStructuredOutput("opencode"));
     enforceAgentSchema({
       schema: { type: "object" },
       prompt: "x",
+      provider: "opencode",
       maxRetries: 0,
       onRetry: ({ attempt }) => retries.push(attempt),
       run: async () => ({ finalResponse: "not json" }),

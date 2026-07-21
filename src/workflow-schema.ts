@@ -1,8 +1,13 @@
 import { createRequire } from "node:module";
+import { Result, type Result as BetterResult } from "better-result";
 import { WORKFLOW_MAX_SCHEMA_RETRIES } from "./workflow-types.js";
 import { tryExtractJson, WorkflowEngineError } from "./workflow-api.js";
 import type { WorkflowProviderRunResult, WorkflowRunProvider } from "./workflow-api.js";
-import { isProviderSchemaUnsupportedError } from "./local-agent-runtime.js";
+import {
+  classifyAgentProviderError,
+  isProviderSchemaUnsupportedError,
+  type AgentProviderError,
+} from "./local-agent-errors.js";
 import { supportsNativeStructuredOutput } from "./local-agent-capabilities.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import {
@@ -10,6 +15,13 @@ import {
   type JsonSchema,
   type JsonValue,
 } from "./json-types.js";
+import {
+  AgentSchemaValidationError,
+  InvalidAgentJsonError,
+  SchemaConfigurationError,
+  SchemaRetriesExhaustedError,
+  type SchemaAttemptError,
+} from "./workflow-errors.js";
 
 const require = createRequire(import.meta.url);
 
@@ -40,7 +52,7 @@ export interface EnforceSchemaInput {
    * Provider id for native-vs-prompt policy. When in NATIVE_SCHEMA_PROVIDERS,
    * attempt 0 uses raw prompt + native structured path; later attempts repair via prompt.
    */
-  provider?: LocalAgentProvider;
+  provider: LocalAgentProvider;
   run: (
     prompt: string,
     opts: {
@@ -64,6 +76,11 @@ export interface EnforceSchemaResult {
   mode: SchemaEnforceMode;
 }
 
+export type EnforceSchemaError =
+  | AgentProviderError
+  | SchemaConfigurationError
+  | SchemaRetriesExhaustedError;
+
 /**
  * Native-first for codex/claude; otherwise prompt+extract+Ajv. Always Ajv-validate.
  * Retries ≤ WORKFLOW_MAX_SCHEMA_RETRIES after the first attempt.
@@ -71,14 +88,35 @@ export interface EnforceSchemaResult {
 export async function enforceAgentSchema(
   input: EnforceSchemaInput,
 ): Promise<EnforceSchemaResult> {
-  const Ajv = loadAjv();
-  const ajv = new Ajv({ allErrors: true, strict: false });
-  const validate = ajv.compile(input.schema);
+  const result = await enforceAgentSchemaResult(input);
+  if (result.isOk()) return result.value;
+  if (
+    SchemaConfigurationError.is(result.error) ||
+    SchemaRetriesExhaustedError.is(result.error)
+  ) {
+    throw new WorkflowEngineError("schema", result.error.message);
+  }
+  throw result.error;
+}
+
+export async function enforceAgentSchemaResult(
+  input: EnforceSchemaInput,
+): Promise<BetterResult<EnforceSchemaResult, EnforceSchemaError>> {
+  const compiled = Result.try({
+    try: () => {
+      const Ajv = loadAjv();
+      const ajv = new Ajv({ allErrors: true, strict: false });
+      return ajv.compile(input.schema);
+    },
+    catch: (cause) => new SchemaConfigurationError(cause),
+  });
+  if (compiled.isErr()) return compiled;
+  const validate = compiled.value;
   const maxRetries = input.maxRetries ?? WORKFLOW_MAX_SCHEMA_RETRIES;
-  const native = Boolean(input.provider && supportsNativeStructuredOutput(input.provider));
+  const native = supportsNativeStructuredOutput(input.provider);
   const basePrompt = augmentPromptForSchema(input.prompt, input.schema);
 
-  let lastErrors = "unknown validation error";
+  let lastFailure: SchemaAttemptError | undefined;
   let providerSessionId: string | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -89,26 +127,39 @@ export async function enforceAgentSchema(
         ? input.prompt
         : attempt === 0
           ? basePrompt
-          : `${basePrompt}\n\nPrevious JSON failed validation:\n${lastErrors}\nReturn only corrected JSON.`;
+          : `${basePrompt}\n\nPrevious JSON failed validation:\n${lastFailure?.message ?? "unknown validation error"}\nReturn only corrected JSON.`;
 
-    let result: WorkflowProviderRunResult;
-    try {
-      result = await input.run(prompt, { mode, providerSessionId });
-    } catch (error) {
-      if (mode === "native" && isProviderSchemaUnsupportedError(error) && attempt < maxRetries) {
-        lastErrors = error.message;
-        input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+    const runResult = await Result.tryPromise({
+      try: () => input.run(prompt, { mode, providerSessionId }),
+      catch: (cause) => classifyAgentProviderError(input.provider, cause),
+    });
+    if (runResult.isErr()) {
+      if (
+        mode === "native" &&
+        isProviderSchemaUnsupportedError(runResult.error) &&
+        attempt < maxRetries
+      ) {
+        input.onRetry?.({
+          attempt: attempt + 1,
+          errors: runResult.error.message,
+          mode,
+        });
         continue;
       }
-      throw error;
+      return runResult;
     }
+    const result = runResult.value;
     providerSessionId = result.providerSessionId ?? providerSessionId;
 
     const candidates = structuredCandidates(result);
     if (candidates.length === 0) {
-      lastErrors = "Response was not valid JSON";
+      lastFailure = new InvalidAgentJsonError({
+        attempt: attempt + 1,
+        mode,
+        responseExcerpt: result.finalResponse.slice(0, 500),
+      });
       if (attempt < maxRetries) {
-        input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+        input.onRetry?.({ attempt: attempt + 1, errors: lastFailure.message, mode });
       }
       continue;
     }
@@ -116,25 +167,36 @@ export async function enforceAgentSchema(
     for (const candidate of candidates) {
       const ok = validate(candidate);
       if (ok) {
-        return {
+        return Result.ok({
           value: candidate,
           finalResponse: result.finalResponse,
           providerSessionId,
           attempts: attempt + 1,
           mode,
-        };
-      };
+        });
+      }
     }
 
-    lastErrors = formatAjvErrors(validate.errors);
+    lastFailure = new AgentSchemaValidationError({
+      attempt: attempt + 1,
+      mode,
+      issues: toSchemaIssues(validate.errors),
+    });
     if (attempt < maxRetries) {
-      input.onRetry?.({ attempt: attempt + 1, errors: lastErrors, mode });
+      input.onRetry?.({ attempt: attempt + 1, errors: lastFailure.message, mode });
     }
   }
 
-  throw new WorkflowEngineError(
-    "schema",
-    `Schema validation failed after ${maxRetries + 1} attempts: ${lastErrors}`,
+  return Result.err(
+    new SchemaRetriesExhaustedError(
+      maxRetries + 1,
+      lastFailure ??
+        new InvalidAgentJsonError({
+          attempt: maxRetries + 1,
+          mode: native ? "native" : "prompt",
+          responseExcerpt: "",
+        }),
+    ),
   );
 }
 
@@ -159,6 +221,18 @@ export function formatAjvErrors(
     .join("; ");
 }
 
+function toSchemaIssues(
+  errors: Array<{ instancePath?: string; message?: string }> | null | undefined,
+): Array<{ path: string; message: string }> {
+  if (!errors || errors.length === 0) {
+    return [{ path: "/", message: "validation failed" }];
+  }
+  return errors.map((error) => ({
+    path: error.instancePath || "/",
+    message: error.message ?? "invalid",
+  }));
+}
+
 /** Helper for wiring into agent(): wrap a one-shot provider as retrying schema runner. */
 export function schemaAwareRunProvider(
   runProvider: WorkflowRunProvider,
@@ -167,6 +241,27 @@ export function schemaAwareRunProvider(
   onRetry?: EnforceSchemaInput["onRetry"],
 ): Promise<EnforceSchemaResult> {
   return enforceAgentSchema({
+    schema,
+    prompt: base.prompt,
+    provider: base.provider,
+    onRetry,
+    run: (prompt, options) =>
+      runProvider({
+        ...base,
+        prompt,
+        providerSessionId: options.providerSessionId,
+        ...(options.mode === "native" ? { schema } : {}),
+      }),
+  });
+}
+
+export function schemaAwareRunProviderResult(
+  runProvider: WorkflowRunProvider,
+  schema: JsonSchema,
+  base: Parameters<WorkflowRunProvider>[0],
+  onRetry?: EnforceSchemaInput["onRetry"],
+): Promise<BetterResult<EnforceSchemaResult, EnforceSchemaError>> {
+  return enforceAgentSchemaResult({
     schema,
     prompt: base.prompt,
     provider: base.provider,

@@ -18,6 +18,10 @@ import {
   type WorkflowMeta,
   type WorkflowErrorKind,
 } from "./workflow-types.js";
+import {
+  isWorkflowOperationError,
+  workflowErrorKind,
+} from "./workflow-errors.js";
 
 export interface ExecuteWorkflowOptions {
   /** Pre-parsed script, or pass `source` instead. */
@@ -184,6 +188,9 @@ const WORKFLOW_MAX_NEST_DEPTH_LOCAL = 1;
 export function mapEngineErrorKind(error: unknown): WorkflowErrorKind {
   if (error instanceof WorkflowEngineError) {
     return error.kind;
+  }
+  if (isWorkflowOperationError(error)) {
+    return workflowErrorKind(error);
   }
   if (error && typeof error === "object" && "name" in error) {
     const name = String((error as { name: string }).name);

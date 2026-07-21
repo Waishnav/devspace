@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import type { ServerConfig } from "./config.js";
 import {
@@ -22,6 +23,16 @@ import {
   workflowRunSourceSchema,
   workflowRunStatusSchema,
 } from "./workflow-contracts.js";
+import {
+  InvalidRunTransitionError,
+  WorkflowNotFoundError,
+  WorkflowStoreError,
+} from "./workflow-errors.js";
+
+export type WorkflowRunTransitionError =
+  | WorkflowNotFoundError
+  | InvalidRunTransitionError
+  | WorkflowStoreError;
 
 export interface CreateWorkflowRunInput {
   name: string;
@@ -207,6 +218,15 @@ export class WorkflowStore {
     return row ? rowToRun(row) : undefined;
   }
 
+  getRunResult(
+    id: string,
+  ): BetterResult<WorkflowRunRecord | undefined, WorkflowStoreError> {
+    return Result.try({
+      try: () => this.getRun(id),
+      catch: (cause) => new WorkflowStoreError("get_run", cause),
+    });
+  }
+
   listRuns(limit = 50): WorkflowRunRecord[] {
     const rows = this.database.sqlite
       .prepare("select * from workflow_runs order by updated_at desc limit ?")
@@ -219,31 +239,102 @@ export class WorkflowStore {
    * Returns undefined if the run is missing or not claimable.
    */
   setScriptPath(id: string, scriptPath: string): WorkflowRunRecord {
-    this.requireRun(id);
-    const now = isoNow();
-    this.database.sqlite
-      .prepare(
-        `UPDATE workflow_runs SET script_path = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(scriptPath, now, id);
-    return this.requireRun(id);
+    return unwrapRunResult(this.setScriptPathResult(id, scriptPath));
+  }
+
+  setScriptPathResult(
+    id: string,
+    scriptPath: string,
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    const current = this.getRunResult(id);
+    if (current.isErr()) return current;
+    const run = current.value;
+    if (!run) return Result.err(new WorkflowNotFoundError(id));
+    const updated = Result.try({
+      try: () => {
+        const now = isoNow();
+        this.database.sqlite
+          .prepare(
+            `UPDATE workflow_runs SET script_path = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(scriptPath, now, id);
+        return this.getRun(id);
+      },
+      catch: (cause) => new WorkflowStoreError("set_script_path", cause),
+    });
+    if (updated.isErr()) return updated;
+    return updated.value
+      ? Result.ok(updated.value)
+      : Result.err(new WorkflowNotFoundError(id));
   }
 
   claimRun(id: string, pid: number): WorkflowRunRecord | undefined {
-    const now = isoNow();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_runs set
-          status = 'running',
-          pid = ?,
-          heartbeat_at = ?,
-          started_at = coalesce(started_at, ?),
-          updated_at = ?
-         where id = ? and status = 'starting'`,
-      )
-      .run(pid, now, now, now, id);
-    if (result.changes === 0) return undefined;
-    return this.getRun(id);
+    const result = this.claimRunResult(id, pid);
+    if (result.isOk()) return result.value;
+    if (
+      WorkflowNotFoundError.is(result.error) ||
+      InvalidRunTransitionError.is(result.error)
+    ) {
+      return undefined;
+    }
+    throw result.error;
+  }
+
+  claimRunResult(
+    id: string,
+    pid: number,
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    const currentResult = this.getRunResult(id);
+    if (currentResult.isErr()) return currentResult;
+    const current = currentResult.value;
+    if (!current) return Result.err(new WorkflowNotFoundError(id));
+    if (current.status !== "starting") {
+      return Result.err(
+        new InvalidRunTransitionError({
+          runId: id,
+          from: current.status,
+          operation: "claim",
+        }),
+      );
+    }
+
+    const claimed = Result.try({
+      try: () => {
+        const now = isoNow();
+        const update = this.database.sqlite
+          .prepare(
+            `update workflow_runs set
+              status = 'running',
+              pid = ?,
+              heartbeat_at = ?,
+              started_at = coalesce(started_at, ?),
+              updated_at = ?
+             where id = ? and status = 'starting'`,
+          )
+          .run(pid, now, now, now, id);
+        return update.changes;
+      },
+      catch: (cause) => new WorkflowStoreError("claim_run", cause),
+    });
+    if (claimed.isErr()) return claimed;
+    if (claimed.value === 0) {
+      const latestResult = this.getRunResult(id);
+      if (latestResult.isErr()) return latestResult;
+      const latest = latestResult.value;
+      return latest
+        ? Result.err(
+            new InvalidRunTransitionError({
+              runId: id,
+              from: latest.status,
+              operation: "claim",
+            }),
+          )
+        : Result.err(new WorkflowNotFoundError(id));
+    }
+    const runResult = this.getRunResult(id);
+    if (runResult.isErr()) return runResult;
+    const run = runResult.value;
+    return run ? Result.ok(run) : Result.err(new WorkflowNotFoundError(id));
   }
 
   setHeartbeat(id: string, at = isoNow()): void {
@@ -255,16 +346,34 @@ export class WorkflowStore {
   }
 
   requestCancel(id: string): WorkflowRunRecord {
-    const run = this.requireRun(id);
-    if (TERMINAL_STATUSES.has(run.status)) return run;
+    return unwrapRunResult(this.requestCancelResult(id));
+  }
 
-    const now = isoNow();
-    this.database.sqlite
-      .prepare(
-        `update workflow_runs set cancel_requested = 'true', updated_at = ? where id = ?`,
-      )
-      .run(now, id);
-    return this.requireRun(id);
+  requestCancelResult(
+    id: string,
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    const current = this.getRunResult(id);
+    if (current.isErr()) return current;
+    const run = current.value;
+    if (!run) return Result.err(new WorkflowNotFoundError(id));
+    if (TERMINAL_STATUSES.has(run.status)) return Result.ok(run);
+
+    const updated = Result.try({
+      try: () => {
+        const now = isoNow();
+        this.database.sqlite
+          .prepare(
+            `update workflow_runs set cancel_requested = 'true', updated_at = ? where id = ?`,
+          )
+          .run(now, id);
+        return this.getRun(id);
+      },
+      catch: (cause) => new WorkflowStoreError("request_cancel", cause),
+    });
+    if (updated.isErr()) return updated;
+    return updated.value
+      ? Result.ok(updated.value)
+      : Result.err(new WorkflowNotFoundError(id));
   }
 
   isCancelRequested(id: string): boolean {
@@ -272,69 +381,114 @@ export class WorkflowStore {
   }
 
   completeRun(id: string, input: CompleteRunInput = {}): WorkflowRunRecord {
-    if (input.resultJson !== undefined) assertResultSize(input.resultJson);
-    const now = isoNow();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_runs set
-          status = 'completed',
-          result_json = ?,
-          completed_at = ?,
-          updated_at = ?,
-          error = null,
-          error_kind = null
-         where id = ? and status in ('starting', 'running')`,
-      )
-      .run(input.resultJson ?? null, now, now, id);
-    if (result.changes === 0) {
-      const run = this.requireRun(id);
-      if (TERMINAL_STATUSES.has(run.status)) return run;
-      throw new Error(`Cannot complete workflow run ${id} in status ${run.status}`);
-    }
-    return this.requireRun(id);
+    return unwrapRunResult(this.completeRunResult(id, input));
+  }
+
+  completeRunResult(
+    id: string,
+    input: CompleteRunInput = {},
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    return this.transitionRunResult(id, "complete", () => {
+      if (input.resultJson !== undefined) assertResultSize(input.resultJson);
+      const now = isoNow();
+      return this.database.sqlite
+        .prepare(
+          `update workflow_runs set
+            status = 'completed',
+            result_json = ?,
+            completed_at = ?,
+            updated_at = ?,
+            error = null,
+            error_kind = null
+           where id = ? and status in ('starting', 'running')`,
+        )
+        .run(input.resultJson ?? null, now, now, id).changes;
+    });
   }
 
   failRun(id: string, input: FailRunInput): WorkflowRunRecord {
-    const now = isoNow();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_runs set
-          status = 'failed',
-          error = ?,
-          error_kind = ?,
-          completed_at = ?,
-          updated_at = ?
-         where id = ? and status in ('starting', 'running')`,
-      )
-      .run(input.error, input.errorKind ?? "internal", now, now, id);
-    if (result.changes === 0) {
-      const run = this.requireRun(id);
-      if (TERMINAL_STATUSES.has(run.status)) return run;
-      throw new Error(`Cannot fail workflow run ${id} in status ${run.status}`);
-    }
-    return this.requireRun(id);
+    return unwrapRunResult(this.failRunResult(id, input));
+  }
+
+  failRunResult(
+    id: string,
+    input: FailRunInput,
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    return this.transitionRunResult(id, "fail", () => {
+      const now = isoNow();
+      return this.database.sqlite
+        .prepare(
+          `update workflow_runs set
+            status = 'failed',
+            error = ?,
+            error_kind = ?,
+            completed_at = ?,
+            updated_at = ?
+           where id = ? and status in ('starting', 'running')`,
+        )
+        .run(input.error, input.errorKind ?? "internal", now, now, id).changes;
+    });
   }
 
   cancelRun(id: string, error = "cancelled"): WorkflowRunRecord {
-    const now = isoNow();
-    const result = this.database.sqlite
-      .prepare(
-        `update workflow_runs set
-          status = 'cancelled',
-          error = ?,
-          error_kind = 'cancelled',
-          cancel_requested = 'true',
-          completed_at = ?,
-          updated_at = ?
-         where id = ? and status in ('starting', 'running')`,
-      )
-      .run(error, now, now, id);
-    if (result.changes === 0) {
-      const run = this.requireRun(id);
-      if (TERMINAL_STATUSES.has(run.status)) return run;
-      throw new Error(`Cannot cancel workflow run ${id} in status ${run.status}`);
+    return unwrapRunResult(this.cancelRunResult(id, error));
+  }
+
+  cancelRunResult(
+    id: string,
+    error = "cancelled",
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    return this.transitionRunResult(id, "cancel", () => {
+      const now = isoNow();
+      return this.database.sqlite
+        .prepare(
+          `update workflow_runs set
+            status = 'cancelled',
+            error = ?,
+            error_kind = 'cancelled',
+            cancel_requested = 'true',
+            completed_at = ?,
+            updated_at = ?
+           where id = ? and status in ('starting', 'running')`,
+        )
+        .run(error, now, now, id).changes;
+    });
+  }
+
+  private transitionRunResult(
+    id: string,
+    operation: "complete" | "fail" | "cancel",
+    update: () => number,
+  ): BetterResult<WorkflowRunRecord, WorkflowRunTransitionError> {
+    const currentResult = this.getRunResult(id);
+    if (currentResult.isErr()) return currentResult;
+    const current = currentResult.value;
+    if (!current) return Result.err(new WorkflowNotFoundError(id));
+    if (TERMINAL_STATUSES.has(current.status)) return Result.ok(current);
+
+    const updated = Result.try({
+      try: update,
+      catch: (cause) => new WorkflowStoreError(`${operation}_run`, cause),
+    });
+    if (updated.isErr()) return updated;
+    if (updated.value === 0) {
+      const latestResult = this.getRunResult(id);
+      if (latestResult.isErr()) return latestResult;
+      const latest = latestResult.value;
+      if (!latest) return Result.err(new WorkflowNotFoundError(id));
+      if (TERMINAL_STATUSES.has(latest.status)) return Result.ok(latest);
+      return Result.err(
+        new InvalidRunTransitionError({
+          runId: id,
+          from: latest.status,
+          operation,
+        }),
+      );
     }
-    return this.requireRun(id);
+    const runResult = this.getRunResult(id);
+    if (runResult.isErr()) return runResult;
+    const run = runResult.value;
+    return run ? Result.ok(run) : Result.err(new WorkflowNotFoundError(id));
   }
 
   appendEvent(input: AppendWorkflowEventInput): WorkflowEventRecord {
@@ -663,4 +817,11 @@ function truncateJson(value: unknown, maxBytes: number): string {
   const budget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8") - 32);
   const slice = Buffer.from(text, "utf8").subarray(0, budget).toString("utf8");
   return JSON.stringify({ truncated: true, preview: slice });
+}
+
+function unwrapRunResult(
+  result: BetterResult<WorkflowRunRecord, WorkflowRunTransitionError>,
+): WorkflowRunRecord {
+  if (result.isErr()) throw result.error;
+  return result.value;
 }

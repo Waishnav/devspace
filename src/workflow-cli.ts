@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerConfig } from "./config.js";
 import { parseJsonText, type JsonObject, type JsonValue } from "./json-types.js";
-import { runLocalAgentProvider } from "./local-agent-adapters.js";
+import { runLocalAgentProviderResult } from "./local-agent-adapters.js";
 import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availability.js";
 import {
   isLocalAgentProvider,
@@ -14,11 +14,11 @@ import {
 } from "./local-agent-profiles.js";
 import { executeWorkflow, mapEngineErrorKind } from "./workflow-engine.js";
 import {
-  parseWorkflowArgFlags,
-  persistWorkflowScript,
-  readWorkflowScriptFile,
+  parseWorkflowArgFlagsResult,
+  persistWorkflowScriptResult,
+  readWorkflowScriptFileResult,
   resolveNamedWorkflowScript,
-  resolveWorkflowScriptFromPathOrName,
+  resolveWorkflowScriptFromPathOrNameResult,
 } from "./workflow-files.js";
 import { createWorkflowReplay } from "./workflow-replay.js";
 import { parseWorkflowScript } from "./workflow-script.js";
@@ -33,6 +33,11 @@ import {
   type WorkflowRunSource,
 } from "./workflow-types.js";
 import { parseWorkflowEventPayload } from "./workflow-contracts.js";
+import {
+  InvalidWorkflowInputError,
+  WorkflowNotFoundError,
+  WorkflowStoredDataError,
+} from "./workflow-errors.js";
 import {
   createWorkflowWorktreeFactory,
   resolveWorkspaceHead,
@@ -92,12 +97,16 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
   const file = flagValue(flags, "file");
   const name = flagValue(flags, "name");
   const resumeFrom = flagValue(flags, "resume");
-  const { args: workflowArgs } = parseWorkflowArgFlags(collectArgTokens(args));
+  const parsedArgs = parseWorkflowArgFlagsResult(collectArgTokens(args));
+  if (parsedArgs.isErr()) throw parsedArgs.error;
+  const workflowArgs = parsedArgs.value.args;
 
   if (!file && !name && !resumeFrom) {
-    throw new Error(
-      "Usage: devspace workflow run (--file <path> | --name <name> | --resume <runId>)",
-    );
+    throw new InvalidWorkflowInputError({
+      code: "missing_source",
+      message:
+        "Usage: devspace workflow run (--file <path> | --name <name> | --resume <runId>)",
+    });
   }
 
   const store = createWorkflowStore(config);
@@ -111,11 +120,15 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
     let priorScriptPath: string | undefined;
 
     if (resumeFrom) {
-      const prior = store.getRun(resumeFrom);
-      if (!prior) throw new Error(`Unknown workflow run to resume: ${resumeFrom}`);
+      const priorResult = store.getRunResult(resumeFrom);
+      if (priorResult.isErr()) throw priorResult.error;
+      const prior = priorResult.value;
+      if (!prior) throw new WorkflowNotFoundError(resumeFrom);
       priorRunId = prior.id;
       priorScriptPath = prior.scriptPath;
-      const resolved = await readWorkflowScriptFile(prior.scriptPath);
+      const resolvedResult = await readWorkflowScriptFileResult(prior.scriptPath);
+      if (resolvedResult.isErr()) throw resolvedResult.error;
+      const resolved = resolvedResult.value;
       source = resolved.source;
       scriptHash = prior.scriptHash;
       nameHint = prior.name;
@@ -124,17 +137,19 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
         try {
           const priorArgs = parseJsonText(prior.argsJson);
           if (isJsonObject(priorArgs)) Object.assign(workflowArgs, priorArgs);
-        } catch {
-          // keep empty
+        } catch (cause) {
+          throw new WorkflowStoredDataError(`${prior.id}.argsJson`, cause);
         }
       }
     } else {
-      const resolved = await resolveWorkflowScriptFromPathOrName({
+      const resolvedResult = await resolveWorkflowScriptFromPathOrNameResult({
         file,
         name,
         workspaceRoot,
         stateDir: config.stateDir,
       });
+      if (resolvedResult.isErr()) throw resolvedResult.error;
+      const resolved = resolvedResult.value;
       source = resolved.source;
       scriptHash = resolved.scriptHash;
       nameHint = resolved.nameHint;
@@ -158,16 +173,18 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
       baseSha,
     });
 
-    const persisted =
-      priorScriptPath ??
-      (await persistWorkflowScript({
+    let persisted = priorScriptPath;
+    if (!persisted) {
+      const result = await persistWorkflowScriptResult({
         stateDir: config.stateDir,
         runId: run.id,
         source,
         preferredName: parsed.meta.name || nameHint,
-      }));
-    if (!priorScriptPath) {
-      store.setScriptPath(run.id, persisted);
+      });
+      if (result.isErr()) throw result.error;
+      persisted = result.value;
+      const updated = store.setScriptPathResult(run.id, persisted);
+      if (updated.isErr()) throw updated.error;
     }
 
     spawnWorkflowWorkerFromCli(
@@ -192,8 +209,10 @@ async function runWorkflowStatus(args: string[], config: ServerConfig): Promise<
 
   const store = createWorkflowStore(config);
   try {
-    const run = store.getRun(runId);
-    if (!run) throw new Error(`Unknown workflow run: ${runId}`);
+    const runResult = store.getRunResult(runId);
+    if (runResult.isErr()) throw runResult.error;
+    const run = runResult.value;
+    if (!run) throw new WorkflowNotFoundError(runId);
     console.log(formatRunLine(run));
     if (follow) {
       await followRun(store, runId);
@@ -211,7 +230,9 @@ async function runWorkflowCancel(args: string[], config: ServerConfig): Promise<
   if (!runId) throw new Error("Usage: devspace workflow cancel <runId>");
   const store = createWorkflowStore(config);
   try {
-    const run = store.requestCancel(runId);
+    const requested = store.requestCancelResult(runId);
+    if (requested.isErr()) throw requested.error;
+    const run = requested.value;
     console.log(formatRunLine(run));
     if (run.pid && (run.status === "running" || run.status === "starting")) {
       try {
@@ -233,7 +254,8 @@ async function runWorkflowCancel(args: string[], config: ServerConfig): Promise<
         }
         const latest = store.getRun(runId);
         if (latest && (latest.status === "running" || latest.status === "starting")) {
-          store.cancelRun(runId, "cancelled (hard kill)");
+          const cancelled = store.cancelRunResult(runId, "cancelled (hard kill)");
+          if (cancelled.isErr()) throw cancelled.error;
         }
       }
     }
@@ -266,11 +288,12 @@ export async function runWorkflowWorker(
   if (!runId) throw new Error("Usage: devspace workflow __worker <runId>");
 
   const store = createWorkflowStore(config);
-  const claimed = store.claimRun(runId, process.pid);
-  if (!claimed) {
+  const claim = store.claimRunResult(runId, process.pid);
+  if (claim.isErr()) {
     store.close();
-    throw new Error(`Cannot claim workflow run ${runId} (missing or not starting)`);
+    throw claim.error;
   }
+  const claimed = claim.value;
 
   const abort = new AbortController();
   const heartbeat = setInterval(() => {
@@ -295,8 +318,8 @@ export async function runWorkflowWorker(
     try {
       argsValue = parseJsonText(claimed.argsJson);
       if (argsValue === null) argsValue = undefined;
-    } catch {
-      argsValue = undefined;
+    } catch (cause) {
+      throw new WorkflowStoredDataError(`${claimed.id}.argsJson`, cause);
     }
 
     const replay = claimed.resumedFromRunId
@@ -327,7 +350,7 @@ export async function runWorkflowWorker(
         if (abort.signal.aborted || store.isCancelRequested(runId)) {
           throw Object.assign(new Error("Workflow cancelled"), { name: "AbortError" });
         }
-        const providerResult = await runLocalAgentProvider(input.provider, {
+        const providerRun = await runLocalAgentProviderResult(input.provider, {
           prompt: input.prompt,
           workspace: input.workspace,
           providerSessionId: input.providerSessionId,
@@ -336,6 +359,8 @@ export async function runWorkflowWorker(
           writeMode: "allowed",
           schema: input.schema,
         });
+        if (providerRun.isErr()) throw providerRun.error;
+        const providerResult = providerRun.value;
         return {
           finalResponse: providerResult.finalResponse,
           providerSessionId: providerResult.providerSessionId ?? undefined,

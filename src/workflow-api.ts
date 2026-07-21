@@ -269,6 +269,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     await semaphore.acquire(deps.signal);
     let worktree: WorkflowWorktreeHandle | null = null;
     let worktreePath: string | undefined;
+    let agentCallBegun = false;
     try {
       throwIfCancelled(deps);
 
@@ -307,6 +308,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         isolation,
         worktreePath,
       });
+      agentCallBegun = true;
       deps.journal.appendEvent({
         runId: deps.runId,
         type: "agent_call_started",
@@ -422,6 +424,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
       return returnValue;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      let cleanupError: string | undefined;
       if (worktree) {
         try {
           const finalized = await worktree.finalize("failure");
@@ -438,22 +441,33 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
               outcome: "failure",
             },
           });
-        } catch {
-          // preserve original error
+        } catch (cleanupFailure) {
+          cleanupError =
+            cleanupFailure instanceof Error
+              ? cleanupFailure.message
+              : String(cleanupFailure);
         }
       }
-      deps.journal.failAgentCall({
-        runId: deps.runId,
-        callIndex: index,
-        error: message,
-        worktreePath,
-      });
+      if (agentCallBegun) {
+        deps.journal.failAgentCall({
+          runId: deps.runId,
+          callIndex: index,
+          error: message,
+          worktreePath,
+        });
+      }
       deps.journal.appendEvent({
         runId: deps.runId,
         type: "agent_call_failed",
         phase,
         label: agentOpts.label,
-        data: { callIndex: index, error: message, isolation, worktreePath },
+        data: {
+          callIndex: index,
+          error: message,
+          cleanupError,
+          isolation,
+          worktreePath,
+        },
       });
       throw error;
     } finally {

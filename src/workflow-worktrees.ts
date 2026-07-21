@@ -2,8 +2,9 @@ import { execFile } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { Result, type Result as BetterResult } from "better-result";
 import type { CreateAgentWorktree, WorkflowWorktreeHandle } from "./workflow-api.js";
-import { WorkflowEngineError } from "./workflow-api.js";
+import { WorktreeOperationError } from "./workflow-errors.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,44 +22,65 @@ export function createWorkflowWorktreeFactory(
   host: WorkflowWorktreeHost,
 ): CreateAgentWorktree {
   return async (input) => {
-    const path = join(host.worktreeRoot, "wf", input.runId, `c${input.callIndex}`);
-    await mkdir(join(host.worktreeRoot, "wf", input.runId), { recursive: true });
+    const result = await createWorkflowWorktreeResult(host, input);
+    if (result.isErr()) throw result.error;
+    return result.value;
+  };
+}
 
-    let sourceRoot: string;
-    try {
-      sourceRoot = (
-        await git(["rev-parse", "--show-toplevel"], input.workspaceRoot)
-      ).trim();
-    } catch (error) {
-      if (isGitUnavailable(error)) {
-        throw new WorkflowEngineError(
-          "worktree",
-          "isolation: 'worktree' requires Git on PATH",
+export async function createWorkflowWorktreeResult(
+  host: WorkflowWorktreeHost,
+  input: Parameters<CreateAgentWorktree>[0],
+): Promise<BetterResult<WorkflowWorktreeHandle, WorktreeOperationError>> {
+  return Result.tryPromise({
+    try: async () => {
+      const path = join(host.worktreeRoot, "wf", input.runId, `c${input.callIndex}`);
+      await mkdir(join(host.worktreeRoot, "wf", input.runId), { recursive: true });
+
+      let sourceRoot: string;
+      try {
+        sourceRoot = (
+          await git(["rev-parse", "--show-toplevel"], input.workspaceRoot)
+        ).trim();
+      } catch (error) {
+        if (isGitUnavailable(error)) {
+          throw new Error("isolation: 'worktree' requires Git on PATH", { cause: error });
+        }
+        throw new Error(
+          `isolation: 'worktree' requires a Git repository (not found at ${input.workspaceRoot})`,
+          { cause: error },
         );
       }
-      throw new WorkflowEngineError(
-        "worktree",
-        `isolation: 'worktree' requires a Git repository (not found at ${input.workspaceRoot})`,
-      );
-    }
 
-    const baseSha =
-      input.baseSha ??
-      (await git(["rev-parse", "--verify", "HEAD^{commit}"], sourceRoot)).trim();
+      const baseSha =
+        input.baseSha ??
+        (await git(["rev-parse", "--verify", "HEAD^{commit}"], sourceRoot)).trim();
 
-    try {
-      await git(["worktree", "add", "--detach", path, baseSha], sourceRoot);
-    } catch (error) {
-      await rm(path, { recursive: true, force: true }).catch(() => undefined);
-      const message = error instanceof Error ? error.message : String(error);
-      throw new WorkflowEngineError(
-        "worktree",
-        `Failed to create agent worktree: ${message}`,
-      );
-    }
+      try {
+        await git(["worktree", "add", "--detach", path, baseSha], sourceRoot);
+      } catch (error) {
+        try {
+          await rm(path, { recursive: true, force: true });
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Failed to create and clean up agent worktree",
+          );
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to create agent worktree: ${message}`, { cause: error });
+      }
 
-    return createHandle({ path, sourceRoot });
-  };
+      return createHandle({ path, sourceRoot });
+    },
+    catch: (cause) =>
+      new WorktreeOperationError({
+        operation: "create",
+        runId: input.runId,
+        callIndex: input.callIndex,
+        cause,
+      }),
+  });
 }
 
 function createHandle(input: {
@@ -68,9 +90,12 @@ function createHandle(input: {
   return {
     path: input.path,
     finalize: async (outcome) => {
-      const dirty = await isDirty(input.path);
+      const dirtyResult = await isDirtyResult(input.path);
+      if (dirtyResult.isErr()) throw dirtyResult.error;
+      const dirty = dirtyResult.value;
       if (outcome === "success" && !dirty) {
-        await removeWorktree(input.sourceRoot, input.path);
+        const removed = await removeWorktreeResult(input.sourceRoot, input.path);
+        if (removed.isErr()) throw removed.error;
         return { dirty: false, removed: true };
       }
       // Preserve dirty or failed worktrees for diagnosis.
@@ -80,29 +105,62 @@ function createHandle(input: {
 }
 
 export async function isDirty(worktreePath: string): Promise<boolean> {
-  try {
-    const status = (await git(["status", "--porcelain=v1"], worktreePath)).trim();
-    return status.length > 0;
-  } catch {
-    // If status fails, treat as dirty so we don't delete.
-    return true;
-  }
+  const result = await isDirtyResult(worktreePath);
+  return result.isOk() ? result.value : true;
+}
+
+export async function isDirtyResult(
+  worktreePath: string,
+): Promise<BetterResult<boolean, WorktreeOperationError>> {
+  return Result.tryPromise({
+    try: async () => {
+      const status = (await git(["status", "--porcelain=v1"], worktreePath)).trim();
+      return status.length > 0;
+    },
+    catch: (cause) =>
+      new WorktreeOperationError({
+        operation: "inspect",
+        path: worktreePath,
+        cause,
+      }),
+  });
 }
 
 export async function removeWorktree(
   sourceRoot: string,
   worktreePath: string,
 ): Promise<void> {
-  try {
-    await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
-  } catch {
-    await rm(worktreePath, { recursive: true, force: true });
-    try {
-      await git(["worktree", "prune"], sourceRoot);
-    } catch {
-      // ignore
-    }
-  }
+  const result = await removeWorktreeResult(sourceRoot, worktreePath);
+  if (result.isErr()) throw result.error;
+}
+
+export async function removeWorktreeResult(
+  sourceRoot: string,
+  worktreePath: string,
+): Promise<BetterResult<void, WorktreeOperationError>> {
+  return Result.tryPromise({
+    try: async () => {
+      try {
+        await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+      } catch (removeError) {
+        await rm(worktreePath, { recursive: true, force: true });
+        try {
+          await git(["worktree", "prune"], sourceRoot);
+        } catch (pruneError) {
+          throw new AggregateError(
+            [removeError, pruneError],
+            "Worktree directory was removed but Git metadata pruning failed",
+          );
+        }
+      }
+    },
+    catch: (cause) =>
+      new WorktreeOperationError({
+        operation: "remove",
+        path: worktreePath,
+        cause,
+      }),
+  });
 }
 
 export async function resolveWorkspaceHead(workspaceRoot: string): Promise<string | undefined> {
