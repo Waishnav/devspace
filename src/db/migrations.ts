@@ -27,6 +27,11 @@ const migrations: Migration[] = [
     name: "local-agent-effort-rename",
     up: migrateLocalAgentEffortRename,
   },
+  {
+    version: 5,
+    name: "workflow-journal",
+    up: migrateWorkflowJournal,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -191,6 +196,90 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
     return;
   }
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
+}
+
+function migrateWorkflowJournal(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workflow_runs (
+      id text primary key,
+      name text not null,
+      source text not null,
+      script_path text not null,
+      script_hash text not null,
+      workspace_root text not null,
+      workspace_id text,
+      args_json text not null default 'null',
+      status text not null,
+      error text,
+      error_kind text,
+      result_json text,
+      pid integer,
+      heartbeat_at text,
+      cancel_requested text not null default 'false',
+      resumed_from_run_id text,
+      base_sha text,
+      created_at text not null,
+      started_at text,
+      completed_at text,
+      updated_at text not null
+    );
+
+    create index if not exists workflow_runs_status_updated_idx
+      on workflow_runs(status, updated_at desc);
+
+    create index if not exists workflow_runs_workspace_updated_idx
+      on workflow_runs(workspace_root, updated_at desc);
+
+    create index if not exists workflow_runs_heartbeat_idx
+      on workflow_runs(status, heartbeat_at);
+
+    create index if not exists workflow_runs_resumed_from_idx
+      on workflow_runs(resumed_from_run_id);
+
+    create table if not exists workflow_events (
+      run_id text not null,
+      seq integer not null,
+      type text not null,
+      phase text,
+      label text,
+      data_json text not null default '{}',
+      created_at text not null,
+      primary key (run_id, seq),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_events_run_seq_idx
+      on workflow_events(run_id, seq);
+
+    create table if not exists workflow_agent_calls (
+      run_id text not null,
+      call_index integer not null,
+      cache_key text not null,
+      provider text not null,
+      model text,
+      effort text,
+      label text,
+      phase text,
+      status text not null,
+      from_cache text not null default 'false',
+      provider_session_id text,
+      response_text text,
+      structured_json text,
+      error text,
+      isolation text not null default 'shared',
+      worktree_path text,
+      dirty text,
+      created_at text not null,
+      started_at text,
+      completed_at text,
+      updated_at text not null,
+      primary key (run_id, call_index),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_agent_calls_cache_key_idx
+      on workflow_agent_calls(run_id, cache_key);
+  `);
 }
 
 function addColumnIfMissing(

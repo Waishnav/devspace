@@ -97,9 +97,97 @@ export const localAgentSessions = sqliteTable(
   ],
 );
 
+export const workflowRuns = sqliteTable(
+  "workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    source: text("source").notNull(),
+    scriptPath: text("script_path").notNull(),
+    scriptHash: text("script_hash").notNull(),
+    workspaceRoot: text("workspace_root").notNull(),
+    workspaceId: text("workspace_id"),
+    argsJson: text("args_json").notNull().default("null"),
+    status: text("status").notNull(),
+    error: text("error"),
+    errorKind: text("error_kind"),
+    resultJson: text("result_json"),
+    pid: integer("pid"),
+    heartbeatAt: text("heartbeat_at"),
+    cancelRequested: text("cancel_requested").notNull().default("false"),
+    resumedFromRunId: text("resumed_from_run_id"),
+    baseSha: text("base_sha"),
+    createdAt: text("created_at").notNull(),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("workflow_runs_status_updated_idx").on(table.status, table.updatedAt),
+    index("workflow_runs_workspace_updated_idx").on(table.workspaceRoot, table.updatedAt),
+    index("workflow_runs_heartbeat_idx").on(table.status, table.heartbeatAt),
+    index("workflow_runs_resumed_from_idx").on(table.resumedFromRunId),
+  ],
+);
+
+export const workflowEvents = sqliteTable(
+  "workflow_events",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    phase: text("phase"),
+    label: text("label"),
+    dataJson: text("data_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.seq] }),
+    index("workflow_events_run_seq_idx").on(table.runId, table.seq),
+  ],
+);
+
+export const workflowAgentCalls = sqliteTable(
+  "workflow_agent_calls",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    callIndex: integer("call_index").notNull(),
+    cacheKey: text("cache_key").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    effort: text("effort"),
+    label: text("label"),
+    phase: text("phase"),
+    status: text("status").notNull(),
+    fromCache: text("from_cache").notNull().default("false"),
+    providerSessionId: text("provider_session_id"),
+    responseText: text("response_text"),
+    structuredJson: text("structured_json"),
+    error: text("error"),
+    isolation: text("isolation").notNull().default("shared"),
+    worktreePath: text("worktree_path"),
+    dirty: text("dirty"),
+    createdAt: text("created_at").notNull(),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.callIndex] }),
+    index("workflow_agent_calls_cache_key_idx").on(table.runId, table.cacheKey),
+  ],
+);
+
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
 export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
 export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;
+export type WorkflowRunRow = typeof workflowRuns.$inferSelect;
+export type WorkflowEventRow = typeof workflowEvents.$inferSelect;
+export type WorkflowAgentCallRow = typeof workflowAgentCalls.$inferSelect;
