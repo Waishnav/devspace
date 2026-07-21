@@ -1,6 +1,14 @@
 import vm from "node:vm";
 import type { ParsedWorkflowScript } from "./workflow-script.js";
-import type { WorkflowBudget, WorkflowMeta } from "./workflow-types.js";
+import type { JsonValue } from "./json-types.js";
+import type {
+  WorkflowAgent,
+  WorkflowBudget,
+  WorkflowMeta,
+  WorkflowNested,
+  WorkflowParallel,
+  WorkflowPipeline,
+} from "./workflow-types.js";
 
 export class WorkflowDeterminismError extends Error {
   constructor(message: string) {
@@ -10,14 +18,14 @@ export class WorkflowDeterminismError extends Error {
 }
 
 export interface WorkflowSandboxApi {
-  agent: (...args: unknown[]) => unknown;
-  parallel: (...args: unknown[]) => unknown;
-  pipeline: (...args: unknown[]) => unknown;
-  phase: (...args: unknown[]) => unknown;
+  agent: WorkflowAgent;
+  parallel: WorkflowParallel;
+  pipeline: WorkflowPipeline;
+  phase: (title: string) => void;
   log: (...args: unknown[]) => unknown;
-  args: unknown;
+  args: JsonValue | undefined;
   budget: WorkflowBudget;
-  workflow: (...args: unknown[]) => unknown;
+  workflow: WorkflowNested;
   /** Host bookkeeping only; script binds its own `const meta`. */
   meta: WorkflowMeta;
 }

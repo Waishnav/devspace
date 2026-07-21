@@ -1,7 +1,11 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
-import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  EffortLevel,
+  OutputFormat,
+} from "@anthropic-ai/claude-agent-sdk";
+import type { JsonSchema } from "./json-types.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
@@ -116,8 +120,8 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
 
 /** Build Claude SDK outputFormat when a JSON Schema is requested. */
 export function claudeOutputFormatOptions(
-  schema: object | undefined,
-): { outputFormat: { type: "json_schema"; schema: Record<string, unknown> } } | Record<string, never> {
+  schema: JsonSchema | undefined,
+): { outputFormat: OutputFormat } | Record<string, never> {
   if (!schema) return {};
   return {
     outputFormat: {

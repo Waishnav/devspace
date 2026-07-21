@@ -4,16 +4,16 @@ import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
 
-export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
-
-export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
+export const LOCAL_AGENT_PROVIDERS = [
   "codex",
   "claude",
   "opencode",
   "pi",
   "cursor",
   "copilot",
-];
+] as const;
+
+export type LocalAgentProvider = (typeof LOCAL_AGENT_PROVIDERS)[number];
 
 export interface LocalAgentProfile {
   name: string;

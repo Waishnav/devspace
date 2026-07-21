@@ -36,12 +36,17 @@ try {
   store.setHeartbeat(run.id);
   assert.ok(store.getRun(run.id)?.heartbeatAt);
 
-  const e1 = store.appendEvent({ runId: run.id, type: "run_started", data: { ok: true } });
+  const e1 = store.appendEvent({
+    runId: run.id,
+    type: "run_started",
+    data: { name: run.name, scriptHash: run.scriptHash, concurrency: 1 },
+  });
   const e2 = store.appendEvent({
     runId: run.id,
     type: "phase_started",
     phase: "Review",
     label: "r1",
+    data: { title: "Review" },
   });
   const e3 = store.appendEvent({ runId: run.id, type: "log", data: { message: "hello" } });
   assert.equal(e1.seq, 1);
@@ -147,7 +152,7 @@ try {
     workspaceRoot: join(root, "project"),
   });
   const seqs = [0, 1, 2, 3, 4].map(() =>
-    store.appendEvent({ runId: run4.id, type: "log", data: { n: 1 } }).seq,
+    store.appendEvent({ runId: run4.id, type: "log", data: { message: "1" } }).seq,
   );
   assert.deepEqual(seqs, [1, 2, 3, 4, 5]);
 

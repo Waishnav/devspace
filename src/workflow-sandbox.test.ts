@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { parseWorkflowScript } from "./workflow-script.js";
-import { createStubBudget, type WorkflowMeta } from "./workflow-types.js";
+import {
+  createStubBudget,
+  type WorkflowMeta,
+} from "./workflow-types.js";
+import type { WorkflowSandboxApi } from "./workflow-sandbox.js";
 import { runWorkflowSandbox, WorkflowDeterminismError } from "./workflow-sandbox.js";
 
-function api(meta: WorkflowMeta, logs?: string[]) {
+function api(meta: WorkflowMeta, logs?: string[]): WorkflowSandboxApi {
   return {
     agent: async () => "",
     parallel: async () => [],
@@ -16,7 +20,7 @@ function api(meta: WorkflowMeta, logs?: string[]) {
     budget: createStubBudget(),
     workflow: async () => null,
     meta,
-  };
+  } as unknown as WorkflowSandboxApi;
 }
 
 {

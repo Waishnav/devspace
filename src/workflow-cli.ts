@@ -4,11 +4,13 @@ import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerConfig } from "./config.js";
+import { parseJsonText, type JsonObject, type JsonValue } from "./json-types.js";
 import { runLocalAgentProvider } from "./local-agent-adapters.js";
 import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availability.js";
 import {
   isLocalAgentProvider,
   LOCAL_AGENT_PROVIDERS,
+  type LocalAgentProvider,
 } from "./local-agent-profiles.js";
 import { executeWorkflow, mapEngineErrorKind } from "./workflow-engine.js";
 import {
@@ -30,6 +32,7 @@ import {
   type WorkflowRunRecord,
   type WorkflowRunSource,
 } from "./workflow-types.js";
+import { parseWorkflowEventPayload } from "./workflow-contracts.js";
 import {
   createWorkflowWorktreeFactory,
   resolveWorkspaceHead,
@@ -119,7 +122,8 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
       runSource = "resume";
       if (!Object.keys(workflowArgs).length && prior.argsJson && prior.argsJson !== "null") {
         try {
-          Object.assign(workflowArgs, JSON.parse(prior.argsJson) as object);
+          const priorArgs = parseJsonText(prior.argsJson);
+          if (isJsonObject(priorArgs)) Object.assign(workflowArgs, priorArgs);
         } catch {
           // keep empty
         }
@@ -287,9 +291,9 @@ export async function runWorkflowWorker(
       availableParallelism(),
     );
 
-    let argsValue: unknown;
+    let argsValue: JsonValue | undefined;
     try {
-      argsValue = JSON.parse(claimed.argsJson);
+      argsValue = parseJsonText(claimed.argsJson);
       if (argsValue === null) argsValue = undefined;
     } catch {
       argsValue = undefined;
@@ -436,9 +440,10 @@ function printEvent(event: WorkflowEventRecord): void {
     case "log": {
       let message = event.dataJson;
       try {
-        message = String(
-          (JSON.parse(event.dataJson) as { message?: string }).message ?? event.dataJson,
-        );
+        message = parseWorkflowEventPayload(
+          "log",
+          JSON.parse(event.dataJson) as unknown,
+        ).message;
       } catch {
         // raw
       }
@@ -479,13 +484,13 @@ function formatRunLine(
 
 function resolveEnabledProviders(
   agentProviders?: ServerConfig["agentProviders"],
-): string[] {
+): LocalAgentProvider[] {
   const snapshot = getLocalAgentProviderAvailabilitySnapshot();
   const live = new Set(snapshot.filter((row) => row.available).map((row) => row.name));
   if (!agentProviders) {
     return LOCAL_AGENT_PROVIDERS.filter((id) => live.has(id));
   }
-  return agentProviders.enabled.filter((id) => live.has(id as never));
+  return agentProviders.enabled.filter((id) => live.has(id));
 }
 
 function splitFlags(args: string[]): {
@@ -541,4 +546,8 @@ function collectArgTokens(args: string[]): string[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function isJsonObject(value: JsonValue): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

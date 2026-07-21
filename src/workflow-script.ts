@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
 import vm from "node:vm";
-import {
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProvider,
-  isLocalAgentProvider,
-} from "./local-agent-profiles.js";
 import { WORKFLOW_LIMITS, type WorkflowMeta } from "./workflow-types.js";
+import { workflowMetaSchema } from "./workflow-contracts.js";
 
 export class WorkflowScriptError extends Error {
   constructor(
@@ -28,7 +24,6 @@ export interface ParsedWorkflowScript {
 }
 
 const META_EXPORT = /export\s+const\s+meta\s*=/;
-const NAME_RE = /^[a-z0-9-]+$/;
 
 /**
  * Parse + compile a workflow script.
@@ -189,87 +184,21 @@ function evaluateMetaLiteral(literal: string, filename: string): unknown {
 }
 
 function validateMeta(value: unknown): WorkflowMeta {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new WorkflowScriptError("meta", "meta must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  const name = readRequiredString(record, "name");
-  if (!NAME_RE.test(name)) {
-    throw new WorkflowScriptError(
-      "meta",
-      `meta.name must match ${NAME_RE} (got ${JSON.stringify(name)})`,
-    );
-  }
-  const description = readRequiredString(record, "description");
+  const parsed = workflowMetaSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
 
-  let phases: WorkflowMeta["phases"];
-  if (record.phases !== undefined) {
-    if (!Array.isArray(record.phases)) {
-      throw new WorkflowScriptError("meta", "meta.phases must be an array");
-    }
-    const hostPhases: NonNullable<WorkflowMeta["phases"]> = [];
-    for (let index = 0; index < record.phases.length; index += 1) {
-      const phase = record.phases[index];
-      if (!phase || typeof phase !== "object" || Array.isArray(phase)) {
-        throw new WorkflowScriptError("meta", `meta.phases[${index}] must be an object`);
-      }
-      const p = phase as Record<string, unknown>;
-      const title = readRequiredString(p, "title", `meta.phases[${index}].title`);
-      const detail = optionalString(p.detail);
-      hostPhases.push(detail === undefined ? { title } : { title, detail });
-    }
-    phases = hostPhases;
+  const issue = parsed.error.issues[0];
+  const path = issue?.path.length ? `meta.${issue.path.join(".")}` : "meta";
+  if (issue?.code === "invalid_type" && issue.input === undefined) {
+    throw new WorkflowScriptError("meta", `${path} is required`);
   }
-
-  const whenToUse = optionalString(record.whenToUse);
-  let defaultProvider: LocalAgentProvider | undefined;
-  if (record.defaultProvider !== undefined) {
-    if (typeof record.defaultProvider !== "string" || !isLocalAgentProvider(record.defaultProvider)) {
-      throw new WorkflowScriptError(
-        "meta",
-        `meta.defaultProvider must be one of: ${LOCAL_AGENT_PROVIDERS.join(", ")}`,
-      );
-    }
-    defaultProvider = record.defaultProvider;
+  if (issue?.code === "invalid_format" && issue.format === "regex") {
+    throw new WorkflowScriptError("meta", `${path} must match /^[a-z0-9-]+$/`);
   }
-
-  let concurrency: number | undefined;
-  if (record.concurrency !== undefined) {
-    if (typeof record.concurrency !== "number" || !Number.isFinite(record.concurrency)) {
-      throw new WorkflowScriptError("meta", "meta.concurrency must be a number");
-    }
-    concurrency = Math.floor(record.concurrency);
-    if (concurrency < 1) {
-      throw new WorkflowScriptError("meta", "meta.concurrency must be >= 1");
-    }
-  }
-
-  return {
-    name,
-    description,
-    ...(phases ? { phases } : {}),
-    ...(whenToUse ? { whenToUse } : {}),
-    ...(defaultProvider ? { defaultProvider } : {}),
-    ...(concurrency !== undefined ? { concurrency } : {}),
-  };
-}
-
-function readRequiredString(
-  record: Record<string, unknown>,
-  key: string,
-  label = `meta.${key}`,
-): string {
-  const value = record[key];
-  if (typeof value !== "string" || !value.trim()) {
-    throw new WorkflowScriptError("meta", `${label} is required`);
-  }
-  return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
+  throw new WorkflowScriptError(
+    "meta",
+    `${path}: ${issue?.message ?? "validation failed"}`,
+  );
 }
 
 function parseErrorLine(message: string): number | undefined {

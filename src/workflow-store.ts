@@ -5,15 +5,23 @@ import type { ServerConfig } from "./config.js";
 import {
   WORKFLOW_LIMITS,
   type AgentIsolationMode,
+  type AppendWorkflowEventInput,
   type WorkflowAgentCallRecord,
   type WorkflowAgentCallStatus,
   type WorkflowErrorKind,
   type WorkflowEventRecord,
-  type WorkflowEventType,
   type WorkflowRunRecord,
   type WorkflowRunSource,
   type WorkflowRunStatus,
 } from "./workflow-types.js";
+import {
+  localAgentProviderSchema,
+  parseWorkflowEventPayload,
+  workflowAgentCallStatusSchema,
+  workflowEventTypeSchema,
+  workflowRunSourceSchema,
+  workflowRunStatusSchema,
+} from "./workflow-contracts.js";
 
 export interface CreateWorkflowRunInput {
   name: string;
@@ -25,14 +33,6 @@ export interface CreateWorkflowRunInput {
   argsJson?: string;
   resumedFromRunId?: string;
   baseSha?: string;
-}
-
-export interface AppendWorkflowEventInput {
-  runId: string;
-  type: WorkflowEventType;
-  phase?: string;
-  label?: string;
-  data?: unknown;
 }
 
 export interface BeginAgentCallInput {
@@ -338,7 +338,8 @@ export class WorkflowStore {
   }
 
   appendEvent(input: AppendWorkflowEventInput): WorkflowEventRecord {
-    const dataJson = truncateJson(input.data ?? {}, WORKFLOW_LIMITS.eventDataJsonBytes);
+    const payload = parseWorkflowEventPayload(input.type, input.data);
+    const dataJson = truncateJson(payload, WORKFLOW_LIMITS.eventDataJsonBytes);
     const createdAt = isoNow();
 
     const insert = this.database.sqlite.transaction(() => {
@@ -562,13 +563,13 @@ function rowToRun(row: WorkflowRunRow): WorkflowRunRecord {
   return {
     id: row.id,
     name: row.name,
-    source: row.source as WorkflowRunSource,
+    source: workflowRunSourceSchema.parse(row.source),
     scriptPath: row.script_path,
     scriptHash: row.script_hash,
     workspaceRoot: row.workspace_root,
     workspaceId: row.workspace_id ?? undefined,
     argsJson: row.args_json,
-    status: row.status as WorkflowRunStatus,
+    status: workflowRunStatusSchema.parse(row.status),
     error: row.error ?? undefined,
     errorKind: (row.error_kind as WorkflowErrorKind | null) ?? undefined,
     resultJson: row.result_json ?? undefined,
@@ -588,7 +589,7 @@ function rowToEvent(row: WorkflowEventRow): WorkflowEventRecord {
   return {
     runId: row.run_id,
     seq: row.seq,
-    type: row.type as WorkflowEventType,
+    type: workflowEventTypeSchema.parse(row.type),
     phase: row.phase ?? undefined,
     label: row.label ?? undefined,
     dataJson: row.data_json,
@@ -601,12 +602,12 @@ function rowToAgentCall(row: WorkflowAgentCallRow): WorkflowAgentCallRecord {
     runId: row.run_id,
     callIndex: row.call_index,
     cacheKey: row.cache_key,
-    provider: row.provider,
+    provider: localAgentProviderSchema.parse(row.provider),
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
     label: row.label ?? undefined,
     phase: row.phase ?? undefined,
-    status: row.status as WorkflowAgentCallStatus,
+    status: workflowAgentCallStatusSchema.parse(row.status),
     fromCache: row.from_cache === "true",
     providerSessionId: row.provider_session_id ?? undefined,
     responseText: row.response_text ?? undefined,

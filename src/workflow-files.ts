@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { hashSource } from "./workflow-script.js";
+import { jsonValueSchema, type JsonValue } from "./json-types.js";
 
 export class WorkflowPathError extends Error {
   constructor(message: string) {
@@ -120,10 +121,10 @@ export async function resolveWorkflowScriptFromPathOrName(input: {
 }
 
 export function parseWorkflowArgFlags(tokens: string[]): {
-  args: Record<string, unknown>;
+  args: Record<string, JsonValue>;
   rest: string[];
 } {
-  const args: Record<string, unknown> = {};
+  const args: Record<string, JsonValue> = {};
   const rest: string[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
@@ -150,9 +151,9 @@ export function parseWorkflowArgFlags(tokens: string[]): {
   return { args, rest };
 }
 
-function coerceArgValue(raw: string): unknown {
+function coerceArgValue(raw: string): JsonValue {
   try {
-    return JSON.parse(raw);
+    return jsonValueSchema.parse(JSON.parse(raw) as unknown);
   } catch {
     return raw;
   }
