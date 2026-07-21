@@ -45,6 +45,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 2, name: "oauth-state" },
       { version: 3, name: "local-agent-sessions" },
       { version: 4, name: "local-agent-effort-rename" },
+      { version: 5, name: "workflow-journal" },
     ]);
   } finally {
     database.close();
