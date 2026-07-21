@@ -17,6 +17,8 @@ export interface LocalAgentRunInput {
   model?: string;
   /** Provider-native effort / reasoning level (was thinking). */
   effort?: string;
+  /** JSON Schema for native structured output (codex/claude). */
+  schema?: object;
 }
 
 export interface LocalAgentRunResult {
@@ -24,6 +26,8 @@ export interface LocalAgentRunResult {
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
+  /** Provider-native structured object when schema was requested. */
+  structured?: unknown;
 }
 
 export interface LocalAgentRuntime {
@@ -31,9 +35,14 @@ export interface LocalAgentRuntime {
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
 }
 
+interface CodexTurnOptions {
+  outputSchema?: unknown;
+  signal?: AbortSignal;
+}
+
 interface CodexThreadLike {
   readonly id: string | null;
-  run(prompt: string): Promise<RunResult>;
+  run(prompt: string, turnOptions?: CodexTurnOptions): Promise<RunResult>;
 }
 
 interface CodexClientLike {
@@ -78,14 +87,24 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
     const thread = input.providerSessionId
       ? this.codex.resumeThread(input.providerSessionId, options)
       : this.codex.startThread(options);
-    const turn = await thread.run(input.prompt);
+    const turnOptions = input.schema ? { outputSchema: input.schema } : undefined;
+    const turn = await thread.run(input.prompt, turnOptions);
 
     return {
       provider: this.provider,
       providerSessionId: thread.id,
       finalResponse: turn.finalResponse,
       items: turn.items,
+      ...(input.schema ? { structured: tryParseJson(turn.finalResponse) } : {}),
     };
+  }
+}
+
+function tryParseJson(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
   }
 }
 
