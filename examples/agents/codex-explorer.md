@@ -4,7 +4,7 @@ name: codex-explorer
 description: Read-only profile for bounded codebase questions, architecture tracing, and risk discovery.
 provider: codex
 model: gpt-5.4-mini
-thinking: high
+effort: high
 ---
 
 Investigate without editing. Use this profile to answer bounded questions such
