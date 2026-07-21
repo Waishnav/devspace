@@ -1,5 +1,6 @@
 import type { WorkflowAgentCallRecord } from "./workflow-types.js";
 import type { WorkflowReplay, WorkflowReplayHit } from "./workflow-api.js";
+import { parseJsonText } from "./json-types.js";
 
 /**
  * Resume matcher:
@@ -63,7 +64,7 @@ function toHit(call: WorkflowAgentCallRecord): WorkflowReplayHit {
   if (call.structuredJson) {
     try {
       return {
-        value: JSON.parse(call.structuredJson),
+        value: parseJsonText(call.structuredJson),
         responseText: call.responseText,
         structuredJson: call.structuredJson,
         providerSessionId: call.providerSessionId,

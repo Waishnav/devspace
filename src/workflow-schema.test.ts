@@ -3,10 +3,10 @@ import {
   augmentPromptForSchema,
   enforceAgentSchema,
   formatAjvErrors,
-  NATIVE_SCHEMA_PROVIDERS,
 } from "./workflow-schema.js";
 import { WorkflowEngineError } from "./workflow-api.js";
 import { ProviderSchemaUnsupportedError } from "./local-agent-runtime.js";
+import { supportsNativeStructuredOutput } from "./local-agent-capabilities.js";
 
 {
   const prompt = augmentPromptForSchema("find bugs", {
@@ -23,9 +23,9 @@ assert.equal(
   "/n must be number",
 );
 
-assert.ok(NATIVE_SCHEMA_PROVIDERS.has("codex"));
-assert.ok(NATIVE_SCHEMA_PROVIDERS.has("claude"));
-assert.ok(!NATIVE_SCHEMA_PROVIDERS.has("opencode"));
+assert.ok(supportsNativeStructuredOutput("codex"));
+assert.ok(supportsNativeStructuredOutput("claude"));
+assert.ok(!supportsNativeStructuredOutput("opencode"));
 
 {
   let attempts = 0;

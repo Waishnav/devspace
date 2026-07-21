@@ -397,7 +397,7 @@ assert.equal(
     type: "object",
     properties: { n: { type: "number" } },
     required: ["n"],
-  };
+  } as const;
   assert.deepEqual(claudeOutputFormatOptions(schema), {
     outputFormat: { type: "json_schema", schema },
   });

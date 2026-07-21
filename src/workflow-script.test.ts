@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { parseWorkflowScript, WorkflowScriptError } from "./workflow-script.js";
 import { createStubBudget } from "./workflow-types.js";
-import { runWorkflowSandbox, WorkflowDeterminismError } from "./workflow-sandbox.js";
+import {
+  runWorkflowSandbox,
+  WorkflowDeterminismError,
+  type WorkflowSandboxApi,
+} from "./workflow-sandbox.js";
 
 {
   const parsed = parseWorkflowScript(`
@@ -91,7 +95,7 @@ async function runBody(source: string): Promise<unknown> {
       budget: createStubBudget(),
       workflow: async () => null,
       meta: parsed.meta,
-    },
+    } as WorkflowSandboxApi,
   });
 }
 

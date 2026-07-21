@@ -7,6 +7,8 @@ import type {
   ThreadOptions,
   TurnOptions,
 } from "@openai/codex-sdk";
+import type { JsonSchema } from "./json-types.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 
@@ -19,11 +21,11 @@ export interface LocalAgentRunInput {
   /** Provider-native effort / reasoning level (was thinking). */
   effort?: string;
   /** JSON Schema for native structured output (codex/claude). */
-  schema?: object;
+  schema?: JsonSchema;
 }
 
 export interface LocalAgentRunResult {
-  provider: string;
+  provider: LocalAgentProvider;
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
@@ -32,7 +34,7 @@ export interface LocalAgentRunResult {
 }
 
 export interface LocalAgentRuntime {
-  readonly provider: string;
+  readonly provider: LocalAgentProvider;
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
 }
 

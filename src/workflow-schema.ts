@@ -3,14 +3,18 @@ import { WORKFLOW_MAX_SCHEMA_RETRIES } from "./workflow-types.js";
 import { tryExtractJson, WorkflowEngineError } from "./workflow-api.js";
 import type { WorkflowProviderRunResult, WorkflowRunProvider } from "./workflow-api.js";
 import { isProviderSchemaUnsupportedError } from "./local-agent-runtime.js";
+import { supportsNativeStructuredOutput } from "./local-agent-capabilities.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import {
+  jsonValueSchema,
+  type JsonSchema,
+  type JsonValue,
+} from "./json-types.js";
 
 const require = createRequire(import.meta.url);
 
-/** Providers with a real structured-output API (hardcoded — no capability probe). */
-export const NATIVE_SCHEMA_PROVIDERS = new Set(["codex", "claude"]);
-
 type AjvLike = new (opts?: object) => {
-  compile: (schema: object) => ((data: unknown) => boolean) & {
+  compile: (schema: JsonSchema) => ((data: unknown) => boolean) & {
     errors?: Array<{ instancePath?: string; message?: string }> | null;
   };
 };
@@ -30,13 +34,13 @@ function loadAjv(): AjvLike {
 export type SchemaEnforceMode = "native" | "prompt";
 
 export interface EnforceSchemaInput {
-  schema: object;
+  schema: JsonSchema;
   prompt: string;
   /**
    * Provider id for native-vs-prompt policy. When in NATIVE_SCHEMA_PROVIDERS,
    * attempt 0 uses raw prompt + native structured path; later attempts repair via prompt.
    */
-  provider?: string;
+  provider?: LocalAgentProvider;
   run: (
     prompt: string,
     opts: {
@@ -53,7 +57,7 @@ export interface EnforceSchemaInput {
 }
 
 export interface EnforceSchemaResult {
-  value: unknown;
+  value: JsonValue;
   finalResponse: string;
   providerSessionId?: string;
   attempts: number;
@@ -71,7 +75,7 @@ export async function enforceAgentSchema(
   const ajv = new Ajv({ allErrors: true, strict: false });
   const validate = ajv.compile(input.schema);
   const maxRetries = input.maxRetries ?? WORKFLOW_MAX_SCHEMA_RETRIES;
-  const native = Boolean(input.provider && NATIVE_SCHEMA_PROVIDERS.has(input.provider));
+  const native = Boolean(input.provider && supportsNativeStructuredOutput(input.provider));
   const basePrompt = augmentPromptForSchema(input.prompt, input.schema);
 
   let lastErrors = "unknown validation error";
@@ -134,7 +138,7 @@ export async function enforceAgentSchema(
   );
 }
 
-export function augmentPromptForSchema(prompt: string, schema: object): string {
+export function augmentPromptForSchema(prompt: string, schema: JsonSchema): string {
   return [
     prompt,
     "",
@@ -158,7 +162,7 @@ export function formatAjvErrors(
 /** Helper for wiring into agent(): wrap a one-shot provider as retrying schema runner. */
 export function schemaAwareRunProvider(
   runProvider: WorkflowRunProvider,
-  schema: object,
+  schema: JsonSchema,
   base: Parameters<WorkflowRunProvider>[0],
   onRetry?: EnforceSchemaInput["onRetry"],
 ): Promise<EnforceSchemaResult> {
@@ -177,16 +181,21 @@ export function schemaAwareRunProvider(
   });
 }
 
-function structuredCandidates(result: WorkflowProviderRunResult): unknown[] {
-  const candidates: unknown[] = [];
+function structuredCandidates(result: WorkflowProviderRunResult): JsonValue[] {
+  const candidates: JsonValue[] = [];
   if (result.structured !== undefined) {
-    candidates.push(result.structured);
+    const structured = jsonValueSchema.safeParse(result.structured);
+    if (structured.success) candidates.push(structured.data);
     if (typeof result.structured === "string") {
       const parsed = tryExtractJson(result.structured);
-      if (parsed !== undefined && parsed !== result.structured) candidates.push(parsed);
+      const parsedJson = jsonValueSchema.safeParse(parsed);
+      if (parsedJson.success && parsedJson.data !== result.structured) {
+        candidates.push(parsedJson.data);
+      }
     }
   }
   const fromText = tryExtractJson(result.finalResponse);
-  if (fromText !== undefined) candidates.push(fromText);
+  const textJson = jsonValueSchema.safeParse(fromText);
+  if (textJson.success) candidates.push(textJson.data);
   return candidates;
 }

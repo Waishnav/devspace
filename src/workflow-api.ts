@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type { WorkflowSandboxApi } from "./workflow-sandbox.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { JsonSchema, JsonValue } from "./json-types.js";
+import { jsonValueSchema } from "./json-types.js";
 import {
   WORKFLOW_LIMITS,
   WORKFLOW_MAX_ITEMS,
@@ -9,15 +12,17 @@ import {
   createStubBudget,
   type AgentIsolationMode,
   type AgentOpts,
+  type AppendWorkflowEventInput,
   type WorkflowMeta,
 } from "./workflow-types.js";
+import { agentOptsSchema } from "./workflow-contracts.js";
 
 // ---------------------------------------------------------------------------
 // Host deps (injected by engine; fakes OK in tests)
 // ---------------------------------------------------------------------------
 
 export interface WorkflowProviderRunInput {
-  provider: string;
+  provider: LocalAgentProvider;
   prompt: string;
   providerSessionId?: string;
   model?: string;
@@ -27,7 +32,7 @@ export interface WorkflowProviderRunInput {
   label?: string;
   phase?: string;
   /** JSON Schema for native structured output (codex/claude). */
-  schema?: object;
+  schema?: JsonSchema;
 }
 
 export interface WorkflowProviderRunResult {
@@ -55,7 +60,7 @@ export type CreateAgentWorktree = (input: {
 }) => Promise<WorkflowWorktreeHandle>;
 
 export interface WorkflowReplayHit {
-  value: unknown;
+  value: JsonValue;
   responseText?: string;
   structuredJson?: string;
   providerSessionId?: string;
@@ -66,27 +71,14 @@ export interface WorkflowReplay {
 }
 
 export interface WorkflowJournal {
-  appendEvent(input: {
-    runId: string;
-    type:
-      | "phase_started"
-      | "log"
-      | "agent_call_started"
-      | "agent_call_completed"
-      | "agent_call_failed"
-      | "agent_call_cached"
-      | "schema_retry"
-      | "worktree_created"
-      | "worktree_finalized";
-    phase?: string;
-    label?: string;
-    data?: unknown;
-  }): unknown;
+  appendEvent<K extends AppendWorkflowEventInput["type"]>(
+    input: Extract<AppendWorkflowEventInput, { type: K }>,
+  ): unknown;
   beginAgentCall(input: {
     runId: string;
     callIndex: number;
     cacheKey: string;
-    provider: string;
+    provider: LocalAgentProvider;
     model?: string;
     effort?: string;
     label?: string;
@@ -118,13 +110,13 @@ export interface WorkflowApiDeps {
   runId: string;
   journal: WorkflowJournal;
   meta: WorkflowMeta;
-  args: unknown;
+  args: JsonValue | undefined;
   concurrency: number;
   signal: AbortSignal;
   workspaceRoot: string;
   baseSha?: string;
   /** Already-filtered enabled ∩ live provider ids, preference order. */
-  enabledProviders: string[];
+  enabledProviders: LocalAgentProvider[];
   runProvider: WorkflowRunProvider;
   createWorktree?: CreateAgentWorktree;
   replay?: WorkflowReplay;
@@ -133,7 +125,7 @@ export interface WorkflowApiDeps {
   /** Run a nested script sharing semaphore/callIndex. */
   executeNested?: (input: {
     source: string;
-    args: unknown;
+    args: JsonValue | undefined;
     nestDepth: number;
   }) => Promise<unknown>;
   nestDepth?: number;
@@ -558,11 +550,17 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
       throw new WorkflowEngineError("internal", "nested workflow() is not configured on this host");
     }
     const nameOrRef = args[0] as string | { scriptPath: string };
-    const childArgs = args[1];
+    const childArgsResult = jsonValueSchema.optional().safeParse(args[1]);
+    if (!childArgsResult.success) {
+      throw new WorkflowEngineError(
+        "internal",
+        `workflow() args must be JSON-serializable: ${childArgsResult.error.issues[0]?.message ?? "invalid value"}`,
+      );
+    }
     const source = await deps.resolveNestedSource(nameOrRef);
     return deps.executeNested({
       source,
-      args: childArgs,
+      args: childArgsResult.data,
       nestDepth: nestDepth + 1,
     });
   };
@@ -592,10 +590,10 @@ export function hashCacheKey(input: ReturnType<typeof buildAgentCacheKeyInput>):
 }
 
 export function resolveProvider(
-  optsProvider: string | undefined,
+  optsProvider: LocalAgentProvider | undefined,
   meta: WorkflowMeta,
-  enabledProviders: string[],
-): string {
+  enabledProviders: LocalAgentProvider[],
+): LocalAgentProvider {
   if (optsProvider) {
     if (!enabledProviders.includes(optsProvider)) {
       throw new WorkflowEngineError(
@@ -623,32 +621,18 @@ export function resolveProvider(
 
 function normalizeAgentOpts(opts: unknown): AgentOpts {
   if (opts === undefined || opts === null) return {};
-  if (typeof opts !== "object" || Array.isArray(opts)) {
-    throw new WorkflowEngineError("internal", "agent opts must be an object");
-  }
-  const record = opts as Record<string, unknown>;
-  const out: AgentOpts = {};
-  if (typeof record.label === "string") out.label = record.label;
-  if (typeof record.phase === "string") out.phase = record.phase;
-  if (record.schema !== undefined) {
-    if (!record.schema || typeof record.schema !== "object" || Array.isArray(record.schema)) {
-      throw new WorkflowEngineError("schema", "agent opts.schema must be an object");
-    }
-    out.schema = record.schema as object;
-  }
-  if (typeof record.model === "string") out.model = record.model;
-  if (typeof record.effort === "string") out.effort = record.effort;
-  if (typeof record.provider === "string") out.provider = record.provider;
-  if (record.isolation !== undefined) {
-    if (record.isolation !== "worktree") {
-      throw new WorkflowEngineError("worktree", 'agent opts.isolation must be "worktree" when set');
-    }
-    out.isolation = "worktree";
-  }
-  if ("writeMode" in record) {
+  if (typeof opts === "object" && opts !== null && "writeMode" in opts) {
     throw new WorkflowEngineError("internal", "writeMode is not supported on agent() (v1)");
   }
-  return out;
+  const parsed = agentOptsSchema.safeParse(opts);
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  const path = issue?.path.join(".") || "opts";
+  const kind = path === "schema" ? "schema" : path === "isolation" ? "worktree" : "internal";
+  throw new WorkflowEngineError(
+    kind,
+    `Invalid agent ${path}: ${issue?.message ?? "validation failed"}`,
+  );
 }
 
 function assertMaxItems(count: number, label: string): void {

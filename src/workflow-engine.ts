@@ -1,4 +1,6 @@
 import { availableParallelism } from "node:os";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { JsonValue } from "./json-types.js";
 import { parseWorkflowScript, type ParsedWorkflowScript } from "./workflow-script.js";
 import { runWorkflowSandbox } from "./workflow-sandbox.js";
 import {
@@ -23,21 +25,13 @@ export interface ExecuteWorkflowOptions {
   source?: string;
   filename?: string;
   runId: string;
-  journal: WorkflowJournal & {
-    appendEvent(input: {
-      runId: string;
-      type: string;
-      phase?: string;
-      label?: string;
-      data?: unknown;
-    }): unknown;
-  };
-  args?: unknown;
+  journal: WorkflowJournal;
+  args?: JsonValue;
   concurrency?: number;
   signal?: AbortSignal;
   workspaceRoot: string;
   baseSha?: string;
-  enabledProviders: string[];
+  enabledProviders: LocalAgentProvider[];
   runProvider: WorkflowRunProvider;
   createWorktree?: CreateAgentWorktree;
   replay?: WorkflowReplay;
@@ -143,7 +137,7 @@ async function executeNestedOnApi(input: {
   parentOptions: ExecuteWorkflowOptions;
   parentApi: WorkflowApi;
   source: string;
-  args: unknown;
+  args: JsonValue | undefined;
   nestDepth: number;
 }): Promise<unknown> {
   if (input.nestDepth > WORKFLOW_MAX_NEST_DEPTH_LOCAL) {

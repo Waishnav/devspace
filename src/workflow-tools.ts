@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
+import { jsonValueSchema, parseJsonText, type JsonValue } from "./json-types.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import {
   persistWorkflowScript,
@@ -62,7 +63,7 @@ export function registerWorkflowTools(
           .describe("Inline workflow script source (export const meta = …)."),
         name: z.string().optional().describe("Named workflow under .devspace/workflows/<name>.js"),
         resumeFromRunId: z.string().optional().describe("Prior run id to resume (new run + cache)."),
-        args: z.unknown().optional().describe("Args object/array passed to script as `args`."),
+        args: jsonValueSchema.optional().describe("JSON args passed to script as `args`."),
         yieldTimeMs: z
           .number()
           .int()
@@ -102,7 +103,7 @@ export function registerWorkflowTools(
           runSource = "resume";
           if (args === undefined && prior.argsJson && prior.argsJson !== "null") {
             try {
-              args = JSON.parse(prior.argsJson);
+              args = parseJsonText(prior.argsJson);
             } catch {
               // keep undefined
             }
@@ -288,9 +289,9 @@ function toolResult(page: {
   };
 }
 
-function safeJson(text: string): unknown {
+function safeJson(text: string): JsonValue {
   try {
-    return JSON.parse(text);
+    return parseJsonText(text);
   } catch {
     return text;
   }
