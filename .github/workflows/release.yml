@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    if: github.repository == 'Waishnav/devspace'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Ensure tag is on main
+        run: |
+          git fetch origin main:refs/remotes/origin/main --depth=1
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Verify tag matches package version
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          if [ "$package_version" != "$tag_version" ]; then
+            echo "Tag v${tag_version} does not match package.json version ${package_version}."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check package contents
+        run: npm pack --dry-run
+
+      - name: Publish
+        run: npm publish
