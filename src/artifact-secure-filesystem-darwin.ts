@@ -103,7 +103,7 @@ export async function openDarwinArtifactTarget({
           fsConstants.O_RDONLY | NO_FOLLOW | O_CLOEXEC,
           0,
         );
-        if (verificationFd < 0) throw partialUnsafeError();
+        if (verificationFd < 0) throw partialUnsafeError(koffi.errno());
         try {
           assertSameEntry(await fstatFd(verificationFd), writtenEntry, "artifact_partial_unsafe");
         } finally {
@@ -172,8 +172,12 @@ function createDarwinLibc() {
   };
 }
 
-function partialUnsafeError(): ArtifactError {
-  return new ArtifactError("artifact_partial_unsafe", "Native file partial changed before publication.");
+function partialUnsafeError(errno?: number): ArtifactError {
+  const suffix = errno === undefined ? "" : ` (errno ${errno})`;
+  return new ArtifactError(
+    "artifact_partial_unsafe",
+    `Native file partial changed before publication${suffix}.`,
+  );
 }
 
 function publicationFailedError(): ArtifactError {

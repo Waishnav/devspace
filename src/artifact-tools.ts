@@ -311,7 +311,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   return {
-    path: normalized,
+    path: parts.join("/"),
     parentParts: parts.slice(0, -1),
     name,
   };
