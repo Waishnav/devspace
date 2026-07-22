@@ -40,7 +40,6 @@ export async function openDarwinArtifactTarget({
     rootFd = libc.open(
       workspaceRoot,
       DIRECTORY_FLAGS | O_CLOEXEC,
-      0,
     );
     if (rootFd < 0) {
       throw new ArtifactError(
@@ -61,7 +60,6 @@ export async function openDarwinArtifactTarget({
         parentFd,
         part,
         DIRECTORY_FLAGS | O_CLOEXEC,
-        0,
       );
       if (childFd < 0) {
         throw new ArtifactError(
@@ -101,7 +99,6 @@ export async function openDarwinArtifactTarget({
           parentFd,
           partialName!,
           fsConstants.O_RDONLY | NO_FOLLOW | O_CLOEXEC,
-          0,
         );
         if (verificationFd < 0) throw partialUnsafeError(koffi.errno());
         try {
@@ -121,7 +118,6 @@ export async function openDarwinArtifactTarget({
           parentFd,
           name,
           fsConstants.O_RDONLY | NO_FOLLOW | O_CLOEXEC,
-          0,
         );
         if (publishedFd < 0) throw publicationFailedError();
         try {
@@ -161,9 +157,17 @@ function darwinLibc() {
 
 function createDarwinLibc() {
   const libc = koffi.load("/usr/lib/libSystem.B.dylib");
+  const open = libc.func("int open(const char *path, int flags, ...)");
+  const openat = libc.func("int openat(int fd, const char *path, int flags, ...)");
   return {
-    open: libc.func("int open(const char *path, int flags, uint32_t mode)"),
-    openat: libc.func("int openat(int fd, const char *path, int flags, uint32_t mode)"),
+    open(path: string, flags: number, mode?: number): number {
+      return mode === undefined ? open(path, flags) : open(path, flags, "int", mode);
+    },
+    openat(fd: number, path: string, flags: number, mode?: number): number {
+      return mode === undefined
+        ? openat(fd, path, flags)
+        : openat(fd, path, flags, "int", mode);
+    },
     mkdirat: libc.func("int mkdirat(int fd, const char *path, uint32_t mode)"),
     linkat: libc.func(
       "int linkat(int oldfd, const char *oldpath, int newfd, const char *newpath, int flags)",
