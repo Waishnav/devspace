@@ -105,9 +105,11 @@ download hosts and redirects. Arbitrary URL strings, local source paths,
 credentials, malformed references, and unknown object fields are rejected.
 
 Absolute paths, traversal, symlinked parents, and existing destinations also
-fail closed. Downloads stream under the configured per-file limit and are
-published without overwrite as owner-only files. DevSpace does not extract or
-execute transferred content.
+fail closed. Windows additionally rejects junctions and other reparse points,
+alternate data streams, device names, and ambiguous reserved path segments.
+Downloads stream under the configured per-file limit and are published without
+overwrite. POSIX files use mode `0600`; Windows files inherit the destination
+directory's ACL. DevSpace does not extract or execute transferred content.
 
 ## Logs
 

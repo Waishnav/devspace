@@ -34,10 +34,13 @@ The `file` input must be the native value supplied by the MCP host. DevSpace doe
 not accept pasted download URLs or local source paths. It validates the complete
 file-object shape, trusted OpenAI download hosts, and redirects before streaming.
 Malformed references, unknown fields, absolute paths, traversal, and symlinked
-parents are rejected.
+parents are rejected. Windows junctions, other reparse points, alternate data
+streams, device names, and ambiguous reserved path segments are also rejected.
 
 Downloads are streamed under `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` and published as
-owner-only files without overwriting an existing destination. The tool is
-currently available on Linux. It is not registered on macOS, Windows, or BSD
-because Node.js does not expose the required descriptor-relative filesystem
-operations there.
+private files without overwriting an existing destination. POSIX platforms use
+mode `0600`; Windows preserves the destination directory's ACL inheritance. The
+tool is available on Linux, macOS, and Windows. Linux and Windows clean bounded,
+stale partial downloads opportunistically; macOS never path-walks to clean an
+abruptly abandoned partial because doing so would weaken descriptor-relative
+publication guarantees.
