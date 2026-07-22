@@ -47,3 +47,55 @@ jobs:
 
       - name: Doctor
         run: node dist/cli.js doctor
+
+  unsupported-node:
+    name: Unsupported Node error
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup supported Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup unsupported Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.19.1
+
+      - name: Verify preinstall rejection
+        shell: bash
+        run: |
+          set +e
+          output="$(node scripts/check-node-version.cjs 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          grep -F "DevSpace requires Node.js >=22.19 <27." <<<"$output"
+          grep -F "Current Node.js: v18.19.1" <<<"$output"
+
+      - name: Verify CLI bootstrap error
+        shell: bash
+        run: |
+          set +e
+          output="$(node scripts/devspace.cjs --version 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          grep -F "DevSpace requires Node.js >=22.19 <27." <<<"$output"
+          grep -F "Current Node.js: v18.19.1" <<<"$output"
+          if grep -F "Invalid regular expression flags" <<<"$output"; then
+            exit 1
+          fi
