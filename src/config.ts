@@ -156,8 +156,8 @@ function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
 }
 
 function parseWidgetMode(value: string | undefined): WidgetMode {
-  if (!value || value === "full") return "full";
-  if (value === "off" || value === "changes") return value;
+  if (!value || value === "off") return "off";
+  if (value === "changes" || value === "full") return value;
 
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
 }
@@ -231,7 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
     toolMode: parseToolMode(env),
-    widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
+    widgets: parseWidgetMode(env.DEVSPACE_WIDGETS ?? files.config.widgets),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     artifactsEnabled:

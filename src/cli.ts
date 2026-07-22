@@ -161,6 +161,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
+      widgets: files.config.widgets ?? "off",
       subagents: resolveSubagentsFlag(files.config),
     };
     const auth = {
@@ -177,6 +178,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       ...seededSkillPaths.map((path) => `Default skill: ${path}`),
       `Local MCP URL: http://${config.host}:${config.port}/mcp`,
       ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
+      `UI widgets: ${config.widgets} (owner setting)`,
     ];
     prompts.note(lines.join("\n"), "DevSpace configured");
     prompts.note(
@@ -219,6 +221,7 @@ async function serve(): Promise<void> {
     console.log(`public base url: ${config.publicBaseUrl}`);
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`widgets: ${config.widgets}`);
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
     }
@@ -264,6 +267,7 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`Widgets: ${config.widgets}`);
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -281,20 +285,33 @@ function runConfigCommand(args: string[]): void {
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
-  if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
-  }
-
   const value = rest.join(" ").trim();
-  if (!value) {
-    throw new Error("Missing publicBaseUrl value.");
+  if (key === "publicBaseUrl") {
+    if (!value) throw new Error("Missing publicBaseUrl value.");
+    writeDevspaceConfig({
+      ...files.config,
+      publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
+    });
+    console.log(`Updated ${files.configPath}`);
+    return;
   }
 
-  writeDevspaceConfig({
-    ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
-  console.log(`Updated ${files.configPath}`);
+  if (key === "widgets") {
+    if (value !== "off" && value !== "changes" && value !== "full") {
+      throw new Error("widgets must be one of: off, changes, full.");
+    }
+    writeDevspaceConfig({
+      ...files.config,
+      widgets: value,
+    });
+    console.log(`Updated ${files.configPath}`);
+    console.log("Restart DevSpace and refresh/reconnect the MCP App for the UI mode change to take effect.");
+    return;
+  }
+
+  throw new Error(
+    "Supported settings: publicBaseUrl <url|null>, widgets <off|changes|full>.",
+  );
 }
 
 function printHelp(): void {
@@ -309,6 +326,7 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace config set widgets <off|changes|full>",
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider-or-id> [--model <model>] <prompt>",
       "  devspace agents show <id>",
