@@ -38,5 +38,6 @@ parents are rejected.
 
 Downloads are streamed under `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` and published as
 owner-only files without overwriting an existing destination. The tool is
-available on Linux, macOS, FreeBSD, OpenBSD, and NetBSD; it is not registered on
-Windows.
+currently available on Linux. It is not registered on macOS, Windows, or BSD
+because Node.js does not expose the required descriptor-relative filesystem
+operations there.

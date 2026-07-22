@@ -99,10 +99,10 @@ function testOneToolContract(): void {
 
 function testPlatformSupportContract(): void {
   assert.equal(isArtifactDownloadSupportedPlatform("linux"), true);
-  assert.equal(isArtifactDownloadSupportedPlatform("darwin"), true);
-  assert.equal(isArtifactDownloadSupportedPlatform("freebsd"), true);
-  assert.equal(isArtifactDownloadSupportedPlatform("openbsd"), true);
-  assert.equal(isArtifactDownloadSupportedPlatform("netbsd"), true);
+  assert.equal(isArtifactDownloadSupportedPlatform("darwin"), false);
+  assert.equal(isArtifactDownloadSupportedPlatform("freebsd"), false);
+  assert.equal(isArtifactDownloadSupportedPlatform("openbsd"), false);
+  assert.equal(isArtifactDownloadSupportedPlatform("netbsd"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("win32"), false);
 }
 

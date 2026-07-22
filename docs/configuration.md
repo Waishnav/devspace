@@ -48,9 +48,9 @@ an attached or generated file into an already-open workspace:
 DEVSPACE_ARTIFACTS=1 npx @waishnav/devspace serve
 ```
 
-This feature currently supports Linux, macOS, FreeBSD, OpenBSD, and NetBSD. It
-is not registered on Windows because the secure publication path depends on
-descriptor-anchored directory operations.
+This feature currently supports Linux. It is not registered on macOS, Windows,
+or BSD because the secure publication path depends on traversable,
+descriptor-anchored directory paths provided by Linux procfs.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

@@ -35,13 +35,7 @@ const PARTIAL_PREFIX = ".devspace-download-";
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_STALE_PARTIAL_CLEANUP = 32;
-const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>([
-  "linux",
-  "darwin",
-  "freebsd",
-  "openbsd",
-  "netbsd",
-]);
+const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux"]);
 
 const openAIFileReferenceInputSchema = z.strictObject({
   download_url: z.string(),
@@ -375,10 +369,7 @@ async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
 }
 
 function descriptorDirectoryPath(handle: FileHandle): string {
-  if (process.platform === "linux") return `/proc/self/fd/${handle.fd}`;
-  if (isArtifactDownloadSupportedPlatform()) {
-    return `/dev/fd/${handle.fd}`;
-  }
+  if (isArtifactDownloadSupportedPlatform()) return `/proc/self/fd/${handle.fd}`;
   throw new ArtifactError(
     "artifact_platform_unsupported",
     "Native file download requires descriptor-anchored directory operations on this platform.",
