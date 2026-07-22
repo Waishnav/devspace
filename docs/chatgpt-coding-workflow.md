@@ -103,6 +103,12 @@ before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
+Example skills are packaged under `examples/skills/`. The
+`examples/skills/executor-local-mcp` skill is a template for using a user's
+existing Executor setup from DevSpace shell tools. Copy it into
+`~/.devspace/skills` or another active skill directory when ChatGPT should
+discover and call local Executor MCP/API integrations.
+
 When `open_workspace` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
 
