@@ -8,7 +8,7 @@
     "node": ">=22.19 <27"
   },
   "bin": {
-    "devspace": "dist/cli.js"
+    "devspace": "scripts/devspace.cjs"
   },
   "files": [
     "dist",
@@ -26,8 +26,9 @@
     "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
     "dev": "node scripts/dev-server.mjs",
+    "preinstall": "node scripts/check-node-version.cjs",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
-    "start": "node dist/cli.js serve",
+    "start": "node scripts/devspace.cjs serve",
     "test": "tsx src/config.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/ui/tool-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

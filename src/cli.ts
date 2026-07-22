@@ -42,7 +42,9 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 
 type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
 const require = createRequire(import.meta.url);
-const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+const { SUPPORTED_NODE_RANGE } = require("../scripts/node-version.cjs") as {
+  SUPPORTED_NODE_RANGE: string;
+};
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
