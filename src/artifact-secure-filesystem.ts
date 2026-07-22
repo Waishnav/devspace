@@ -1,8 +1,5 @@
 import { link } from "node:fs/promises";
 import { ArtifactError } from "./artifact-error.js";
-import { openDarwinArtifactTarget } from "./artifact-secure-filesystem-darwin.js";
-import { openLinuxArtifactTarget } from "./artifact-secure-filesystem-linux.js";
-import { openWindowsArtifactTarget } from "./artifact-secure-filesystem-windows.js";
 
 export type ArtifactPublishLink = typeof link;
 
@@ -31,9 +28,18 @@ export function isSecureArtifactPlatformSupported(
 export async function openSecureArtifactTarget(
   options: SecureArtifactTargetOptions,
 ): Promise<SecureArtifactTarget> {
-  if (process.platform === "linux") return openLinuxArtifactTarget(options);
-  if (process.platform === "darwin") return openDarwinArtifactTarget(options);
-  if (process.platform === "win32") return openWindowsArtifactTarget(options);
+  if (process.platform === "linux") {
+    const { openLinuxArtifactTarget } = await import("./artifact-secure-filesystem-linux.js");
+    return openLinuxArtifactTarget(options);
+  }
+  if (process.platform === "darwin") {
+    const { openDarwinArtifactTarget } = await import("./artifact-secure-filesystem-darwin.js");
+    return openDarwinArtifactTarget(options);
+  }
+  if (process.platform === "win32") {
+    const { openWindowsArtifactTarget } = await import("./artifact-secure-filesystem-windows.js");
+    return openWindowsArtifactTarget(options);
+  }
   throw new ArtifactError(
     "artifact_platform_unsupported",
     "Native file download requires secure platform filesystem primitives.",
