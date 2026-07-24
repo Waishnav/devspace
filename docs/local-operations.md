@@ -13,6 +13,13 @@ tokens, or an active tunnel URL.
 - Runtime state: `~/.local/share/devspace/`
 - Default local MCP endpoint: `http://127.0.0.1:7676/mcp`
 
+## Current Local Policy
+
+The current workspace allowlist is `/Users/ljl`. DevSpace can open projects
+under this home directory. This is intentionally broader than the initial
+single-directory verification setup and should be reviewed before connecting a
+different or untrusted ChatGPT account.
+
 Check the installed version and resolved configuration:
 
 ```bash
