@@ -90,6 +90,29 @@ ps aux | rg '[d]evspace|[c]loudflared'
 No output from the first command means DevSpace is no longer listening on the
 default port.
 
+## Monitor Live Activity
+
+The current temporary service writes DevSpace activity to
+`/tmp/devspace-chatgpt-server.log` and tunnel health to
+`/tmp/devspace-chatgpt-tunnel.log`.
+
+Use the repository helper to watch just MCP sessions and tool calls:
+
+```bash
+./scripts/watch-live.sh
+```
+
+Other modes are:
+
+```bash
+./scripts/watch-live.sh server
+./scripts/watch-live.sh tunnel
+```
+
+DevSpace logs tool name, workspace, path where applicable, outcome, and
+duration. Full shell command previews remain disabled by default because
+commands can contain secrets.
+
 ## Security Boundary
 
 `allowedRoots` restricts which directories DevSpace can open as workspaces and
