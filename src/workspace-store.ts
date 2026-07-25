@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import {
   workspaceSessions,
@@ -31,6 +31,7 @@ export interface WorkspaceStore {
     managed?: boolean;
   }): WorkspaceSession;
   getSession(id: string): WorkspaceSession | undefined;
+  getSessionByRoot(root: string): WorkspaceSession | undefined;
   touchSession(id: string): void;
   close?(): void;
 }
@@ -89,6 +90,17 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
       .select()
       .from(workspaceSessions)
       .where(eq(workspaceSessions.id, id))
+      .get();
+
+    return row ? rowToWorkspaceSession(row) : undefined;
+  }
+
+  getSessionByRoot(root: string): WorkspaceSession | undefined {
+    const row = this.database.db
+      .select()
+      .from(workspaceSessions)
+      .where(eq(workspaceSessions.root, root))
+      .orderBy(desc(workspaceSessions.lastUsedAt))
       .get();
 
     return row ? rowToWorkspaceSession(row) : undefined;

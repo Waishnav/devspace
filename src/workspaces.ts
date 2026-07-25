@@ -6,7 +6,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
-import { assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
+import {
+  assertAllowedPath,
+  expandHomePath,
+  isPathInsideRoot,
+  resolveAllowedPath,
+} from "./roots.js";
 import {
   loadWorkspaceSkills,
   markSkillActivated,
@@ -174,6 +179,14 @@ export class WorkspaceRegistry {
   }
 
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
+    const restoredWorktree = this.store?.getSessionByRoot(resolve(expandHomePath(path)));
+    if (restoredWorktree?.mode === "worktree" && restoredWorktree.managed) {
+      const workspace = this.getWorkspace(restoredWorktree.id);
+      const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
+      const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
+      return { workspace, agentsFiles, availableAgentsFiles };
+    }
+
     const root = assertAllowedPath(path, this.config.allowedRoots);
     const rootStats = await ensureCheckoutWorkspaceRoot(root);
     if (!rootStats.isDirectory()) {

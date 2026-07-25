@@ -12,6 +12,7 @@ import { ensureCheckoutWorkspaceRoot, WorkspaceRegistry } from "./workspaces.js"
 const execFileAsync = promisify(execFile);
 const root = await mkdtemp(join(tmpdir(), "devspace-workspace-test-"));
 const outsideRoot = await mkdtemp(join(tmpdir(), "devspace-workspace-outside-test-"));
+const worktreeRoot = await mkdtemp(join(tmpdir(), "devspace-worktree-test-"));
 
 try {
   const agentDir = join(root, ".pi", "agent");
@@ -45,7 +46,7 @@ try {
   const config = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
     DEVSPACE_ALLOWED_ROOTS: root,
-    DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
+    DEVSPACE_WORKTREE_ROOT: worktreeRoot,
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
@@ -179,6 +180,20 @@ try {
   assert.equal(restoredWorktree.worktree?.managed, true);
   secondStore.close();
 
+  const reopenedStore = new SqliteWorkspaceStore(stateDir);
+  const reopenedRegistry = new WorkspaceRegistry(config, reopenedStore);
+  const reopenedWorktree = await reopenedRegistry.openWorkspace(persistentWorktree.workspace.root);
+  assert.equal(reopenedWorktree.workspace.id, persistentWorktree.workspace.id);
+  assert.equal(reopenedWorktree.workspace.mode, "worktree");
+  assert.equal(reopenedWorktree.workspace.sourceRoot, gitRoot);
+  assert.equal(reopenedWorktree.workspace.root, persistentWorktree.workspace.root);
+  assert.equal(reopenedWorktree.workspace.worktree?.managed, true);
+  await assert.rejects(
+    () => reopenedRegistry.openWorkspace(join(worktreeRoot, "unregistered-worktree")),
+    /Path is outside allowed roots/,
+  );
+  reopenedStore.close();
+
   if (platform() !== "win32") {
     const aliasRoot = join(root, "alias-root");
     await symlink(root, aliasRoot, "dir");
@@ -204,6 +219,7 @@ try {
 } finally {
   await rm(root, { recursive: true, force: true });
   await rm(outsideRoot, { recursive: true, force: true });
+  await rm(worktreeRoot, { recursive: true, force: true });
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
