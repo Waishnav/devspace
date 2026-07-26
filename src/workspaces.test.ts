@@ -165,6 +165,25 @@ try {
     path: gitRoot,
     mode: "worktree",
   });
+  const persistentWorktreeAgentsDir = join(
+    persistentWorktree.workspace.root,
+    ".devspace",
+    "agents",
+  );
+  await mkdir(persistentWorktreeAgentsDir, { recursive: true });
+  await writeFile(
+    join(persistentWorktreeAgentsDir, "restored.md"),
+    [
+      "---",
+      "name: restored",
+      "description: Available after persisted workspace restoration.",
+      "provider: codex",
+      "---",
+      "",
+      "Restore worktree context.",
+      "",
+    ].join("\n"),
+  );
   firstStore.close();
 
   const secondStore = new SqliteWorkspaceStore(stateDir);
@@ -182,17 +201,24 @@ try {
 
   const reopenedStore = new SqliteWorkspaceStore(stateDir);
   const reopenedRegistry = new WorkspaceRegistry(config, reopenedStore);
-  const reopenedWorktree = await reopenedRegistry.openWorkspace(persistentWorktree.workspace.root);
-  assert.equal(reopenedWorktree.workspace.id, persistentWorktree.workspace.id);
-  assert.equal(reopenedWorktree.workspace.mode, "worktree");
-  assert.equal(reopenedWorktree.workspace.sourceRoot, gitRoot);
-  assert.equal(reopenedWorktree.workspace.root, persistentWorktree.workspace.root);
-  assert.equal(reopenedWorktree.workspace.worktree?.managed, true);
-  await assert.rejects(
-    () => reopenedRegistry.openWorkspace(join(worktreeRoot, "unregistered-worktree")),
-    /Path is outside allowed roots/,
-  );
-  reopenedStore.close();
+  try {
+    const reopenedWorktree = await reopenedRegistry.openWorkspace(persistentWorktree.workspace.root);
+    assert.equal(reopenedWorktree.workspace.id, persistentWorktree.workspace.id);
+    assert.equal(reopenedWorktree.workspace.mode, "worktree");
+    assert.equal(reopenedWorktree.workspace.sourceRoot, gitRoot);
+    assert.equal(reopenedWorktree.workspace.root, persistentWorktree.workspace.root);
+    assert.equal(reopenedWorktree.workspace.worktree?.managed, true);
+    assert.deepEqual(
+      reopenedWorktree.workspace.agentProfiles.map((profile) => profile.name),
+      ["restored"],
+    );
+    await assert.rejects(
+      () => reopenedRegistry.openWorkspace(join(worktreeRoot, "unregistered-worktree")),
+      /Path is outside allowed roots/,
+    );
+  } finally {
+    reopenedStore.close();
+  }
 
   if (platform() !== "win32") {
     const aliasRoot = join(root, "alias-root");

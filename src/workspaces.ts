@@ -182,6 +182,7 @@ export class WorkspaceRegistry {
     const restoredWorktree = this.store?.getSessionByRoot(resolve(expandHomePath(path)));
     if (restoredWorktree?.mode === "worktree" && restoredWorktree.managed) {
       const workspace = this.getWorkspace(restoredWorktree.id);
+      workspace.agentProfiles = await loadLocalAgentProfiles(this.config, workspace.root);
       const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
       const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
       return { workspace, agentsFiles, availableAgentsFiles };
