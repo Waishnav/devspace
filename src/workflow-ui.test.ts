@@ -29,7 +29,7 @@ try {
     phase: "Review",
     data: { title: "Review" },
   });
-  store.beginAgentCall({
+  store.startAgentCall({
     runId: run.id,
     callIndex: 0,
     cacheKey: "key",

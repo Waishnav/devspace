@@ -110,7 +110,7 @@ export interface WorkflowJournal {
   appendEvent<K extends AppendWorkflowEventInput["type"]>(
     input: Extract<AppendWorkflowEventInput, { type: K }>,
   ): unknown;
-  beginAgentCall(input: {
+  startAgentCall(input: {
     runId: string;
     callIndex: number;
     cacheKey: string;
@@ -130,6 +130,28 @@ export interface WorkflowJournal {
     replayedFromCallIndex?: number;
     replayReason?: string;
   }): unknown;
+  cacheAgentCall(input: {
+    runId: string;
+    callIndex: number;
+    cacheKey: string;
+    prompt: string;
+    schemaJson?: string;
+    provider: LocalAgentProvider;
+    model?: string;
+    effort?: string;
+    profileName?: string;
+    profileFingerprint?: string;
+    label?: string;
+    phase?: string;
+    isolation?: AgentIsolationMode;
+    replayMatch: "same_index";
+    replayedFromRunId: string;
+    replayedFromCallIndex: number;
+    responseText?: string;
+    structuredJson?: string;
+    returnValueJson?: string;
+    providerSessionId?: string;
+  }): unknown;
   completeAgentCall(input: {
     runId: string;
     callIndex: number;
@@ -148,6 +170,7 @@ export interface WorkflowJournal {
     errorKind?: import("./workflow-types.js").WorkflowErrorKind;
     worktreePath?: string;
     dirty?: boolean;
+    cleanupError?: string;
   }): unknown;
   isCancelRequested(runId: string): boolean;
 }
@@ -288,48 +311,29 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     const replayDecision = deps.replay?.decide(index, cacheKey, cacheKeyInput);
     if (replayDecision?.hit) {
       const hit = replayDecision.hit;
-        deps.journal.beginAgentCall({
-          runId: deps.runId,
-          callIndex: index,
-          cacheKey,
-          prompt,
-          schemaJson: agentOpts.schema ? JSON.stringify(agentOpts.schema) : undefined,
-          provider,
-          model,
-          effort,
-          profileName,
-          profileFingerprint,
-          label: agentOpts.label,
-          phase,
-          isolation,
-          replayMatch: hit.replayMatch,
-          replayedFromRunId: hit.replayedFromRunId,
-          replayedFromCallIndex: hit.replayedFromCallIndex,
-        });
-        deps.journal.completeAgentCall({
-          runId: deps.runId,
-          callIndex: index,
-          responseText: hit.responseText,
-          structuredJson: hit.structuredJson,
-          returnValueJson: hit.returnValueJson,
-          providerSessionId: hit.providerSessionId,
-          fromCache: true,
-        });
-        deps.journal.appendEvent({
-          runId: deps.runId,
-          type: "agent_call_cached",
-          phase,
-          label: agentOpts.label,
-          data: {
-            callIndex: index,
-            cacheKey,
-            provider,
-            replayMatch: hit.replayMatch,
-            replayedFromRunId: hit.replayedFromRunId,
-            replayedFromCallIndex: hit.replayedFromCallIndex,
-          },
-        });
-        return hit.value;
+      deps.journal.cacheAgentCall({
+        runId: deps.runId,
+        callIndex: index,
+        cacheKey,
+        prompt,
+        schemaJson: agentOpts.schema ? JSON.stringify(agentOpts.schema) : undefined,
+        provider,
+        model,
+        effort,
+        profileName,
+        profileFingerprint,
+        label: agentOpts.label,
+        phase,
+        isolation,
+        replayMatch: hit.replayMatch,
+        replayedFromRunId: hit.replayedFromRunId,
+        replayedFromCallIndex: hit.replayedFromCallIndex,
+        responseText: hit.responseText,
+        structuredJson: hit.structuredJson,
+        returnValueJson: hit.returnValueJson,
+        providerSessionId: hit.providerSessionId,
+      });
+      return hit.value;
     }
 
     await semaphore.acquire(deps.signal);
@@ -338,6 +342,26 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     let agentCallBegun = false;
     try {
       throwIfCancelled(deps);
+
+      deps.journal.startAgentCall({
+        runId: deps.runId,
+        callIndex: index,
+        cacheKey,
+        prompt,
+        schemaJson: agentOpts.schema ? JSON.stringify(agentOpts.schema) : undefined,
+        provider,
+        model,
+        effort,
+        profileName,
+        profileFingerprint,
+        label: agentOpts.label,
+        phase,
+        isolation,
+        replayReason: replayDecision?.miss
+          ? formatReplayMiss(replayDecision.miss)
+          : undefined,
+      });
+      agentCallBegun = true;
 
       if (isolation === "worktree") {
         if (!deps.createWorktree) {
@@ -361,40 +385,6 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
           data: { callIndex: index, worktreePath, isolation },
         });
       }
-
-      deps.journal.beginAgentCall({
-        runId: deps.runId,
-        callIndex: index,
-        cacheKey,
-        prompt,
-        schemaJson: agentOpts.schema ? JSON.stringify(agentOpts.schema) : undefined,
-        provider,
-        model,
-        effort,
-        profileName,
-        profileFingerprint,
-        label: agentOpts.label,
-        phase,
-        isolation,
-        worktreePath,
-        replayReason: replayDecision?.miss
-          ? formatReplayMiss(replayDecision.miss)
-          : undefined,
-      });
-      agentCallBegun = true;
-      deps.journal.appendEvent({
-        runId: deps.runId,
-        type: "agent_call_started",
-        phase,
-        label: agentOpts.label,
-        data: {
-          callIndex: index,
-          cacheKey,
-          provider,
-          isolation,
-          worktreePath,
-        },
-      });
 
       const cwd = worktreePath ?? deps.workspaceRoot;
       const providerBase = {
@@ -484,20 +474,6 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         dirty,
         worktreePath,
       });
-      deps.journal.appendEvent({
-        runId: deps.runId,
-        type: "agent_call_completed",
-        phase,
-        label: agentOpts.label,
-        data: {
-          callIndex: index,
-          provider,
-          isolation,
-          worktreePath,
-          dirty,
-          fromCache: false,
-        },
-      });
       return returnValue;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -532,21 +508,9 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
           error: message,
           errorKind: error instanceof WorkflowEngineError ? error.kind : "internal",
           worktreePath,
+          cleanupError,
         });
       }
-      deps.journal.appendEvent({
-        runId: deps.runId,
-        type: "agent_call_failed",
-        phase,
-        label: agentOpts.label,
-        data: {
-          callIndex: index,
-          error: message,
-          cleanupError,
-          isolation,
-          worktreePath,
-        },
-      });
       throw error;
     } finally {
       semaphore.release();

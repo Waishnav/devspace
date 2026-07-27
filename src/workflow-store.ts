@@ -79,6 +79,16 @@ export interface CompleteAgentCallInput {
   fromCache?: boolean;
 }
 
+export interface CacheAgentCallInput extends BeginAgentCallInput {
+  replayMatch: "same_index";
+  replayedFromRunId: string;
+  replayedFromCallIndex: number;
+  responseText?: string;
+  structuredJson?: string;
+  returnValueJson?: string;
+  providerSessionId?: string;
+}
+
 export interface FailAgentCallInput {
   runId: string;
   callIndex: number;
@@ -86,6 +96,7 @@ export interface FailAgentCallInput {
   errorKind?: WorkflowErrorKind;
   worktreePath?: string;
   dirty?: boolean;
+  cleanupError?: string;
 }
 
 export interface CompleteRunInput {
@@ -636,8 +647,74 @@ export class WorkflowStore {
     return rows.map(rowToEvent);
   }
 
-  beginAgentCall(input: BeginAgentCallInput): WorkflowAgentCallRecord {
+  startAgentCall(input: BeginAgentCallInput): WorkflowAgentCallRecord {
     const now = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      const call = this.insertAgentCallRow(input, now);
+      this.insertEventRow(
+        {
+          runId: input.runId,
+          type: "agent_call_started",
+          phase: input.phase,
+          label: input.label,
+          data: {
+            callIndex: input.callIndex,
+            cacheKey: input.cacheKey,
+            provider: call.provider,
+            isolation: call.isolation,
+            worktreePath: call.worktreePath,
+          },
+        },
+        now,
+      );
+      return call;
+    });
+    return transaction.immediate();
+  }
+
+  cacheAgentCall(input: CacheAgentCallInput): WorkflowAgentCallRecord {
+    this.assertAgentCallResultSizes(input);
+    const now = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      this.insertAgentCallRow(input, now);
+      const call = this.updateCompletedAgentCallRow(
+        {
+          runId: input.runId,
+          callIndex: input.callIndex,
+          responseText: input.responseText,
+          structuredJson: input.structuredJson,
+          returnValueJson: input.returnValueJson,
+          providerSessionId: input.providerSessionId,
+          fromCache: true,
+        },
+        now,
+      );
+      this.insertEventRow(
+        {
+          runId: input.runId,
+          type: "agent_call_cached",
+          phase: input.phase,
+          label: input.label,
+          data: {
+            callIndex: input.callIndex,
+            cacheKey: input.cacheKey,
+            provider: call.provider,
+            replayMatch: input.replayMatch,
+            replayedFromRunId: input.replayedFromRunId,
+            replayedFromCallIndex: input.replayedFromCallIndex,
+          },
+        },
+        now,
+      );
+      return call;
+    });
+    return transaction.immediate();
+  }
+
+  private insertAgentCallRow(
+    input: BeginAgentCallInput,
+    now: string,
+  ): WorkflowAgentCallRecord {
     const isolation: AgentIsolationMode = input.isolation === "worktree" ? "worktree" : "shared";
     this.database.sqlite
       .prepare(
@@ -676,20 +753,36 @@ export class WorkflowStore {
   }
 
   completeAgentCall(input: CompleteAgentCallInput): WorkflowAgentCallRecord {
-    if (input.responseText !== undefined) {
-      assertTextSize(input.responseText, WORKFLOW_LIMITS.responseTextBytes, "responseText");
-    }
-    if (input.structuredJson !== undefined) {
-      assertTextSize(input.structuredJson, WORKFLOW_LIMITS.structuredJsonBytes, "structuredJson");
-    }
-    if (input.returnValueJson !== undefined) {
-      assertTextSize(
-        input.returnValueJson,
-        WORKFLOW_LIMITS.replayValueJsonBytes,
-        "returnValueJson",
-      );
-    }
+    this.assertAgentCallResultSizes(input);
     const now = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      const call = this.updateCompletedAgentCallRow(input, now);
+      this.insertEventRow(
+        {
+          runId: input.runId,
+          type: "agent_call_completed",
+          phase: call.phase,
+          label: call.label,
+          data: {
+            callIndex: input.callIndex,
+            provider: call.provider,
+            isolation: call.isolation,
+            worktreePath: call.worktreePath,
+            dirty: call.dirty,
+            fromCache: call.fromCache,
+          },
+        },
+        now,
+      );
+      return call;
+    });
+    return transaction.immediate();
+  }
+
+  private updateCompletedAgentCallRow(
+    input: CompleteAgentCallInput,
+    now: string,
+  ): WorkflowAgentCallRecord {
     const status: WorkflowAgentCallStatus = input.fromCache ? "from_cache" : "completed";
     this.database.sqlite
       .prepare(
@@ -725,6 +818,33 @@ export class WorkflowStore {
 
   failAgentCall(input: FailAgentCallInput): WorkflowAgentCallRecord {
     const now = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      const call = this.updateFailedAgentCallRow(input, now);
+      this.insertEventRow(
+        {
+          runId: input.runId,
+          type: "agent_call_failed",
+          phase: call.phase,
+          label: call.label,
+          data: {
+            callIndex: input.callIndex,
+            error: input.error,
+            cleanupError: input.cleanupError,
+            isolation: call.isolation,
+            worktreePath: call.worktreePath,
+          },
+        },
+        now,
+      );
+      return call;
+    });
+    return transaction.immediate();
+  }
+
+  private updateFailedAgentCallRow(
+    input: FailAgentCallInput,
+    now: string,
+  ): WorkflowAgentCallRecord {
     this.database.sqlite
       .prepare(
         `update workflow_agent_calls set
@@ -748,6 +868,26 @@ export class WorkflowStore {
         input.callIndex,
       );
     return this.requireAgentCall(input.runId, input.callIndex);
+  }
+
+  private assertAgentCallResultSizes(input: {
+    responseText?: string;
+    structuredJson?: string;
+    returnValueJson?: string;
+  }): void {
+    if (input.responseText !== undefined) {
+      assertTextSize(input.responseText, WORKFLOW_LIMITS.responseTextBytes, "responseText");
+    }
+    if (input.structuredJson !== undefined) {
+      assertTextSize(input.structuredJson, WORKFLOW_LIMITS.structuredJsonBytes, "structuredJson");
+    }
+    if (input.returnValueJson !== undefined) {
+      assertTextSize(
+        input.returnValueJson,
+        WORKFLOW_LIMITS.replayValueJsonBytes,
+        "returnValueJson",
+      );
+    }
   }
 
   getAgentCall(runId: string, callIndex: number): WorkflowAgentCallRecord | undefined {

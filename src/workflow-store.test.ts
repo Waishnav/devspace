@@ -66,7 +66,7 @@ try {
   assert.equal(page2.nextSeq, 3);
   assert.equal(page2.hasMore, false);
 
-  store.beginAgentCall({
+  store.startAgentCall({
     runId: run.id,
     callIndex: 0,
     cacheKey: "key-a",
@@ -102,8 +102,12 @@ try {
   assert.equal(call?.prompt, "review");
   assert.equal(call?.returnValueJson, JSON.stringify({ ok: true, exact: true }));
   assert.equal(call?.replayReason, "identity_changed:prompt");
+  assert.deepEqual(
+    store.listEvents(run.id).slice(-2).map((event) => event.type),
+    ["agent_call_started", "agent_call_completed"],
+  );
 
-  store.beginAgentCall({
+  store.startAgentCall({
     runId: run.id,
     callIndex: 1,
     cacheKey: "key-b",
@@ -119,6 +123,10 @@ try {
   assert.equal(store.getAgentCall(run.id, 1)?.status, "failed");
   assert.equal(store.getAgentCall(run.id, 1)?.errorKind, "provider");
   assert.equal(store.listAgentCalls(run.id).length, 2);
+  assert.deepEqual(
+    store.listEvents(run.id).slice(-2).map((event) => event.type),
+    ["agent_call_started", "agent_call_failed"],
+  );
 
   const cancelled = store.requestCancel(run.id);
   assert.equal(cancelled.cancelRequested, true);
@@ -173,7 +181,10 @@ try {
     store.listRunsForWorkspace(join(root, "other-project"))[0]?.id,
     otherProjectRun.id,
   );
-  assert.deepEqual(store.listEvents(run.id, 2).map((event) => event.seq), [3, 4]);
+  assert.deepEqual(
+    store.listEvents(run.id, 2).map((event) => event.type),
+    ["agent_call_failed", "run_cancelled"],
+  );
 
   // Reap: stale heartbeat + dead pid (force heartbeat via shared sqlite handle)
   const run3 = store.createRun({
@@ -229,6 +240,97 @@ try {
     store.appendEvent({ runId: run4.id, type: "log", data: { message: "1" } }).seq,
   );
   assert.deepEqual(seqs, [1, 2, 3, 4, 5]);
+
+  const atomicRun = store.createRun({
+    name: "atomic-agent-calls",
+    source: "inline",
+    scriptPath: join(root, "atomic.js"),
+    scriptHash: "atomic",
+    workspaceRoot: join(root, "project"),
+  });
+  store.claimRun(atomicRun.id, process.pid);
+  const atomicDb = openDatabase(root);
+  try {
+    atomicDb.sqlite.exec(`
+      create trigger reject_agent_call_started
+      before insert on workflow_events
+      when new.type = 'agent_call_started'
+      begin
+        select raise(abort, 'reject started event');
+      end;
+    `);
+    assert.throws(() =>
+      store.startAgentCall({
+        runId: atomicRun.id,
+        callIndex: 0,
+        cacheKey: "atomic-start",
+        prompt: "start",
+        provider: "codex",
+      }),
+    );
+    assert.equal(store.getAgentCall(atomicRun.id, 0), undefined);
+    atomicDb.sqlite.exec(`drop trigger reject_agent_call_started`);
+
+    store.startAgentCall({
+      runId: atomicRun.id,
+      callIndex: 0,
+      cacheKey: "atomic-start",
+      prompt: "start",
+      provider: "codex",
+    });
+    atomicDb.sqlite.exec(`
+      create trigger reject_agent_call_completed
+      before insert on workflow_events
+      when new.type = 'agent_call_completed'
+      begin
+        select raise(abort, 'reject completed event');
+      end;
+    `);
+    assert.throws(() =>
+      store.completeAgentCall({
+        runId: atomicRun.id,
+        callIndex: 0,
+        responseText: "done",
+        returnValueJson: JSON.stringify("done"),
+      }),
+    );
+    assert.equal(store.getAgentCall(atomicRun.id, 0)?.status, "running");
+    atomicDb.sqlite.exec(`drop trigger reject_agent_call_completed`);
+
+    store.completeAgentCall({
+      runId: atomicRun.id,
+      callIndex: 0,
+      responseText: "done",
+      returnValueJson: JSON.stringify("done"),
+    });
+
+    atomicDb.sqlite.exec(`
+      create trigger reject_agent_call_cached
+      before insert on workflow_events
+      when new.type = 'agent_call_cached'
+      begin
+        select raise(abort, 'reject cached event');
+      end;
+    `);
+    assert.throws(() =>
+      store.cacheAgentCall({
+        runId: atomicRun.id,
+        callIndex: 1,
+        cacheKey: "atomic-cache",
+        prompt: "cached",
+        provider: "codex",
+        replayMatch: "same_index",
+        replayedFromRunId: "wfr_prior",
+        replayedFromCallIndex: 0,
+        responseText: "cached",
+        returnValueJson: JSON.stringify("cached"),
+      }),
+    );
+    assert.equal(store.getAgentCall(atomicRun.id, 1), undefined);
+    atomicDb.sqlite.exec(`drop trigger reject_agent_call_cached`);
+  } finally {
+    atomicDb.close();
+  }
 
   assert.ok(store.listRuns().length >= 3);
 

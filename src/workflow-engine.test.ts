@@ -280,7 +280,8 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
     () => runIsolated("do", { isolation: "worktree" }),
     /expected worktree setup failure/,
   );
-  assert.equal(store.listAgentCalls(run.id).length, 0);
+  assert.equal(store.listAgentCalls(run.id).length, 1);
+  assert.equal(store.getAgentCall(run.id, 0)?.status, "failed");
   const failed = store
     .drainEvents(run.id)
     .events.find((event) => event.type === "agent_call_failed");
