@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  WORKFLOW_MAX_AGENT_CALLS,
   WORKFLOW_MAX_ITEMS,
   WORKFLOW_MAX_NEST_DEPTH,
   buildAgentCacheKeyInput,
@@ -9,6 +10,7 @@ import {
 } from "./workflow-types.js";
 
 assert.equal(WORKFLOW_MAX_ITEMS, 4096);
+assert.equal(WORKFLOW_MAX_AGENT_CALLS, 256);
 assert.equal(WORKFLOW_MAX_NEST_DEPTH, 1);
 
 assert.deepEqual(

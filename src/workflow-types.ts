@@ -48,6 +48,7 @@ export type {
 // ---------------------------------------------------------------------------
 
 export const WORKFLOW_MAX_ITEMS = 4096;
+export const WORKFLOW_MAX_AGENT_CALLS = 256;
 export const WORKFLOW_MAX_NEST_DEPTH = 1;
 export const WORKFLOW_MAX_SCHEMA_RETRIES = 2;
 export const WORKFLOW_HEARTBEAT_MS = 5_000;

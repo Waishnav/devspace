@@ -131,6 +131,7 @@ export const workflowErrorKindSchema = z.enum([
   "heartbeat",
   "worktree",
   "nest_depth",
+  "call_limit",
   "path",
   "result_too_large",
   "args_too_large",

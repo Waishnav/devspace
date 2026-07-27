@@ -13,6 +13,7 @@ import type { JsonSchema, JsonValue } from "./json-types.js";
 import { jsonValueSchema } from "./json-types.js";
 import {
   WORKFLOW_LIMITS,
+  WORKFLOW_MAX_AGENT_CALLS,
   WORKFLOW_MAX_ITEMS,
   WORKFLOW_MAX_NEST_DEPTH,
   buildAgentCacheKeyInput,
@@ -293,8 +294,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     const phase = agentOpts.phase ?? phaseAls.getStore();
     const isolation: AgentIsolationMode =
       agentOpts.isolation === "worktree" ? "worktree" : "shared";
-    const index = runtime.callIndex;
-    runtime.callIndex += 1;
+    const index = allocateAgentCallIndex(runtime);
 
     const cacheKeyInput = buildAgentCacheKeyInput({
       prompt,
@@ -742,6 +742,18 @@ function assertMaxItems(count: number, label: string): void {
       `${label} exceeds max items ${WORKFLOW_MAX_ITEMS} (got ${count})`,
     );
   }
+}
+
+function allocateAgentCallIndex(runtime: WorkflowApiRuntime): number {
+  if (runtime.callIndex >= WORKFLOW_MAX_AGENT_CALLS) {
+    throw new WorkflowEngineError(
+      "call_limit",
+      `Workflow exceeded the limit of ${WORKFLOW_MAX_AGENT_CALLS} agent calls`,
+    );
+  }
+  const index = runtime.callIndex;
+  runtime.callIndex += 1;
+  return index;
 }
 
 function throwIfCancelled(deps: WorkflowApiDeps): void {

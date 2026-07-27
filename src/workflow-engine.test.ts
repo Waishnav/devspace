@@ -6,13 +6,18 @@ import { WorkflowStore } from "./workflow-store.js";
 import { executeWorkflow } from "./workflow-engine.js";
 import {
   createWorkflowApi,
+  createWorkflowApiRuntime,
   WorkflowEngineError,
   WorkflowSemaphore,
   getCurrentWorkflowPhase,
   type WorkflowProviderRunInput,
   type CreateAgentWorktree,
 } from "./workflow-api.js";
-import { createStubBudget, WORKFLOW_LIMITS } from "./workflow-types.js";
+import {
+  createStubBudget,
+  WORKFLOW_LIMITS,
+  WORKFLOW_MAX_AGENT_CALLS,
+} from "./workflow-types.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +38,61 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
     }),
   );
   assert.equal(maxConcurrent, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Per-run agent call budget
+// ---------------------------------------------------------------------------
+{
+  const dir = await mkdtemp(join(tmpdir(), "wf-call-limit-"));
+  const store = new WorkflowStore(dir);
+  const run = store.createRun({
+    name: "call-limit",
+    source: "inline",
+    scriptPath: "inline",
+    scriptHash: "h",
+    workspaceRoot: dir,
+  });
+  const runtime = createWorkflowApiRuntime(2);
+  runtime.callIndex = WORKFLOW_MAX_AGENT_CALLS - 1;
+  let providerCalls = 0;
+  const api = createWorkflowApi({
+    runId: run.id,
+    journal: store,
+    meta: { name: "call-limit", description: "d" },
+    args: undefined,
+    concurrency: 2,
+    signal: new AbortController().signal,
+    workspaceRoot: dir,
+    availableProviders: ["codex"],
+    runtime,
+    runProvider: async (input) => {
+      providerCalls += 1;
+      return { finalResponse: `ok:${input.prompt}` };
+    },
+  });
+
+  const [lastAllowed, overflow] = await Promise.allSettled([
+    api.agent("last allowed"),
+    api.agent("overflow"),
+  ]);
+  assert.equal(lastAllowed.status, "fulfilled");
+  assert.equal(overflow.status, "rejected");
+  assert.ok(
+    overflow.status === "rejected" &&
+      overflow.reason instanceof WorkflowEngineError &&
+      overflow.reason.kind === "call_limit",
+  );
+  assert.equal(providerCalls, 1);
+  assert.equal(api.getCallCount(), WORKFLOW_MAX_AGENT_CALLS);
+  assert.equal(store.listAgentCalls(run.id).length, 1);
+  assert.equal(
+    store.getAgentCall(run.id, WORKFLOW_MAX_AGENT_CALLS - 1)?.status,
+    "completed",
+  );
+
+  store.close();
+  await rm(dir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------

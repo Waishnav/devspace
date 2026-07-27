@@ -19,6 +19,7 @@ export class WorkflowEngineError extends Error {
       | "no_provider"
       | "profile"
       | "nest_depth"
+      | "call_limit"
       | "worktree"
       | "schema"
       | "path"
