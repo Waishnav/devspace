@@ -38,7 +38,7 @@ export interface WorkflowCallDetailView {
   worktreePath?: string;
   dirty?: boolean;
   fromCache: boolean;
-  replayMatch?: "same_index" | "compatible_key";
+  replayMatch?: "same_index";
   replayedFromRunId?: string;
   replayedFromCallIndex?: number;
   replayReason?: string;

@@ -61,7 +61,7 @@ export interface BeginAgentCallInput {
   phase?: string;
   isolation?: AgentIsolationMode;
   worktreePath?: string;
-  replayMatch?: "same_index" | "compatible_key";
+  replayMatch?: "same_index";
   replayedFromRunId?: string;
   replayedFromCallIndex?: number;
   replayReason?: string;
@@ -918,8 +918,8 @@ function rowToAgentCall(row: WorkflowAgentCallRow): WorkflowAgentCallRecord {
     error: row.error ?? undefined,
     errorKind: (row.error_kind as WorkflowErrorKind | null) ?? undefined,
     replayMatch:
-      row.replay_match === "same_index" || row.replay_match === "compatible_key"
-        ? row.replay_match
+      row.replay_match === "same_index"
+        ? "same_index"
         : undefined,
     replayedFromRunId: row.replayed_from_run_id ?? undefined,
     replayedFromCallIndex: row.replayed_from_call_index ?? undefined,

@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { Result, type Result as BetterResult } from "better-result";
 import { WORKFLOW_MAX_SCHEMA_RETRIES } from "./workflow-types.js";
 import { tryExtractJson, WorkflowEngineError } from "./workflow-api.js";
-import type { WorkflowProviderRunResult, WorkflowRunProvider } from "./workflow-api.js";
+import type { WorkflowProviderRunResult } from "./workflow-api.js";
 import {
   classifyAgentProviderError,
   isProviderSchemaUnsupportedError,
@@ -231,49 +231,6 @@ function toSchemaIssues(
     path: error.instancePath || "/",
     message: error.message ?? "invalid",
   }));
-}
-
-/** Helper for wiring into agent(): wrap a one-shot provider as retrying schema runner. */
-export function schemaAwareRunProvider(
-  runProvider: WorkflowRunProvider,
-  schema: JsonSchema,
-  base: Parameters<WorkflowRunProvider>[0],
-  onRetry?: EnforceSchemaInput["onRetry"],
-): Promise<EnforceSchemaResult> {
-  return enforceAgentSchema({
-    schema,
-    prompt: base.prompt,
-    provider: base.provider,
-    onRetry,
-    run: (prompt, options) =>
-      runProvider({
-        ...base,
-        prompt,
-        providerSessionId: options.providerSessionId,
-        ...(options.mode === "native" ? { schema } : {}),
-      }),
-  });
-}
-
-export function schemaAwareRunProviderResult(
-  runProvider: WorkflowRunProvider,
-  schema: JsonSchema,
-  base: Parameters<WorkflowRunProvider>[0],
-  onRetry?: EnforceSchemaInput["onRetry"],
-): Promise<BetterResult<EnforceSchemaResult, EnforceSchemaError>> {
-  return enforceAgentSchemaResult({
-    schema,
-    prompt: base.prompt,
-    provider: base.provider,
-    onRetry,
-    run: (prompt, options) =>
-      runProvider({
-        ...base,
-        prompt,
-        providerSessionId: options.providerSessionId,
-        ...(options.mode === "native" ? { schema } : {}),
-      }),
-  });
 }
 
 function structuredCandidates(result: WorkflowProviderRunResult): JsonValue[] {

@@ -473,7 +473,7 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
 }
 
 // ---------------------------------------------------------------------------
-// oversized exact replay values do not fail the live call
+// oversized exact replay values fail the live call (completed ⇒ replayable)
 // ---------------------------------------------------------------------------
 {
   const dir = await mkdtemp(join(tmpdir(), "wf-replay-size-"));
@@ -498,14 +498,19 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
     runProvider: async () => ({ finalResponse: response }),
   });
 
-  assert.equal(await api.agent("large"), response);
-  assert.equal(store.getAgentCall(run.id, 0)?.returnValueJson, undefined);
+  await assert.rejects(
+    () => api.agent("large"),
+    (error: unknown) =>
+      error instanceof WorkflowEngineError && error.kind === "result_too_large",
+  );
+  assert.equal(store.getAgentCall(run.id, 0)?.status, "failed");
+  assert.equal(store.getAgentCall(run.id, 0)?.errorKind, "result_too_large");
   store.close();
   await rm(dir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
-// oversized structured results remain intact without persisting invalid JSON
+// oversized structured results fail the live call
 // ---------------------------------------------------------------------------
 {
   const dir = await mkdtemp(join(tmpdir(), "wf-structured-size-"));
@@ -533,17 +538,23 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
     }),
   });
 
-  assert.deepEqual(
-    await api.agent("large structured", {
-      schema: {
-        type: "object",
-        properties: { big: { type: "string" } },
-        required: ["big"],
+  const oversizedStructured = () =>
+    (api.agent as (prompt: string, opts?: object) => Promise<unknown>)(
+      "large structured",
+      {
+        schema: {
+          type: "object",
+          properties: { big: { type: "string" } },
+          required: ["big"],
+        },
       },
-    }),
-    { big },
+    );
+  await assert.rejects(
+    oversizedStructured,
+    (error: unknown) =>
+      error instanceof WorkflowEngineError && error.kind === "result_too_large",
   );
-  assert.equal(store.getAgentCall(run.id, 0)?.structuredJson, undefined);
+  assert.equal(store.getAgentCall(run.id, 0)?.status, "failed");
   store.close();
   await rm(dir, { recursive: true, force: true });
 }

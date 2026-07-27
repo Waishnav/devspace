@@ -10,6 +10,27 @@ import type {
   WorkflowRunStatus,
 } from "./workflow-types.js";
 
+/** Domain failures inside agent()/sandbox orchestration (throw, not Result). */
+export class WorkflowEngineError extends Error {
+  constructor(
+    readonly kind:
+      | "cancelled"
+      | "provider_unavailable"
+      | "no_provider"
+      | "profile"
+      | "nest_depth"
+      | "worktree"
+      | "schema"
+      | "path"
+      | "result_too_large"
+      | "internal",
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkflowEngineError";
+  }
+}
+
 export class InvalidWorkflowInputError extends TaggedError(
   "InvalidWorkflowInputError",
 )<{

@@ -151,7 +151,7 @@ export async function executeWorkflow(
 
 export function mapEngineErrorKind(error: unknown): WorkflowErrorKind {
   if (error instanceof WorkflowEngineError) {
-    return error.kind;
+    return error.kind as WorkflowErrorKind;
   }
   if (isWorkflowOperationError(error)) {
     return workflowErrorKind(error);

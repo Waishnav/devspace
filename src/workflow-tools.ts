@@ -5,12 +5,6 @@ import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
 import { jsonValueSchema, parseJsonText, type JsonValue } from "./json-types.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
-import {
-  persistWorkflowScriptResult,
-  resolveNamedWorkflowScriptResult,
-  readWorkflowScriptFileResult,
-} from "./workflow-files.js";
-import { parseWorkflowScript } from "./workflow-script.js";
 import { createWorkflowStore } from "./workflow-store.js";
 import {
   WORKFLOW_MCP_YIELD_MS,
@@ -18,26 +12,23 @@ import {
   type WorkflowEventRecord,
   type WorkflowRunRecord,
 } from "./workflow-types.js";
-import { resolveWorkspaceHead } from "./workflow-worktrees.js";
-import { spawnWorkflowWorkerFromCli } from "./workflow-cli.js";
 import { cancelWorkflowRun } from "./workflow-lifecycle.js";
-import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availability.js";
-import {
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
 import {
   InvalidWorkflowInputError,
   isWorkflowOperationError,
   serializeWorkflowError,
   WorkflowNotFoundError,
-  WorkflowStoredDataError,
 } from "./workflow-errors.js";
 import {
   loadWorkflowUiCallDetail,
   loadWorkflowUiProject,
   loadWorkflowUiRun,
 } from "./workflow-ui.js";
+import {
+  launchWorkflowRun,
+  type LaunchWorkflowSource,
+} from "./workflow-launch.js";
+import { resolveWorkflowLiveProviders } from "./workflow-providers.js";
 
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
 const WORKFLOW_UI_WAIT_MAX_MS = 30_000;
@@ -106,109 +97,30 @@ export function registerWorkflowTools(
           });
         }
 
-        let source: string;
-        let scriptHash: string;
-        let nameHint: string;
-        let priorRunId: string | undefined;
-        let priorScriptPath: string | undefined;
-        let runSource: "inline" | "named" | "resume" = "inline";
-
-        if (resumeFromRunId) {
-          const priorResult = store.getRunResult(resumeFromRunId);
-          if (priorResult.isErr()) throw priorResult.error;
-          const prior = priorResult.value;
-          if (!prior) throw new WorkflowNotFoundError(resumeFromRunId);
-          priorRunId = prior.id;
-          const overridePath = scriptPath;
-          if (script !== undefined) {
-            source = script;
-            const overrideParsed = parseWorkflowScript(source);
-            scriptHash = overrideParsed.scriptHash;
-            nameHint = overrideParsed.meta.name;
-          } else if (name) {
-            const resolvedResult = await resolveNamedWorkflowScriptResult({
-              name,
-              workspaceRoot: workspace.root,
-              stateDir: config.stateDir,
-            });
-            if (resolvedResult.isErr()) throw resolvedResult.error;
-            source = resolvedResult.value.source;
-            scriptHash = resolvedResult.value.scriptHash;
-            nameHint = resolvedResult.value.nameHint;
-          } else {
-            priorScriptPath = overridePath ?? prior.scriptPath;
-            const resolvedResult = await readWorkflowScriptFileResult(priorScriptPath);
-            if (resolvedResult.isErr()) throw resolvedResult.error;
-            source = resolvedResult.value.source;
-            scriptHash = resolvedResult.value.scriptHash;
-            nameHint = overridePath ? resolvedResult.value.nameHint : prior.name;
-          }
-          runSource = "resume";
-          if (args === undefined && prior.argsJson && prior.argsJson !== "null") {
-            try {
-              args = parseJsonText(prior.argsJson);
-            } catch (cause) {
-              throw new WorkflowStoredDataError(`${prior.id}.argsJson`, cause);
-            }
-          }
-        } else if (name) {
-          const resolvedResult = await resolveNamedWorkflowScriptResult({
-            name,
-            workspaceRoot: workspace.root,
-            stateDir: config.stateDir,
-          });
-          if (resolvedResult.isErr()) throw resolvedResult.error;
-          const resolved = resolvedResult.value;
-          source = resolved.source;
-          scriptHash = resolved.scriptHash;
-          nameHint = resolved.nameHint;
-          runSource = "named";
-        } else if (scriptPath) {
-          const resolvedResult = await readWorkflowScriptFileResult(scriptPath);
-          if (resolvedResult.isErr()) throw resolvedResult.error;
-          source = resolvedResult.value.source;
-          scriptHash = resolvedResult.value.scriptHash;
-          nameHint = resolvedResult.value.nameHint;
-        } else {
-          source = script!;
-          const parsed = parseWorkflowScript(source);
-          scriptHash = parsed.scriptHash;
-          nameHint = parsed.meta.name;
-          runSource = "inline";
-        }
-
-        const parsed = parseWorkflowScript(source);
-        const baseSha = await resolveWorkspaceHead(workspace.root);
-        const run = store.createRun({
-          name: parsed.meta.name || nameHint,
-          source: runSource,
-          scriptPath: "pending",
-          scriptHash,
+        const source = buildMcpLaunchSource({
+          script,
+          name,
+          scriptPath,
+          resumeFromRunId,
+        });
+        const launched = await launchWorkflowRun({
+          store,
+          config,
           workspaceRoot: workspace.root,
           workspaceId,
-          argsJson: JSON.stringify(args ?? null),
-          resumedFromRunId: priorRunId,
-          baseSha,
-        });
-
-        const persistedResult = await persistWorkflowScriptResult({
-          stateDir: config.stateDir,
-          runId: run.id,
           source,
-          preferredName: parsed.meta.name || nameHint,
+          args,
+          cliEntry: fileURLToPath(
+            import.meta.url.replace(/workflow-tools\.(ts|js)$/, "cli.$1"),
+          ),
         });
-        if (persistedResult.isErr()) throw persistedResult.error;
-        const persisted = persistedResult.value;
-        const updated = store.setScriptPathResult(run.id, persisted);
-        if (updated.isErr()) throw updated.error;
-
-        const cliEntry = fileURLToPath(
-          import.meta.url.replace(/workflow-tools\.(ts|js)$/, "cli.$1"),
-        );
-        spawnWorkflowWorkerFromCli(run.id, cliEntry);
+        if (launched.isErr()) {
+          if (isWorkflowOperationError(launched.error)) return workflowToolError(launched.error);
+          throw launched.error;
+        }
 
         const yieldMs = yieldTimeMs ?? 2_000;
-        const page = await yieldEvents(store, run.id, 0, yieldMs);
+        const page = await yieldEvents(store, launched.value.run.id, 0, yieldMs);
         return toolResult(page, "run_workflow");
       } catch (error) {
         if (isWorkflowOperationError(error)) return workflowToolError(error);
@@ -558,11 +470,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Resolve live providers in stable product order for workflows. */
-export function resolveWorkflowEnabledProviders(): LocalAgentProvider[] {
-  const snapshot = getLocalAgentProviderAvailabilitySnapshot();
-  const live = new Set(
-    snapshot.filter((row) => row.available).map((row) => row.name),
-  );
-  return LOCAL_AGENT_PROVIDERS.filter((id): id is LocalAgentProvider => live.has(id));
+function buildMcpLaunchSource(input: {
+  script?: string;
+  name?: string;
+  scriptPath?: string;
+  resumeFromRunId?: string;
+}): LaunchWorkflowSource {
+  if (input.resumeFromRunId) {
+    const override =
+      input.script !== undefined
+        ? ({ kind: "inline", script: input.script } as const)
+        : input.name
+          ? ({ kind: "named", name: input.name } as const)
+          : input.scriptPath
+            ? ({ kind: "file", path: input.scriptPath } as const)
+            : undefined;
+    return { kind: "resume", runId: input.resumeFromRunId, override };
+  }
+  if (input.name) return { kind: "named", name: input.name };
+  if (input.scriptPath) return { kind: "file", path: input.scriptPath };
+  if (input.script !== undefined) return { kind: "inline", script: input.script };
+  throw new InvalidWorkflowInputError({
+    code: "missing_source",
+    message: "Provide script, name, scriptPath, or resumeFromRunId",
+  });
+}
+
+/** @deprecated Prefer resolveWorkflowLiveProviders from workflow-providers.js */
+export function resolveWorkflowEnabledProviders() {
+  return resolveWorkflowLiveProviders();
 }

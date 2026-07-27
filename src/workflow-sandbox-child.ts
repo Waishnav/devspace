@@ -1,7 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import vm from "node:vm";
 import { parseWorkflowScript } from "./workflow-script.js";
 import type { JsonValue } from "./json-types.js";
 import { WORKFLOW_MAX_ITEMS } from "./workflow-types.js";
+
+/** Phase context for concurrent script chains (must live in the child process). */
+const phaseAls = new AsyncLocalStorage<string>();
 
 type SandboxMethod = "agent" | "workflow" | "phase" | "log";
 
@@ -79,7 +83,17 @@ async function execute(message: StartMessage): Promise<void> {
       });
     };
 
-    const context = vm.createContext({ __workflowBridge: bridge });
+    const context = vm.createContext({
+      __workflowBridge: bridge,
+      __workflowPhaseAls: {
+        enterWith(title: string) {
+          phaseAls.enterWith(title);
+        },
+        getStore() {
+          return phaseAls.getStore();
+        },
+      },
+    });
     installContextApi(context, message);
     const factory = parsed.script.runInContext(context, {
       timeout: 5_000,
@@ -160,6 +174,8 @@ function installContextApi(context: vm.Context, message: StartMessage): void {
       if (typeof input?.stack === "string") error.stack = input.stack;
       return error;
     };
+    const phaseAls = globalThis.__workflowPhaseAls;
+    delete globalThis.__workflowPhaseAls;
     const call = (method, callArgs) => new Promise((resolve, reject) => {
       bridge(method, callArgs).then(
         (payloadJson) => {
@@ -176,15 +192,37 @@ function installContextApi(context: vm.Context, message: StartMessage): void {
         () => reject(new WorkflowEngineError("internal", "Workflow bridge call failed")),
       );
     });
-    const agent = (...callArgs) => call("agent", callArgs);
+    // Inject current ALS phase so host journal/agent rows stay correct even though
+    // host phase() only records events (host ALS is not on the script chain).
+    const agent = (prompt, opts = {}) => {
+      const inherited = typeof phaseAls?.getStore === "function" ? phaseAls.getStore() : undefined;
+      const nextOpts =
+        opts && typeof opts === "object"
+          ? {
+              ...opts,
+              phase:
+                typeof opts.phase === "string" && opts.phase.trim()
+                  ? opts.phase
+                  : inherited,
+            }
+          : inherited
+            ? { phase: inherited }
+            : opts;
+      return call("agent", [prompt, nextOpts]);
+    };
     const workflow = (...callArgs) => call("workflow", callArgs);
     const phase = (title) => {
       if (typeof title !== "string" || !title.trim()) {
         throw new WorkflowEngineError("internal", "phase(title) requires a non-empty string");
       }
+      phaseAls.enterWith(title);
       return bridge("phase", [title]);
     };
-    const log = (...callArgs) => bridge("log", callArgs);
+    const emitLog = (...callArgs) => {
+      const message = callArgs.map(stringifyConsoleArg).join(" ");
+      const inherited = typeof phaseAls?.getStore === "function" ? phaseAls.getStore() : undefined;
+      return bridge("log", [{ message, phase: inherited }]);
+    };
     const parallel = async (tasks) => {
       if (!Array.isArray(tasks)) {
         throw new WorkflowEngineError("internal", "parallel(thunks) requires an array of functions");
@@ -244,20 +282,19 @@ function installContextApi(context: vm.Context, message: StartMessage): void {
       if (typeof value === "string") return value;
       try { return JSON.stringify(value); } catch { return String(value); }
     };
-    const consoleLine = (...callArgs) => log(callArgs.map(stringifyConsoleArg).join(" "));
     const console = Object.freeze({
-      log: consoleLine,
-      warn: consoleLine,
-      error: consoleLine,
-      info: consoleLine,
-      debug: consoleLine,
+      log: emitLog,
+      warn: emitLog,
+      error: emitLog,
+      info: emitLog,
+      debug: emitLog,
     });
 
     Object.defineProperties(globalThis, {
       agent: { value: Object.freeze(agent), writable: false, configurable: false },
       workflow: { value: Object.freeze(workflow), writable: false, configurable: false },
       phase: { value: Object.freeze(phase), writable: false, configurable: false },
-      log: { value: Object.freeze(log), writable: false, configurable: false },
+      log: { value: Object.freeze(emitLog), writable: false, configurable: false },
       parallel: { value: Object.freeze(parallel), writable: false, configurable: false },
       pipeline: { value: Object.freeze(pipeline), writable: false, configurable: false },
       args: { value: Object.freeze(args), writable: false, configurable: false },

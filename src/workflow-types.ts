@@ -134,7 +134,7 @@ export interface WorkflowAgentCallRecord {
   returnValueJson?: string;
   error?: string;
   errorKind?: WorkflowErrorKind;
-  replayMatch?: "same_index" | "compatible_key";
+  replayMatch?: "same_index";
   replayedFromRunId?: string;
   replayedFromCallIndex?: number;
   replayReason?: string;

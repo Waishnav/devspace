@@ -8,13 +8,26 @@ import {
 import type { WorkflowSandboxApi } from "./workflow-sandbox.js";
 import { runWorkflowSandbox, WorkflowDeterminismError } from "./workflow-sandbox.js";
 
-function api(meta: WorkflowMeta, logs?: string[]): WorkflowSandboxApi {
+function api(
+  meta: WorkflowMeta,
+  logs?: string[],
+  hooks?: {
+    agent?: WorkflowSandboxApi["agent"];
+    phaseTitles?: string[];
+  },
+): WorkflowSandboxApi {
   return {
-    agent: async () => "",
+    agent: hooks?.agent ?? (async () => ""),
     parallel: async () => [],
     pipeline: async () => [],
-    phase: () => {},
+    phase: (title: string) => {
+      hooks?.phaseTitles?.push(title);
+    },
     log: (msg: unknown) => {
+      if (msg && typeof msg === "object" && !Array.isArray(msg) && "message" in msg) {
+        logs?.push(String((msg as { message: unknown }).message));
+        return;
+      }
       logs?.push(String(msg));
     },
     args: undefined as unknown,
@@ -224,6 +237,49 @@ return agent.constructor('return process.version')()
       }),
     /process is not defined/,
   );
+}
+
+// Child-owned phase ALS: concurrent chains inject distinct opts.phase over IPC.
+{
+  const seen: Array<{ prompt: string; phase?: string }> = [];
+  const phaseTitles: string[] = [];
+  const hostApi = api(
+    { name: "phase-ipc", description: "d" },
+    undefined,
+    {
+      phaseTitles,
+      agent: async (prompt: string, opts?: { phase?: string }) => {
+        seen.push({ prompt, phase: opts?.phase });
+        await new Promise((r) => setTimeout(r, 20));
+        return `ok:${prompt}`;
+      },
+    },
+  );
+  // Host parallel is unused; child implements parallel. Agent is bridged.
+  const result = await runWorkflowSandbox({
+    parsed: parseWorkflowScript(`
+export const meta = { name: 'phase-ipc', description: 'd' }
+return await parallel([
+  async () => {
+    phase('A')
+    log('in-a')
+    return await agent('from-a')
+  },
+  async () => {
+    phase('B')
+    log('in-b')
+    return await agent('from-b')
+  },
+])
+`),
+    api: hostApi,
+  });
+  assert.deepEqual(result, ["ok:from-a", "ok:from-b"]);
+  assert.deepEqual(new Set(phaseTitles), new Set(["A", "B"]));
+  const a = seen.find((row) => row.prompt === "from-a");
+  const b = seen.find((row) => row.prompt === "from-b");
+  assert.equal(a?.phase, "A");
+  assert.equal(b?.phase, "B");
 }
 
 console.log("workflow-sandbox.test.ts: ok");

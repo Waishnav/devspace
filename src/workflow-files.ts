@@ -1,6 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import { hashSource } from "./workflow-script.js";
 import { jsonValueSchema, type JsonValue } from "./json-types.js";
@@ -12,13 +12,6 @@ import {
   WorkflowFileWriteError,
 } from "./workflow-errors.js";
 import { isPathInsideRoot } from "./roots.js";
-
-export class WorkflowPathError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WorkflowPathError";
-  }
-}
 
 export interface ResolvedWorkflowScript {
   source: string;
@@ -38,17 +31,6 @@ export type WorkflowFileResolveError =
  * Persist script under stateDir for worker re-read / audit.
  * Returns absolute path written.
  */
-export async function persistWorkflowScript(input: {
-  stateDir: string;
-  runId: string;
-  source: string;
-  preferredName?: string;
-}): Promise<string> {
-  const result = await persistWorkflowScriptResult(input);
-  if (result.isErr()) throw result.error;
-  return result.value;
-}
-
 export async function persistWorkflowScriptResult(input: {
   stateDir: string;
   runId: string;
@@ -68,12 +50,6 @@ export async function persistWorkflowScriptResult(input: {
     },
     catch: (cause) => new WorkflowFileWriteError(path, cause),
   });
-}
-
-export async function readWorkflowScriptFile(path: string): Promise<ResolvedWorkflowScript> {
-  const result = await readWorkflowScriptFileResult(path);
-  if (result.isErr()) throwPathCompatibilityError(result.error);
-  return result.value;
 }
 
 export async function readWorkflowScriptFileResult(
@@ -96,15 +72,6 @@ export async function readWorkflowScriptFileResult(
         ? new WorkflowFileNotFoundError(scriptPath)
         : new WorkflowFileReadError(scriptPath, cause),
   });
-}
-
-export async function readProjectWorkflowScriptFile(input: {
-  scriptPath: string;
-  workspaceRoot: string;
-}): Promise<ResolvedWorkflowScript> {
-  const result = await readProjectWorkflowScriptFileResult(input);
-  if (result.isErr()) throwPathCompatibilityError(result.error);
-  return result.value;
 }
 
 /** Resolve an explicit nested script only inside `<project>/.devspace/workflows`. */
@@ -158,16 +125,6 @@ export async function readProjectWorkflowScriptFileResult(input: {
  * 1. `<cwd>/.devspace/workflows/<name>.js`
  * 2. `<stateDir>/workflows/<name>.js` (if stateDir provided)
  */
-export async function resolveNamedWorkflowScript(input: {
-  name: string;
-  workspaceRoot: string;
-  stateDir?: string;
-}): Promise<ResolvedWorkflowScript> {
-  const result = await resolveNamedWorkflowScriptResult(input);
-  if (result.isErr()) throwPathCompatibilityError(result.error);
-  return result.value;
-}
-
 export async function resolveNamedWorkflowScriptResult(input: {
   name: string;
   workspaceRoot: string;
@@ -197,17 +154,6 @@ export async function resolveNamedWorkflowScriptResult(input: {
     return result;
   }
   return Result.err(new NamedWorkflowNotFoundError(name, candidates));
-}
-
-export async function resolveWorkflowScriptFromPathOrName(input: {
-  file?: string;
-  name?: string;
-  workspaceRoot: string;
-  stateDir?: string;
-}): Promise<ResolvedWorkflowScript> {
-  const result = await resolveWorkflowScriptFromPathOrNameResult(input);
-  if (result.isErr()) throwPathCompatibilityError(result.error);
-  return result.value;
 }
 
 export async function resolveWorkflowScriptFromPathOrNameResult(input: {
@@ -243,15 +189,6 @@ export async function resolveWorkflowScriptFromPathOrNameResult(input: {
       message: "Provide --file <path> or --name <name>",
     }),
   );
-}
-
-export function parseWorkflowArgFlags(tokens: string[]): {
-  args: Record<string, JsonValue>;
-  rest: string[];
-} {
-  const result = parseWorkflowArgFlagsResult(tokens);
-  if (result.isErr()) throwPathCompatibilityError(result.error);
-  return result.value;
 }
 
 export function parseWorkflowArgFlagsResult(
@@ -314,18 +251,6 @@ function sanitizeSegment(value: string): string {
     .slice(0, 80);
 }
 
-export function workflowScriptDirForRun(stateDir: string, runId: string): string {
-  return join(stateDir, "workflow-scripts", runId);
-}
-
-export function contentHash(source: string): string {
-  return createHash("sha256").update(source).digest("hex");
-}
-
-export function dirnameOf(path: string): string {
-  return dirname(path);
-}
-
 function isFileNotFound(error: unknown): boolean {
   return Boolean(
     error &&
@@ -333,10 +258,4 @@ function isFileNotFound(error: unknown): boolean {
       "code" in error &&
       (error as { code?: unknown }).code === "ENOENT",
   );
-}
-
-function throwPathCompatibilityError(error: Error): never {
-  const compatible = new WorkflowPathError(error.message);
-  compatible.cause = error;
-  throw compatible;
 }

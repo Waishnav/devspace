@@ -55,7 +55,7 @@ ChatGPT      ── MCP tools  ──► engine ── agent() ──► adapter
 | `budget` | Shared host token hard ceiling | **Stub** `{ total: null, spent:0, remaining: Infinity }` |
 | `workflow()` | Nested name/scriptPath; depth 1; shared caps | Same spirit |
 | Determinism bans | Date.now / Math.random / bare new Date | Same |
-| Resume | Prefix cache by prompt+opts | Index+key + consume-once cacheKey fallback |
+| Resume | Prefix cache by prompt+opts | Deterministic call-index prefix only (first miss closes replay) |
 | File diffs per stage | **Not a primitive** | Same — no auto-diff |
 
 ---
@@ -614,11 +614,12 @@ Adapters: no individual abort API — accepted; group-kill is backstop.
 |---|---|
 | New run | `--resume` / `resumeFromRunId` creates new run with `resumedFromRunId`. |
 | Cache key | `sha256(canonicalJson({ prompt, provider, model, effort, schema, isolation }))` |
-| Match | (1) same callIndex + key (2) on first miss, consume-once by key (fan-out order). |
+| Match | Same callIndex + cache key while the prefix remains open. |
+| Close | First failed, interrupted, changed, missing, corrupt, worktree, or unpersisted result executes live and closes replay for later calls. |
 | Record | Cache hits written as new rows `from_cache=1` so chains chain. |
 | Determinism | Bans make prompt construction stable if args fixed. |
 
-Document CC divergence (consume-once) in skill.
+Document prefix-only resume (no consume-once key fallback) in skill.
 
 ---
 
@@ -748,7 +749,7 @@ return pipeline(
 | log / args / budget | `workflow-api.ts` | freeze, stub budget |
 | workflow nest | `workflow-api.ts` + engine | depth 1, shared journal |
 | store | `workflow-store.ts` | seq, reap, cancel |
-| replay | `workflow-replay.ts` | index+key, consume-once |
+| replay | `workflow-replay.ts` | deterministic call-index prefix |
 | CLI | `cli.ts` | run/status/cancel/ls/__worker |
 | MCP | `workflow-tools.ts` | yield, survive disconnect |
 | skill | `skills/dynamic-workflows` | education |

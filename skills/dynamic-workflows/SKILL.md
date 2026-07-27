@@ -117,6 +117,10 @@ calls assume their existing filesystem effects are still present. Worktree calls
 are never reused unless their exact worktree can be restored, so they currently
 end the reusable prefix and run live.
 
+Return values must fit the replay budget (~1 MiB JSON). Oversized returns fail
+the `agent()` call with `result_too_large` — prefer summaries or paths to large
+artifacts on disk.
+
 ### Cancel
 
 `workflow cancel` sets a cooperative flag; worker aborts then hard-kills if needed.

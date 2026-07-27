@@ -24,6 +24,9 @@ import {
   type WorkflowMeta,
 } from "./workflow-types.js";
 import { agentOptsSchema } from "./workflow-contracts.js";
+import { WorkflowEngineError } from "./workflow-errors.js";
+
+export { WorkflowEngineError } from "./workflow-errors.js";
 
 // ---------------------------------------------------------------------------
 // Host deps (injected by engine; fakes OK in tests)
@@ -73,7 +76,7 @@ export interface WorkflowReplayHit {
   structuredJson?: string;
   returnValueJson: string;
   providerSessionId?: string;
-  replayMatch: "same_index" | "compatible_key";
+  replayMatch: "same_index";
   replayedFromRunId: string;
   replayedFromCallIndex: number;
 }
@@ -122,7 +125,7 @@ export interface WorkflowJournal {
     phase?: string;
     isolation?: AgentIsolationMode;
     worktreePath?: string;
-    replayMatch?: "same_index" | "compatible_key";
+    replayMatch?: "same_index";
     replayedFromRunId?: string;
     replayedFromCallIndex?: number;
     replayReason?: string;
@@ -180,25 +183,6 @@ export interface WorkflowApiDeps {
 export interface WorkflowApi extends WorkflowSandboxApi {
   getCallCount(): number;
   getNestDepth(): number;
-}
-
-export class WorkflowEngineError extends Error {
-  constructor(
-    readonly kind:
-      | "cancelled"
-      | "provider_unavailable"
-      | "no_provider"
-      | "profile"
-      | "nest_depth"
-      | "worktree"
-      | "schema"
-      | "path"
-      | "internal",
-    message: string,
-  ) {
-    super(message);
-    this.name = "WorkflowEngineError";
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +450,11 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
 
       throwIfCancelled(deps);
 
+      const returnValueJson = serializeReplayValueOrThrow(returnValue);
+      if (structuredJson !== undefined) {
+        assertStructuredJsonBudget(structuredJson);
+      }
+
       let dirty: boolean | undefined;
       if (worktree) {
         const finalized = await worktree.finalize("success");
@@ -489,8 +478,8 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         runId: deps.runId,
         callIndex: index,
         responseText: truncate(result.finalResponse, WORKFLOW_LIMITS.responseTextBytes),
-        structuredJson: boundedStructuredJson(structuredJson),
-        returnValueJson: serializeReplayValue(returnValue),
+        structuredJson,
+        returnValueJson,
         providerSessionId: result.providerSessionId,
         dirty,
         worktreePath,
@@ -623,6 +612,8 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     if (typeof title !== "string" || !title.trim()) {
       throw new WorkflowEngineError("internal", "phase(title) requires a non-empty string");
     }
+    // In-process tests still use host ALS. Sandbox scripts track phase in the
+    // child and inject opts.phase / log payloads across IPC.
     phaseAls.enterWith(title);
     deps.journal.appendEvent({
       runId: deps.runId,
@@ -633,11 +624,27 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
   };
 
   const log = (...args: unknown[]): void => {
-    const message = args.map(String).join(" ");
+    let message: string;
+    let phaseTitle = phaseAls.getStore();
+    if (
+      args.length === 1 &&
+      args[0] &&
+      typeof args[0] === "object" &&
+      !Array.isArray(args[0]) &&
+      "message" in (args[0] as object)
+    ) {
+      const payload = args[0] as { message?: unknown; phase?: unknown };
+      message = String(payload.message ?? "");
+      if (typeof payload.phase === "string" && payload.phase.trim()) {
+        phaseTitle = payload.phase;
+      }
+    } else {
+      message = args.map(String).join(" ");
+    }
     deps.journal.appendEvent({
       runId: deps.runId,
       type: "log",
-      phase: phaseAls.getStore(),
+      phase: phaseTitle,
       data: { message: truncate(message, WORKFLOW_LIMITS.eventDataJsonBytes) },
     });
   };
@@ -792,23 +799,30 @@ function truncate(text: string, maxBytes: number): string {
   return `${text.slice(0, end)}${marker}`;
 }
 
-function boundedStructuredJson(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  return Buffer.byteLength(value, "utf8") <= WORKFLOW_LIMITS.structuredJsonBytes
-    ? value
-    : undefined;
+function assertStructuredJsonBudget(value: string): void {
+  if (Buffer.byteLength(value, "utf8") <= WORKFLOW_LIMITS.structuredJsonBytes) return;
+  throw new WorkflowEngineError(
+    "result_too_large",
+    `agent() structured result exceeds ${WORKFLOW_LIMITS.structuredJsonBytes} bytes; return a smaller object or write large artifacts to disk and return paths`,
+  );
 }
 
-function serializeReplayValue(value: unknown): string | undefined {
+function serializeReplayValueOrThrow(value: unknown): string | undefined {
+  let json: string | undefined;
   try {
-    const json = JSON.stringify(value);
-    if (json === undefined) return undefined;
-    return Buffer.byteLength(json, "utf8") <= WORKFLOW_LIMITS.replayValueJsonBytes
-      ? json
-      : undefined;
+    json = JSON.stringify(value);
   } catch {
-    return undefined;
+    throw new WorkflowEngineError(
+      "result_too_large",
+      "agent() return value is not JSON-serializable and cannot be replayed",
+    );
   }
+  if (json === undefined) return undefined;
+  if (Buffer.byteLength(json, "utf8") <= WORKFLOW_LIMITS.replayValueJsonBytes) return json;
+  throw new WorkflowEngineError(
+    "result_too_large",
+    `agent() return value exceeds ${WORKFLOW_LIMITS.replayValueJsonBytes} bytes replay budget; return a smaller summary or write large artifacts to disk and return paths`,
+  );
 }
 
 /** Minimal JSON extract for schema path until Ajv module lands. */

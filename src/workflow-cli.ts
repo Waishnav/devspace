@@ -1,53 +1,34 @@
-import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerConfig } from "./config.js";
-import { parseJsonText, type JsonObject, type JsonValue } from "./json-types.js";
-import { runLocalAgentProviderResult } from "./local-agent-adapters.js";
-import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availability.js";
-import {
-  isLocalAgentProvider,
-  loadLocalAgentProfiles,
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
-import { executeWorkflow, mapEngineErrorKind } from "./workflow-engine.js";
-import {
-  parseWorkflowArgFlagsResult,
-  persistWorkflowScriptResult,
-  readProjectWorkflowScriptFile,
-  readWorkflowScriptFileResult,
-  resolveNamedWorkflowScript,
-  resolveWorkflowScriptFromPathOrNameResult,
-} from "./workflow-files.js";
-import { createWorkflowReplay } from "./workflow-replay.js";
+import { parseWorkflowArgFlagsResult } from "./workflow-files.js";
 import {
   cancelWorkflowRun,
   reapStaleWorkflows,
 } from "./workflow-lifecycle.js";
-import { parseWorkflowScript } from "./workflow-script.js";
 import { createWorkflowStore, type WorkflowStore } from "./workflow-store.js";
 import {
-  WORKFLOW_HEARTBEAT_MS,
   WORKFLOW_LIMITS,
-  resolveWorkflowConcurrency,
   type WorkflowEventRecord,
   type WorkflowAgentCallRecord,
   type WorkflowRunRecord,
-  type WorkflowRunSource,
 } from "./workflow-types.js";
 import { parseWorkflowEventPayload } from "./workflow-contracts.js";
 import {
   InvalidWorkflowInputError,
   WorkflowNotFoundError,
-  WorkflowStoredDataError,
 } from "./workflow-errors.js";
 import {
-  createWorkflowWorktreeFactory,
-  resolveWorkspaceHead,
-} from "./workflow-worktrees.js";
+  launchWorkflowRun,
+  type LaunchWorkflowSource,
+} from "./workflow-launch.js";
+import {
+  runWorkflowWorker,
+  spawnWorkflowWorker,
+  spawnWorkflowWorkerFromCli,
+} from "./workflow-worker.js";
+
+export { runWorkflowWorker, spawnWorkflowWorker, spawnWorkflowWorkerFromCli };
 
 export async function runWorkflowCommand(
   args: string[],
@@ -55,9 +36,11 @@ export async function runWorkflowCommand(
 ): Promise<void> {
   const [subcommand, ...rest] = args;
   if (!config.workflows) {
-    throw new Error(
-      "Dynamic workflows are disabled. Set DEVSPACE_WORKFLOWS=1 to enable the experimental feature.",
-    );
+    throw new InvalidWorkflowInputError({
+      code: "invalid_argument",
+      message:
+        "Dynamic workflows are disabled. Set DEVSPACE_WORKFLOWS=1 to enable the experimental feature.",
+    });
   }
   switch (subcommand) {
     case "run":
@@ -94,7 +77,10 @@ export async function runWorkflowCommand(
       printWorkflowHelp();
       return;
     default:
-      throw new Error(`Unknown workflow command: ${subcommand}`);
+      throw new InvalidWorkflowInputError({
+        code: "invalid_argument",
+        message: `Unknown workflow command: ${subcommand}`,
+      });
   }
 }
 
@@ -140,107 +126,71 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
     });
   }
 
+  const source = buildCliLaunchSource({ file, name, resumeFrom });
   const store = createWorkflowStore(config);
   try {
     const workspaceRoot = resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
-    let source: string;
-    let scriptHash: string;
-    let nameHint: string;
-    let runSource: WorkflowRunSource = "inline";
-    let priorRunId: string | undefined;
-    let priorScriptPath: string | undefined;
+    let argsValue = Object.keys(workflowArgs).length ? workflowArgs : undefined;
 
-    if (resumeFrom) {
-      const priorResult = store.getRunResult(resumeFrom);
-      if (priorResult.isErr()) throw priorResult.error;
-      const prior = priorResult.value;
-      if (!prior) throw new WorkflowNotFoundError(resumeFrom);
-      priorRunId = prior.id;
-      const overrideResult = file || name
-        ? await resolveWorkflowScriptFromPathOrNameResult({
-            file,
-            name,
-            workspaceRoot,
-            stateDir: config.stateDir,
-          })
-        : await readWorkflowScriptFileResult(prior.scriptPath);
-      if (overrideResult.isErr()) throw overrideResult.error;
-      const resolved = overrideResult.value;
-      source = resolved.source;
-      scriptHash = resolved.scriptHash;
-      nameHint = file || name ? resolved.nameHint : prior.name;
-      priorScriptPath = resolved.scriptPath;
-      runSource = "resume";
-      if (!Object.keys(workflowArgs).length && prior.argsJson && prior.argsJson !== "null") {
-        try {
-          const priorArgs = parseJsonText(prior.argsJson);
-          if (isJsonObject(priorArgs)) Object.assign(workflowArgs, priorArgs);
-        } catch (cause) {
-          throw new WorkflowStoredDataError(`${prior.id}.argsJson`, cause);
-        }
-      }
-    } else {
-      const resolvedResult = await resolveWorkflowScriptFromPathOrNameResult({
-        file,
-        name,
-        workspaceRoot,
-        stateDir: config.stateDir,
-      });
-      if (resolvedResult.isErr()) throw resolvedResult.error;
-      const resolved = resolvedResult.value;
-      source = resolved.source;
-      scriptHash = resolved.scriptHash;
-      nameHint = resolved.nameHint;
-      runSource = resolved.origin === "named" ? "named" : "inline";
+    // Resume without explicit --arg reuses prior args inside launch; if CLI
+    // provided empty object and resume, leave undefined so launch reloads prior.
+    if (resumeFrom && argsValue === undefined) {
+      // launch handles prior args
+    } else if (resumeFrom && argsValue && Object.keys(workflowArgs).length === 0) {
+      argsValue = undefined;
     }
 
-    const parsed = parseWorkflowScript(source, {
-      filename: file ?? priorScriptPath ?? name ?? "workflow:inline",
-    });
-    const baseSha = await resolveWorkspaceHead(workspaceRoot);
-
-    const run = store.createRun({
-      name: parsed.meta.name || nameHint,
-      source: runSource,
-      scriptPath: "pending",
-      scriptHash,
+    const launched = await launchWorkflowRun({
+      store,
+      config,
       workspaceRoot,
       workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
-      argsJson: JSON.stringify(Object.keys(workflowArgs).length ? workflowArgs : null),
-      resumedFromRunId: priorRunId,
-      baseSha,
-    });
-
-    const result = await persistWorkflowScriptResult({
-      stateDir: config.stateDir,
-      runId: run.id,
       source,
-      preferredName: parsed.meta.name || nameHint,
+      args: argsValue,
+      cliEntry: fileURLToPath(import.meta.url.replace(/workflow-cli\.(ts|js)$/, "cli.$1")),
     });
-    if (result.isErr()) throw result.error;
-    const persisted = result.value;
-    const updated = store.setScriptPathResult(run.id, persisted);
-    if (updated.isErr()) throw updated.error;
+    if (launched.isErr()) throw launched.error;
 
-    spawnWorkflowWorkerFromCli(
-      run.id,
-      fileURLToPath(import.meta.url.replace(/workflow-cli\.(ts|js)$/, "cli.$1")),
-    );
-
-    console.log(formatRunLine(store.getRun(run.id) ?? { ...run, scriptPath: persisted }));
+    console.log(formatRunLine(launched.value.run));
 
     if (follow) {
-      await followRun(store, run.id);
+      await followRun(store, launched.value.run.id);
     }
   } finally {
     store.close();
   }
 }
 
+function buildCliLaunchSource(input: {
+  file?: string;
+  name?: string;
+  resumeFrom?: string;
+}): LaunchWorkflowSource {
+  if (input.resumeFrom) {
+    const override = input.file
+      ? ({ kind: "file", path: input.file } as const)
+      : input.name
+        ? ({ kind: "named", name: input.name } as const)
+        : undefined;
+    return { kind: "resume", runId: input.resumeFrom, override };
+  }
+  if (input.file) return { kind: "file", path: input.file };
+  if (input.name) return { kind: "named", name: input.name };
+  throw new InvalidWorkflowInputError({
+    code: "missing_source",
+    message: "Provide --file/--script-path, --name, or --resume",
+  });
+}
+
 async function runWorkflowStatus(args: string[], config: ServerConfig): Promise<void> {
   const follow = args.includes("--follow");
   const runId = args.find((a) => !a.startsWith("-"));
-  if (!runId) throw new Error("Usage: devspace workflow status <runId> [--follow]");
+  if (!runId) {
+    throw new InvalidWorkflowInputError({
+      code: "invalid_argument",
+      message: "Usage: devspace workflow status <runId> [--follow]",
+    });
+  }
 
   const store = createWorkflowStore(config);
   try {
@@ -264,7 +214,12 @@ async function runWorkflowStatus(args: string[], config: ServerConfig): Promise<
 
 async function runWorkflowCancel(args: string[], config: ServerConfig): Promise<void> {
   const runId = args[0];
-  if (!runId) throw new Error("Usage: devspace workflow cancel <runId>");
+  if (!runId) {
+    throw new InvalidWorkflowInputError({
+      code: "invalid_argument",
+      message: "Usage: devspace workflow cancel <runId>",
+    });
+  }
   const store = createWorkflowStore(config);
   try {
     reapStaleWorkflows(store);
@@ -291,7 +246,12 @@ async function runWorkflowList(config: ServerConfig): Promise<void> {
 
 async function runWorkflowCalls(args: string[], config: ServerConfig): Promise<void> {
   const runId = args[0];
-  if (!runId) throw new Error("Usage: devspace workflow calls <runId>");
+  if (!runId) {
+    throw new InvalidWorkflowInputError({
+      code: "invalid_argument",
+      message: "Usage: devspace workflow calls <runId>",
+    });
+  }
   const store = createWorkflowStore(config);
   try {
     if (!store.getRun(runId)) throw new WorkflowNotFoundError(runId);
@@ -310,178 +270,25 @@ async function runWorkflowCall(args: string[], config: ServerConfig): Promise<vo
   const runId = args[0];
   const callIndex = Number(args[1]);
   if (!runId || !Number.isInteger(callIndex) || callIndex < 0) {
-    throw new Error("Usage: devspace workflow call <runId> <callIndex>");
+    throw new InvalidWorkflowInputError({
+      code: "invalid_argument",
+      message: "Usage: devspace workflow call <runId> <callIndex>",
+    });
   }
   const store = createWorkflowStore(config);
   try {
     if (!store.getRun(runId)) throw new WorkflowNotFoundError(runId);
     const call = store.getAgentCall(runId, callIndex);
-    if (!call) throw new Error(`Unknown workflow agent call: ${runId}#${callIndex}`);
+    if (!call) {
+      throw new InvalidWorkflowInputError({
+        code: "invalid_argument",
+        message: `Unknown workflow agent call: ${runId}#${callIndex}`,
+      });
+    }
     console.log(JSON.stringify(formatCallDetail(call), null, 2));
   } finally {
     store.close();
   }
-}
-
-/** Detached worker entry: claim run, heartbeat, execute, complete/fail. */
-export async function runWorkflowWorker(
-  args: string[],
-  config: ServerConfig,
-): Promise<void> {
-  const runId = args[0];
-  if (!runId) throw new Error("Usage: devspace workflow __worker <runId>");
-
-  const store = createWorkflowStore(config);
-  const claim = store.claimRunResult(runId, process.pid);
-  if (claim.isErr()) {
-    store.close();
-    throw claim.error;
-  }
-  const claimed = claim.value;
-
-  const abort = new AbortController();
-  const heartbeat = setInterval(() => {
-    try {
-      store.setHeartbeat(runId);
-      if (store.isCancelRequested(runId)) abort.abort();
-    } catch {
-      // store closed
-    }
-  }, WORKFLOW_HEARTBEAT_MS);
-
-  try {
-    const source = await readFile(claimed.scriptPath, "utf8");
-    const parsed = parseWorkflowScript(source, { filename: claimed.scriptPath });
-    const availableProviders = resolveAvailableProviders();
-    const agentProfiles = await loadLocalAgentProfiles(config, claimed.workspaceRoot);
-    const concurrency = resolveWorkflowConcurrency(
-      parsed.meta.concurrency,
-      availableParallelism(),
-    );
-
-    let argsValue: JsonValue | undefined;
-    try {
-      argsValue = parseJsonText(claimed.argsJson);
-      if (argsValue === null) argsValue = undefined;
-    } catch (cause) {
-      throw new WorkflowStoredDataError(`${claimed.id}.argsJson`, cause);
-    }
-
-    const replay = claimed.resumedFromRunId
-      ? createWorkflowReplay(store.listAgentCalls(claimed.resumedFromRunId))
-      : undefined;
-
-    const createWorktree = createWorkflowWorktreeFactory({
-      worktreeRoot: config.worktreeRoot,
-      allowedRoots: config.allowedRoots,
-    });
-
-    const { result, callCount } = await executeWorkflow({
-      parsed,
-      runId,
-      journal: store,
-      args: argsValue,
-      concurrency,
-      signal: abort.signal,
-      workspaceRoot: claimed.workspaceRoot,
-      baseSha: claimed.baseSha,
-      availableProviders,
-      agentProfiles,
-      createWorktree,
-      replay,
-      runProvider: async (input) => {
-        if (!isLocalAgentProvider(input.provider)) {
-          throw new Error(`Unknown provider: ${input.provider}`);
-        }
-        if (abort.signal.aborted || store.isCancelRequested(runId)) {
-          throw Object.assign(new Error("Workflow cancelled"), { name: "AbortError" });
-        }
-        const providerRun = await runLocalAgentProviderResult(input.provider, {
-          prompt: input.prompt,
-          workspace: input.workspace,
-          providerSessionId: input.providerSessionId,
-          model: input.model,
-          effort: input.effort,
-          writeMode: "allowed",
-          schema: input.schema,
-        });
-        if (providerRun.isErr()) throw providerRun.error;
-        const providerResult = providerRun.value;
-        return {
-          finalResponse: providerResult.finalResponse,
-          providerSessionId: providerResult.providerSessionId ?? undefined,
-          structured: providerResult.structured,
-        };
-      },
-      resolveNestedSource: async (ref) => {
-        if (typeof ref === "string") {
-          const named = await resolveNamedWorkflowScript({
-            name: ref,
-            workspaceRoot: claimed.workspaceRoot,
-            stateDir: config.stateDir,
-          });
-          return named.source;
-        }
-        return (
-          await readProjectWorkflowScriptFile({
-            scriptPath: ref.scriptPath,
-            workspaceRoot: claimed.workspaceRoot,
-          })
-        ).source;
-      },
-    });
-
-    if (abort.signal.aborted || store.isCancelRequested(runId)) {
-      store.cancelRun(runId);
-      return;
-    }
-
-    let resultJson: string | undefined;
-    if (result !== undefined) {
-      resultJson = JSON.stringify(result);
-      if (Buffer.byteLength(resultJson, "utf8") > WORKFLOW_LIMITS.resultJsonBytes) {
-        store.failRun(runId, {
-          error: `result exceeds ${WORKFLOW_LIMITS.resultJsonBytes} bytes`,
-          errorKind: "result_too_large",
-        });
-        return;
-      }
-    }
-
-    store.completeRun(runId, { resultJson, callCount });
-  } catch (error) {
-    if (store.isCancelRequested(runId) || abort.signal.aborted) {
-      try {
-        store.cancelRun(runId);
-      } catch {
-        // already terminal
-      }
-      return;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    const errorKind = mapEngineErrorKind(error);
-    try {
-      store.failRun(runId, { error: message, errorKind });
-    } catch {
-      // terminal race
-    }
-  } finally {
-    clearInterval(heartbeat);
-    store.close();
-  }
-}
-
-export function spawnWorkflowWorkerFromCli(runId: string, cliEntry: string): void {
-  const child = spawn(
-    process.execPath,
-    [...process.execArgv, cliEntry, "workflow", "__worker", runId],
-    {
-      detached: true,
-      stdio: "ignore",
-      env: process.env,
-    },
-  );
-  child.unref();
 }
 
 async function followRun(store: WorkflowStore, runId: string): Promise<void> {
@@ -600,12 +407,6 @@ function safeParseJson(text: string): unknown {
   }
 }
 
-function resolveAvailableProviders(): LocalAgentProvider[] {
-  const snapshot = getLocalAgentProviderAvailabilitySnapshot();
-  const live = new Set(snapshot.filter((row) => row.available).map((row) => row.name));
-  return LOCAL_AGENT_PROVIDERS.filter((id) => live.has(id));
-}
-
 function splitFlags(args: string[]): {
   flags: Map<string, string | true>;
   positionals: string[];
@@ -659,8 +460,4 @@ function collectArgTokens(args: string[]): string[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
