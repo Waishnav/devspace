@@ -60,8 +60,17 @@ try {
     ["global instructions\n", "root instructions\n"],
   );
   assert.deepEqual(
-    availableAgentsFiles.map((file) => file.path),
-    [join(root, "nested", "AGENTS.md")],
+    availableAgentsFiles,
+    [],
+  );
+  assert.deepEqual(
+    (await registry.loadAgentsFilesForPath(workspace, join(root, "nested", "file.txt")))
+      .map((file) => file.content),
+    ["nested instructions\n"],
+  );
+  assert.deepEqual(
+    await registry.loadAgentsFilesForPath(workspace, join(root, "nested", "file.txt")),
+    [],
   );
   assert.deepEqual(
     workspace.agentProfiles.map((profile) => ({
@@ -97,6 +106,14 @@ try {
     assert.deepEqual(
       unsafeWorkspace.agentsFiles.map((file) => file.content),
       ["root instructions\n"],
+    );
+
+    const unsafeNestedDir = join(root, "unsafe-nested");
+    await mkdir(unsafeNestedDir);
+    await symlink(join(outsideRoot, "secret.txt"), join(unsafeNestedDir, "AGENTS.md"));
+    assert.deepEqual(
+      await registry.loadAgentsFilesForPath(workspace, join(unsafeNestedDir, "file.txt")),
+      [],
     );
   }
 
