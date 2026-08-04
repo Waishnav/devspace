@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ShellMode } from "./config.js";
@@ -18,6 +19,10 @@ interface ProcessTreeRuntime {
   killWindowsTree(pid: number): boolean;
 }
 
+export interface ShellResolutionRuntime {
+  exists(path: string): boolean;
+}
+
 const defaultProcessTreeRuntime: ProcessTreeRuntime = {
   platform: process.platform,
   killGroup: (pid, signal) => process.kill(-pid, signal),
@@ -28,6 +33,10 @@ const defaultProcessTreeRuntime: ProcessTreeRuntime = {
     });
     return !result.error && result.status === 0;
   },
+};
+
+const defaultShellResolutionRuntime: ShellResolutionRuntime = {
+  exists: existsSync,
 };
 
 const LOGIN_SHELLS = new Set(["bash", "ksh", "zsh"]);
@@ -62,11 +71,21 @@ const POWERSHELL_ARGS = [
  *  - bash: bash -lc <command> (or bash -c for POSIX shells)
  *  - auto: platform-dependent default (powershell on Windows, sh on others)
  */
+export function resolveBashToolShellMode(
+  environment: NodeJS.ProcessEnv = process.env,
+): ShellMode {
+  const configured = environment.DEVSPACE_SHELL;
+  if (configured === undefined || configured === "auto" || configured === "bash") return "bash";
+  if (configured === "powershell" || configured === "cmd") return configured;
+  throw new Error(`Invalid DEVSPACE_SHELL: ${configured}`);
+}
+
 export function resolveShellCommand(
   command: string,
   platform: NodeJS.Platform = process.platform,
   environment: NodeJS.ProcessEnv = process.env,
   shellMode?: ShellMode,
+  runtime: ShellResolutionRuntime = defaultShellResolutionRuntime,
 ): ShellCommand {
   const mode = shellMode ?? (environment.DEVSPACE_SHELL as ShellMode | undefined) ?? "auto";
 
@@ -85,16 +104,14 @@ export function resolveShellCommand(
       };
     }
     if (mode === "bash") {
-      // Find bash without going through MSYS/Git Bash wrapper
-      const bashPath = environment.BASH ?? findBashOnWindows();
-      if (bashPath) {
-        return { executable: bashPath, args: ["-lc", command] };
-      }
-      // Fall back to PowerShell if bash not found
-      return {
-        executable: POWERSHELL_EXECUTABLE,
-        args: [...POWERSHELL_ARGS, command],
-      };
+      const bashPath = findBashOnWindows(environment, runtime);
+      if (bashPath) return { executable: bashPath, args: ["-lc", command] };
+      const error = new Error(
+        "Git Bash is required for the DevSpace bash tool on Windows. "
+          + "Install Git for Windows or set GIT_BASH_PATH to bash.exe.",
+      );
+      (error as NodeJS.ErrnoException).code = "git_bash_not_found";
+      throw error;
     }
     // auto on Windows: default to PowerShell
     return {
@@ -125,24 +142,25 @@ export function resolveShellCommand(
  * Find bash.exe on Windows without using MSYS/Git Bash wrapper.
  * Looks in typical Git for Windows install locations.
  */
-function findBashOnWindows(): string | null {
+function findBashOnWindows(
+  environment: NodeJS.ProcessEnv,
+  runtime: ShellResolutionRuntime,
+): string | null {
   const candidates = [
+    environment.GIT_BASH_PATH,
+    environment.BASH,
     "C:\\Program Files\\Git\\bin\\bash.exe",
     "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
     "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
   ];
-  for (const c of candidates) {
-    try {
-      spawnSync("cmd.exe", ["/c", "if", "exist", c, "echo", "found"], {
-        stdio: "ignore",
-        windowsHide: true,
-        timeout: 2000,
-      });
-      // If the file exists, use it directly (not through MSYS wrapper)
-      return c;
-    } catch {
-      continue;
-    }
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    const normalized = candidate.trim();
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (runtime.exists(normalized)) return normalized;
   }
   return null;
 }
