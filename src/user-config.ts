@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, scryptSync } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -25,6 +25,7 @@ export interface DevspaceUserConfig {
 
 export interface DevspaceAuthConfig {
   ownerToken?: string;
+  clientRegistrationKey?: string;
 }
 
 export interface DevspaceFiles {
@@ -97,6 +98,21 @@ export function writeDevspaceAuth(
 
 export function generateOwnerToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+export function generateClientRegistrationKey(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function deriveClientRegistrationKey(ownerToken: string): string {
+  // Compatibility keys are bound to the Owner password. Rotating that password
+  // before persisting a separate key invalidates previously issued signed IDs.
+  return scryptSync(
+    ownerToken,
+    "devspace-oauth-client-registration-v1",
+    32,
+    { N: 16_384, r: 8, p: 1 },
+  ).toString("base64url");
 }
 
 export function ensureDevspaceDefaultSkills(env: NodeJS.ProcessEnv = process.env): string[] {

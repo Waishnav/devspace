@@ -30,6 +30,8 @@ import { createLocalAgentStore, type LocalAgentRecord } from "./local-agent-stor
 import type { LocalAgentRunResult } from "./local-agent-runtime.js";
 import {
   ensureDevspaceDefaultSkills,
+  deriveClientRegistrationKey,
+  generateClientRegistrationKey,
   generateOwnerToken,
   loadDevspaceFiles,
   resolveSubagentsFlag,
@@ -163,8 +165,14 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       publicBaseUrl,
       subagents: resolveSubagentsFlag(files.config),
     };
+    const ownerToken = files.auth.ownerToken ?? generateOwnerToken();
     const auth = {
-      ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
+      ownerToken,
+      clientRegistrationKey:
+        files.auth.clientRegistrationKey ??
+        (files.auth.ownerToken
+          ? deriveClientRegistrationKey(files.auth.ownerToken)
+          : generateClientRegistrationKey()),
     };
 
     const configPath = writeDevspaceConfig(config);
