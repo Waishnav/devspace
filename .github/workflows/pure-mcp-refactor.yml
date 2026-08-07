@@ -1,0 +1,52 @@
+name: Apply pure MCP refactor
+
+on:
+  push:
+    branches:
+      - refactor/pure-mcp-runtime
+    paths:
+      - scripts/refactor-pure-mcp.mjs
+      - .github/workflows/pure-mcp-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/pure-mcp-runtime
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply deterministic refactor
+        run: node scripts/refactor-pure-mcp.mjs
+
+      - name: Refresh lockfile and install
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit verified refactor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: make DevSpace a pure MCP runtime"
+          git push origin HEAD:refactor/pure-mcp-runtime
