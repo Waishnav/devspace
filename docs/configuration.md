@@ -166,6 +166,18 @@ DEVSPACE_SKILL_PATHS="$HOME/.claude/skills,$HOME/company/skills" \
 npx @waishnav/devspace serve
 ```
 
+Example skills are packaged under `examples/skills/`. To teach ChatGPT to use a
+local Executor setup for existing MCP/API integrations, copy the packaged skill
+into an active skill directory:
+
+```bash
+mkdir -p ~/.devspace/skills/executor-local-mcp
+cp examples/skills/executor-local-mcp/SKILL.md ~/.devspace/skills/executor-local-mcp/SKILL.md
+```
+
+That workflow uses the existing `bash` or `exec_command` tool to run the local
+`executor` CLI. It does not add DevSpace bridge tools for every Executor tool.
+
 ## Logging
 
 | Variable | Default |
