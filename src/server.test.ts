@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig, type ServerConfig } from "./config.js";
+import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
@@ -63,6 +64,60 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.skills));
   assert.ok(Array.isArray(card.agentProviders));
   assert.ok(Array.isArray(card.agents));
+});
+
+test("open_workspace reports provider versions and floors in its catalog", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  const config = loadConfig({
+    DEVSPACE_CONFIG_DIR: join(root, ".config"),
+    DEVSPACE_ALLOWED_ROOTS: root,
+    DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
+    DEVSPACE_AGENT_DIR: join(root, "agent"),
+    DEVSPACE_WIDGETS: "full",
+    DEVSPACE_TOOL_MODE: "full",
+    DEVSPACE_SUBAGENTS: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  const store = new SqliteWorkspaceStore(join(root, ".state"));
+  const workspaces = new WorkspaceRegistry(config, store);
+  const localAgentProviders: LocalAgentProviderAvailability[] = [
+    { name: "codex", available: true, version: "0.147.0", minimumVersion: "0.142.5" },
+    { name: "pi", available: false, reason: "pi executable not found" },
+  ];
+  const server = createMcpServer(
+    config,
+    workspaces,
+    createReviewCheckpointManager(),
+    new ProcessSessionManager(),
+    localAgentProviders,
+    [],
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "devspace-test-client", version: "1.0.0" });
+  await Promise.all([
+    client.connect(clientTransport),
+    server.connect(serverTransport),
+  ]);
+  try {
+    const opened = await callOpen(client, project, "chat-1");
+
+    const structured = structuredContent(opened);
+    const providers = structured.agentProviders as Array<Record<string, unknown>>;
+    assert.equal(providers.find((provider) => provider.name === "codex")?.version, "0.147.0");
+    assert.equal(providers.find((provider) => provider.name === "codex")?.minimumVersion, "0.142.5");
+
+    const text = responseText(opened);
+    assert.match(text, /Available subagent providers: codex \(0\.147\.0, min 0\.142\.5\)/);
+    assert.match(text, /Unavailable subagent providers: pi \(pi executable not found\)/);
+  } finally {
+    await client.close();
+    await server.close();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("concurrent checkout opens return one full context and one reuse instruction", async (t) => {

@@ -41,7 +41,6 @@
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@openai/codex-sdk": "^0.142.5",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.2.5",
     "better-sqlite3": "^12.10.0",

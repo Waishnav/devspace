@@ -68,6 +68,8 @@ export interface ToolResultCard {
     name?: string;
     available?: boolean;
     reason?: string;
+    version?: string;
+    minimumVersion?: string;
   }>;
   agents?: Array<{
     name?: string;

@@ -11,6 +11,7 @@ import {
   resolveAcpModelConfigUpdate,
   resolveAcpThinkingConfigUpdate,
 } from "./local-agent-adapters.js";
+import { codexCommandEnvironment } from "./local-agent-codex.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
@@ -383,6 +384,28 @@ assert.equal(
   const devspaceBin = `${process.cwd()}/node_modules/.bin`;
   const env = piCommandEnvironment({
     PI_COMMAND: "/custom/pi",
+    PATH: [devspaceBin, "/home/user/.local/bin"].join(delimiter),
+  });
+
+  assert.equal(env.PATH, [devspaceBin, "/home/user/.local/bin"].join(delimiter));
+}
+
+{
+  const devspaceBin = `${process.cwd()}/node_modules/.bin`;
+  const userBin = "/home/user/.local/bin";
+  const env = codexCommandEnvironment({
+    CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "devspace",
+    PATH: [devspaceBin, userBin].join(delimiter),
+  });
+
+  assert.equal(env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE, undefined);
+  assert.equal(env.PATH, userBin);
+}
+
+{
+  const devspaceBin = `${process.cwd()}/node_modules/.bin`;
+  const env = codexCommandEnvironment({
+    CODEX_COMMAND: "/custom/codex",
     PATH: [devspaceBin, "/home/user/.local/bin"].join(delimiter),
   });
 

@@ -20,6 +20,7 @@ import {
 import {
   assertLocalAgentProviderAvailable,
   formatLocalAgentProviderAvailabilitySummary,
+  getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
 import {
   formatAvailableLocalAgentTargets,
@@ -349,6 +350,13 @@ async function runAgentsCommand(args: string[]): Promise<void> {
 
 async function runAgentsList(): Promise<void> {
   const config = loadConfig();
+  if (config.subagents) {
+    console.log(
+      `subagent providers: ${formatLocalAgentProviderAvailabilitySummary(
+        getLocalAgentProviderAvailabilitySnapshot(),
+      )}`,
+    );
+  }
   const store = createLocalAgentStore(config);
   const agents = store.list(resolveCurrentWorkspaceScope());
 

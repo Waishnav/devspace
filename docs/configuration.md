@@ -127,6 +127,7 @@ sessions.
 | `DEVSPACE_SUBAGENTS` | Set to `1` to expose configured agent profiles as Subagents. Experimental and disabled by default. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
+| `CODEX_COMMAND` | Optional absolute path to the `codex` binary used for the Codex subagent provider, mirroring `CLAUDE_COMMAND` and `PI_COMMAND`. Defaults to `codex` on `PATH`. |
 
 DevSpace discovers standard Agent Skills from:
 

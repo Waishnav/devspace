@@ -141,6 +141,21 @@ DevSpace gives ChatGPT tools to:
 - discover local agent skills from your skill folders
 - show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
 
+## DevSpace Subagents
+
+With `DEVSPACE_SUBAGENTS=1`, DevSpace can delegate bounded coding work to
+subagent workers backed by your locally installed agent CLIs (`codex`,
+`claude`, `opencode`, `pi`, `cursor-agent`, `copilot`). DevSpace runs each
+provider's host-installed binary; it bundles no copies of them.
+
+For the Codex provider, DevSpace executes your PATH `codex` binary, or the one
+given by the `CODEX_COMMAND` environment override. It reports the detected Codex
+CLI version and a minimum supported version (0.142.5) wherever provider
+availability is shown (`open_workspace`, the `devspace serve` banner, and
+`devspace agents` output), and stamps failed runs with the Codex version and raw
+CLI stderr. Sessions persist in your normal `~/.codex/sessions`, so follow-ups
+resume work the same way your own `codex` session would.
+
 ## Mental Model
 
 DevSpace is remote access to selected local folders.

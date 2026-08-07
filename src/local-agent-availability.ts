@@ -1,5 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
+import {
+  isCodexVersionAtLeastFloor,
+  MINIMUM_CODEX_VERSION,
+  resolveCodexCommand,
+} from "./local-agent-codex.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
   LOCAL_AGENT_PROVIDERS,
@@ -10,6 +15,8 @@ export interface LocalAgentProviderAvailability {
   name: LocalAgentProvider;
   available: boolean;
   reason?: string;
+  version?: string;
+  minimumVersion?: string;
 }
 
 export function getLocalAgentProviderAvailabilitySnapshot(
@@ -24,7 +31,7 @@ export function checkLocalAgentProviderAvailability(
 ): LocalAgentProviderAvailability {
   switch (provider) {
     case "codex":
-      return packageAvailability(provider, "@openai/codex-sdk");
+      return codexAvailability(env);
     case "claude":
       return packageAvailability(provider, "@anthropic-ai/claude-agent-sdk");
     case "opencode":
@@ -56,7 +63,7 @@ export function formatLocalAgentProviderAvailabilitySummary(
 ): string {
   const available = providers
     .filter((provider) => provider.available)
-    .map((provider) => provider.name);
+    .map(formatProviderWithVersion);
   const unavailable = providers
     .filter((provider) => !provider.available)
     .map((provider) => `${provider.name} (${provider.reason ?? "unavailable"})`);
@@ -64,6 +71,36 @@ export function formatLocalAgentProviderAvailabilitySummary(
     available.length > 0 ? `available: ${available.join(", ")}` : undefined,
     unavailable.length > 0 ? `unavailable: ${unavailable.join(", ")}` : undefined,
   ].filter(Boolean).join("; ");
+}
+
+function formatProviderWithVersion(provider: LocalAgentProviderAvailability): string {
+  if (!provider.version) return provider.name;
+  const floor = provider.minimumVersion ? `, min ${provider.minimumVersion}` : "";
+  return `${provider.name} (${provider.version}${floor})`;
+}
+
+function codexAvailability(env: NodeJS.ProcessEnv): LocalAgentProviderAvailability {
+  const resolved = resolveCodexCommand(env);
+  if (!resolved) {
+    return {
+      name: "codex",
+      available: false,
+      reason: `codex executable not found`,
+    };
+  }
+  const base = {
+    name: "codex" as const,
+    version: resolved.version,
+    minimumVersion: MINIMUM_CODEX_VERSION,
+  };
+  if (resolved.version && !isCodexVersionAtLeastFloor(resolved.version)) {
+    return {
+      ...base,
+      available: false,
+      reason: `codex ${resolved.version} is below the minimum supported version ${MINIMUM_CODEX_VERSION}; upgrade codex or set CODEX_COMMAND`,
+    };
+  }
+  return { ...base, available: true };
 }
 
 function packageAvailability(

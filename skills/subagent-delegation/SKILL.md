@@ -41,6 +41,14 @@ Do not run provider CLIs such as `codex`, `claude`, `opencode`, `pi`,
 `cursor-agent`, or `copilot` directly unless you are explicitly debugging
 DevSpace agent integration.
 
+DevSpace runs each provider's host-installed CLI; it does not bundle hidden
+copies. For the Codex provider, DevSpace executes your PATH `codex` (or the
+binary at `CODEX_COMMAND`) and reports the detected CLI version and the minimum
+supported version in `open_workspace` and the availability summary. If a run
+fails, the session error includes the detected Codex version and the CLI's raw
+stderr, so a model gate keyed on CLI version can be diagnosed without digging
+into process internals.
+
 ## Choosing a profile
 
 Choose profiles from the compact subagent profile catalog returned by

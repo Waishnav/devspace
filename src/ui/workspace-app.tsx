@@ -548,13 +548,20 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
     const name = provider.name?.trim() || "Unknown provider";
     const unavailable = provider.available === false;
     const logo = getProviderLogo(name);
+    const version = provider.version
+      ? `${provider.version}${provider.minimumVersion ? ` (min ${provider.minimumVersion})` : ""}`
+      : undefined;
     return {
       label: name,
       logo,
       bareLogo: Boolean(logo),
       ariaLabel: name,
       tone: unavailable ? "muted" as const : undefined,
-      title: unavailable ? provider.reason ?? "Provider unavailable" : name,
+      title: unavailable
+        ? provider.reason ?? "Provider unavailable"
+        : version
+          ? `${name} ${version}`
+          : name,
     };
   });
 

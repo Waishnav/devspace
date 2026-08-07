@@ -3,9 +3,13 @@ import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import {
+  codexCommandEnvironment,
+  resolveCodexCommand,
+} from "./local-agent-codex.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
-  createCodexSdkLocalAgentRuntime,
+  CodexCliLocalAgentRuntime,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
 } from "./local-agent-runtime.js";
@@ -48,7 +52,18 @@ class CodexLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "codex" as const;
 
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
-    const runtime = await createCodexSdkLocalAgentRuntime();
+    const env = codexCommandEnvironment(process.env);
+    const resolved = resolveCodexCommand(env);
+    if (!resolved) {
+      throw new Error(
+        "codex provider is not available: codex executable not found. Install codex or set CODEX_COMMAND.",
+      );
+    }
+    const runtime = new CodexCliLocalAgentRuntime({
+      command: resolved.executable,
+      env,
+      version: resolved.version,
+    });
     return runtime.run(input);
   }
 }
