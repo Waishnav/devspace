@@ -9,7 +9,7 @@ import {
 } from "./local-agent-codex.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
-  CodexCliLocalAgentRuntime,
+  CodexAppServerLocalAgentRuntime,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
 } from "./local-agent-runtime.js";
@@ -59,7 +59,7 @@ class CodexLocalAgentAdapter implements LocalAgentAdapter {
         "codex provider is not available: codex executable not found. Install codex or set CODEX_COMMAND.",
       );
     }
-    const runtime = new CodexCliLocalAgentRuntime({
+    const runtime = new CodexAppServerLocalAgentRuntime({
       command: resolved.executable,
       env,
       version: resolved.version,
