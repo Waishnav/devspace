@@ -255,6 +255,55 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
   await rm(dir, { recursive: true, force: true });
 }
 
+// provider observations are journaled and final usage is attached to the call
+{
+  const dir = await mkdtemp(join(tmpdir(), "wf-observations-"));
+  const store = new WorkflowStore(dir);
+  const run = store.createRun({
+    name: "observations",
+    source: "inline",
+    scriptPath: "inline",
+    scriptHash: "h",
+    workspaceRoot: dir,
+  });
+  const api = createWorkflowApi({
+    runId: run.id,
+    journal: store,
+    meta: { name: "observations", description: "d" },
+    args: undefined,
+    concurrency: 1,
+    signal: new AbortController().signal,
+    workspaceRoot: dir,
+    availableProviders: ["codex"],
+    runProvider: async (input) => {
+      input.onObservation?.({
+        kind: "activity",
+        activityId: "tool-1",
+        toolName: "grep",
+        toolStatus: "started",
+        message: "Searching",
+      });
+      input.onObservation?.({
+        kind: "usage",
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+      });
+      return {
+        finalResponse: "done",
+        usage: { inputTokens: 6, outputTokens: 3, totalTokens: 9 },
+      };
+    },
+  });
+  assert.equal(await api.agent("inspect"), "done");
+  const call = store.getAgentCall(run.id, 0);
+  assert.deepEqual(call?.finalUsage, { inputTokens: 6, outputTokens: 3, totalTokens: 9 });
+  assert.deepEqual(
+    store.listAgentObservations(run.id, 0).map((entry) => entry.kind),
+    ["activity", "usage"],
+  );
+  store.close();
+  await rm(dir, { recursive: true, force: true });
+}
+
 // ---------------------------------------------------------------------------
 // isolation: worktree uses createWorktree path as cwd
 // ---------------------------------------------------------------------------

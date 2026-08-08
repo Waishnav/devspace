@@ -22,8 +22,11 @@ import {
   type AgentCacheKeyInput,
   type AgentOpts,
   type AppendWorkflowEventInput,
+  type LocalAgentObservation,
+  type LocalAgentTokenUsage,
   type WorkflowMeta,
 } from "./workflow-types.js";
+import { mergeLocalAgentTokenUsage } from "./local-agent-observations.js";
 import { agentOptsSchema } from "./workflow-contracts.js";
 import { WorkflowEngineError } from "./workflow-errors.js";
 
@@ -45,6 +48,7 @@ export interface WorkflowProviderRunInput {
   phase?: string;
   /** JSON Schema for native structured output (codex/claude). */
   schema?: JsonSchema;
+  onObservation?: (observation: LocalAgentObservation) => void;
 }
 
 export interface WorkflowProviderRunResult {
@@ -52,6 +56,7 @@ export interface WorkflowProviderRunResult {
   providerSessionId?: string;
   /** Provider-native structured object when schema was requested. */
   structured?: unknown;
+  usage?: LocalAgentTokenUsage;
 }
 
 export type WorkflowRunProvider = (
@@ -163,6 +168,12 @@ export interface WorkflowJournal {
     dirty?: boolean;
     worktreePath?: string;
     fromCache?: boolean;
+    usage?: LocalAgentTokenUsage;
+  }): unknown;
+  appendAgentObservation(input: {
+    runId: string;
+    callIndex: number;
+    observation: LocalAgentObservation;
   }): unknown;
   failAgentCall(input: {
     runId: string;
@@ -340,6 +351,44 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
     let worktree: WorkflowWorktreeHandle | null = null;
     let worktreePath: string | undefined;
     let agentCallBegun = false;
+    let latestUsage: LocalAgentTokenUsage | undefined;
+    let pendingUsage: LocalAgentTokenUsage | undefined;
+    let lastPersistedUsageAt = 0;
+    const persistObservation = (observation: LocalAgentObservation): void => {
+      if (observation.kind === "usage") {
+        latestUsage = mergeLocalAgentTokenUsage(latestUsage, observation.usage);
+        pendingUsage = mergeLocalAgentTokenUsage(pendingUsage, observation.usage);
+        const now = Date.now();
+        if (now - lastPersistedUsageAt < 5_000) return;
+        lastPersistedUsageAt = now;
+        const usage = pendingUsage;
+        pendingUsage = undefined;
+        if (usage) {
+          deps.journal.appendAgentObservation({
+            runId: deps.runId,
+            callIndex: index,
+            observation: { kind: "usage", usage },
+          });
+        }
+        return;
+      }
+      deps.journal.appendAgentObservation({
+        runId: deps.runId,
+        callIndex: index,
+        observation,
+      });
+    };
+    const flushUsage = (): void => {
+      const usage = pendingUsage;
+      pendingUsage = undefined;
+      if (!usage) return;
+      lastPersistedUsageAt = Date.now();
+      deps.journal.appendAgentObservation({
+        runId: deps.runId,
+        callIndex: index,
+        observation: { kind: "usage", usage },
+      });
+    };
     try {
       throwIfCancelled(deps);
 
@@ -396,6 +445,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         signal: deps.signal,
         label: agentOpts.label,
         phase,
+        onObservation: persistObservation,
       };
 
       let returnValue: unknown;
@@ -405,17 +455,20 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
       if (agentOpts.schema) {
         // Lazy import keeps non-schema paths free of ajv load cost.
         const { enforceAgentSchema } = await import("./workflow-schema.js");
+        let latestProviderResult: WorkflowProviderRunResult | undefined;
         const enforced = await enforceAgentSchema({
           schema: agentOpts.schema,
           prompt: providerPrompt,
           provider,
-          run: (p, options) =>
-            deps.runProvider({
+          run: async (p, options) => {
+            latestProviderResult = await deps.runProvider({
               ...providerBase,
               prompt: p,
               providerSessionId: options.providerSessionId,
               ...(options.mode === "native" ? { schema: agentOpts.schema } : {}),
-            }),
+            });
+            return latestProviderResult;
+          },
           onRetry: ({ attempt, errors, mode }) => {
             deps.journal.appendEvent({
               runId: deps.runId,
@@ -432,9 +485,11 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
           finalResponse: enforced.finalResponse,
           providerSessionId: enforced.providerSessionId,
           structured: enforced.value,
+          usage: latestProviderResult?.usage ?? latestUsage,
         };
       } else {
         result = await deps.runProvider(providerBase);
+        latestUsage = mergeLocalAgentTokenUsage(latestUsage, result.usage);
         returnValue = result.finalResponse;
       }
 
@@ -444,6 +499,8 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
       if (structuredJson !== undefined) {
         assertStructuredJsonBudget(structuredJson);
       }
+      if (result.usage) latestUsage = mergeLocalAgentTokenUsage(latestUsage, result.usage);
+      flushUsage();
 
       let dirty: boolean | undefined;
       if (worktree) {
@@ -471,6 +528,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         structuredJson,
         returnValueJson,
         providerSessionId: result.providerSessionId,
+        usage: latestUsage,
         dirty,
         worktreePath,
       });
@@ -502,6 +560,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
         }
       }
       if (agentCallBegun) {
+        flushUsage();
         deps.journal.failAgentCall({
           runId: deps.runId,
           callIndex: index,

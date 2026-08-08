@@ -106,6 +106,7 @@ export async function runWorkflowWorker(
           effort: input.effort,
           writeMode: "allowed",
           schema: input.schema,
+          onObservation: input.onObservation,
         });
         if (providerRun.isErr()) throw providerRun.error;
         const providerResult = providerRun.value;
@@ -113,6 +114,7 @@ export async function runWorkflowWorker(
           finalResponse: providerResult.finalResponse,
           providerSessionId: providerResult.providerSessionId ?? undefined,
           structured: providerResult.structured,
+          usage: providerResult.usage,
         };
       },
       resolveNestedSource: async (ref) => {

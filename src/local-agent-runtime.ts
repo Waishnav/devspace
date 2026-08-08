@@ -9,6 +9,10 @@ import type {
 } from "@openai/codex-sdk";
 import type { JsonSchema } from "./json-types.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type {
+  LocalAgentObservation,
+  LocalAgentTokenUsage,
+} from "./local-agent-observations.js";
 import {
   isNativeSchemaUnsupportedFailure,
   ProviderSchemaUnsupportedError,
@@ -32,6 +36,8 @@ export interface LocalAgentRunInput {
   effort?: string;
   /** JSON Schema for native structured output (codex/claude). */
   schema?: JsonSchema;
+  /** Receives provider-neutral activity and usage observations while running. */
+  onObservation?: (observation: LocalAgentObservation) => void;
 }
 
 export interface LocalAgentRunResult {
@@ -41,11 +47,24 @@ export interface LocalAgentRunResult {
   items: unknown[];
   /** Provider-native structured object when schema was requested. */
   structured?: unknown;
+  /** Latest provider-reported usage, when available. */
+  usage?: LocalAgentTokenUsage;
 }
 
 export interface LocalAgentRuntime {
   readonly provider: LocalAgentProvider;
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
+}
+
+export function notifyLocalAgentObservation(
+  input: LocalAgentRunInput,
+  observation: LocalAgentObservation,
+): void {
+  try {
+    input.onObservation?.(observation);
+  } catch {
+    // Observability is best effort and must not turn a provider result into a failure.
+  }
 }
 
 interface CodexThreadLike {
