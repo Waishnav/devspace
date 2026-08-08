@@ -1780,7 +1780,7 @@ export function createServer(
     res.json({ ok: true, name: "devspace" });
   });
 
-  app.all("/mcp", async (req, res) => {
+  const handleMcpRequest = async (req: Request, res: Response) => {
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
@@ -1869,7 +1869,13 @@ export function createServer(
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
     }
-  });
+  };
+
+  // Tailscale Funnel strips the configured path prefix before proxying to the
+  // backend, so a server exposed at `/mcp` receives requests at `/`. Register
+  // the MCP handler at the root path as well in that case; otherwise the
+  // `/mcp` route alone is served and root stays 404.
+  app.all(config.isTailscaleFunnel ? ["/mcp", "/"] : "/mcp", handleMcpRequest);
 
   let closePromise: Promise<void> | undefined;
   return {
