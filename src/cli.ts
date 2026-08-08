@@ -18,7 +18,9 @@ import {
 } from "./local-agent-catalog.js";
 import {
   isLocalAgentProvider,
+  LOCAL_AGENT_PROVIDERS,
   loadLocalAgentProfiles,
+  type LocalAgentProvider,
 } from "./local-agent-profiles.js";
 import {
   assertLocalAgentProviderAvailable,
@@ -50,6 +52,7 @@ import {
   localAgentOutput,
   localAgentTargetsOutput,
 } from "./cli-output.js";
+import { installBundledAgentSkills } from "./skill-install.js";
 
 import { runWorkflowCommand } from "./workflow-cli.js";
 import {
@@ -84,7 +87,7 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       if (!loadConfig().subagents) {
         throw new Error(
-          "Subagents are disabled. Set DEVSPACE_SUBAGENTS=1 to enable the experimental feature.",
+          "Agent tooling is disabled. Run `devspace init --force` or set DEVSPACE_SUBAGENTS=1.",
         );
       }
       await runAgentsCommand(args);
@@ -170,31 +173,61 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
     const port = Number(portAnswer);
 
-    prompts.note(
-      [
-        "DevSpace needs a public base URL so ChatGPT or Claude can reach this MCP server.",
-        "Create a tunnel or reverse proxy with Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS proxy.",
-        "Paste the public origin here, without /mcp.",
-        "",
-        "Example: https://your-tunnel-host.example.com",
-      ].join("\n"),
-      "Public URL required",
-    );
-    const publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-      message: files.config.publicBaseUrl
-        ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
-        : "What is the public base URL?",
-      placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-      defaultValue: files.config.publicBaseUrl ?? "",
-      validate: validateRequiredPublicBaseUrl,
-    }));
+    const remoteMcpAnswer = await prompts.confirm({
+      message: "Will ChatGPT or Claude connect to DevSpace over the internet?",
+      initialValue: Boolean(files.config.publicBaseUrl),
+    });
+    if (prompts.isCancel(remoteMcpAnswer)) throw new SetupCancelledError();
+    const publicBaseUrl = remoteMcpAnswer
+      ? normalizePublicBaseUrl(await textPrompt({
+          message: files.config.publicBaseUrl
+            ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
+            : "What is the public base URL?",
+          placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
+          defaultValue: files.config.publicBaseUrl ?? "",
+          validate: validateRequiredPublicBaseUrl,
+        }))
+      : null;
+
+    const agentToolingAnswer = await prompts.confirm({
+      message: "Enable subagents and Dynamic Workflows?",
+      initialValue: resolveSubagentsFlag(files.config) ?? true,
+    });
+    if (prompts.isCancel(agentToolingAnswer)) throw new SetupCancelledError();
+
+    const providerSnapshot = getLocalAgentProviderAvailabilitySnapshot();
+    const availableProviders = providerSnapshot
+      .filter((provider) => provider.available)
+      .map((provider) => provider.name);
+    let agentProviders: LocalAgentProvider[] = [];
+    let subagents = agentToolingAnswer;
+    if (subagents && availableProviders.length === 0) {
+      prompts.log.warn("No supported agent providers are currently available; agent tooling was disabled.");
+      subagents = false;
+    } else if (subagents) {
+      const configuredProviders = files.config.agentProviders ?? [...LOCAL_AGENT_PROVIDERS];
+      const providerAnswer = await prompts.multiselect<LocalAgentProvider>({
+        message: "Which agent providers should DevSpace use?",
+        options: availableProviders.map((provider) => ({ value: provider, label: provider })),
+        initialValues: configuredProviders.filter((provider) =>
+          availableProviders.includes(provider)
+        ),
+        required: true,
+      });
+      if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+      agentProviders = providerAnswer;
+    }
 
     const config: DevspaceUserConfig = {
+      ...files.config,
       host: files.config.host ?? "127.0.0.1",
       port,
       allowedRoots,
       publicBaseUrl,
-      subagents: resolveSubagentsFlag(files.config),
+      subagents,
+      // Disabling the capability should not turn provider defaults into an
+      // explicit deny-all list if it is later enabled through the environment.
+      agentProviders: subagents ? agentProviders : files.config.agentProviders,
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -202,11 +235,16 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const configPath = writeDevspaceConfig(config);
     const authPath = writeDevspaceAuth(auth);
+    const installedSkills = subagents ? installBundledAgentSkills() : undefined;
     const lines = [
       `Config: ${configPath}`,
       `Auth: ${authPath}`,
       `Local MCP URL: http://${config.host}:${config.port}/mcp`,
       ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
+      `Agent tooling: ${subagents ? `enabled (${agentProviders.join(", ")})` : "disabled"}`,
+      ...(installedSkills
+        ? [`Agent skills: ${installedSkills.directory}`]
+        : []),
     ];
     prompts.note(lines.join("\n"), "DevSpace configured");
     prompts.note(
@@ -217,7 +255,16 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       ].join("\n"),
       "Owner password",
     );
-    prompts.outro("Run `devspace serve` to start the MCP server.");
+    if (installedSkills?.skipped.length) {
+      prompts.log.warn(
+        `Kept user-owned skills unchanged: ${installedSkills.skipped.join(", ")}`,
+      );
+    }
+    prompts.outro(
+      remoteMcpAnswer
+        ? "Run `devspace serve` to start the MCP server."
+        : "Setup complete. Use `devspace agents` and `devspace workflow` from a project directory.",
+    );
   } catch (error) {
     if (error instanceof SetupCancelledError) {
       prompts.cancel("Setup cancelled");
@@ -297,7 +344,10 @@ async function runDoctor(): Promise<void> {
     console.log(`Subagents: ${config.subagents ? "enabled" : "disabled"}`);
     console.log(`Workflows: ${config.workflows ? "enabled" : "disabled"}`);
     if (config.subagents) {
-      const snapshot = getLocalAgentProviderAvailabilitySnapshot();
+      const snapshot = getLocalAgentProviderAvailabilitySnapshot(
+        process.env,
+        config.agentProviders,
+      );
       console.log(
         `Agent providers (live): ${formatLocalAgentProviderAvailabilitySummary(snapshot)}`,
       );
@@ -420,7 +470,7 @@ async function runAgentsTargets(args: string[]): Promise<void> {
   const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
   const catalog = buildLocalAgentCatalog(
     profiles,
-    getLocalAgentProviderAvailabilitySnapshot(),
+    getLocalAgentProviderAvailabilitySnapshot(process.env, config.agentProviders),
   );
   console.log(
     args.includes("--json")
@@ -443,7 +493,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
     if (!isLocalAgentProvider(existing.provider)) {
       throw new Error(`Unknown subagent provider for existing session: ${existing.provider}`);
     }
-    assertLocalAgentProviderAvailable(existing.provider);
+    assertLocalAgentProviderAvailable(existing.provider, process.env, config.agentProviders);
     const promptFile = writeAgentPromptFile(parsed.prompt);
     store.update(existing.id, {
       status: "starting",
@@ -465,7 +515,10 @@ async function runAgentsRun(args: string[]): Promise<void> {
   }
 
   const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
-  const availableProviders = getAvailableLocalAgentProviders();
+  const availableProviders = getAvailableLocalAgentProviders(
+    process.env,
+    config.agentProviders,
+  );
   let target;
   try {
     target = resolveLocalAgentExecution({
@@ -556,7 +609,10 @@ async function runAgentsWorker(args: string[]): Promise<void> {
       target: record.profileName,
       prompt,
       profiles,
-      availableProviders: getAvailableLocalAgentProviders(),
+      availableProviders: getAvailableLocalAgentProviders(
+        process.env,
+        config.agentProviders,
+      ),
       model: record.model,
       effort: record.effort,
     });

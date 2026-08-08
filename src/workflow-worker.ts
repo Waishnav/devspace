@@ -54,7 +54,7 @@ export async function runWorkflowWorker(
   try {
     const source = await readFile(claimed.scriptPath, "utf8");
     const parsed = parseWorkflowScript(source, { filename: claimed.scriptPath });
-    const availableProviders = resolveWorkflowLiveProviders();
+    const availableProviders = resolveWorkflowLiveProviders(config);
     const agentProfiles = await loadLocalAgentProfiles(config, claimed.workspaceRoot);
     const concurrency = resolveWorkflowConcurrency(
       parsed.meta.concurrency,

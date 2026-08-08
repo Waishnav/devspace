@@ -65,34 +65,37 @@ Install the DevSpace CLI:
 npm install -g @waishnav/devspace
 ```
 
-Then initialize and start the server:
+Then initialize DevSpace:
 
 ```bash
 devspace init
-devspace serve
 ```
 
 Or run it without a global install:
 
 ```bash
 npx @waishnav/devspace init
-npx @waishnav/devspace serve
 ```
 
 During setup, DevSpace asks for:
 
-- the local project folders ChatGPT is allowed to open through DevSpace
+- the local project folders DevSpace is allowed to open
 - the local port, usually `7676`
-- your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or
-  another reverse proxy
+- whether ChatGPT or Claude will connect remotely; only remote MCP users need a public HTTPS URL
+- whether to enable subagents and Dynamic Workflows, and which available providers may run
 
-Use the public origin without `/mcp` during setup:
+Setup installs the `subagents` and `dynamic-workflows` skills in
+`~/.devspace/skills` when agent tooling is enabled. Coding harnesses can use the
+DevSpace CLI directly; MCP users invoke the same CLI through DevSpace's shell or
+process tools.
+
+For remote MCP use, enter the public origin without `/mcp` during setup:
 
 ```text
 https://your-tunnel-host.example.com
 ```
 
-You will configure your MCP client with the public `/mcp` URL after setup.
+Then configure your MCP client with the public `/mcp` URL after setup.
 
 When the client connects, DevSpace opens an Owner password approval page. Enter
 the Owner password printed by `devspace init`. It is also stored in:
@@ -139,6 +142,7 @@ DevSpace gives ChatGPT tools to:
 - use isolated Git worktrees for parallel coding sessions
 - follow project instructions from `AGENTS.md` and `CLAUDE.md`
 - discover local agent skills from your skill folders
+- delegate bounded work and run programmable multi-agent workflows through the DevSpace CLI
 - show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
 
 ## Mental Model
@@ -180,6 +184,7 @@ devspace doctor
 - [Setup Guide](https://github.com/Waishnav/devspace/blob/main/docs/setup.md)
 - [ChatGPT Coding Workflow](https://github.com/Waishnav/devspace/blob/main/docs/chatgpt-coding-workflow.md)
 - [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
+- [Subagents and Dynamic Workflows](https://github.com/Waishnav/devspace/blob/main/docs/dynamic-workflows.md)
 - [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
 - [Troubleshooting Gotchas](https://github.com/Waishnav/devspace/blob/main/docs/gotchas.md)
 

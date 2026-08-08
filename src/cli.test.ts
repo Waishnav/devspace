@@ -109,6 +109,30 @@ try {
   assert.equal(targets.profiles[0]?.provider, "codex");
   assert.equal(targets.providers.some((provider) => provider.name === "codex"), true);
 
+  const filteredTargets = JSON.parse(execFileSync(
+    "node",
+    ["--import", "tsx", "src/cli.ts", "agents", "targets", "--json"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEVSPACE_CONFIG_DIR: configDir,
+        DEVSPACE_ALLOWED_ROOTS: projectRoot,
+        DEVSPACE_STATE_DIR: stateDir,
+        DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        DEVSPACE_SUBAGENTS: "1",
+        DEVSPACE_AGENT_PROVIDERS: "claude",
+        DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+      },
+    },
+  )) as {
+    profiles: Array<{ name: string }>;
+    providers: Array<{ name: string }>;
+  };
+  assert.deepEqual(filteredTargets.profiles, []);
+  assert.deepEqual(filteredTargets.providers.map((provider) => provider.name), ["claude"]);
+
   const agentsJson = JSON.parse(execFileSync(
     "node",
     ["--import", "tsx", "src/cli.ts", "agents", "ls", "--json"],

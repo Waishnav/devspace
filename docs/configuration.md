@@ -83,17 +83,18 @@ sessions.
 
 | Value | Behavior |
 | --- | --- |
-| `full` | Default. Widget UI is attached to exposed workspace, workflow, file, edit, and shell tools, including read-only live workflow dashboards. |
+| `full` | Default. Widget UI is attached to exposed workspace, file, edit, and shell tools. The workspace card includes a compact active-workflow summary. |
 | `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_workspace` and `show_changes`. |
 | `off` | Disables widget UI. |
 
-## Skills
+## Agent Tooling And Skills
 
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
-| `DEVSPACE_SUBAGENTS` | Set to `1` to expose configured agent profiles as Subagents. Experimental and disabled by default. |
-| `DEVSPACE_WORKFLOWS` | Experimental Dynamic Workflows gate. When unset, it follows the effective Subagents setting, including persisted config and any environment override. |
+| `DEVSPACE_SUBAGENTS` | Enables direct subagents and, by default, Dynamic Workflows. |
+| `DEVSPACE_WORKFLOWS` | Optional runtime override for the workflow CLI. When unset, it follows `DEVSPACE_SUBAGENTS`. |
+| `DEVSPACE_AGENT_PROVIDERS` | Optional comma-separated provider allowlist: `codex`, `claude`, `opencode`, `pi`, `cursor`, or `copilot`. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -105,33 +106,31 @@ DevSpace discovers standard Agent Skills from:
 
 It also includes:
 
-- the package-managed `subagents` skill when the Subagents capability is enabled
-- the package-managed `dynamic-workflows` skill when the Dynamic Workflows capability is enabled
+- managed `subagents` and `dynamic-workflows` skills installed by setup in `~/.devspace/skills`
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-User and project skills with the same name take precedence over bundled skills.
-DevSpace does not copy bundled skills into `~/.devspace/skills` during setup.
+User and project skills with the same name take precedence. Setup updates only
+copies marked as DevSpace-managed and preserves unmarked, user-owned skill
+directories.
 
-When Subagents are enabled, DevSpace discovers agent profiles
-from:
+When agent tooling is enabled, DevSpace discovers agent profiles from:
 
 - `~/.devspace/agents/*.md`
 - project `.devspace/agents/*.md`
 
-`open_workspace` returns a compact catalog containing profile names,
-descriptions, providers, and optional models/effort levels so the host model can choose an
-agent without reading provider-specific launch details. `devspace agents ls`
-lists existing subagent sessions for the current workspace, scoped by the
-workspace environment injected into shell commands. The `subagents`
-skill teaches the model to discover targets with `devspace agents targets`,
-then use the minimal `devspace agents run`, `devspace agents show`, and
-`devspace agents ls` workflow.
+`open_workspace` returns only usable provider names and profile names with
+descriptions. `devspace agents ls` lists existing subagent sessions for the
+current workspace, scoped by the workspace environment injected into shell
+commands. The `subagents` skill teaches the model to discover targets with
+`devspace agents targets`, then use the minimal `devspace agents run`,
+`devspace agents show`, and `devspace agents ls` workflow.
 
-Provider availability is detected at runtime. DevSpace does not persist probe
-timestamps, availability snapshots, or an experimental provider enable-list in
-`config.json`. Final provider policy and onboarding are deferred until the
-Subagents and Dynamic Workflows features are finalized.
+Provider availability is detected at runtime. Setup persists the selected
+provider names in `config.json`; unavailable and unselected providers and their
+profiles are omitted from model-facing results. `devspace agents targets --json`
+shows the complete usable CLI target catalog when a model needs provider,
+model, or effort defaults for execution.
 
 Starter profile templates are available under `examples/agents/`. Copy or adapt
 them into one of the active profile directories before use.

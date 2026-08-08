@@ -47,7 +47,7 @@ export async function runWorkflowCommand(
     throw new InvalidWorkflowInputError({
       code: "invalid_argument",
       message:
-        "Dynamic workflows are disabled. Set DEVSPACE_WORKFLOWS=1 to enable the experimental feature.",
+        "Dynamic Workflows are disabled. Run `devspace init --force` or set DEVSPACE_WORKFLOWS=1.",
     });
   }
   switch (subcommand) {

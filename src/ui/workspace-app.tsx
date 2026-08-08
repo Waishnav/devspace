@@ -25,7 +25,7 @@ import {
   getToolHeaderSummary,
   type ToolDisplay,
 } from "./tool-display.js";
-import { renderWorkspaceDashboard } from "./workflow-dashboard.js";
+import { renderWorkspaceDashboard } from "./workspace-dashboard.js";
 import "./workspace-app.css";
 
 interface MountedPayload {

@@ -14,14 +14,16 @@ export interface LocalAgentProviderAvailability {
 
 export function getLocalAgentProviderAvailabilitySnapshot(
   env: NodeJS.ProcessEnv = process.env,
+  providers: readonly LocalAgentProvider[] = LOCAL_AGENT_PROVIDERS,
 ): LocalAgentProviderAvailability[] {
-  return LOCAL_AGENT_PROVIDERS.map((provider) => checkLocalAgentProviderAvailability(provider, env));
+  return providers.map((provider) => checkLocalAgentProviderAvailability(provider, env));
 }
 
 export function getAvailableLocalAgentProviders(
   env: NodeJS.ProcessEnv = process.env,
+  providers: readonly LocalAgentProvider[] = LOCAL_AGENT_PROVIDERS,
 ): LocalAgentProvider[] {
-  return getLocalAgentProviderAvailabilitySnapshot(env)
+  return getLocalAgentProviderAvailabilitySnapshot(env, providers)
     .filter((provider) => provider.available)
     .map((provider) => provider.name);
 }
@@ -51,7 +53,11 @@ export function checkLocalAgentProviderAvailability(
 export function assertLocalAgentProviderAvailable(
   provider: LocalAgentProvider,
   env: NodeJS.ProcessEnv = process.env,
+  enabledProviders: readonly LocalAgentProvider[] = LOCAL_AGENT_PROVIDERS,
 ): void {
+  if (!enabledProviders.includes(provider)) {
+    throw new Error(`${provider} provider is disabled in DevSpace config.`);
+  }
   const availability = checkLocalAgentProviderAvailability(provider, env);
   if (availability.available) return;
   throw new Error(
