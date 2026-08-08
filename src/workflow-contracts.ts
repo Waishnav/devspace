@@ -6,20 +6,18 @@ import { jsonSchemaSchema, type JsonSchema, type JsonValue } from "./json-types.
 
 export const localAgentProviderSchema = z.enum(LOCAL_AGENT_PROVIDERS);
 
+export const workflowPhaseMetaSchema = z
+  .object({
+    title: z.string().trim().min(1),
+    detail: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 export const workflowMetaSchema = z
   .object({
     name: z.string().trim().min(1).regex(/^[a-z0-9-]+$/),
     description: z.string().trim().min(1),
-    phases: z
-      .array(
-        z
-          .object({
-            title: z.string().trim().min(1),
-            detail: z.string().trim().min(1).optional(),
-          })
-          .strict(),
-      )
-      .optional(),
+    phases: z.array(workflowPhaseMetaSchema).optional(),
     whenToUse: z.string().trim().min(1).optional(),
     defaultProvider: localAgentProviderSchema.optional(),
     concurrency: z.number().finite().int().positive().optional(),

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
+import * as z from "zod/v4";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import type { ServerConfig } from "./config.js";
 import {
@@ -9,11 +10,16 @@ import {
   type AppendWorkflowEventInput,
   type WorkflowAgentCallRecord,
   type WorkflowAgentCallStatus,
+  type WorkflowAgentActivityKind,
+  type WorkflowAgentActivityRecord,
+  type WorkflowAgentActivityStatus,
   type WorkflowErrorKind,
   type WorkflowEventRecord,
   type WorkflowRunRecord,
   type WorkflowRunSource,
   type WorkflowRunStatus,
+  type WorkflowPhaseMeta,
+  type WorkflowTokenUsage,
 } from "./workflow-types.js";
 import {
   localAgentProviderSchema,
@@ -22,6 +28,7 @@ import {
   workflowEventTypeSchema,
   workflowRunSourceSchema,
   workflowRunStatusSchema,
+  workflowPhaseMetaSchema,
 } from "./workflow-contracts.js";
 import {
   InvalidRunTransitionError,
@@ -42,8 +49,20 @@ export interface CreateWorkflowRunInput {
   workspaceRoot: string;
   workspaceId?: string;
   argsJson?: string;
+  phases?: WorkflowPhaseMeta[];
   resumedFromRunId?: string;
   baseSha?: string;
+}
+
+export interface AppendWorkflowAgentActivityInput {
+  runId: string;
+  callIndex: number;
+  kind: WorkflowAgentActivityKind;
+  status: WorkflowAgentActivityStatus;
+  label: string;
+  detail?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface BeginAgentCallInput {
@@ -131,6 +150,7 @@ interface WorkflowRunRow {
   workspace_root: string;
   workspace_id: string | null;
   args_json: string;
+  phases_json: string;
   status: string;
   error: string | null;
   error_kind: string | null;
@@ -172,6 +192,13 @@ interface WorkflowAgentCallRow {
   status: string;
   from_cache: string;
   provider_session_id: string | null;
+  usage_input_tokens: number | null;
+  usage_cached_input_tokens: number | null;
+  usage_cache_creation_input_tokens: number | null;
+  usage_output_tokens: number | null;
+  usage_total_tokens: number | null;
+  usage_state: string | null;
+  usage_updated_at: string | null;
   response_text: string | null;
   structured_json: string | null;
   return_value_json: string | null;
@@ -190,6 +217,19 @@ interface WorkflowAgentCallRow {
   updated_at: string;
 }
 
+interface WorkflowAgentActivityRow {
+  run_id: string;
+  call_index: number;
+  seq: number;
+  kind: string;
+  status: string;
+  label: string;
+  detail: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
 const TERMINAL_STATUSES = new Set<WorkflowRunStatus>(["completed", "failed", "cancelled"]);
 
 export class WorkflowStore {
@@ -202,6 +242,7 @@ export class WorkflowStore {
   createRun(input: CreateWorkflowRunInput): WorkflowRunRecord {
     const now = isoNow();
     const argsJson = input.argsJson ?? "null";
+    const phasesJson = JSON.stringify(input.phases ?? []);
     assertArgsSize(argsJson);
 
     const record: WorkflowRunRecord = {
@@ -213,6 +254,7 @@ export class WorkflowStore {
       workspaceRoot: resolve(input.workspaceRoot),
       workspaceId: input.workspaceId,
       argsJson,
+      phases: input.phases ?? [],
       status: "starting",
       cancelRequested: false,
       resumedFromRunId: input.resumedFromRunId,
@@ -225,9 +267,9 @@ export class WorkflowStore {
       .prepare(
         `insert into workflow_runs (
           id, name, source, script_path, script_hash, workspace_root, workspace_id,
-          args_json, status, cancel_requested, resumed_from_run_id, base_sha,
+          args_json, phases_json, status, cancel_requested, resumed_from_run_id, base_sha,
           created_at, updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -238,6 +280,7 @@ export class WorkflowStore {
         record.workspaceRoot,
         record.workspaceId ?? null,
         record.argsJson,
+        phasesJson,
         record.status,
         "false",
         record.resumedFromRunId ?? null,
@@ -949,6 +992,128 @@ export class WorkflowStore {
     return rows.map(rowToAgentCall);
   }
 
+  attachAgentSession(runId: string, callIndex: number, providerSessionId: string): void {
+    const sessionId = providerSessionId.trim();
+    if (!sessionId) throw new Error("providerSessionId cannot be empty");
+    const now = isoNow();
+    const update = this.database.sqlite
+      .prepare(
+        `update workflow_agent_calls
+         set provider_session_id = ?, updated_at = ?
+         where run_id = ? and call_index = ?`,
+      )
+      .run(sessionId, now, runId, callIndex);
+    if (update.changes === 0) this.requireAgentCall(runId, callIndex);
+  }
+
+  updateAgentUsage(
+    runId: string,
+    callIndex: number,
+    usage: Omit<WorkflowTokenUsage, "updatedAt">,
+  ): WorkflowTokenUsage {
+    for (const value of [
+      usage.inputTokens,
+      usage.cachedInputTokens,
+      usage.cacheCreationInputTokens,
+      usage.outputTokens,
+      usage.totalTokens,
+    ]) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new Error("Workflow token usage must contain non-negative integers");
+      }
+    }
+    const now = isoNow();
+    const update = this.database.sqlite
+      .prepare(
+        `update workflow_agent_calls set
+          usage_input_tokens = ?,
+          usage_cached_input_tokens = ?,
+          usage_cache_creation_input_tokens = ?,
+          usage_output_tokens = ?,
+          usage_total_tokens = ?,
+          usage_state = ?,
+          usage_updated_at = ?,
+          updated_at = ?
+         where run_id = ? and call_index = ?`,
+      )
+      .run(
+        usage.inputTokens ?? null,
+        usage.cachedInputTokens ?? null,
+        usage.cacheCreationInputTokens ?? null,
+        usage.outputTokens ?? null,
+        usage.totalTokens,
+        usage.state,
+        now,
+        now,
+        runId,
+        callIndex,
+      );
+    if (update.changes === 0) this.requireAgentCall(runId, callIndex);
+    return { ...usage, updatedAt: now };
+  }
+
+  appendAgentActivity(input: AppendWorkflowAgentActivityInput): WorkflowAgentActivityRecord {
+    const now = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      this.requireAgentCall(input.runId, input.callIndex);
+      const next = this.database.sqlite
+        .prepare(
+          `select coalesce(max(seq), 0) + 1 as next_seq
+           from workflow_agent_activity where run_id = ? and call_index = ?`,
+        )
+        .get(input.runId, input.callIndex) as { next_seq: number };
+      this.database.sqlite
+        .prepare(
+          `insert into workflow_agent_activity (
+            run_id, call_index, seq, kind, status, label, detail,
+            started_at, completed_at, created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.runId,
+          input.callIndex,
+          next.next_seq,
+          input.kind,
+          input.status,
+          input.label,
+          input.detail ?? null,
+          input.startedAt ?? null,
+          input.completedAt ?? null,
+          now,
+        );
+      this.database.sqlite
+        .prepare(
+          `delete from workflow_agent_activity
+           where run_id = ? and call_index = ? and seq <= ?`,
+        )
+        .run(input.runId, input.callIndex, next.next_seq - WORKFLOW_LIMITS.activityPerCall);
+      return {
+        ...input,
+        seq: next.next_seq,
+        createdAt: now,
+      };
+    });
+    return transaction.immediate();
+  }
+
+  listAgentActivity(
+    runId: string,
+    callIndex: number,
+    limit = WORKFLOW_LIMITS.activityPerCall,
+  ): WorkflowAgentActivityRecord[] {
+    const capped = Math.max(1, Math.min(limit, WORKFLOW_LIMITS.activityPerCall));
+    const rows = this.database.sqlite
+      .prepare(
+        `select * from (
+          select * from workflow_agent_activity
+          where run_id = ? and call_index = ?
+          order by seq desc limit ?
+        ) order by seq asc`,
+      )
+      .all(runId, callIndex, capped) as WorkflowAgentActivityRow[];
+    return rows.map(rowToAgentActivity);
+  }
+
   /**
    * Mark abandoned starting runs and running runs with a dead worker as failed.
    * staleBeforeMs: start/update or heartbeat older than this and no live pid.
@@ -1050,6 +1215,7 @@ function rowToRun(row: WorkflowRunRow): WorkflowRunRecord {
     workspaceRoot: row.workspace_root,
     workspaceId: row.workspace_id ?? undefined,
     argsJson: row.args_json,
+    phases: z.array(workflowPhaseMetaSchema).parse(JSON.parse(row.phases_json)),
     status: workflowRunStatusSchema.parse(row.status),
     error: row.error ?? undefined,
     errorKind: (row.error_kind as WorkflowErrorKind | null) ?? undefined,
@@ -1095,6 +1261,17 @@ function rowToAgentCall(row: WorkflowAgentCallRow): WorkflowAgentCallRecord {
     status: workflowAgentCallStatusSchema.parse(row.status),
     fromCache: row.from_cache === "true",
     providerSessionId: row.provider_session_id ?? undefined,
+    usage: row.usage_total_tokens === null || row.usage_updated_at === null
+      ? undefined
+      : {
+          inputTokens: row.usage_input_tokens ?? undefined,
+          cachedInputTokens: row.usage_cached_input_tokens ?? undefined,
+          cacheCreationInputTokens: row.usage_cache_creation_input_tokens ?? undefined,
+          outputTokens: row.usage_output_tokens ?? undefined,
+          totalTokens: row.usage_total_tokens,
+          state: row.usage_state === "final" ? "final" : "partial",
+          updatedAt: row.usage_updated_at,
+        },
     responseText: row.response_text ?? undefined,
     structuredJson: row.structured_json ?? undefined,
     returnValueJson: row.return_value_json ?? undefined,
@@ -1114,6 +1291,29 @@ function rowToAgentCall(row: WorkflowAgentCallRow): WorkflowAgentCallRecord {
     startedAt: row.started_at ?? undefined,
     completedAt: row.completed_at ?? undefined,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToAgentActivity(row: WorkflowAgentActivityRow): WorkflowAgentActivityRecord {
+  const kinds: WorkflowAgentActivityKind[] = ["tool", "command", "file", "status"];
+  const statuses: WorkflowAgentActivityStatus[] = ["running", "completed", "failed"];
+  if (!kinds.includes(row.kind as WorkflowAgentActivityKind)) {
+    throw new Error(`Unknown workflow agent activity kind: ${row.kind}`);
+  }
+  if (!statuses.includes(row.status as WorkflowAgentActivityStatus)) {
+    throw new Error(`Unknown workflow agent activity status: ${row.status}`);
+  }
+  return {
+    runId: row.run_id,
+    callIndex: row.call_index,
+    seq: row.seq,
+    kind: row.kind as WorkflowAgentActivityKind,
+    status: row.status as WorkflowAgentActivityStatus,
+    label: row.label,
+    detail: row.detail ?? undefined,
+    startedAt: row.started_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    createdAt: row.created_at,
   };
 }
 

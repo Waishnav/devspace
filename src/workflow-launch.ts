@@ -94,6 +94,7 @@ export async function launchWorkflowRun(
       workspaceRoot: input.workspaceRoot,
       workspaceId: input.workspaceId,
       argsJson: JSON.stringify(args === undefined ? null : args),
+      phases: parsed.meta.phases,
       resumedFromRunId: priorRunId,
       baseSha,
     });

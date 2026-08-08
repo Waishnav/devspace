@@ -14,7 +14,7 @@ import { launchWorkflowRun } from "./workflow-launch.js";
     workspaceRoot: dir,
     source: {
       kind: "inline",
-      script: `export const meta = { name: 'launch-demo', description: 'd' }\nreturn 1\n`,
+      script: `export const meta = { name: 'launch-demo', description: 'd', phases: [{ title: 'Plan' }, { title: 'Build', detail: 'Implement it' }] }\nreturn 1\n`,
     },
     args: { n: 1 },
     cliEntry: "/tmp/devspace-cli-not-used",
@@ -26,6 +26,10 @@ import { launchWorkflowRun } from "./workflow-launch.js";
   assert.equal(launched.value.run.status, "starting");
   assert.match(launched.value.run.scriptPath.replaceAll("\\", "/"), /workflow-scripts\//);
   assert.equal(launched.value.run.argsJson, JSON.stringify({ n: 1 }));
+  assert.deepEqual(launched.value.run.phases, [
+    { title: "Plan" },
+    { title: "Build", detail: "Implement it" },
+  ]);
 
   await mkdir(join(dir, ".devspace", "workflows"), { recursive: true });
   await writeFile(
