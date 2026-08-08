@@ -15,6 +15,11 @@ const run: WorkflowRunRecord = {
   workspaceRoot: "/tmp/project",
   argsJson: "null",
   status: "running",
+  phases: [
+    { title: "Planning" },
+    { title: "Implementation", detail: "Patch the approved plan" },
+    { title: "Verification" },
+  ],
   cancelRequested: false,
   createdAt: "2026-07-26T10:00:00.000Z",
   startedAt: "2026-07-26T10:00:01.000Z",
@@ -49,6 +54,13 @@ const calls: WorkflowAgentCallRecord[] = [
     status: "running",
     fromCache: false,
     isolation: "worktree",
+    usage: {
+      inputTokens: 1_000,
+      outputTokens: 500,
+      totalTokens: 1_500,
+      state: "partial",
+      updatedAt: "2026-07-26T10:00:04.000Z",
+    },
     worktreePath: "/tmp/worktree",
     createdAt: "2026-07-26T10:00:04.000Z",
     startedAt: "2026-07-26T10:00:04.000Z",
@@ -105,7 +117,10 @@ assert.equal(view.calls.completed, 1);
 assert.equal(view.calls.running, 1);
 assert.equal(view.calls.cached, 1);
 assert.equal(view.calls.observed, 3);
-assert.deepEqual(view.phases.map((phase) => phase.title), ["Planning", "Implementation"]);
+assert.equal(view.totalTokens, 1_500);
+assert.deepEqual(view.phases.map((phase) => phase.title), ["Planning", "Implementation", "Verification"]);
+assert.deepEqual(view.phases.map((phase) => phase.status), ["completed", "running", "not_started"]);
+assert.equal(view.phases[1]?.detail, "Patch the approved plan");
 assert.equal(view.phases[1]?.calls[0]?.worktreePath, "/tmp/worktree");
 assert.equal(view.unphasedCalls[0]?.replayedFromRunId, "wfr_old");
 assert.equal(view.recentActivity.at(-1)?.detail, "Running tests");

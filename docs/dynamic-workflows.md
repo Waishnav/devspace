@@ -51,6 +51,7 @@ devspace workflow calls <run-id> --json
 devspace workflow call <run-id> <call-index> --json
 devspace workflow cancel <run-id> --json
 devspace workflow ls --json
+devspace workflow tui [run-id]
 ```
 
 Named scripts live in `.devspace/workflows/<name>.js`. A script can combine
@@ -62,6 +63,19 @@ Agent harnesses should prefer `--json`, retain the returned id, and poll status.
 This avoids coupling a long workflow lifetime to one tool-call timeout.
 `--follow` remains available for interactive terminals with long-running
 process support.
+
+`workflow tui` opens a project-scoped, read-only Navigator. The first screen
+lists workflows. Opening a run shows its declared phases beside the agent calls
+in the selected phase; opening a call exposes normalized activity, prompt,
+result, worktree details, and provider metadata. Use arrow keys (or `j`/`k`) to
+navigate, `Tab` to switch panes or inspector sections, `Enter` to open, `Esc`
+to go back, and `q` to quit.
+
+Elapsed time is derived from persisted call timestamps. Token counts are
+best-effort provider observations: a running call may show a partial snapshot,
+while a completed call shows its final provider-reported total. Providers that
+cannot report a value remain visibly unavailable instead of being estimated.
+Replayed calls do not contribute tokens to the current run.
 
 Failed and cancelled workflows are terminal. `workflow run --resume <run-id>`
 creates a new run, reuses the unchanged successful prefix when safe, and

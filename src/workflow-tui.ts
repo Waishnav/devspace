@@ -1,38 +1,64 @@
-import { resolve } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import type { ServerConfig } from "./config.js";
+import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import { createWorkflowStore } from "./workflow-store.js";
+import type { WorkflowAgentActivityRecord } from "./workflow-types.js";
 import {
   ACTIVE_WORKFLOW_STATUSES,
   loadWorkflowProjectView,
   type WorkflowCallView,
+  type WorkflowPhaseView,
   type WorkflowProjectView,
   type WorkflowRunView,
 } from "./workflow-view.js";
 
 const REFRESH_MS = 750;
+const INSPECTOR_TABS = ["activity", "prompt", "result", "files", "metadata"] as const;
+type InspectorTab = (typeof INSPECTOR_TABS)[number];
 
-export async function runWorkflowTui(
-  args: string[],
-  config: ServerConfig,
-): Promise<void> {
+export type WorkflowTuiState =
+  | { screen: "workflows"; runIndex: number }
+  | {
+      screen: "workflow";
+      runIndex: number;
+      phaseIndex: number;
+      callIndex: number;
+      focus: "phases" | "calls";
+    }
+  | {
+      screen: "call";
+      runIndex: number;
+      phaseIndex: number;
+      callIndex: number;
+      tab: InspectorTab;
+      scroll: number;
+    };
+
+export async function runWorkflowTui(args: string[], config: ServerConfig): Promise<void> {
   const requestedRunId = args.find((arg) => !arg.startsWith("-"));
   const workspaceRoot = resolveWorkflowTuiWorkspaceRoot();
   const store = createWorkflowStore(config);
-
-  const load = (): WorkflowProjectView =>
+  const load = (includeTerminal = false): WorkflowProjectView =>
     loadWorkflowProjectView(store, workspaceRoot, {
-      statuses: requestedRunId ? undefined : [...ACTIVE_WORKFLOW_STATUSES],
+      statuses: requestedRunId || includeTerminal ? undefined : [...ACTIVE_WORKFLOW_STATUSES],
       limit: 50,
       eventLimit: 100,
     });
 
+  let project = load();
+  let state = createWorkflowTuiState(project, requestedRunId);
+
+  const activityForState = (): WorkflowAgentActivityRecord[] => {
+    if (state.screen !== "call") return [];
+    const call = selectedCall(project, state);
+    const run = project.runs[state.runIndex];
+    return run && call ? store.listAgentActivity(run.id, call.callIndex) : [];
+  };
+
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     try {
-      const view = load();
-      const selectedIndex = findInitialSelection(view, requestedRunId);
       process.stdout.write(
-        `${renderWorkflowTui(view, selectedIndex, 100, 40, { ansi: false })}\n`,
+        `${renderWorkflowTui(project, state, 100, 40, { ansi: false, activity: activityForState() })}\n`,
       );
       return;
     } finally {
@@ -40,24 +66,22 @@ export async function runWorkflowTui(
     }
   }
 
-  let project = load();
-  let selectedIndex = findInitialSelection(project, requestedRunId);
   let closed = false;
   let rendering = false;
-
   const render = (): void => {
     if (rendering || closed) return;
     rendering = true;
     try {
-      project = load();
-      selectedIndex = clampSelection(project, selectedIndex, requestedRunId);
+      const previousProject = project;
+      project = load(state.screen !== "workflows");
+      state = reconcileWorkflowTuiState(previousProject, project, state);
       process.stdout.write(
         `\u001b[H\u001b[2J${renderWorkflowTui(
           project,
-          selectedIndex,
+          state,
           process.stdout.columns || 100,
           process.stdout.rows || 40,
-          { ansi: true },
+          { ansi: true, activity: activityForState() },
         )}`,
       );
     } finally {
@@ -67,7 +91,6 @@ export async function runWorkflowTui(
 
   await new Promise<void>((done) => {
     let timer: NodeJS.Timeout;
-
     const finish = (): void => {
       if (closed) return;
       closed = true;
@@ -81,24 +104,11 @@ export async function runWorkflowTui(
       store.close();
       done();
     };
-
-    const onKeypress = (
-      _input: string,
-      key: { name?: string; ctrl?: boolean },
-    ): void => {
-      if ((key.ctrl && key.name === "c") || key.name === "q" || key.name === "escape") {
-        finish();
-        return;
-      }
-      if (key.name === "up") {
-        selectedIndex = Math.max(0, selectedIndex - 1);
-        render();
-      } else if (key.name === "down") {
-        selectedIndex = Math.min(Math.max(0, project.runs.length - 1), selectedIndex + 1);
-        render();
-      }
+    const onKeypress = (_input: string, key: { name?: string; ctrl?: boolean }): void => {
+      if ((key.ctrl && key.name === "c") || key.name === "q") return finish();
+      state = reduceWorkflowTuiState(project, state, key.name ?? "");
+      render();
     };
-
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
     process.stdin.resume();
@@ -112,139 +122,288 @@ export async function runWorkflowTui(
 }
 
 export function resolveWorkflowTuiWorkspaceRoot(cwd = process.cwd()): string {
-  return resolve(cwd);
+  return resolveCliWorkspaceContext(process.env, cwd).workspaceRoot;
+}
+
+export function createWorkflowTuiState(
+  project: WorkflowProjectView,
+  requestedRunId?: string,
+): WorkflowTuiState {
+  if (!requestedRunId) return { screen: "workflows", runIndex: 0 };
+  const runIndex = project.runs.findIndex((run) => run.id === requestedRunId);
+  if (runIndex < 0) {
+    throw new Error(`Workflow ${requestedRunId} does not belong to the current project: ${project.workspaceRoot}`);
+  }
+  return {
+    screen: "workflow",
+    runIndex,
+    phaseIndex: initialPhaseIndex(project.runs[runIndex]!),
+    callIndex: 0,
+    focus: "phases",
+  };
+}
+
+export function reduceWorkflowTuiState(
+  project: WorkflowProjectView,
+  state: WorkflowTuiState,
+  key: string,
+): WorkflowTuiState {
+  const run = project.runs[state.runIndex];
+  if (state.screen === "workflows") {
+    if (key === "up" || key === "k") return { ...state, runIndex: Math.max(0, state.runIndex - 1) };
+    if (key === "down" || key === "j") {
+      return { ...state, runIndex: Math.min(Math.max(0, project.runs.length - 1), state.runIndex + 1) };
+    }
+    if ((key === "return" || key === "right") && run) {
+      return {
+        screen: "workflow",
+        runIndex: state.runIndex,
+        phaseIndex: initialPhaseIndex(run),
+        callIndex: 0,
+        focus: "phases",
+      };
+    }
+    return state;
+  }
+  if (state.screen === "workflow") {
+    if (key === "escape" || key === "left") return { screen: "workflows", runIndex: state.runIndex };
+    if (key === "tab") return { ...state, focus: state.focus === "phases" ? "calls" : "phases" };
+    if (!run) return state;
+    if (state.focus === "phases") {
+      if (key === "up" || key === "k") return { ...state, phaseIndex: Math.max(0, state.phaseIndex - 1), callIndex: 0 };
+      if (key === "down" || key === "j") {
+        return { ...state, phaseIndex: Math.min(Math.max(0, navigatorPhases(run).length - 1), state.phaseIndex + 1), callIndex: 0 };
+      }
+      if (key === "return" || key === "right") return { ...state, focus: "calls" };
+    } else {
+      const calls = callsForPhase(run, state.phaseIndex);
+      if (key === "up" || key === "k") return { ...state, callIndex: Math.max(0, state.callIndex - 1) };
+      if (key === "down" || key === "j") {
+        return { ...state, callIndex: Math.min(Math.max(0, calls.length - 1), state.callIndex + 1) };
+      }
+      if ((key === "return" || key === "right") && calls[state.callIndex]) {
+        return { screen: "call", runIndex: state.runIndex, phaseIndex: state.phaseIndex, callIndex: state.callIndex, tab: "activity", scroll: 0 };
+      }
+    }
+    return state;
+  }
+  if (key === "escape" || key === "left") {
+    return { screen: "workflow", runIndex: state.runIndex, phaseIndex: state.phaseIndex, callIndex: state.callIndex, focus: "calls" };
+  }
+  if (key === "tab" || key === "right") {
+    const index = INSPECTOR_TABS.indexOf(state.tab);
+    return { ...state, tab: INSPECTOR_TABS[(index + 1) % INSPECTOR_TABS.length]!, scroll: 0 };
+  }
+  if (key === "up" || key === "k") return { ...state, scroll: Math.max(0, state.scroll - 1) };
+  if (key === "down" || key === "j") return { ...state, scroll: state.scroll + 1 };
+  return state;
 }
 
 export function renderWorkflowTui(
   project: WorkflowProjectView,
-  selectedIndex: number,
+  state: WorkflowTuiState,
   columns: number,
   rows: number,
-  options: { ansi?: boolean } = {},
+  options: { ansi?: boolean; activity?: WorkflowAgentActivityRecord[] } = {},
 ): string {
-  const ansi = options.ansi !== false;
+  project = sanitizeTerminalValue(project);
+  const activity = sanitizeTerminalValue(options.activity ?? []);
   const width = Math.max(48, columns);
-  const selected = project.runs[selectedIndex];
-  const lines: string[] = [];
-
-  lines.push(style(truncate(`DevSpace workflows · ${project.workspaceRoot}`, width), "bold", ansi));
-  lines.push(rule(width));
-
-  if (project.runs.length === 0) {
-    lines.push("No active workflows in the current directory.");
-    lines.push("");
-    lines.push(style("q quit", "muted", ansi));
-    return fitRows(lines, rows).join("\n");
-  }
-
-  const maxRunRows = Math.max(3, Math.min(8, Math.floor(rows / 4)));
-  lines.push(style("Active workflows", "heading", ansi));
-  for (const [index, run] of project.runs.slice(0, maxRunRows).entries()) {
-    const marker = index === selectedIndex ? "›" : " ";
-    const phase = run.currentPhase ? ` · ${run.currentPhase}` : "";
-    lines.push(
-      truncate(
-        `${marker} ${statusGlyph(run.status)} ${run.name}${phase} · ${callSummary(run)}`,
-        width,
-      ),
-    );
-  }
-  if (project.runs.length > maxRunRows) {
-    lines.push(style(`  +${project.runs.length - maxRunRows} more`, "muted", ansi));
-  }
-
-  lines.push(rule(width));
-  if (selected) renderRunDetails(lines, selected, width, rows, ansi);
-  lines.push(rule(width));
-  lines.push(style("↑/↓ select · q/esc quit · refreshes automatically", "muted", ansi));
+  const ansi = options.ansi !== false;
+  const lines = state.screen === "workflows"
+    ? renderWorkflowList(project, state, width, ansi)
+    : state.screen === "workflow"
+      ? renderNavigator(project, state, width, ansi)
+      : renderCallInspector(project, state, width, ansi, activity);
   return fitRows(lines, rows).join("\n");
 }
 
-function renderRunDetails(
-  lines: string[],
-  run: WorkflowRunView,
+function renderWorkflowList(
+  project: WorkflowProjectView,
+  state: Extract<WorkflowTuiState, { screen: "workflows" }>,
   width: number,
-  rows: number,
   ansi: boolean,
-): void {
-  lines.push(`${style(run.name, "bold", ansi)}  ${statusGlyph(run.status)} ${run.status}`);
-  lines.push(
-    truncate(
-      `${run.currentPhase ? `Phase: ${run.currentPhase} · ` : ""}${callSummary(run)} · ${elapsedLabel(run)}`,
-      width,
-    ),
-  );
-
-  const phaseBudget = Math.max(4, Math.floor(rows / 2));
-  let renderedCalls = 0;
-  for (const phase of run.phases) {
-    if (renderedCalls >= phaseBudget) break;
-    lines.push(style(`\n${phase.title}`, "heading", ansi));
-    for (const call of phase.calls) {
-      if (renderedCalls >= phaseBudget) break;
-      lines.push(truncate(formatCall(call), width));
-      renderedCalls += 1;
-    }
+): string[] {
+  const lines = [style(`Workflows · ${project.workspaceRoot}`, "bold", ansi), rule(width)];
+  if (project.runs.length === 0) {
+    lines.push("No active workflows in this project.", "", style("q quit", "muted", ansi));
+    return lines;
   }
-  if (run.unphasedCalls.length > 0 && renderedCalls < phaseBudget) {
-    lines.push(style("\nOther calls", "heading", ansi));
-    for (const call of run.unphasedCalls) {
-      if (renderedCalls >= phaseBudget) break;
-      lines.push(truncate(formatCall(call), width));
-      renderedCalls += 1;
-    }
+  for (const [index, run] of project.runs.entries()) {
+    const phase = run.currentPhase ? `  ${run.currentPhase}` : "";
+    lines.push(truncate(`${index === state.runIndex ? "›" : " "} ${statusGlyph(run.status)} ${run.name}${phase}  ${callSummary(run)}  ${elapsedLabel(run)}`, width));
   }
-
-  const activity = run.recentActivity.slice(-4);
-  if (activity.length > 0) {
-    lines.push(style("\nRecent activity", "heading", ansi));
-    for (const event of activity) {
-      const time = new Date(event.createdAt).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-      const label = event.label ?? event.phase ?? event.type.replaceAll("_", " ");
-      const detail = event.detail ? `: ${event.detail}` : "";
-      lines.push(truncate(`${time}  ${label}${detail}`, width));
-    }
-  }
-
-  if (run.error) {
-    lines.push(style(`\n${run.errorKind ?? "error"}: ${run.error}`, "error", ansi));
-  }
+  lines.push(rule(width), style("↑/↓ select · Enter open · q quit", "muted", ansi));
+  return lines;
 }
 
-function findInitialSelection(
+function renderNavigator(
   project: WorkflowProjectView,
-  requestedRunId: string | undefined,
-): number {
-  if (!requestedRunId) return 0;
-  const index = project.runs.findIndex((run) => run.id === requestedRunId);
-  if (index < 0) {
-    throw new Error(
-      `Workflow ${requestedRunId} does not belong to the current directory: ${project.workspaceRoot}`,
-    );
+  state: Extract<WorkflowTuiState, { screen: "workflow" }>,
+  width: number,
+  ansi: boolean,
+): string[] {
+  const run = project.runs[state.runIndex];
+  if (!run) return ["Workflow is no longer available."];
+  const lines = [
+    style(`Workflow › ${run.name}`, "bold", ansi),
+    truncate(`${statusGlyph(run.status)} ${run.status.toUpperCase()}  ${elapsedLabel(run)}  ·  ${callSummary(run)}${run.totalTokens ? `  ·  ${formatTokens(run.totalTokens)} tokens observed` : ""}`, width),
+    rule(width),
+  ];
+  const phases = navigatorPhases(run);
+  const phase = phases[state.phaseIndex];
+  const calls = callsForPhase(run, state.phaseIndex);
+  if (width < 80) {
+    lines.push(style(state.focus === "phases" ? "PHASES" : `AGENTS · ${phase?.title ?? "Other"}`, "heading", ansi));
+    if (state.focus === "phases") appendPhaseLines(lines, phases, state.phaseIndex, width);
+    else appendCallLines(lines, calls, state.callIndex, width);
+  } else {
+    const leftWidth = Math.min(32, Math.floor(width * 0.35));
+    const rightWidth = width - leftWidth - 3;
+    lines.push(`${style("PHASES".padEnd(leftWidth), "heading", ansi)} │ ${style(`AGENTS · ${phase?.title ?? "Other"}`, "heading", ansi)}`);
+    const left = phaseRows(phases, state.phaseIndex, leftWidth);
+    const right = callRows(calls, state.callIndex, rightWidth);
+    const count = Math.max(left.length, right.length, 1);
+    for (let index = 0; index < count; index += 1) {
+      lines.push(`${(left[index] ?? "").padEnd(leftWidth)} │ ${right[index] ?? ""}`);
+    }
   }
-  return index;
+  lines.push(rule(width), style("↑/↓ select · Tab switch pane · Enter inspect · Esc back · q quit", "muted", ansi));
+  return lines;
 }
 
-function clampSelection(
+function renderCallInspector(
   project: WorkflowProjectView,
-  selectedIndex: number,
-  requestedRunId: string | undefined,
-): number {
-  if (requestedRunId) return findInitialSelection(project, requestedRunId);
-  return Math.min(Math.max(0, selectedIndex), Math.max(0, project.runs.length - 1));
-}
-
-function formatCall(call: WorkflowCallView): string {
+  state: Extract<WorkflowTuiState, { screen: "call" }>,
+  width: number,
+  ansi: boolean,
+  activity: WorkflowAgentActivityRecord[],
+): string[] {
+  const run = project.runs[state.runIndex];
+  const call = run ? selectedCall(project, state) : undefined;
+  if (!run || !call) return ["Agent call is no longer available."];
   const label = call.label ?? `Agent #${call.callIndex}`;
-  const provider = call.model ? `${call.provider}/${call.model}` : call.provider;
-  const worktree = call.isolation === "worktree" ? " · worktree" : "";
-  const replay = call.fromCache ? " · replayed" : "";
-  const error = call.error ? ` · ${call.errorKind ?? "error"}: ${call.error}` : "";
-  return `  ${statusGlyph(call.status)} ${label}  ${provider}${worktree}${replay}${error}`;
+  const target = call.model ? `${call.provider}/${call.model}` : call.provider;
+  const lines = [
+    style(`Workflow › ${call.phase ?? "Other"} › ${label}`, "bold", ansi),
+    truncate(`${statusGlyph(call.status)} ${call.status}  ·  ${target}  ·  ${callElapsedLabel(call)}${call.usage ? `  ·  ${formatTokens(call.usage.totalTokens)} tokens ${call.usage.state}` : ""}`, width),
+    "",
+    INSPECTOR_TABS.map((tab) => tab === state.tab ? `[${capitalize(tab)}]` : capitalize(tab)).join("  "),
+    rule(width),
+  ];
+  const body = inspectorBody(state.tab, call, activity).slice(state.scroll);
+  lines.push(...body.map((line) => truncate(line, width)));
+  lines.push(rule(width), style("Tab next section · ↑/↓ scroll · Esc back · q quit", "muted", ansi));
+  return lines;
+}
+
+function inspectorBody(tab: InspectorTab, call: WorkflowCallView, activity: WorkflowAgentActivityRecord[]): string[] {
+  if (tab === "activity") {
+    if (activity.length === 0) return ["No agent activity has been observed yet."];
+    return activity.map((event) => `${timeLabel(event.createdAt)}  ${statusGlyph(event.status)} ${event.kind.padEnd(7)}  ${event.label}${event.detail ? ` · ${event.detail}` : ""}`);
+  }
+  if (tab === "prompt") return call.prompt.split("\n");
+  if (tab === "result") {
+    if (call.error) return [`${call.errorKind ?? "error"}: ${call.error}`];
+    return (call.responseText ?? call.structuredJson ?? call.returnValueJson ?? "No result yet.").split("\n");
+  }
+  if (tab === "files") {
+    return [
+      `Isolation  ${call.isolation}`,
+      `Worktree   ${call.worktreePath ?? "shared checkout"}`,
+      `Dirty      ${call.dirty === undefined ? "unknown" : call.dirty ? "yes" : "no"}`,
+    ];
+  }
+  return [
+    `Call        #${call.callIndex}`,
+    `Provider    ${call.provider}`,
+    `Model       ${call.model ?? "default"}`,
+    `Effort      ${call.effort ?? "default"}`,
+    `Session     ${call.providerSessionId ?? "unavailable"}`,
+    `Started     ${call.startedAt ?? "not recorded"}`,
+    `Completed   ${call.completedAt ?? "running"}`,
+    `Tokens      ${call.usage ? `${call.usage.totalTokens} (${call.usage.state})` : "unavailable"}`,
+    `Replay      ${call.replayedFromRunId ? `${call.replayedFromRunId}#${call.replayedFromCallIndex}` : "no"}`,
+  ];
+}
+
+export function reconcileWorkflowTuiState(
+  previousProject: WorkflowProjectView,
+  project: WorkflowProjectView,
+  state: WorkflowTuiState,
+): WorkflowTuiState {
+  const previousRunId = previousProject.runs[state.runIndex]?.id;
+  const matchingRunIndex = previousRunId
+    ? project.runs.findIndex((run) => run.id === previousRunId)
+    : -1;
+  const runIndex = matchingRunIndex >= 0
+    ? matchingRunIndex
+    : Math.min(Math.max(0, state.runIndex), Math.max(0, project.runs.length - 1));
+  if (state.screen === "workflows") return { ...state, runIndex };
+  const run = project.runs[runIndex];
+  const phaseIndex = Math.min(
+    Math.max(0, state.phaseIndex),
+    Math.max(0, (run ? navigatorPhases(run).length : 1) - 1),
+  );
+  const calls = run ? callsForPhase(run, phaseIndex) : [];
+  const callIndex = Math.min(Math.max(0, state.callIndex), Math.max(0, calls.length - 1));
+  return { ...state, runIndex, phaseIndex, callIndex };
+}
+
+function selectedCall(project: WorkflowProjectView, state: { runIndex: number; phaseIndex: number; callIndex: number }): WorkflowCallView | undefined {
+  const run = project.runs[state.runIndex];
+  return run ? callsForPhase(run, state.phaseIndex)[state.callIndex] : undefined;
+}
+
+function callsForPhase(run: WorkflowRunView, phaseIndex: number): WorkflowCallView[] {
+  return navigatorPhases(run)[phaseIndex]?.calls ?? [];
+}
+
+function initialPhaseIndex(run: WorkflowRunView): number {
+  const index = run.currentPhase
+    ? run.phases.findIndex((phase) => phase.title === run.currentPhase)
+    : -1;
+  return index < 0 ? 0 : index;
+}
+
+function navigatorPhases(run: WorkflowRunView): WorkflowPhaseView[] {
+  if (run.unphasedCalls.length === 0) return run.phases;
+  const calls = run.unphasedCalls;
+  const status: WorkflowPhaseView["status"] = calls.some((call) => call.status === "failed")
+    ? "failed"
+    : calls.some((call) => call.status === "running")
+      ? "running"
+      : calls.every((call) => call.status === "cancelled")
+        ? "cancelled"
+        : "completed";
+  return [...run.phases, { title: "Other", status, calls }];
+}
+
+function appendPhaseLines(lines: string[], phases: WorkflowPhaseView[], selected: number, width: number): void {
+  lines.push(...phaseRows(phases, selected, width));
+}
+
+function appendCallLines(lines: string[], calls: WorkflowCallView[], selected: number, width: number): void {
+  lines.push(...callRows(calls, selected, width));
+}
+
+function phaseRows(phases: WorkflowPhaseView[], selected: number, width: number): string[] {
+  if (phases.length === 0) return ["No phases observed yet."];
+  return phases.map((phase, index) => truncate(`${index === selected ? "›" : " "} ${statusGlyph(phase.status)} ${phase.title}  ${phaseProgress(phase)}`, width));
+}
+
+function callRows(calls: WorkflowCallView[], selected: number, width: number): string[] {
+  if (calls.length === 0) return ["No agent calls in this phase yet."];
+  return calls.map((call, index) => {
+    const tokens = call.usage ? formatTokens(call.usage.totalTokens) : "—";
+    return truncate(`${index === selected ? "›" : " "} ${statusGlyph(call.status)} ${call.label ?? `Agent #${call.callIndex}`}  ${call.provider}  ${tokens}  ${callElapsedLabel(call)}`, width);
+  });
+}
+
+function phaseProgress(phase: WorkflowPhaseView): string {
+  if (phase.calls.length === 0) return "—";
+  const done = phase.calls.filter((call) => call.status === "completed" || call.status === "from_cache").length;
+  return `${done}/${phase.calls.length}`;
 }
 
 function callSummary(run: WorkflowRunView): string {
@@ -253,52 +412,73 @@ function callSummary(run: WorkflowRunView): string {
     run.calls.cached ? `${run.calls.cached} replayed` : undefined,
     run.calls.running ? `${run.calls.running} running` : undefined,
     run.calls.failed ? `${run.calls.failed} failed` : undefined,
-    run.calls.cancelled ? `${run.calls.cancelled} cancelled` : undefined,
   ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? parts.join(" · ") : "no agent calls yet";
+  return parts.length ? parts.join(" · ") : "no agent calls yet";
 }
 
 function elapsedLabel(run: WorkflowRunView): string {
-  const start = Date.parse(run.startedAt ?? run.createdAt);
-  const end = run.completedAt ? Date.parse(run.completedAt) : Date.now();
-  const seconds = Math.max(0, Math.floor((end - start) / 1_000));
+  return durationLabel(run.startedAt ?? run.createdAt, run.completedAt);
+}
+
+function callElapsedLabel(call: WorkflowCallView): string {
+  return call.fromCache ? "replayed" : durationLabel(call.startedAt ?? call.updatedAt, call.completedAt);
+}
+
+function durationLabel(startValue: string, endValue?: string): string {
+  const seconds = Math.max(0, Math.floor(((endValue ? Date.parse(endValue) : Date.now()) - Date.parse(startValue)) / 1_000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remaining}s`;
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function statusGlyph(status: WorkflowRunView["status"] | WorkflowCallView["status"]): string {
+function statusGlyph(status: string): string {
   if (status === "completed" || status === "from_cache") return "✓";
   if (status === "failed") return "✕";
   if (status === "cancelled") return "−";
   if (status === "running") return "●";
-  return "◌";
+  return "○";
 }
 
-function rule(width: number): string {
-  return "─".repeat(width);
+function formatTokens(tokens: number): string {
+  if (tokens < 1_000) return String(tokens);
+  if (tokens < 1_000_000) return `${(tokens / 1_000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
+  return `${(tokens / 1_000_000).toFixed(1)}m`;
 }
 
+function timeLabel(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function capitalize(value: string): string {
+  return `${value[0]!.toUpperCase()}${value.slice(1)}`;
+}
+
+function rule(width: number): string { return "─".repeat(width); }
 function truncate(value: string, width: number): string {
-  if (value.length <= width) return value;
-  return `${value.slice(0, Math.max(0, width - 1))}…`;
+  return value.length <= width ? value : `${value.slice(0, Math.max(0, width - 1))}…`;
 }
-
 function fitRows(lines: string[], rows: number): string[] {
-  if (rows <= 0 || lines.length <= rows) return lines;
-  return lines.slice(0, Math.max(1, rows));
+  return rows > 0 && lines.length > rows ? lines.slice(0, Math.max(1, rows)) : lines;
 }
-
-function style(
-  value: string,
-  tone: "bold" | "heading" | "muted" | "error",
-  ansi: boolean,
-): string {
+function style(value: string, tone: "bold" | "heading" | "muted", ansi: boolean): string {
   if (!ansi) return value;
   if (tone === "bold") return `\u001b[1m${value}\u001b[0m`;
   if (tone === "heading") return `\u001b[1;36m${value}\u001b[0m`;
-  if (tone === "error") return `\u001b[31m${value}\u001b[0m`;
   return `\u001b[2m${value}\u001b[0m`;
+}
+
+function sanitizeTerminalValue<T>(value: T): T {
+  if (typeof value === "string") {
+    return value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (character) =>
+      `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    ) as T;
+  }
+  if (Array.isArray(value)) return value.map(sanitizeTerminalValue) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, sanitizeTerminalValue(child)]),
+    ) as T;
+  }
+  return value;
 }

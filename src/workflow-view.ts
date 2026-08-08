@@ -10,6 +10,8 @@ import type {
   WorkflowRunRecord,
   WorkflowRunSource,
   WorkflowRunStatus,
+  WorkflowTokenUsage,
+  WorkflowAgentActivityRecord,
 } from "./workflow-types.js";
 
 export const ACTIVE_WORKFLOW_STATUSES = ["starting", "running"] as const satisfies readonly WorkflowRunStatus[];
@@ -41,6 +43,12 @@ export interface WorkflowCallView {
   replayReason?: string;
   error?: string;
   errorKind?: WorkflowErrorKind;
+  providerSessionId?: string;
+  usage?: WorkflowTokenUsage;
+  prompt: string;
+  responseText?: string;
+  structuredJson?: string;
+  returnValueJson?: string;
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
@@ -48,6 +56,8 @@ export interface WorkflowCallView {
 
 export interface WorkflowPhaseView {
   title: string;
+  detail?: string;
+  status: "not_started" | "running" | "completed" | "failed" | "cancelled";
   calls: WorkflowCallView[];
 }
 
@@ -71,6 +81,7 @@ export interface WorkflowRunView {
   resumedFromRunId?: string;
   currentPhase?: string;
   calls: WorkflowCallCounts;
+  totalTokens: number;
   phases: WorkflowPhaseView[];
   unphasedCalls: WorkflowCallView[];
   recentActivity: WorkflowActivityView[];
@@ -88,6 +99,12 @@ export interface WorkflowProjectView {
   workspaceRoot: string;
   runs: WorkflowRunView[];
   version: string;
+}
+
+export interface WorkflowCallInspectorView {
+  run: WorkflowRunView;
+  call: WorkflowCallView;
+  activity: WorkflowAgentActivityRecord[];
 }
 
 export function loadWorkflowProjectView(
@@ -140,8 +157,23 @@ export function buildWorkflowRunView(
     if (call.phase && !phaseOrder.includes(call.phase)) phaseOrder.push(call.phase);
   }
 
-  const phases = phaseOrder.map((title) => ({
+  const declaredPhases = run.phases ?? [];
+  for (const phase of declaredPhases) {
+    if (!phaseOrder.includes(phase.title)) phaseOrder.push(phase.title);
+  }
+  phaseOrder.sort((left, right) => {
+    const leftDeclared = declaredPhases.findIndex((phase) => phase.title === left);
+    const rightDeclared = declaredPhases.findIndex((phase) => phase.title === right);
+    if (leftDeclared < 0 && rightDeclared < 0) return 0;
+    if (leftDeclared < 0) return 1;
+    if (rightDeclared < 0) return -1;
+    return leftDeclared - rightDeclared;
+  });
+  const currentPhaseIndex = currentPhase ? phaseOrder.indexOf(currentPhase) : -1;
+  const phases = phaseOrder.map((title, index) => ({
     title,
+    detail: declaredPhases.find((phase) => phase.title === title)?.detail,
+    status: phaseStatus(run.status, index, currentPhaseIndex),
     calls: callViews.filter((call) => call.phase === title),
   }));
   const latestEventSeq = events.at(-1)?.seq ?? 0;
@@ -161,6 +193,10 @@ export function buildWorkflowRunView(
     resumedFromRunId: run.resumedFromRunId,
     currentPhase,
     calls: countCalls(callViews),
+    totalTokens: callViews.reduce(
+      (total, call) => total + (call.fromCache ? 0 : call.usage?.totalTokens ?? 0),
+      0,
+    ),
     phases,
     unphasedCalls: callViews.filter((call) => !call.phase),
     recentActivity: events.map(toActivityView),
@@ -194,10 +230,32 @@ function toCallView(call: WorkflowAgentCallRecord): WorkflowCallView {
     replayReason: call.replayReason,
     error: call.error,
     errorKind: call.errorKind,
+    providerSessionId: call.providerSessionId,
+    usage: call.usage,
+    prompt: call.prompt,
+    responseText: call.responseText,
+    structuredJson: call.structuredJson,
+    returnValueJson: call.returnValueJson,
     startedAt: call.startedAt,
     completedAt: call.completedAt,
     updatedAt: call.updatedAt,
   };
+}
+
+function phaseStatus(
+  runStatus: WorkflowRunStatus,
+  index: number,
+  currentIndex: number,
+): WorkflowPhaseView["status"] {
+  if (currentIndex < 0) {
+    return runStatus === "completed" ? "completed" : "not_started";
+  }
+  if (index < currentIndex) return "completed";
+  if (index > currentIndex) return "not_started";
+  if (runStatus === "failed") return "failed";
+  if (runStatus === "cancelled") return "cancelled";
+  if (runStatus === "completed") return "completed";
+  return "running";
 }
 
 function countCalls(calls: WorkflowCallView[]): WorkflowCallCounts {
