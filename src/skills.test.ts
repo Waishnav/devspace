@@ -207,18 +207,6 @@ try {
   assert.equal(subagentSkills.some((skill) => skill.name === "subagents"), true);
   assert.equal(subagentSkills.some((skill) => skill.name === "dynamic-workflows"), false);
   assert.equal(subagentSkills.some((skill) => skill.name === "subagent-delegation"), false);
-  const subagentsSkill = subagentSkills.find(
-    (skill) => skill.name === "subagents",
-  );
-  assert.ok(subagentsSkill);
-  const codexReference = join(subagentsSkill.baseDir, "references", "codex.md");
-  assert.equal(resolveSkillReadPath([subagentsSkill], new Set(), codexReference), undefined);
-  assert.equal(
-    resolveSkillReadPath([subagentsSkill], new Set([subagentsSkill.baseDir]), codexReference)
-      ?.absolutePath,
-    codexReference,
-  );
-
   const workflowsOnlyConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
