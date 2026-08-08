@@ -90,6 +90,7 @@ try {
     returnValueJson: JSON.stringify({ ok: true, exact: true }),
     providerSessionId: "sess_1",
     dirty: true,
+    usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
   });
   const call = store.getAgentCall(run.id, 0);
   assert.equal(call?.status, "completed");
@@ -102,10 +103,45 @@ try {
   assert.equal(call?.prompt, "review");
   assert.equal(call?.returnValueJson, JSON.stringify({ ok: true, exact: true }));
   assert.equal(call?.replayReason, "identity_changed:prompt");
+  assert.deepEqual(call?.usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20 });
+  assert.deepEqual(call?.finalUsage, { inputTokens: 12, outputTokens: 8, totalTokens: 20 });
   assert.deepEqual(
     store.listEvents(run.id).slice(-2).map((event) => event.type),
     ["agent_call_started", "agent_call_completed"],
   );
+
+  store.startAgentCall({
+    runId: run.id,
+    callIndex: 2,
+    cacheKey: "key-observe",
+    prompt: "observe",
+    provider: "codex",
+  });
+  store.appendAgentObservation({
+    runId: run.id,
+    callIndex: 2,
+    observation: {
+      kind: "activity",
+      activityId: "tool-1",
+      toolName: "grep",
+      toolStatus: "started",
+      message: "Searching source",
+    },
+  });
+  store.appendAgentObservation({
+    runId: run.id,
+    callIndex: 2,
+    observation: {
+      kind: "usage",
+      usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+    },
+  });
+  assert.equal(store.listAgentObservations(run.id, 2)[0]?.activityId, "tool-1");
+  assert.deepEqual(store.getAgentCall(run.id, 2)?.usage, {
+    inputTokens: 30,
+    outputTokens: 10,
+    totalTokens: 40,
+  });
 
   store.startAgentCall({
     runId: run.id,
@@ -122,7 +158,7 @@ try {
   });
   assert.equal(store.getAgentCall(run.id, 1)?.status, "failed");
   assert.equal(store.getAgentCall(run.id, 1)?.errorKind, "provider");
-  assert.equal(store.listAgentCalls(run.id).length, 2);
+  assert.equal(store.listAgentCalls(run.id).length, 3);
   assert.deepEqual(
     store.listEvents(run.id).slice(-2).map((event) => event.type),
     ["agent_call_started", "agent_call_failed"],

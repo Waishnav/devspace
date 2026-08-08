@@ -181,6 +181,8 @@ export const workflowAgentCalls = sqliteTable(
     isolation: text("isolation").notNull().default("shared"),
     worktreePath: text("worktree_path"),
     dirty: text("dirty"),
+    usageJson: text("usage_json"),
+    finalUsageJson: text("final_usage_json"),
     createdAt: text("created_at").notNull(),
     startedAt: text("started_at"),
     completedAt: text("completed_at"),
@@ -196,6 +198,32 @@ export const workflowAgentCalls = sqliteTable(
   ],
 );
 
+export const workflowAgentObservations = sqliteTable(
+  "workflow_agent_observations",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: "cascade" }),
+    callIndex: integer("call_index").notNull(),
+    seq: integer("seq").notNull(),
+    provider: text("provider").notNull(),
+    kind: text("kind").notNull(),
+    activityId: text("activity_id"),
+    message: text("message"),
+    toolName: text("tool_name"),
+    toolStatus: text("tool_status"),
+    detail: text("detail"),
+    usageJson: text("usage_json"),
+    dataJson: text("data_json"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.callIndex, table.seq] }),
+    index("workflow_agent_observations_call_seq_idx").on(table.runId, table.callIndex, table.seq),
+    index("workflow_agent_observations_created_idx").on(table.runId, table.createdAt),
+  ],
+);
+
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
@@ -205,3 +233,4 @@ export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;
 export type WorkflowRunRow = typeof workflowRuns.$inferSelect;
 export type WorkflowEventRow = typeof workflowEvents.$inferSelect;
 export type WorkflowAgentCallRow = typeof workflowAgentCalls.$inferSelect;
+export type WorkflowAgentObservationRow = typeof workflowAgentObservations.$inferSelect;

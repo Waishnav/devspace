@@ -47,6 +47,11 @@ const migrations: Migration[] = [
     name: "workflow-agent-profiles",
     up: migrateWorkflowAgentProfiles,
   },
+  {
+    version: 9,
+    name: "workflow-observability",
+    up: migrateWorkflowObservability,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -322,6 +327,36 @@ function migrateWorkflowExactReplay(sqlite: Database.Database): void {
 function migrateWorkflowAgentProfiles(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workflow_agent_calls", "profile_name", "text");
   addColumnIfMissing(sqlite, "workflow_agent_calls", "profile_fingerprint", "text");
+}
+
+function migrateWorkflowObservability(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_json", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "final_usage_json", "text");
+  sqlite.exec(`
+    create table if not exists workflow_agent_observations (
+      run_id text not null,
+      call_index integer not null,
+      seq integer not null,
+      provider text not null,
+      kind text not null,
+      activity_id text,
+      message text,
+      tool_name text,
+      tool_status text,
+      detail text,
+      usage_json text,
+      data_json text,
+      created_at text not null,
+      primary key (run_id, call_index, seq),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_agent_observations_call_seq_idx
+      on workflow_agent_observations(run_id, call_index, seq);
+
+    create index if not exists workflow_agent_observations_created_idx
+      on workflow_agent_observations(run_id, created_at);
+  `);
 }
 
 function addColumnIfMissing(

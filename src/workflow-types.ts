@@ -10,6 +10,10 @@
  */
 
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type {
+  LocalAgentActivityObservation,
+  LocalAgentTokenUsage,
+} from "./local-agent-observations.js";
 import type { JsonSchema } from "./json-types.js";
 import type {
   AgentIsolationMode,
@@ -24,6 +28,13 @@ import type {
 } from "./workflow-contracts.js";
 
 export type { JsonObject, JsonPrimitive, JsonSchema, JsonValue } from "./json-types.js";
+export type {
+  LocalAgentActivityObservation,
+  LocalAgentObservation,
+  LocalAgentToolStatus,
+  LocalAgentTokenUsage,
+  LocalAgentUsageObservation,
+} from "./local-agent-observations.js";
 export type {
   AgentIsolationMode,
   AgentOpts,
@@ -59,6 +70,7 @@ export const WORKFLOW_MCP_YIELD_MS = 110_000;
 /** Soft/hard transport + storage caps (not semantic coverage truncation). */
 export const WORKFLOW_LIMITS = {
   eventDataJsonBytes: 8 * 1024,
+  observationDataJsonBytes: 16 * 1024,
   responseTextBytes: 1 * 1024 * 1024,
   structuredJsonBytes: 256 * 1024,
   replayValueJsonBytes: 1 * 1024 * 1024,
@@ -142,10 +154,28 @@ export interface WorkflowAgentCallRecord {
   isolation: AgentIsolationMode;
   worktreePath?: string;
   dirty?: boolean;
+  usage?: LocalAgentTokenUsage;
+  finalUsage?: LocalAgentTokenUsage;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+}
+
+export interface WorkflowAgentObservationRecord {
+  runId: string;
+  callIndex: number;
+  seq: number;
+  provider: AgentProviderId;
+  kind: "activity" | "usage";
+  activityId?: string;
+  message?: string;
+  toolName?: string;
+  toolStatus?: "started" | "updated" | "completed" | "failed";
+  detail?: string;
+  usage?: LocalAgentTokenUsage;
+  dataJson?: string;
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------------------

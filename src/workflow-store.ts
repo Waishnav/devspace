@@ -5,10 +5,13 @@ import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import type { ServerConfig } from "./config.js";
 import {
   WORKFLOW_LIMITS,
+  type LocalAgentObservation,
+  type LocalAgentTokenUsage,
   type AgentIsolationMode,
   type AppendWorkflowEventInput,
   type WorkflowAgentCallRecord,
   type WorkflowAgentCallStatus,
+  type WorkflowAgentObservationRecord,
   type WorkflowErrorKind,
   type WorkflowEventRecord,
   type WorkflowRunRecord,
@@ -77,6 +80,7 @@ export interface CompleteAgentCallInput {
   dirty?: boolean;
   worktreePath?: string;
   fromCache?: boolean;
+  usage?: LocalAgentTokenUsage;
 }
 
 export interface CacheAgentCallInput extends BeginAgentCallInput {
@@ -87,6 +91,15 @@ export interface CacheAgentCallInput extends BeginAgentCallInput {
   structuredJson?: string;
   returnValueJson?: string;
   providerSessionId?: string;
+  usage?: LocalAgentTokenUsage;
+}
+
+export interface AppendAgentObservationInput {
+  runId: string;
+  callIndex: number;
+  observation: LocalAgentObservation;
+  /** Optional provider payload retained for diagnostics, subject to the cap. */
+  dataJson?: string;
 }
 
 export interface FailAgentCallInput {
@@ -184,10 +197,28 @@ interface WorkflowAgentCallRow {
   isolation: string;
   worktree_path: string | null;
   dirty: string | null;
+  usage_json: string | null;
+  final_usage_json: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+}
+
+interface WorkflowAgentObservationRow {
+  run_id: string;
+  call_index: number;
+  seq: number;
+  provider: string;
+  kind: string;
+  activity_id: string | null;
+  message: string | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  detail: string | null;
+  usage_json: string | null;
+  data_json: string | null;
+  created_at: string;
 }
 
 const TERMINAL_STATUSES = new Set<WorkflowRunStatus>(["completed", "failed", "cancelled"]);
@@ -728,6 +759,7 @@ export class WorkflowStore {
           structuredJson: input.structuredJson,
           returnValueJson: input.returnValueJson,
           providerSessionId: input.providerSessionId,
+          usage: input.usage,
           fromCache: true,
         },
         now,
@@ -836,6 +868,8 @@ export class WorkflowStore {
           structured_json = ?,
           return_value_json = ?,
           provider_session_id = coalesce(?, provider_session_id),
+          usage_json = coalesce(?, usage_json),
+          final_usage_json = coalesce(?, final_usage_json),
           worktree_path = coalesce(?, worktree_path),
           dirty = ?,
           completed_at = ?,
@@ -849,6 +883,8 @@ export class WorkflowStore {
         input.structuredJson ?? null,
         input.returnValueJson ?? null,
         input.providerSessionId ?? null,
+        input.usage ? JSON.stringify(input.usage) : null,
+        input.usage ? JSON.stringify(input.usage) : null,
         input.worktreePath ?? null,
         input.dirty === undefined ? null : input.dirty ? "true" : "false",
         now,
@@ -857,6 +893,92 @@ export class WorkflowStore {
         input.callIndex,
       );
     return this.requireAgentCall(input.runId, input.callIndex);
+  }
+
+  appendAgentObservation(input: AppendAgentObservationInput): WorkflowAgentObservationRecord {
+    const call = this.requireAgentCall(input.runId, input.callIndex);
+    const observation = input.observation;
+    const usageJson = observation.kind === "usage"
+      ? JSON.stringify(observation.usage)
+      : null;
+    const dataJson = input.dataJson
+      ? truncateText(input.dataJson, WORKFLOW_LIMITS.observationDataJsonBytes, "dataJson")
+      : null;
+    const createdAt = isoNow();
+    const transaction = this.database.sqlite.transaction(() => {
+      const next = this.database.sqlite
+        .prepare(
+          `select coalesce(max(seq), 0) + 1 as next_seq
+           from workflow_agent_observations where run_id = ? and call_index = ?`,
+        )
+        .get(input.runId, input.callIndex) as { next_seq: number };
+      this.database.sqlite
+        .prepare(
+          `insert into workflow_agent_observations (
+            run_id, call_index, seq, provider, kind, activity_id, message,
+            tool_name, tool_status, detail, usage_json, data_json, created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.runId,
+          input.callIndex,
+          next.next_seq,
+          call.provider,
+          observation.kind,
+          observation.kind === "activity" ? observation.activityId ?? null : null,
+          observation.kind === "activity" ? observation.message ?? null : null,
+          observation.kind === "activity" ? observation.toolName ?? null : null,
+          observation.kind === "activity" ? observation.toolStatus ?? null : null,
+          observation.kind === "activity" ? observation.detail ?? null : null,
+          usageJson,
+          dataJson,
+          createdAt,
+        );
+      if (usageJson) {
+        this.database.sqlite
+          .prepare(
+            `update workflow_agent_calls
+             set usage_json = ?, updated_at = ?
+             where run_id = ? and call_index = ?`,
+          )
+          .run(usageJson, createdAt, input.runId, input.callIndex);
+      }
+      return next.next_seq;
+    });
+    const seq = transaction.immediate();
+    return {
+      runId: input.runId,
+      callIndex: input.callIndex,
+      seq,
+      provider: call.provider,
+      kind: observation.kind,
+      activityId: observation.kind === "activity" ? observation.activityId : undefined,
+      message: observation.kind === "activity" ? observation.message : undefined,
+      toolName: observation.kind === "activity" ? observation.toolName : undefined,
+      toolStatus: observation.kind === "activity" ? observation.toolStatus : undefined,
+      detail: observation.kind === "activity" ? observation.detail : undefined,
+      usage: observation.kind === "usage" ? observation.usage : undefined,
+      dataJson: dataJson ?? undefined,
+      createdAt,
+    };
+  }
+
+  listAgentObservations(
+    runId: string,
+    callIndex: number,
+    limit = 100,
+  ): WorkflowAgentObservationRecord[] {
+    const capped = Math.max(1, Math.min(limit, WORKFLOW_LIMITS.eventDrainMax));
+    const rows = this.database.sqlite
+      .prepare(
+        `select * from (
+           select * from workflow_agent_observations
+           where run_id = ? and call_index = ?
+           order by seq desc limit ?
+         ) order by seq asc`,
+      )
+      .all(runId, callIndex, capped) as WorkflowAgentObservationRow[];
+    return rows.map(rowToAgentObservation);
   }
 
   failAgentCall(input: FailAgentCallInput): WorkflowAgentCallRecord {
@@ -1110,11 +1232,48 @@ function rowToAgentCall(row: WorkflowAgentCallRow): WorkflowAgentCallRecord {
     isolation: row.isolation === "worktree" ? "worktree" : "shared",
     worktreePath: row.worktree_path ?? undefined,
     dirty: row.dirty === null ? undefined : row.dirty === "true",
+    usage: parseUsageJson(row.usage_json),
+    finalUsage: parseUsageJson(row.final_usage_json),
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     completedAt: row.completed_at ?? undefined,
     updatedAt: row.updated_at,
   };
+}
+
+function rowToAgentObservation(row: WorkflowAgentObservationRow): WorkflowAgentObservationRecord {
+  return {
+    runId: row.run_id,
+    callIndex: row.call_index,
+    seq: row.seq,
+    provider: localAgentProviderSchema.parse(row.provider),
+    kind: row.kind === "usage" ? "usage" : "activity",
+    activityId: row.activity_id ?? undefined,
+    message: row.message ?? undefined,
+    toolName: row.tool_name ?? undefined,
+    toolStatus: isToolStatus(row.tool_status) ? row.tool_status : undefined,
+    detail: row.detail ?? undefined,
+    usage: parseUsageJson(row.usage_json),
+    dataJson: row.data_json ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+function parseUsageJson(value: string | null | undefined): LocalAgentTokenUsage | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as LocalAgentTokenUsage;
+  } catch {
+    return undefined;
+  }
+}
+
+function isToolStatus(
+  value: string | null,
+): value is "started" | "updated" | "completed" | "failed" {
+  return value === "started" || value === "updated" || value === "completed" || value === "failed";
 }
 
 function isoNow(): string {
@@ -1144,6 +1303,13 @@ function assertTextSize(value: string, maxBytes: number, label: string): void {
   if (bytes > maxBytes) {
     throw new Error(`${label} exceeds limit (${bytes} > ${maxBytes} bytes)`);
   }
+}
+
+function truncateText(value: string, maxBytes: number, label: string): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  const truncated = Buffer.from(value, "utf8").subarray(0, maxBytes).toString("utf8");
+  if (!truncated) throw new Error(`${label} exceeds limit (${maxBytes} bytes)`);
+  return truncated;
 }
 
 function truncateJson(value: unknown, maxBytes: number): string {
