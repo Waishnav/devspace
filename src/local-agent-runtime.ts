@@ -14,6 +14,10 @@ import type {
   LocalAgentTokenUsage,
 } from "./local-agent-observations.js";
 import {
+  extractCodexObservations,
+  extractCodexUsage,
+} from "./local-agent-provider-observations.js";
+import {
   isNativeSchemaUnsupportedFailure,
   ProviderSchemaUnsupportedError,
 } from "./local-agent-errors.js";
@@ -65,6 +69,20 @@ export function notifyLocalAgentObservation(
   } catch {
     // Observability is best effort and must not turn a provider result into a failure.
   }
+}
+
+export function createLocalAgentObservationEmitter(
+  input: LocalAgentRunInput,
+): (observation: LocalAgentObservation) => void {
+  const emitted = new Set<string>();
+  return (observation) => {
+    if (observation.kind === "activity" && observation.activityId) {
+      const key = `${observation.activityId}:${observation.toolStatus ?? "updated"}:${observation.message ?? ""}:${observation.detail ?? ""}`;
+      if (emitted.has(key)) return;
+      emitted.add(key);
+    }
+    notifyLocalAgentObservation(input, observation);
+  };
 }
 
 interface CodexThreadLike {
@@ -125,11 +143,19 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
       throw error;
     }
 
+    const emitObservation = createLocalAgentObservationEmitter(input);
+    for (const item of turn.items) {
+      for (const observation of extractCodexObservations(item)) emitObservation(observation);
+    }
+    const usage = extractCodexUsage(turn);
+    if (usage) emitObservation({ kind: "usage", usage });
+
     return {
       provider: this.provider,
       providerSessionId: thread.id,
       finalResponse: turn.finalResponse,
       items: turn.items,
+      usage,
       ...(input.schema ? { structured: tryParseJson(turn.finalResponse) } : {}),
     };
   }

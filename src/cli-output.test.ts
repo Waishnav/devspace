@@ -87,6 +87,7 @@ const call: WorkflowAgentCallRecord = {
   startedAt: now,
   completedAt: now,
   updatedAt: now,
+  finalUsage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
 };
 const runJson = workflowRunOutput(run, [call]);
 assert.deepEqual(runJson.result, { ok: true });
@@ -98,11 +99,13 @@ assert.deepEqual(runJson.calls, {
   total: 1,
 });
 assert.equal("scriptHash" in runJson, false);
+assert.deepEqual(runJson.usage, { inputTokens: 8, outputTokens: 2, totalTokens: 10 });
 
 const callJson = workflowCallOutput(call, { detailed: true });
 assert.deepEqual(callJson.structured, { bugs: [] });
 assert.equal("cacheKey" in callJson, false);
 assert.equal("providerSessionId" in callJson, false);
 assert.equal("profileFingerprint" in callJson, false);
+assert.deepEqual(callJson.usage, { inputTokens: 8, outputTokens: 2, totalTokens: 10 });
 
 console.log("cli-output.test.ts: ok");

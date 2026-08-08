@@ -56,6 +56,7 @@ export function workflowRunOutput(
     resumedFromRunId: run.resumedFromRunId,
     cancelRequested: run.cancelRequested,
     calls: calls ? workflowCallCounts(calls) : undefined,
+    usage: calls ? sumUsage(calls.map((call) => call.finalUsage ?? call.usage)) : undefined,
     result: parseStoredJson(run.resultJson),
     error: run.error
       ? { kind: run.errorKind, message: parseStoredJson(run.error) }
@@ -82,6 +83,7 @@ export function workflowCallOutput(
     effort: call.effort,
     cached: call.fromCache,
     durationMs: workflowCallDurationMs(call),
+    usage: call.finalUsage ?? call.usage,
     isolation: call.isolation,
     worktree: call.worktreePath
       ? { path: call.worktreePath, dirty: call.dirty }
@@ -128,6 +130,17 @@ function workflowCallCounts(calls: WorkflowAgentCallRecord[]): Record<string, nu
 function workflowCallDurationMs(call: WorkflowAgentCallRecord): number | undefined {
   if (!call.startedAt || !call.completedAt) return undefined;
   return Math.max(0, Date.parse(call.completedAt) - Date.parse(call.startedAt));
+}
+
+function sumUsage(calls: Array<WorkflowAgentCallRecord["usage"]>): WorkflowAgentCallRecord["usage"] | undefined {
+  const result: NonNullable<WorkflowAgentCallRecord["usage"]> = {};
+  for (const key of ["inputTokens", "outputTokens", "totalTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+    const values = calls
+      .map((usage) => usage?.[key])
+      .filter((value): value is number => value !== undefined);
+    if (values.length > 0) result[key] = values.reduce((total, value) => total + value, 0);
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function parseStoredJson(value: string | undefined): unknown {

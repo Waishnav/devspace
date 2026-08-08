@@ -15,11 +15,24 @@ import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
   createCodexSdkLocalAgentRuntime,
+  createLocalAgentObservationEmitter,
   isNativeSchemaUnsupportedFailure,
   ProviderSchemaUnsupportedError,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
 } from "./local-agent-runtime.js";
+import {
+  extractAcpObservations,
+  extractAcpUsage,
+  extractClaudeObservations,
+  extractClaudeUsage,
+  extractCodexObservations,
+  extractCodexUsage,
+  extractOpenCodeObservations,
+  extractOpenCodeUsage,
+  extractPiObservations,
+  extractPiUsage,
+} from "./local-agent-provider-observations.js";
 
 export interface LocalAgentAdapter {
   readonly provider: LocalAgentProvider;
@@ -103,9 +116,13 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       let providerSessionId = input.providerSessionId ?? null;
       let finalResponse = "";
       let structured: unknown | undefined;
+      let usage: LocalAgentRunResult["usage"];
+      const emitObservation = createLocalAgentObservationEmitter(input);
       const items: unknown[] = [];
       for await (const message of messages) {
         items.push(message);
+        for (const observation of extractClaudeObservations(message)) emitObservation(observation);
+        usage = extractClaudeUsage(message) ?? usage;
         const record = message as Record<string, unknown>;
         if (typeof record.session_id === "string") providerSessionId = record.session_id;
         if (record.type !== "result") continue;
@@ -124,6 +141,7 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
         providerSessionId,
         finalResponse,
         items,
+        usage,
         ...(structured !== undefined ? { structured } : {}),
       };
     } catch (error) {
@@ -226,8 +244,13 @@ class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
     try {
       const sessionId = input.providerSessionId ?? await createOpencodeSession(client, input);
       const promptResult = await promptOpencodeSession(client, sessionId, input);
+      const emitObservation = createLocalAgentObservationEmitter(input);
+      for (const observation of extractOpenCodeObservations(promptResult)) emitObservation(observation);
       await waitForOpencodeSession(client, sessionId);
       const messages = await readOpencodeMessages(client, sessionId);
+      for (const observation of extractOpenCodeObservations(messages)) emitObservation(observation);
+      const usage = extractOpenCodeUsage(messages) ?? extractOpenCodeUsage(promptResult);
+      if (usage) emitObservation({ kind: "usage", usage });
       const finalResponse = requireFinalResponse(
         "OpenCode",
         extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
@@ -237,6 +260,7 @@ class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
         providerSessionId: sessionId,
         finalResponse,
         items: [promptResult, messages],
+        usage,
       };
     } finally {
       server.close();
@@ -263,6 +287,8 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
     });
     assertPipedChild(child);
     let stderr = "";
+    const emitObservation = createLocalAgentObservationEmitter(input);
+    let usage: LocalAgentRunResult["usage"];
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
@@ -302,6 +328,8 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
               }
 
               const update = message.update;
+              for (const observation of extractAcpObservations(update)) emitObservation(observation);
+              usage = extractAcpUsage(update) ?? usage;
               if (update.sessionUpdate !== "agent_message_chunk") continue;
               const content = update.content;
               if (content.type === "text") textParts.push(content.text);
@@ -315,6 +343,7 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
         providerSessionId,
         finalResponse: finalResponse.trim(),
         items: [],
+        usage,
       };
     } catch (error) {
       throw new Error(`${this.provider} ACP run failed: ${errorMessage(error)}${stderr ? `\n${stderr.trim()}` : ""}`);
@@ -429,7 +458,13 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
     assertPipedChild(child);
     const rpc = new JsonLineRpc(child);
     const events: unknown[] = [];
-    rpc.onEvent((event) => events.push(event));
+    const emitObservation = createLocalAgentObservationEmitter(input);
+    let usage: LocalAgentRunResult["usage"];
+    rpc.onEvent((event) => {
+      events.push(event);
+      for (const observation of extractPiObservations(event)) emitObservation(observation);
+      usage = extractPiUsage(event) ?? usage;
+    });
     try {
       const state = await rpc.request({ type: "get_state" });
       const providerSessionId = readNestedString(state, ["sessionId"]) ?? input.providerSessionId ?? null;
@@ -437,6 +472,10 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       await rpc.request({ type: "prompt", message: input.prompt });
       const agentEnd = await done;
       const sessionMessages = await rpc.request({ type: "get_messages" });
+      for (const observation of extractPiObservations(agentEnd)) emitObservation(observation);
+      for (const observation of extractPiObservations(sessionMessages)) emitObservation(observation);
+      usage = extractPiUsage(agentEnd) ?? extractPiUsage(sessionMessages) ?? usage;
+      if (usage) emitObservation({ kind: "usage", usage });
       const finalResponse =
         extractPiFinalResponse(agentEnd) ||
         extractPiFinalResponse(sessionMessages) ||
@@ -454,6 +493,7 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
         providerSessionId,
         finalResponse,
         items: [...events, sessionMessages],
+        usage,
       };
     } finally {
       child.kill();
