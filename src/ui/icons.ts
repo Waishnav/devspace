@@ -14,7 +14,6 @@ import {
   Search,
   SquareTerminal,
   Terminal,
-  Workflow,
   createElement,
   type IconNode,
 } from "lucide";
@@ -34,7 +33,6 @@ export const toolIcons = {
   search: Search,
   terminal: Terminal,
   terminalSquare: SquareTerminal,
-  workflow: Workflow,
   writeFile: FilePlus,
 } as const satisfies Record<string, IconNode>;
 

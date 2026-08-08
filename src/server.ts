@@ -47,10 +47,9 @@ import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { buildLocalAgentCatalog } from "./local-agent-catalog.js";
-import { registerWorkflowTools } from "./workflow-tools.js";
 import { startWorkflowReaper } from "./workflow-lifecycle.js";
 import { createWorkflowStore } from "./workflow-store.js";
-import { loadActiveWorkflowSummaries } from "./workflow-ui.js";
+import { loadActiveWorkflowSummaries } from "./workflow-summary.js";
 import {
   formatLocalAgentProviderAvailabilitySummary,
   getLocalAgentProviderAvailabilitySnapshot,
@@ -205,17 +204,6 @@ function serverInstructions(config: ServerConfig): string {
   return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChangesInstruction}`;
 }
 
-function formatVisibleAgent(agent: {
-  name: string;
-  provider: string;
-  model?: string;
-  effort?: string;
-}): string {
-  const model = agent.model ? `, model ${agent.model}` : "";
-  const effort = agent.effort ? `, effort ${agent.effort}` : "";
-  return `${agent.name} (${agent.provider}${model}${effort})`;
-}
-
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
     result: z
@@ -241,22 +229,6 @@ const workspaceAgentsFileOutputSchema = z.object({
 const workspaceLocalAgentOutputSchema = z.object({
   name: z.string(),
   description: z.string(),
-  provider: z.string(),
-  model: z.string().optional(),
-  effort: z.string().optional(),
-});
-
-const workspaceLocalAgentProviderOutputSchema = z.object({
-  name: z.string(),
-  model: z.object({
-    supported: z.boolean(),
-    discovery: z.enum(["provider_static", "model_dependent", "session_dynamic"]),
-  }),
-  effort: z.object({
-    supported: z.boolean(),
-    semantics: z.enum(["reasoning_effort", "thinking_level", "model_variant"]),
-    discovery: z.enum(["provider_static", "model_dependent", "session_dynamic"]),
-  }),
 });
 
 export function openWorkspaceOutputSchema(config: ServerConfig): z.ZodRawShape {
@@ -280,11 +252,10 @@ export function openWorkspaceOutputSchema(config: ServerConfig): z.ZodRawShape {
     skills: z.array(workspaceSkillOutputSchema),
     ...(config.subagents
       ? {
-          agentProviders: z.array(workspaceLocalAgentProviderOutputSchema),
+          agentProviders: z.array(z.string()),
           agents: z.array(workspaceLocalAgentOutputSchema),
         }
       : {}),
-    skillDiagnostics: z.array(z.unknown()),
     ...(config.workflows
       ? { activeWorkflows: z.array(workflowRunSummaryOutputSchema) }
       : {}),
@@ -299,19 +270,14 @@ const workspaceAvailableAgentsFileOutputSchema = z.object({
 const workflowCallCountsOutputSchema = z.object({
   running: z.number(),
   completed: z.number(),
-  cached: z.number(),
   failed: z.number(),
-  cancelled: z.number(),
-  observed: z.number(),
 });
 
 const workflowRunSummaryOutputSchema = z.object({
   id: z.string(),
   name: z.string(),
-  status: z.enum(["starting", "running", "completed", "failed", "cancelled"]),
-  currentPhase: z.string().optional(),
+  status: z.enum(["starting", "running"]),
   calls: workflowCallCountsOutputSchema,
-  updatedAt: z.string(),
 });
 
 const reviewFileOutputSchema = z.object({
@@ -831,8 +797,11 @@ function createMcpServer(
       const agentCatalog = config.subagents
         ? buildLocalAgentCatalog(workspace.agentProfiles, localAgentProviders)
         : undefined;
-      const visibleAgentProviders = agentCatalog?.providers ?? [];
-      const visibleAgents = agentCatalog?.profiles ?? [];
+      const visibleAgentProviders = agentCatalog?.providers.map((provider) => provider.name) ?? [];
+      const visibleAgents = agentCatalog?.profiles.map((agent) => ({
+        name: agent.name,
+        description: agent.description,
+      })) ?? [];
       const loadedAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -844,7 +813,10 @@ function createMcpServer(
         ? (() => {
             const workflowStore = createWorkflowStore(config);
             try {
-              return loadActiveWorkflowSummaries(workflowStore, workspace.root);
+              return loadActiveWorkflowSummaries(workflowStore, {
+                workspaceId: workspace.id,
+                workspaceRoot: workspace.root,
+              });
             } finally {
               workflowStore.close();
             }
@@ -870,10 +842,10 @@ function createMcpServer(
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
             visibleAgentProviders.length > 0
-              ? `Available subagent providers: ${visibleAgentProviders.map((provider) => provider.name).join(", ")}`
+              ? `Available subagent providers: ${visibleAgentProviders.join(", ")}`
               : undefined,
             visibleAgents.length > 0
-              ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
+              ? `Available subagent profiles: ${visibleAgents.map((agent) => `${agent.name} — ${agent.description}`).join(", ")}`
               : undefined,
             instruction,
           ].filter(Boolean).join("\n"),
@@ -909,7 +881,6 @@ function createMcpServer(
                     agents: visibleAgents.length,
                   }
                 : {}),
-              skillDiagnostics: workspace.skillDiagnostics.length,
             },
           },
         },
@@ -929,7 +900,6 @@ function createMcpServer(
                 agents: visibleAgents,
               }
             : {}),
-          skillDiagnostics: workspace.skillDiagnostics,
           instruction,
         },
       };
@@ -1635,10 +1605,6 @@ function createMcpServer(
 
   if (config.toolMode === "codex") {
     registerCodexProcessTools(server, config, workspaces, processSessions);
-  }
-
-  if (config.workflows) {
-    registerWorkflowTools(server, config, workspaces);
   }
 
   return server;

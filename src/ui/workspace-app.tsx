@@ -5,7 +5,6 @@ import {
   applyHostStyleVariables,
 } from "@modelcontextprotocol/ext-apps";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { WorkflowProjectView, WorkflowRunView } from "../workflow-view.js";
 import {
   isEditTool,
   isExpandableCard,
@@ -14,7 +13,6 @@ import {
   isReviewTool,
   isToolName,
   isToolResultCard,
-  isWorkflowTool,
   isWriteTool,
   payloadText,
   type HostContext,
@@ -27,10 +25,7 @@ import {
   getToolHeaderSummary,
   type ToolDisplay,
 } from "./tool-display.js";
-import {
-  renderWorkflowDashboard,
-  renderWorkspaceDashboard,
-} from "./workflow-dashboard.js";
+import { renderWorkspaceDashboard } from "./workflow-dashboard.js";
 import "./workspace-app.css";
 
 interface MountedPayload {
@@ -53,10 +48,6 @@ let reviewFilesExpanded = false;
 let errorMessage: string | null = null;
 let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
-let workflowProject: WorkflowProjectView | null = null;
-let workflowRun: WorkflowRunView | null = null;
-let workflowRefreshKey: string | null = null;
-let workflowRefreshGeneration = 0;
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -85,7 +76,6 @@ async function boot(): Promise<void> {
     const tool = toolNameFromMeta(result);
 
     if (!tool || !isToolResultCard(structured)) {
-      stopWorkflowRefresh();
       card = null;
       expanded = false;
       reviewFilesExpanded = false;
@@ -95,11 +85,8 @@ async function boot(): Promise<void> {
     }
 
     const nextCard = { ...structured, tool };
-    stopWorkflowRefresh();
-    workflowProject = null;
-    workflowRun = null;
     card = nextCard;
-    expanded = (isReviewTool(tool) || isWorkflowTool(tool)) && isExpandableCard(nextCard);
+    expanded = isReviewTool(tool) && isExpandableCard(nextCard);
     reviewFilesExpanded = false;
     errorMessage = null;
     render();
@@ -115,7 +102,6 @@ async function boot(): Promise<void> {
   };
 
   app.onteardown = async () => {
-    stopWorkflowRefresh();
     unmountPayload();
     return {};
   };
@@ -188,7 +174,6 @@ function render(): void {
   if (expandable) {
     button.addEventListener("click", () => {
       expanded = !expanded;
-      if (!expanded) stopWorkflowRefresh();
       render();
     });
   }
@@ -243,14 +228,7 @@ async function renderPayloadIfNeeded(): Promise<void> {
   }
 
   if (card.tool === "open_workspace") {
-    renderWorkspaceDashboard(target, card, workflowProject, dashboardDisplayOptions());
-    ensureWorkflowRefresh();
-    return;
-  }
-
-  if (isWorkflowTool(card.tool)) {
-    renderWorkflowDashboard(target, workflowRun, card, dashboardDisplayOptions());
-    ensureWorkflowRefresh();
+    renderWorkspaceDashboard(target, card, dashboardDisplayOptions());
     return;
   }
 
@@ -353,106 +331,6 @@ async function toggleFullscreen(): Promise<void> {
       : "Unable to change display mode.";
     renderPayloadIfNeeded();
   }
-}
-
-function ensureWorkflowRefresh(): void {
-  if (!app || !card || !expanded) return;
-
-  const request = card.tool === "open_workspace" && card.workspaceId
-    ? {
-        key: `workspace:${card.workspaceId}`,
-        name: "workspace_workflow_activity",
-        args: { workspaceId: card.workspaceId },
-        kind: "project" as const,
-      }
-    : isWorkflowTool(card.tool) && card.runId
-      ? {
-          key: `run:${card.runId}`,
-          name: "workflow_ui_snapshot",
-          args: { runId: card.runId },
-          kind: "run" as const,
-        }
-      : null;
-
-  if (!request || workflowRefreshKey === request.key) return;
-  workflowRefreshKey = request.key;
-  const generation = ++workflowRefreshGeneration;
-  void refreshWorkflowLoop(request, generation);
-}
-
-async function refreshWorkflowLoop(
-  request: {
-    key: string;
-    name: string;
-    args: Record<string, unknown>;
-    kind: "project" | "run";
-  },
-  generation: number,
-): Promise<void> {
-  let knownVersion = request.kind === "project"
-    ? workflowProject?.version
-    : workflowRun?.version;
-
-  while (
-    app &&
-    expanded &&
-    workflowRefreshGeneration === generation &&
-    workflowRefreshKey === request.key
-  ) {
-    try {
-      const result = await app.callServerTool({
-        name: request.name,
-        arguments: {
-          ...request.args,
-          knownVersion,
-          waitMs: 20_000,
-        },
-      });
-      if (
-        workflowRefreshGeneration !== generation ||
-        workflowRefreshKey !== request.key
-      ) {
-        return;
-      }
-
-      if (request.kind === "project") {
-        const structured = getStructuredContent<{ project?: WorkflowProjectView }>(result);
-        if (structured?.project) {
-          workflowProject = structured.project;
-          knownVersion = structured.project.version;
-        }
-      } else {
-        const structured = getStructuredContent<{ run?: WorkflowRunView }>(result);
-        if (structured?.run) {
-          workflowRun = structured.run;
-          knownVersion = structured.run.version;
-        }
-      }
-
-      await renderPayloadIfNeeded();
-      if (
-        request.kind === "run" &&
-        workflowRun &&
-        ["completed", "failed", "cancelled"].includes(workflowRun.status)
-      ) {
-        workflowRefreshKey = null;
-        return;
-      }
-    } catch (refreshError) {
-      if (workflowRefreshGeneration !== generation) return;
-      errorMessage = refreshError instanceof Error
-        ? refreshError.message
-        : "Unable to refresh workflow activity.";
-      workflowRefreshKey = null;
-      await renderPayloadIfNeeded();
-      return;
-    }
-  }
-}
-
-function stopWorkflowRefresh(): void {
-  workflowRefreshKey = null;
-  workflowRefreshGeneration += 1;
 }
 
 function unmountPayload(): void {
@@ -642,4 +520,3 @@ function element<K extends keyof HTMLElementTagNameMap>(
   }
   return node;
 }
-
