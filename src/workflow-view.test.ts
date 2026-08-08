@@ -32,6 +32,7 @@ const calls: WorkflowAgentCallRecord[] = [
     phase: "Planning",
     status: "completed",
     fromCache: false,
+    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     isolation: "shared",
     createdAt: "2026-07-26T10:00:02.000Z",
     startedAt: "2026-07-26T10:00:02.000Z",
@@ -99,7 +100,27 @@ const events: WorkflowEventRecord[] = [
   },
 ];
 
-const view = buildWorkflowRunView(run, calls, events);
+const observations = new Map([
+  [
+    1,
+    [
+      {
+        runId: run.id,
+        callIndex: 1,
+        seq: 1,
+        provider: "claude" as const,
+        kind: "activity" as const,
+        activityId: "tool-1",
+        toolName: "bash",
+        toolStatus: "started" as const,
+        message: "Running tests",
+        createdAt: "2026-07-26T10:00:04.500Z",
+      },
+    ],
+  ],
+]);
+
+const view = buildWorkflowRunView(run, calls, events, observations);
 assert.equal(view.currentPhase, "Implementation");
 assert.equal(view.calls.completed, 1);
 assert.equal(view.calls.running, 1);
@@ -108,6 +129,8 @@ assert.equal(view.calls.observed, 3);
 assert.deepEqual(view.phases.map((phase) => phase.title), ["Planning", "Implementation"]);
 assert.equal(view.phases[1]?.calls[0]?.worktreePath, "/tmp/worktree");
 assert.equal(view.unphasedCalls[0]?.replayedFromRunId, "wfr_old");
+assert.equal(view.phases[1]?.calls[0]?.observations[0]?.toolName, "bash");
+assert.deepEqual(view.usage, { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
 assert.equal(view.recentActivity.at(-1)?.detail, "Running tests");
 assert.equal(view.latestEventSeq, 3);
 

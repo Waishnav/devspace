@@ -29,14 +29,25 @@ const project: WorkflowProjectView = {
       phases: [
         {
           title: "Implementation",
+          status: "running",
           calls: [
             {
               callIndex: 1,
               status: "running",
               provider: "codex",
               label: "Patch auth",
+              prompt: "Patch auth",
+              responseText: "Tests pass",
               isolation: "worktree",
               fromCache: false,
+              observations: [{
+                seq: 1,
+                kind: "activity",
+                toolName: "bash",
+                toolStatus: "completed",
+                message: "Running tests",
+                createdAt: "2026-07-26T10:00:02.000Z",
+              }],
               updatedAt: "2026-07-26T10:00:02.000Z",
             },
           ],
@@ -66,6 +77,12 @@ assert.match(rendered, /Review auth · Implementation/);
 assert.match(rendered, /Patch auth  codex · worktree/);
 assert.match(rendered, /Running tests/);
 assert.match(rendered, /refreshes automatically/);
+const inspected = renderWorkflowTui(project, 0, 100, 30, {
+  ansi: false,
+  selection: { runIndex: 0, phaseIndex: 0, callIndex: 0, focus: "inspector" },
+});
+assert.match(inspected, /Call inspector · Patch auth/);
+assert.match(inspected, /bash · completed · Running tests/);
 assert.equal(resolveWorkflowTuiWorkspaceRoot("./test-project").endsWith("test-project"), true);
 
 console.log("workflow-tui.test.ts: ok");
