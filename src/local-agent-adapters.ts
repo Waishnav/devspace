@@ -19,6 +19,7 @@ import {
   ProviderSchemaUnsupportedError,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
+  type LocalAgentActivity,
   type LocalAgentObserver,
   type LocalAgentUsageSnapshot,
 } from "./local-agent-runtime.js";
@@ -287,12 +288,16 @@ export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.Process
 class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "opencode" as const;
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const { createOpencode } = await import("@opencode-ai/sdk/v2");
     const { client, server } = await createOpencode();
     try {
       const sessionId = input.providerSessionId ?? await createOpencodeSession(client, input);
+      observer?.onSession?.(sessionId);
       const promptResult = await promptOpencodeSession(client, sessionId, input);
+      // The prompt response is scoped to this turn; the messages endpoint returns
+      // the whole session and would reattribute historical tools on resume.
+      const usage = observeOpenCodeResult(promptResult, observer);
       await waitForOpencodeSession(client, sessionId);
       const messages = await readOpencodeMessages(client, sessionId);
       const finalResponse = requireFinalResponse(
@@ -304,6 +309,7 @@ class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
         providerSessionId: sessionId,
         finalResponse,
         items: [promptResult, messages],
+        ...(usage ? { usage } : {}),
       };
     } finally {
       server.close();
@@ -317,7 +323,7 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
     private readonly command: [string, ...string[]],
   ) {}
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const { client } = await import("@agentclientprotocol/sdk");
     const { methods } = await import("@agentclientprotocol/sdk");
     const { ndJsonStream } = await import("@agentclientprotocol/sdk");
@@ -350,6 +356,7 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
         .connectWith(stream, async (context) => {
           const session = await context.buildSession(input.workspace).start();
           providerSessionId = session.sessionId;
+          observer?.onSession?.(session.sessionId);
           try {
             if (input.model) {
               const config = resolveAcpModelConfigUpdate(session, input.model, this.provider);
@@ -364,14 +371,18 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
             for (;;) {
               const message = await session.nextUpdate();
               if (message.kind === "stop") {
-                await prompt;
+                const response = await prompt;
+                const usage = tokenUsage(asRecord(response.usage), "final");
+                if (usage) observer?.onUsage?.(usage);
                 return textParts.join("").trim();
               }
 
               const update = message.update;
-              if (update.sessionUpdate !== "agent_message_chunk") continue;
-              const content = update.content;
-              if (content.type === "text") textParts.push(content.text);
+              observeAcpUpdate(update, observer);
+              if (update.sessionUpdate === "agent_message_chunk") {
+                const content = update.content;
+                if (content.type === "text") textParts.push(content.text);
+              }
             }
           } finally {
             session.dispose();
@@ -482,7 +493,7 @@ function selectAcpAllowPermissionOption(options: Array<{ optionId: string; kind:
 class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "pi" as const;
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const args = ["--mode", "rpc"];
     if (input.model) args.push("--model", input.model);
     if (input.effort) args.push("--thinking", input.effort);
@@ -496,10 +507,14 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
     assertPipedChild(child);
     const rpc = new JsonLineRpc(child);
     const events: unknown[] = [];
-    rpc.onEvent((event) => events.push(event));
+    rpc.onEvent((event) => {
+      events.push(event);
+      observePiEvent(event, observer);
+    });
     try {
       const state = await rpc.request({ type: "get_state" });
       const providerSessionId = readNestedString(state, ["sessionId"]) ?? input.providerSessionId ?? null;
+      if (providerSessionId) observer?.onSession?.(providerSessionId);
       const done = rpc.waitForEvent((event) => asRecord(event)?.type === "agent_end", PI_AGENT_TIMEOUT_MS);
       await rpc.request({ type: "prompt", message: input.prompt });
       const agentEnd = await done;
@@ -526,6 +541,109 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       child.kill();
     }
   }
+}
+
+export function observeOpenCodeResult(
+  value: unknown,
+  observer?: LocalAgentObserver,
+): LocalAgentUsageSnapshot | undefined {
+  const messages = openCodeMessages(value);
+  let usage: LocalAgentUsageSnapshot | undefined;
+  for (const message of messages) {
+    const info = asRecord(message.info) ?? message;
+    if (info.role !== "assistant") continue;
+    const snapshot = tokenUsage(asRecord(info.tokens), "final");
+    if (snapshot) usage = snapshot;
+    for (const partValue of readArray(message, "parts") ?? readArray(message, "content") ?? []) {
+      const part = asRecord(partValue);
+      if (part?.type !== "tool") continue;
+      const state = asRecord(part.state);
+      const status = normalizeActivityStatus(state?.status ?? part.status);
+      observer?.onActivity?.({
+        kind: toolKind(directString(part.tool) ?? directString(part.name)),
+        status,
+        label: directString(part.tool) ?? directString(part.name) ?? "tool",
+      });
+    }
+  }
+  if (usage) observer?.onUsage?.(usage);
+  return usage;
+}
+
+export function observePiEvent(event: unknown, observer?: LocalAgentObserver): void {
+  const record = asRecord(event);
+  if (!record) return;
+  const usage = tokenUsage(asRecord(record.usage) ?? asRecord(asRecord(record.message)?.usage), record.type === "agent_end" ? "final" : "partial");
+  if (usage) observer?.onUsage?.(usage);
+  const tool = asRecord(record.tool) ?? asRecord(record.toolCall) ?? asRecord(record.toolExecution);
+  const name = directString(record.toolName) ?? directString(tool?.name);
+  if (!name) return;
+  const detail = directString(record.command) ?? directString(asRecord(tool?.arguments)?.command);
+  observer?.onActivity?.({
+    kind: toolKind(name),
+    status: normalizeActivityStatus(record.status ?? tool?.status ?? (record.type === "tool_execution_end" ? "completed" : "running")),
+    label: name,
+    ...(detail ? { detail } : {}),
+  });
+}
+
+export function observeAcpUpdate(update: unknown, observer?: LocalAgentObserver): void {
+  const record = asRecord(update);
+  if (!record) return;
+  if (record.sessionUpdate === "usage_update") return;
+  if (record.sessionUpdate !== "tool_call" && record.sessionUpdate !== "tool_call_update") return;
+  const label = directString(record.title) ?? directString(record.kind) ?? "tool";
+  observer?.onActivity?.({
+    kind: acpToolKind(directString(record.kind)),
+    status: normalizeActivityStatus(record.status),
+    label,
+  });
+}
+
+function openCodeMessages(value: unknown): Record<string, unknown>[] {
+  const record = asRecord(value);
+  const data = record?.data;
+  const values = Array.isArray(data) ? data : data ? [data] : [];
+  return values.map(asRecord).filter((item): item is Record<string, unknown> => item !== undefined);
+}
+
+function tokenUsage(
+  value: Record<string, unknown> | undefined,
+  state: "partial" | "final",
+): LocalAgentUsageSnapshot | undefined {
+  if (!value) return undefined;
+  const inputTokens = nonNegativeInteger(value.input ?? value.input_tokens ?? value.inputTokens);
+  const outputTokens = nonNegativeInteger(value.output ?? value.output_tokens ?? value.outputTokens);
+  const explicitTotal = nonNegativeInteger(value.total ?? value.total_tokens ?? value.totalTokens);
+  if (inputTokens === undefined && outputTokens === undefined && explicitTotal === undefined) return undefined;
+  const cache = asRecord(value.cache);
+  return {
+    inputTokens,
+    cachedInputTokens: nonNegativeInteger(cache?.read ?? value.cached_read_tokens),
+    cacheCreationInputTokens: nonNegativeInteger(cache?.write ?? value.cache_creation_input_tokens),
+    outputTokens,
+    totalTokens: explicitTotal ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+    state,
+  };
+}
+
+function normalizeActivityStatus(value: unknown): LocalAgentActivity["status"] {
+  if (value === "failed" || value === "error") return "failed";
+  if (value === "completed" || value === "complete" || value === "success") return "completed";
+  return "running";
+}
+
+function toolKind(name: string | undefined): LocalAgentActivity["kind"] {
+  const normalized = name?.toLowerCase();
+  if (normalized === "bash" || normalized === "shell" || normalized === "command") return "command";
+  if (normalized === "write" || normalized === "edit" || normalized === "patch") return "file";
+  return "tool";
+}
+
+function acpToolKind(kind: string | undefined): LocalAgentActivity["kind"] {
+  if (kind === "execute") return "command";
+  if (kind === "edit" || kind === "delete" || kind === "move") return "file";
+  return "tool";
 }
 
 export function piCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

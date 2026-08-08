@@ -9,12 +9,62 @@ import {
   extractPiFinalResponse,
   extractPiProviderError,
   extractPiStreamingText,
+  observeAcpUpdate,
+  observeOpenCodeResult,
+  observePiEvent,
   piCommandEnvironment,
   resolveAcpModelConfigUpdate,
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { LocalAgentActivity, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
+
+const observedActivity: LocalAgentActivity[] = [];
+const observedUsage: LocalAgentUsageSnapshot[] = [];
+const observer = {
+  onActivity: (activity: LocalAgentActivity) => observedActivity.push(activity),
+  onUsage: (usage: LocalAgentUsageSnapshot) => observedUsage.push(usage),
+};
+
+const openCodeUsage = observeOpenCodeResult({
+  data: [{
+    info: {
+      role: "assistant",
+      tokens: { input: 1_000, output: 250, cache: { read: 400, write: 50 } },
+    },
+    parts: [{ type: "tool", tool: "bash", state: { status: "completed" } }],
+  }],
+}, observer);
+assert.equal(openCodeUsage?.totalTokens, 1_250);
+assert.deepEqual(observedActivity.shift(), {
+  kind: "command",
+  status: "completed",
+  label: "bash",
+});
+
+observePiEvent({
+  type: "tool_execution_start",
+  toolName: "read",
+  tool: { name: "read", arguments: { path: "src/index.ts" } },
+}, observer);
+assert.deepEqual(observedActivity.shift(), {
+  kind: "tool",
+  status: "running",
+  label: "read",
+});
+
+observeAcpUpdate({
+  sessionUpdate: "tool_call_update",
+  kind: "execute",
+  title: "Run tests",
+  status: "failed",
+}, observer);
+assert.deepEqual(observedActivity.shift(), {
+  kind: "command",
+  status: "failed",
+  label: "Run tests",
+});
 
 const providers: LocalAgentProvider[] = [
   "codex",
