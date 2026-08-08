@@ -19,11 +19,13 @@ import {
   ProviderSchemaUnsupportedError,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
+  type LocalAgentObserver,
+  type LocalAgentUsageSnapshot,
 } from "./local-agent-runtime.js";
 
 export interface LocalAgentAdapter {
   readonly provider: LocalAgentProvider;
-  run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
+  run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult>;
 }
 
 const ACP_COMMANDS: Record<"cursor" | "copilot", [string, ...string[]]> = {
@@ -35,8 +37,9 @@ const PI_AGENT_TIMEOUT_MS = 120_000;
 export async function runLocalAgentProvider(
   provider: LocalAgentProvider,
   input: LocalAgentRunInput,
+  observer?: LocalAgentObserver,
 ): Promise<LocalAgentRunResult> {
-  const result = await runLocalAgentProviderResult(provider, input);
+  const result = await runLocalAgentProviderResult(provider, input, observer);
   if (result.isErr()) throw result.error;
   return result.value;
 }
@@ -44,9 +47,10 @@ export async function runLocalAgentProvider(
 export async function runLocalAgentProviderResult(
   provider: LocalAgentProvider,
   input: LocalAgentRunInput,
+  observer?: LocalAgentObserver,
 ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
   return Result.tryPromise({
-    try: () => createLocalAgentAdapter(provider).run(input),
+    try: () => createLocalAgentAdapter(provider).run(input, observer),
     catch: (cause) => classifyAgentProviderError(provider, cause),
   });
 }
@@ -70,16 +74,16 @@ export function createLocalAgentAdapter(provider: LocalAgentProvider): LocalAgen
 class CodexLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "codex" as const;
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const runtime = await createCodexSdkLocalAgentRuntime();
-    return runtime.run(input);
+    return runtime.run(input, observer);
   }
 }
 
 class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "claude" as const;
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
     const claudeExecutable = process.env.CLAUDE_COMMAND ?? resolveExecutable("claude");
     try {
@@ -107,7 +111,11 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       for await (const message of messages) {
         items.push(message);
         const record = message as Record<string, unknown>;
-        if (typeof record.session_id === "string") providerSessionId = record.session_id;
+        if (typeof record.session_id === "string") {
+          providerSessionId = record.session_id;
+          observer?.onSession?.(record.session_id);
+        }
+        notifyClaudeActivity(record, observer);
         if (record.type !== "result") continue;
         const resultError = claudeResultError(record);
         if (resultError) throw new Error(resultError);
@@ -116,14 +124,21 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
           finalResponse = extracted.finalResponse;
           structured = extracted.structured;
         }
+        const usage = claudeUsage(record.usage, "final");
+        if (usage) observer?.onUsage?.(usage);
       }
 
       finalResponse = requireFinalResponse("Claude", finalResponse);
+      const usage = [...items]
+        .reverse()
+        .map((item) => claudeUsage((item as Record<string, unknown>).usage, "final"))
+        .find((snapshot) => snapshot !== undefined);
       return {
         provider: this.provider,
         providerSessionId,
         finalResponse,
         items,
+        ...(usage ? { usage } : {}),
         ...(structured !== undefined ? { structured } : {}),
       };
     } catch (error) {
@@ -133,6 +148,58 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       throw error;
     }
   }
+}
+
+function notifyClaudeActivity(record: Record<string, unknown>, observer?: LocalAgentObserver): void {
+  if (record.type === "tool_progress" && typeof record.tool_name === "string") {
+    observer?.onActivity?.({ kind: "tool", status: "running", label: record.tool_name });
+    return;
+  }
+  if (record.type === "tool_use_summary" && typeof record.summary === "string") {
+    observer?.onActivity?.({ kind: "tool", status: "completed", label: record.summary });
+    return;
+  }
+  if (record.type !== "assistant") return;
+  const message = record.message as { content?: unknown[] } | undefined;
+  for (const block of message?.content ?? []) {
+    const content = block as Record<string, unknown>;
+    if (content.type !== "tool_use" || typeof content.name !== "string") continue;
+    observer?.onActivity?.({
+      kind: content.name === "Bash" ? "command" : content.name === "Write" || content.name === "Edit" ? "file" : "tool",
+      status: "running",
+      label: content.name,
+      detail: claudeToolDetail(content.input),
+    });
+  }
+}
+
+function claudeToolDetail(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  for (const key of ["command", "file_path", "path", "query"]) {
+    if (typeof record[key] === "string") return record[key];
+  }
+  return undefined;
+}
+
+function claudeUsage(value: unknown, state: "partial" | "final"): LocalAgentUsageSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const usage = value as Record<string, unknown>;
+  const inputTokens = nonNegativeInteger(usage.input_tokens);
+  const outputTokens = nonNegativeInteger(usage.output_tokens);
+  if (inputTokens === undefined && outputTokens === undefined) return undefined;
+  return {
+    inputTokens,
+    cachedInputTokens: nonNegativeInteger(usage.cache_read_input_tokens),
+    cacheCreationInputTokens: nonNegativeInteger(usage.cache_creation_input_tokens),
+    outputTokens,
+    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+    state,
+  };
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** Build Claude SDK outputFormat when a JSON Schema is requested. */

@@ -34,6 +34,7 @@ export { WorkflowEngineError } from "./workflow-errors.js";
 // ---------------------------------------------------------------------------
 
 export interface WorkflowProviderRunInput {
+  callIndex: number;
   provider: LocalAgentProvider;
   prompt: string;
   providerSessionId?: string;
@@ -388,6 +389,7 @@ export function createWorkflowApi(deps: WorkflowApiDeps): WorkflowApi {
 
       const cwd = worktreePath ?? deps.workspaceRoot;
       const providerBase = {
+        callIndex: index,
         provider,
         prompt: providerPrompt,
         model,

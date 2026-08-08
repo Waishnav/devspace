@@ -3,7 +3,10 @@ import type {
   CodexOptions,
   ModelReasoningEffort,
   RunResult,
+  RunStreamedResult,
   SandboxMode,
+  ThreadEvent,
+  ThreadItem,
   ThreadOptions,
   TurnOptions,
 } from "@openai/codex-sdk";
@@ -41,16 +44,40 @@ export interface LocalAgentRunResult {
   items: unknown[];
   /** Provider-native structured object when schema was requested. */
   structured?: unknown;
+  usage?: LocalAgentUsageSnapshot;
+}
+
+export interface LocalAgentUsageSnapshot {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  outputTokens?: number;
+  totalTokens: number;
+  state: "partial" | "final";
+}
+
+export interface LocalAgentActivity {
+  kind: "tool" | "command" | "file" | "status";
+  status: "running" | "completed" | "failed";
+  label: string;
+  detail?: string;
+}
+
+export interface LocalAgentObserver {
+  onSession?(providerSessionId: string): void;
+  onUsage?(usage: LocalAgentUsageSnapshot): void;
+  onActivity?(activity: LocalAgentActivity): void;
 }
 
 export interface LocalAgentRuntime {
   readonly provider: LocalAgentProvider;
-  run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
+  run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult>;
 }
 
 interface CodexThreadLike {
   readonly id: string | null;
   run(prompt: string, turnOptions?: TurnOptions): Promise<RunResult>;
+  runStreamed?(prompt: string, turnOptions?: TurnOptions): Promise<RunStreamedResult>;
 }
 
 interface CodexClientLike {
@@ -90,15 +117,18 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
     this.codex = codex;
   }
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, observer?: LocalAgentObserver): Promise<LocalAgentRunResult> {
     const options = threadOptionsFor(input);
     const thread = input.providerSessionId
       ? this.codex.resumeThread(input.providerSessionId, options)
       : this.codex.startThread(options);
     const turnOptions = input.schema ? { outputSchema: input.schema } : undefined;
     let turn: RunResult;
+    const streamed = thread.runStreamed !== undefined;
     try {
-      turn = await thread.run(input.prompt, turnOptions);
+      turn = thread.runStreamed
+        ? await collectCodexStream(await thread.runStreamed(input.prompt, turnOptions), observer)
+        : await thread.run(input.prompt, turnOptions);
     } catch (error) {
       if (input.schema && isNativeSchemaUnsupportedFailure(error)) {
         throw new ProviderSchemaUnsupportedError(this.provider, error);
@@ -106,14 +136,88 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
       throw error;
     }
 
+    if (!streamed && thread.id) observer?.onSession?.(thread.id);
+    const usage = turn.usage ? codexUsage(turn.usage) : undefined;
+    if (usage) observer?.onUsage?.(usage);
     return {
       provider: this.provider,
       providerSessionId: thread.id,
       finalResponse: turn.finalResponse,
       items: turn.items,
+      usage,
       ...(input.schema ? { structured: tryParseJson(turn.finalResponse) } : {}),
     };
   }
+}
+
+async function collectCodexStream(
+  streamed: RunStreamedResult,
+  observer?: LocalAgentObserver,
+): Promise<RunResult> {
+  const items: ThreadItem[] = [];
+  let finalResponse = "";
+  let usage: RunResult["usage"] = null;
+  for await (const event of streamed.events) {
+    if (event.type === "thread.started") observer?.onSession?.(event.thread_id);
+    if (event.type === "item.started") notifyCodexItem(event.item, "running", observer);
+    if (event.type === "item.completed") {
+      items.push(event.item);
+      notifyCodexItem(event.item, codexItemStatus(event.item), observer);
+      if (event.item.type === "agent_message") finalResponse = event.item.text;
+    }
+    if (event.type === "turn.completed") usage = event.usage;
+    if (event.type === "turn.failed") throw new Error(event.error.message);
+    if (event.type === "error") throw new Error(event.message);
+  }
+  return { items, finalResponse, usage };
+}
+
+function notifyCodexItem(
+  item: ThreadItem,
+  status: LocalAgentActivity["status"],
+  observer?: LocalAgentObserver,
+): void {
+  const activity = codexItemActivity(item, status);
+  if (activity) observer?.onActivity?.(activity);
+}
+
+function codexItemActivity(
+  item: ThreadItem,
+  status: LocalAgentActivity["status"],
+): LocalAgentActivity | undefined {
+  if (item.type === "command_execution") {
+    return { kind: "command", status, label: item.command };
+  }
+  if (item.type === "file_change") {
+    return {
+      kind: "file",
+      status,
+      label: "apply file changes",
+      detail: item.changes.map((change) => `${change.kind} ${change.path}`).join(", "),
+    };
+  }
+  if (item.type === "mcp_tool_call") {
+    return { kind: "tool", status, label: `${item.server}.${item.tool}` };
+  }
+  if (item.type === "web_search") return { kind: "tool", status, label: "web search", detail: item.query };
+  return undefined;
+}
+
+function codexItemStatus(item: ThreadItem): LocalAgentActivity["status"] {
+  if (item.type === "command_execution" || item.type === "mcp_tool_call" || item.type === "file_change") {
+    return item.status === "failed" ? "failed" : "completed";
+  }
+  return "completed";
+}
+
+function codexUsage(usage: NonNullable<RunResult["usage"]>): LocalAgentUsageSnapshot {
+  return {
+    inputTokens: usage.input_tokens,
+    cachedInputTokens: usage.cached_input_tokens,
+    outputTokens: usage.output_tokens,
+    totalTokens: usage.input_tokens + usage.output_tokens,
+    state: "final",
+  };
 }
 
 function tryParseJson(text: string): unknown | undefined {
