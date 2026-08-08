@@ -70,7 +70,7 @@ export async function launchWorkflowRun(
 ): Promise<BetterResult<LaunchWorkflowRunResult, LaunchWorkflowError>> {
   try {
     const resolved = await resolveLaunchSource(input);
-    if (resolved.isErr()) return resolved;
+    if (resolved.isErr()) return Result.err(resolved.error);
 
     const {
       sourceText,
@@ -104,10 +104,10 @@ export async function launchWorkflowRun(
       source: sourceText,
       preferredName,
     });
-    if (persisted.isErr()) return persisted;
+    if (persisted.isErr()) return Result.err(persisted.error);
 
     const updated = input.store.setScriptPathResult(run.id, persisted.value);
-    if (updated.isErr()) return updated;
+    if (updated.isErr()) return Result.err(updated.error);
 
     if (input.spawn !== false) {
       spawnWorkflowWorker(run.id, input.cliEntry);
@@ -143,7 +143,7 @@ async function resolveLaunchSource(
 
   if (source.kind === "resume") {
     const priorResult = store.getRunResult(source.runId);
-    if (priorResult.isErr()) return priorResult;
+    if (priorResult.isErr()) return Result.err(priorResult.error);
     const prior = priorResult.value;
     if (!prior) return Result.err(new WorkflowNotFoundError(source.runId));
 
@@ -166,21 +166,21 @@ async function resolveLaunchSource(
         workspaceRoot,
         stateDir: config.stateDir,
       });
-      if (named.isErr()) return named;
+      if (named.isErr()) return Result.err(named.error);
       sourceText = named.value.source;
       scriptHash = named.value.scriptHash;
       nameHint = named.value.nameHint;
       filename = named.value.scriptPath;
     } else if (source.override?.kind === "file") {
       const file = await readWorkflowScriptFileResult(source.override.path);
-      if (file.isErr()) return file;
+      if (file.isErr()) return Result.err(file.error);
       sourceText = file.value.source;
       scriptHash = file.value.scriptHash;
       nameHint = file.value.nameHint;
       filename = file.value.scriptPath;
     } else {
       const priorScript = await readWorkflowScriptFileResult(prior.scriptPath);
-      if (priorScript.isErr()) return priorScript;
+      if (priorScript.isErr()) return Result.err(priorScript.error);
       sourceText = priorScript.value.source;
       scriptHash = priorScript.value.scriptHash;
       nameHint = prior.name;
@@ -226,7 +226,7 @@ async function resolveLaunchSource(
       workspaceRoot,
       stateDir: config.stateDir,
     });
-    if (named.isErr()) return named;
+    if (named.isErr()) return Result.err(named.error);
     return Result.ok({
       sourceText: named.value.source,
       scriptHash: named.value.scriptHash,
@@ -243,7 +243,7 @@ async function resolveLaunchSource(
       workspaceRoot,
       stateDir: config.stateDir,
     });
-    if (file.isErr()) return file;
+    if (file.isErr()) return Result.err(file.error);
     return Result.ok({
       sourceText: file.value.source,
       scriptHash: file.value.scriptHash,

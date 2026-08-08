@@ -164,12 +164,37 @@ try {
     scriptHash: "other",
     workspaceRoot: join(root, "other-project"),
   });
+  const otherWorkspaceRun = store.createRun({
+    name: "other-workspace",
+    source: "inline",
+    scriptPath: join(root, "other-workspace.js"),
+    scriptHash: "other-workspace",
+    workspaceRoot: join(root, "project"),
+    workspaceId: "ws_2",
+  });
   assert.deepEqual(
     store
       .listRunsForWorkspace(join(root, "project"))
       .map((entry) => entry.id)
       .sort(),
+    [run.id, run2.id, otherWorkspaceRun.id].sort(),
+  );
+  assert.deepEqual(
+    store
+      .listRunsForScope({
+        workspaceId: "ws_1",
+        workspaceRoot: join(root, "project"),
+      })
+      .map((entry) => entry.id)
+      .sort(),
     [run.id, run2.id].sort(),
+  );
+  assert.deepEqual(
+    store.listRunsForScope({
+      workspaceId: "ws_1",
+      workspaceRoot: join(root, "project"),
+    }, { statuses: ["completed"] }).map((entry) => entry.id),
+    [run2.id],
   );
   assert.deepEqual(
     store
