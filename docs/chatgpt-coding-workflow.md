@@ -198,9 +198,11 @@ The shell tool is for commands that belong in a terminal:
 
 - tests
 - builds
-- git inspection
+- Git operations, including inspection and `git add`, `git commit`, `git fetch`,
+  `git pull`, and `git push`
 - package scripts
 - environment checks
 
-File writes should go through the edit/write tools rather than shell
-redirection, heredocs, `tee`, `sed -i`, or generated scripts.
+Outside Git operations, project source file writes should go through the
+edit/write tools rather than shell redirection, heredocs, `tee`, `sed -i`, or
+generated scripts.
