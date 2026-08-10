@@ -205,6 +205,7 @@ The shell tool is for commands that belong in a terminal:
 
 This guidance does not authorize destructive Git commands such as
 `git reset --hard`, `git clean`, `git checkout --`, or branch deletion. Outside
-the explicitly allowed Git operations, project source file writes should go
-through the edit/write tools rather than shell redirection, heredocs, `tee`,
-`sed -i`, or generated scripts.
+the explicitly allowed Git operations, do not create or modify project source
+files with shell commands. Do not use shell redirection, heredocs, `tee`,
+`sed -i`, `perl -i`, `node/python/ruby` scripts, or generated scripts to write
+project source files; use the edit/write tools for source-file changes.
