@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -15,6 +15,21 @@ import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
+
+test("list_allowed_roots exposes configured workspace choices without opening a workspace", async (t) => {
+  const context = await fixture(t);
+  const result = await context.client.callTool({
+    name: "list_allowed_roots",
+    arguments: {},
+  });
+
+  assert.deepEqual(structuredContent(result).roots, [{
+    name: basename(context.config.allowedRoots[0]!),
+    path: context.config.allowedRoots[0],
+  }]);
+  assert.match(responseText(result), /Allowed workspace roots:/);
+  assert.doesNotMatch(responseText(result), /project instructions/);
+});
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
   const context = await fixture(t);
