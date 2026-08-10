@@ -18,14 +18,8 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
-  /**
-   * True when the public base URL host is a Tailscale Funnel hostname
-   * (`*.ts.net`). Tailscale Funnel strips the configured path prefix before
-   * proxying to the backend, so a server exposed at `/mcp` receives requests
-   * at `/`. When this flag is set, the MCP handler is also registered at the
-   * root path so ChatGPT can reach it through Funnel.
-   */
-  isTailscaleFunnel: boolean;
+  /** Register the MCP handler at the root path for a path-stripping proxy. */
+  mcpRootAlias: boolean;
   toolMode: ToolMode;
   widgets: WidgetMode;
   stateDir: string;
@@ -238,7 +232,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
-    isTailscaleFunnel: new URL(publicBaseUrl).hostname.endsWith(".ts.net"),
+    mcpRootAlias: parseBoolean(env.DEVSPACE_TAILSCALE_FUNNEL),
     toolMode: parseToolMode(env),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),

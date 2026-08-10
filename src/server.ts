@@ -1871,11 +1871,9 @@ export function createServer(
     }
   };
 
-  // Tailscale Funnel strips the configured path prefix before proxying to the
-  // backend, so a server exposed at `/mcp` receives requests at `/`. Register
-  // the MCP handler at the root path as well in that case; otherwise the
-  // `/mcp` route alone is served and root stays 404.
-  app.all(config.isTailscaleFunnel ? ["/mcp", "/"] : "/mcp", handleMcpRequest);
+  // Some upstream proxies strip the configured path prefix before forwarding
+  // requests. Register the root alias only when the adapter explicitly opts in.
+  app.all(config.mcpRootAlias ? ["/mcp", "/"] : "/mcp", handleMcpRequest);
 
   let closePromise: Promise<void> | undefined;
   return {

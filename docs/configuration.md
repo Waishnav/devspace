@@ -34,10 +34,16 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `PORT` | Local port. Defaults to `7676`. |
 | `DEVSPACE_ALLOWED_ROOTS` | Comma-separated local roots that workspaces may open. |
 | `DEVSPACE_PUBLIC_BASE_URL` | Public origin for the server, without `/mcp`. |
+| `DEVSPACE_TAILSCALE_FUNNEL` | Set to `1` when a Tailscale Funnel route strips the `/mcp` path prefix before forwarding. |
 | `DEVSPACE_ALLOWED_HOSTS` | Optional Host header allowlist override. |
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Owner password for OAuth approval. Must be at least 16 characters. |
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
+
+When using a Tailscale Funnel path that strips `/mcp` before forwarding to
+DevSpace, set `DEVSPACE_TAILSCALE_FUNNEL=1`. This explicit opt-in adds a root
+MCP route alias; the hostname alone does not enable it because Tailscale Serve
+uses the same `.ts.net` hostnames.
 
 ## Native Artifact Download
 
