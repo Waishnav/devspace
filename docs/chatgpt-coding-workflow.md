@@ -203,6 +203,8 @@ The shell tool is for commands that belong in a terminal:
 - package scripts
 - environment checks
 
-Outside Git operations, project source file writes should go through the
-edit/write tools rather than shell redirection, heredocs, `tee`, `sed -i`, or
-generated scripts.
+This guidance does not authorize destructive Git commands such as
+`git reset --hard`, `git clean`, `git checkout --`, or branch deletion. Outside
+the explicitly allowed Git operations, project source file writes should go
+through the edit/write tools rather than shell redirection, heredocs, `tee`,
+`sed -i`, or generated scripts.

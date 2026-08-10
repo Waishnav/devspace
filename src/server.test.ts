@@ -80,6 +80,10 @@ test("bash guidance allows Git writes without authorizing shell-based source edi
         for (const command of ["git add", "git commit", "git fetch", "git pull", "git push"]) {
           assert.match(guidance, new RegExp(`\\b${command}\\b`));
         }
+        for (const command of ["git reset --hard", "git clean", "git checkout --", "branch deletion"]) {
+          assert.match(guidance, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        }
+        assert.match(guidance, /does not authorize destructive Git commands/);
         assert.match(guidance, /project source files/);
         assert.doesNotMatch(guidance, /Use only for/);
         assert.doesNotMatch(guidance, /Must not create or modify project files/);
