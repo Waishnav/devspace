@@ -7,6 +7,7 @@ import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
+export type ComputerUseBackend = "codex" | "swift";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_ARTIFACT_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -24,6 +25,9 @@ export interface ServerConfig {
   worktreeRoot: string;
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
+  computerUseEnabled: boolean;
+  computerUseBackend: ComputerUseBackend;
+  chromeDefaultProfile: string;
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
@@ -84,15 +88,27 @@ function parseBoolean(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
 }
 
-function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
-  const mode = env.DEVSPACE_TOOL_MODE;
-  if (mode === "minimal" || mode === "full" || mode === "codex") return mode;
-  if (mode) throw new Error(`Invalid DEVSPACE_TOOL_MODE: ${mode}`);
+function parseToolModeValue(value: unknown, name: string): ToolMode | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value === "minimal" || value === "full" || value === "codex") return value;
+  throw new Error(`Invalid ${name}: ${String(value)}`);
+}
 
-  if (env.DEVSPACE_MINIMAL_TOOLS !== undefined) {
-    return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
+function parseToolMode(env: NodeJS.ProcessEnv, requiredToolModeValue?: unknown): ToolMode {
+  const requiredToolMode = parseToolModeValue(requiredToolModeValue, "requiredToolMode");
+  let requestedToolMode = parseToolModeValue(env.DEVSPACE_TOOL_MODE, "DEVSPACE_TOOL_MODE");
+
+  if (!requestedToolMode && env.DEVSPACE_MINIMAL_TOOLS !== undefined) {
+    requestedToolMode = parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
   }
-  return "minimal";
+
+  const toolMode = requestedToolMode ?? requiredToolMode ?? "minimal";
+  if (requiredToolMode && toolMode !== requiredToolMode) {
+    throw new Error(
+      `Requested tool mode ${toolMode} conflicts with persisted requiredToolMode ${requiredToolMode}.`,
+    );
+  }
+  return toolMode;
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -160,6 +176,12 @@ function parseWidgetMode(value: string | undefined): WidgetMode {
   if (value === "off" || value === "changes") return value;
 
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
+}
+
+function parseComputerUseBackend(value: string | undefined): ComputerUseBackend {
+  if (!value || value === "codex") return "codex";
+  if (value === "swift") return "swift";
+  throw new Error(`Invalid DEVSPACE_COMPUTER_USE_BACKEND: ${value}`);
 }
 
 function parseRequiredSecret(value: string | undefined, name: string): string {
@@ -230,7 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
-    toolMode: parseToolMode(env),
+    toolMode: parseToolMode(env, files.config.requiredToolMode),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
@@ -243,6 +265,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       DEFAULT_ARTIFACT_MAX_FILE_BYTES,
       "DEVSPACE_ARTIFACT_MAX_FILE_BYTES",
     ),
+    computerUseEnabled:
+      env.DEVSPACE_COMPUTER_USE === undefined
+        ? files.config.computerUseEnabled === true
+        : parseBoolean(env.DEVSPACE_COMPUTER_USE),
+    computerUseBackend: parseComputerUseBackend(
+      env.DEVSPACE_COMPUTER_USE_BACKEND ?? files.config.computerUseBackend,
+    ),
+    chromeDefaultProfile:
+      env.DEVSPACE_CHROME_DEFAULT_PROFILE?.trim()
+      || files.config.chromeDefaultProfile?.trim()
+      || "Default",
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),

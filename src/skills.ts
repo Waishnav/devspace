@@ -23,6 +23,13 @@ export interface SkillReadResolution {
 
 const SUBAGENT_DELEGATION_NAME = "subagent-delegation";
 const SUBAGENT_DELEGATION_SKILL = join(SUBAGENT_DELEGATION_NAME, "SKILL.md");
+const RUNTIME_BUNDLED_SKILL_NAMES = new Set(["devspace-chrome-use"]);
+
+function enabledRuntimeBundledSkillNames(config: ServerConfig): Set<string> {
+  return config.computerUseEnabled && config.computerUseBackend === "codex"
+    ? RUNTIME_BUNDLED_SKILL_NAMES
+    : new Set();
+}
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
@@ -64,6 +71,16 @@ function resolveSkillPath(path: string, cwd: string): string {
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
+  const bundled = loadSkills({
+    cwd,
+    agentDir: config.agentDir,
+    skillPaths: [bundledSkillsDir()],
+    includeDefaults: false,
+  });
+  const enabledRuntimeSkillNames = enabledRuntimeBundledSkillNames(config);
+  const runtimeSkills = bundled.skills.filter((skill) =>
+    enabledRuntimeSkillNames.has(skill.name)
+  );
   const result = loadSkills({
     cwd,
     agentDir: config.agentDir,
@@ -71,11 +88,21 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  if (config.subagents) return result;
+  const mergedSkills = [
+    ...runtimeSkills,
+    ...result.skills.filter((skill) => !RUNTIME_BUNDLED_SKILL_NAMES.has(skill.name)),
+  ];
+
+  if (config.subagents) {
+    return {
+      skills: mergedSkills,
+      diagnostics: [...bundled.diagnostics, ...result.diagnostics],
+    };
+  }
 
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),
-    diagnostics: result.diagnostics.filter((diagnostic) => {
+    skills: mergedSkills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),
+    diagnostics: [...bundled.diagnostics, ...result.diagnostics].filter((diagnostic) => {
       const collision = diagnostic.collision;
       return !(collision?.resourceType === "skill" && collision.name === SUBAGENT_DELEGATION_NAME);
     }),

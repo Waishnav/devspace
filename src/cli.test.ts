@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { LocalAgentStore } from "./local-agent-store.js";
+import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -17,6 +18,20 @@ for (const flag of ["-v", "--version"]) {
   }).trim();
 
   assert.equal(output, packageJson.version);
+}
+
+const configCommandRoot = mkdtempSync(join(tmpdir(), "devspace-cli-config-test-"));
+try {
+  execFileSync("node", ["--import", "tsx", "src/cli.ts", "config", "set", "requiredToolMode", "codex"], {
+    encoding: "utf8",
+    env: { ...process.env, DEVSPACE_CONFIG_DIR: configCommandRoot },
+  });
+  assert.equal(
+    JSON.parse(readFileSync(join(configCommandRoot, "config.json"), "utf8")).requiredToolMode,
+    "codex",
+  );
+} finally {
+  rmSync(configCommandRoot, { recursive: true, force: true });
 }
 
 const root = mkdtempSync(join(tmpdir(), "devspace-cli-agents-test-"));
@@ -93,4 +108,46 @@ try {
   }).subagents, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
+}
+
+const authRoot = mkdtempSync(join(tmpdir(), "devspace-cli-auth-test-"));
+try {
+  const stateDir = join(authRoot, ".state");
+  const projectRoot = join(authRoot, "project");
+  mkdirSync(projectRoot, { recursive: true });
+
+  const store = new SqliteOAuthStore(stateDir);
+  const client = new SqliteOAuthClientsStore(store, ["chatgpt.com"]).registerClient({
+    redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+    client_name: "ChatGPT",
+  });
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  store.saveTokenPair({
+    accessTokenHash: "cli-access-hash",
+    accessToken: { clientId: client.client_id, scopes: ["devspace"], expiresAt },
+    refreshTokenHash: "cli-refresh-hash",
+    refreshToken: { clientId: client.client_id, scopes: ["devspace"], expiresAt },
+  });
+  store.close();
+
+  const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", "auth", "reset"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      DEVSPACE_CONFIG_DIR: join(authRoot, ".devspace"),
+      DEVSPACE_ALLOWED_ROOTS: projectRoot,
+      DEVSPACE_STATE_DIR: stateDir,
+      DEVSPACE_PUBLIC_BASE_URL: "https://devspace.example.com",
+      DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    },
+  });
+  assert.match(output, /1 client\(s\), 1 access token\(s\), 1 refresh token\(s\) removed/);
+
+  const reopened = new SqliteOAuthStore(stateDir);
+  assert.equal(reopened.getClient(client.client_id), undefined);
+  assert.equal(reopened.getAccessToken("cli-access-hash"), undefined);
+  assert.equal(reopened.getRefreshToken("cli-refresh-hash"), undefined);
+  reopened.close();
+} finally {
+  rmSync(authRoot, { recursive: true, force: true });
 }

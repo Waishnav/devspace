@@ -22,13 +22,39 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "f
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "codex");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).toolMode, "full");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "minimal");
+
+const lockedModeConfigDir = mkdtempSync(join(tmpdir(), "devspace-locked-mode-test-"));
+writeFileSync(join(lockedModeConfigDir, "config.json"), JSON.stringify({ requiredToolMode: "codex" }));
+const lockedModeEnv = { ...baseEnv, DEVSPACE_CONFIG_DIR: lockedModeConfigDir };
+assert.equal(loadConfig(lockedModeEnv).toolMode, "codex");
+assert.equal(loadConfig({ ...lockedModeEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "codex");
+assert.throws(
+  () => loadConfig({ ...lockedModeEnv, DEVSPACE_TOOL_MODE: "minimal" }),
+  /conflicts with persisted requiredToolMode codex/,
+);
+assert.throws(
+  () => loadConfig({ ...lockedModeEnv, DEVSPACE_MINIMAL_TOOLS: "1" }),
+  /conflicts with persisted requiredToolMode codex/,
+);
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
 assert.equal(loadConfig(baseEnv).subagents, false);
 assert.equal(loadConfig(baseEnv).artifactsEnabled, false);
 assert.equal(loadConfig(baseEnv).artifactMaxFileBytes, 100 * 1024 * 1024);
+assert.equal(loadConfig(baseEnv).computerUseEnabled, false);
+assert.equal(loadConfig(baseEnv).computerUseBackend, "codex");
+assert.equal(loadConfig(baseEnv).chromeDefaultProfile, "Default");
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_ARTIFACTS: "1" }).artifactsEnabled, true);
+assert.equal(loadConfig({ ...baseEnv, DEVSPACE_COMPUTER_USE: "1" }).computerUseEnabled, true);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_COMPUTER_USE_BACKEND: "swift" }).computerUseBackend,
+  "swift",
+);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_CHROME_DEFAULT_PROFILE: "gemini" }).chromeDefaultProfile,
+  "gemini",
+);
 assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_ARTIFACT_MAX_FILE_BYTES: "123" }).artifactMaxFileBytes,
   123,
@@ -66,6 +92,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_COMPUTER_USE_BACKEND: "invalid" }),
+  /Invalid DEVSPACE_COMPUTER_USE_BACKEND: invalid/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
@@ -176,6 +206,9 @@ writeFileSync(
     subagents: true,
     artifactsEnabled: true,
     artifactMaxFileBytes: 321,
+    computerUseEnabled: true,
+    computerUseBackend: "swift",
+    chromeDefaultProfile: "baidu_yijianvip",
   }),
 );
 writeFileSync(
@@ -192,6 +225,9 @@ assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.equal(fileConfig.subagents, true);
 assert.equal(fileConfig.artifactsEnabled, true);
 assert.equal(fileConfig.artifactMaxFileBytes, 321);
+assert.equal(fileConfig.computerUseEnabled, true);
+assert.equal(fileConfig.computerUseBackend, "swift");
+assert.equal(fileConfig.chromeDefaultProfile, "baidu_yijianvip");
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",

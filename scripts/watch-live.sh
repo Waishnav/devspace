@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-server_log="${DEVSPACE_SERVER_LOG:-/tmp/devspace-chatgpt-server.log}"
-tunnel_log="${DEVSPACE_TUNNEL_LOG:-/tmp/devspace-chatgpt-tunnel.log}"
+log_dir="${DEVSPACE_LOG_DIR:-$HOME/Library/Logs/DevSpace}"
+server_log="${DEVSPACE_SERVER_LOG:-$log_dir/server.log}"
+tunnel_log="${DEVSPACE_TUNNEL_LOG:-$log_dir/tunnel.log}"
 mode="${1:-calls}"
 
 case "$mode" in

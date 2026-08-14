@@ -43,6 +43,17 @@ reach.
 When an MCP client connects, DevSpace shows an approval page. Enter the Owner
 password only when you intentionally want that client to access this server.
 
+Each DevSpace instance keeps one authorized MCP client. Approving a new client
+deletes every previous client registration and its access and refresh tokens.
+Use this command to revoke the current client before connecting a replacement:
+
+```bash
+devspace auth reset
+```
+
+Resetting authorization does not change the Owner password, public URL,
+filesystem allowlist, tunnel configuration, or workspace state.
+
 For env-driven deployments, set a long random value:
 
 ```bash
@@ -109,6 +120,38 @@ fail closed. Downloads stream under the configured per-file limit and are
 published without overwrite as owner-only files. DevSpace does not extract or
 execute transferred content.
 
+## macOS Computer Use
+
+Local computer control is separately opt-in through
+`DEVSPACE_COMPUTER_USE=1`. Every application or browser action requires an
+active, authenticated DevSpace connection and a valid `workspaceId`.
+
+The default implementation is a thin adapter over OpenAI-signed Codex Computer
+Use and Chrome components. DevSpace dynamically discovers and verifies their
+OpenAI code-signing identities, starts them through the signed Codex app-server
+process boundary, forwards official permission requests, and returns screenshots
+as MCP image content. It does not copy or reimplement their native desktop,
+accessibility, DOM, Playwright, or Chrome extension engines.
+
+The app-server client has a hard method allowlist: `initialize`,
+`process/spawn`, `process/writeStdin`, and `process/kill`. Codex model APIs such
+as `thread/start` and `turn/start` are rejected before transmission. Browser and
+Computer Use request metadata is used only for local permission and interruption
+scope.
+
+The older Swift helper remains as `DEVSPACE_COMPUTER_USE_BACKEND=swift`, an
+explicit rollback path. It is not selected automatically after any Codex adapter
+failure and requires separate Screen Recording and Accessibility permission.
+
+Computer and browser actions grant substantially more authority than
+workspace-scoped file tools. The adapters preserve official application,
+browser-origin, upload, download, sensitive-data, and interruption policies and
+forward their elicitations to the connected MCP client. Native Computer Use
+fails closed while macOS is locked unless the incoming request contains
+authentic Codex `session_id` and `turn_id` metadata. DevSpace does not invent
+those identifiers. Chrome Use is independent of desktop unlock and has been
+validated while locked.
+
 ## Logs
 
 By default, DevSpace logs requests and tool calls. Shell command previews are
@@ -122,3 +165,8 @@ workspace-relative output path, byte count, hash, duration, and status metadata.
 references, native file IDs, bearer credentials, presigned URLs, host paths,
 temporary paths, and base64 chunks are never included in tool logs or tool
 results.
+
+Local-control logs record the adapter, action type, whether an app, URL,
+selector, coordinates, or text field was supplied, image count, duration, and
+status. They exclude typed values, screenshot bytes, image base64 data,
+request-metadata values, tab contents, and accessibility or DOM payloads.

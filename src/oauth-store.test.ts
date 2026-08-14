@@ -24,7 +24,9 @@ try {
   testPersistenceAndTokenHashing(join(root, "persistence"));
   testExpiredTokenCleanup(join(root, "expiration"));
   testTransactionalTokenRotation(join(root, "rotation"));
+  testSingleActiveClientAndReset(join(root, "single-client"));
   await testProviderRestartRotationAndRevocation(join(root, "provider"));
+  await testNewAuthorizationReplacesPreviousClient(join(root, "provider-replacement"));
 } finally {
   await rm(root, { recursive: true, force: true });
 }
@@ -183,6 +185,42 @@ function testTransactionalTokenRotation(stateDir: string): void {
   }
 }
 
+function testSingleActiveClientAndReset(stateDir: string): void {
+  const store = new SqliteOAuthStore(stateDir);
+  try {
+    const clients = new SqliteOAuthClientsStore(store, oauthConfig.allowedRedirectHosts);
+    const oldClient = clients.registerClient({ redirect_uris: [redirectUri], client_name: "ChatGPT" });
+    const newClient = clients.registerClient({ redirect_uris: [redirectUri], client_name: "ChatGPT" });
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+
+    store.saveTokenPair({
+      accessTokenHash: "old-access-hash",
+      accessToken: { clientId: oldClient.client_id, scopes: ["devspace"], expiresAt },
+      refreshTokenHash: "old-refresh-hash",
+      refreshToken: { clientId: oldClient.client_id, scopes: ["devspace"], expiresAt },
+    });
+
+    assert.deepEqual(store.activateClient(newClient.client_id), {
+      clients: 1,
+      accessTokens: 1,
+      refreshTokens: 1,
+    });
+    assert.equal(store.getClient(oldClient.client_id), undefined);
+    assert.ok(store.getClient(newClient.client_id));
+    assert.equal(store.getAccessToken("old-access-hash"), undefined);
+    assert.equal(store.getRefreshToken("old-refresh-hash"), undefined);
+
+    assert.deepEqual(store.resetAuthorization(), {
+      clients: 1,
+      accessTokens: 0,
+      refreshTokens: 0,
+    });
+    assert.equal(store.getClient(newClient.client_id), undefined);
+  } finally {
+    store.close();
+  }
+}
+
 async function testProviderRestartRotationAndRevocation(stateDir: string): Promise<void> {
   const firstProvider = new SingleUserOAuthProvider(oauthConfig, mcpUrl, stateDir);
   const client = await firstProvider.clientsStore.registerClient?.({
@@ -241,6 +279,101 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
     );
   } finally {
     secondProvider.close();
+  }
+}
+
+async function testNewAuthorizationReplacesPreviousClient(stateDir: string): Promise<void> {
+  const provider = new SingleUserOAuthProvider(oauthConfig, mcpUrl, stateDir);
+  try {
+    const oldClient = await provider.clientsStore.registerClient?.({
+      redirect_uris: [redirectUri],
+      client_name: "ChatGPT",
+    });
+    assert.ok(oldClient);
+
+    const oldCode = "code-old-client";
+    provider["codes"].set(oldCode, {
+      clientId: oldClient.client_id,
+      params: {
+        redirectUri,
+        codeChallenge: "old-challenge",
+        scopes: ["devspace"],
+        resource: mcpUrl,
+      },
+      expiresAtMs: Date.now() + 60_000,
+    });
+    const oldTokens = await provider.exchangeAuthorizationCode(
+      oldClient,
+      oldCode,
+      undefined,
+      redirectUri,
+      mcpUrl,
+    );
+    assert.ok(oldTokens.refresh_token);
+
+    const newClient = await provider.clientsStore.registerClient?.({
+      redirect_uris: [redirectUri],
+      client_name: "ChatGPT",
+    });
+    assert.ok(newClient);
+
+    let rejectedStatus = 0;
+    await provider.authorize(
+      newClient,
+      {
+        redirectUri,
+        codeChallenge: "rejected-challenge",
+        scopes: ["devspace"],
+        resource: mcpUrl,
+      },
+      {
+        req: {
+          method: "POST",
+          body: { owner_token: "wrong-owner-token" },
+        },
+        status(status: number) {
+          rejectedStatus = status;
+          return this;
+        },
+        setHeader() {},
+        send() {},
+      } as never,
+    );
+    assert.equal(rejectedStatus, 401);
+    assert.ok(provider.clientsStore.getClient(oldClient.client_id));
+    assert.equal((await provider.verifyAccessToken(oldTokens.access_token)).clientId, oldClient.client_id);
+
+    let redirectedTo = "";
+    await provider.authorize(
+      newClient,
+      {
+        redirectUri,
+        codeChallenge: "new-challenge",
+        scopes: ["devspace"],
+        resource: mcpUrl,
+      },
+      {
+        req: {
+          method: "POST",
+          body: { owner_token: oauthConfig.ownerToken },
+        },
+        redirect(status: number, location: string) {
+          assert.equal(status, 302);
+          redirectedTo = location;
+        },
+      } as never,
+    );
+
+    assert.match(redirectedTo, /^https:\/\/chatgpt\.com\/connector_platform_oauth_redirect\?code=/);
+    assert.equal(provider.clientsStore.getClient(oldClient.client_id), undefined);
+    assert.ok(provider.clientsStore.getClient(newClient.client_id));
+    await assert.rejects(provider.verifyAccessToken(oldTokens.access_token), InvalidTokenError);
+    await assert.rejects(
+      provider.exchangeRefreshToken(oldClient, oldTokens.refresh_token, ["devspace"], mcpUrl),
+      InvalidGrantError,
+    );
+  } finally {
+    provider.close();
   }
 }
 

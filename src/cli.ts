@@ -28,6 +28,7 @@ import {
 } from "./local-agent-targets.js";
 import { createLocalAgentStore, type LocalAgentRecord } from "./local-agent-store.js";
 import type { LocalAgentRunResult } from "./local-agent-runtime.js";
+import { SqliteOAuthStore } from "./oauth-store.js";
 import {
   ensureDevspaceDefaultSkills,
   generateOwnerToken,
@@ -40,7 +41,7 @@ import {
 import { expandHomePath } from "./roots.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
+type Command = "serve" | "init" | "doctor" | "config" | "auth" | "agents" | "help" | "version";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -64,6 +65,9 @@ async function main(argv: string[]): Promise<void> {
     case "config":
       runConfigCommand(args);
       return;
+    case "auth":
+      runAuthCommand(args);
+      return;
     case "agents":
       await runAgentsCommand(args);
       return;
@@ -78,7 +82,7 @@ async function main(argv: string[]): Promise<void> {
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
-  if (command === "init" || command === "doctor" || command === "config" || command === "agents") return command;
+  if (command === "init" || command === "doctor" || command === "config" || command === "auth" || command === "agents") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -161,6 +165,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
+      requiredToolMode: files.config.requiredToolMode,
       subagents: resolveSubagentsFlag(files.config),
     };
     const auth = {
@@ -264,6 +269,8 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    console.log(`Tool mode: ${config.toolMode}`);
+    console.log(`Required tool mode: ${files.config.requiredToolMode ?? "unset"}`);
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -281,20 +288,50 @@ function runConfigCommand(args: string[]): void {
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
-  if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
-  }
 
   const value = rest.join(" ").trim();
-  if (!value) {
-    throw new Error("Missing publicBaseUrl value.");
+  if (!key || !value) {
+    throw new Error("Usage: devspace config set <publicBaseUrl|requiredToolMode> <value>");
   }
 
-  writeDevspaceConfig({
-    ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
+  if (key === "publicBaseUrl") {
+    writeDevspaceConfig({
+      ...files.config,
+      publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
+    });
+  } else if (key === "requiredToolMode") {
+    if (value !== "null" && value !== "minimal" && value !== "full" && value !== "codex") {
+      throw new Error("requiredToolMode must be one of: minimal, full, codex, null");
+    }
+    writeDevspaceConfig({
+      ...files.config,
+      requiredToolMode: value === "null" ? undefined : value,
+    });
+  } else {
+    throw new Error(`Unknown config key: ${key}`);
+  }
   console.log(`Updated ${files.configPath}`);
+}
+
+function runAuthCommand(args: string[]): void {
+  const [subcommand] = args;
+  if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    console.log("Usage: devspace auth reset");
+    return;
+  }
+  if (subcommand !== "reset" || args.length !== 1) {
+    throw new Error(`Unknown auth command: ${args.join(" ")}`);
+  }
+
+  const store = new SqliteOAuthStore(loadConfig().stateDir);
+  try {
+    const removed = store.resetAuthorization();
+    console.log(
+      `OAuth authorization reset: ${removed.clients} client(s), ${removed.accessTokens} access token(s), ${removed.refreshTokens} refresh token(s) removed.`,
+    );
+  } finally {
+    store.close();
+  }
 }
 
 function printHelp(): void {
@@ -309,6 +346,8 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace config set requiredToolMode <minimal|full|codex|null>",
+      "  devspace auth reset      Revoke every previously authorized MCP client",
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider-or-id> [--model <model>] <prompt>",
       "  devspace agents show <id>",

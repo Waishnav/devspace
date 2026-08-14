@@ -20,6 +20,7 @@ import {
   artifactToolLogFields,
   downloadIncomingArtifact,
   isArtifactDownloadSupportedPlatform,
+  outgoingArtifactToolLogFields,
   registerArtifactTools,
 } from "./artifact-tools.js";
 import { ArtifactError } from "./artifact-error.js";
@@ -27,12 +28,19 @@ import {
   IncomingArtifactAdapterRegistry,
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
+import {
+  exportWorkspaceFile,
+  inferMimeType,
+  isLikelyBinaryFile,
+} from "./outgoing-artifacts.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-artifact-download-test-"));
 
 try {
-  testOneToolContract();
+  await testToolContracts(join(root, "tool-contracts"));
   testPlatformSupportContract();
+  await testWorkspaceFileExport(join(root, "exports"));
+  await testWorkspaceFileExportValidation(join(root, "export-validation"));
   if (isArtifactDownloadSupportedPlatform()) {
     await testSafeDownloadAndConflict(join(root, "downloads"));
     await testDestinationValidation(join(root, "destinations"));
@@ -49,36 +57,113 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 
-function testOneToolContract(): void {
-  const registered = new Map<string, { descriptor: Record<string, unknown>; callback: (input: never) => unknown }>();
+async function testToolContracts(testRoot: string): Promise<void> {
+  type RegisteredTool = {
+    descriptor: Record<string, unknown>;
+    callback: (input: Record<string, unknown>) => Promise<unknown>;
+  };
+  const registered = new Map<string, RegisteredTool>();
   const server = {
     registerTool(
       name: string,
       descriptor: Record<string, unknown>,
-      callback: (input: never) => unknown,
+      callback: RegisteredTool["callback"],
     ) {
       registered.set(name, { descriptor, callback });
       return {};
     },
   };
+  const workspaceRoot = join(testRoot, "workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const bytes = Buffer.from([0x00, 0x01, 0xfe, 0xff]);
+  const pngBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await writeFile(join(workspaceRoot, "probe.bin"), bytes);
+  await writeFile(join(workspaceRoot, "probe.png"), pngBytes);
 
   registerArtifactTools(server as never, {
     config: {
       artifactMaxFileBytes: 1024,
       logging: { toolCalls: false },
     } as never,
-    workspaces: {} as never,
+    workspaces: {
+      getWorkspace(workspaceId: string) {
+        assert.equal(workspaceId, "ws_test");
+        return { id: workspaceId, root: workspaceRoot };
+      },
+    } as never,
   });
 
-  assert.deepEqual([...registered.keys()], ["download_artifact"]);
-  const descriptor = registered.get("download_artifact")?.descriptor;
-  assert.ok(descriptor);
-  assert.deepEqual(descriptor._meta, { "openai/fileParams": ["file"] });
-  assert.deepEqual(Object.keys(descriptor.inputSchema as object).sort(), ["file", "path", "workspaceId"]);
-  assert.deepEqual(Object.keys(descriptor.outputSchema as object), ["path"]);
-  assert.equal((descriptor.annotations as { destructiveHint?: boolean }).destructiveHint, false);
+  const expectedTools = isArtifactDownloadSupportedPlatform()
+    ? ["export_file", "download_artifact"]
+    : ["export_file"];
+  assert.deepEqual([...registered.keys()], expectedTools);
 
-  const fileSchema = (descriptor.inputSchema as z.ZodRawShape).file as z.ZodType;
+  const exportDescriptor = registered.get("export_file")?.descriptor;
+  assert.ok(exportDescriptor);
+  assert.deepEqual(
+    Object.keys(exportDescriptor.inputSchema as object).sort(),
+    ["mimeType", "path", "workspaceId"],
+  );
+  assert.deepEqual(
+    Object.keys(exportDescriptor.outputSchema as object),
+    ["path", "name", "mimeType", "size", "sha256"],
+  );
+  assert.equal((exportDescriptor.annotations as { readOnlyHint?: boolean }).readOnlyHint, true);
+  assert.equal((exportDescriptor.annotations as { openWorldHint?: boolean }).openWorldHint, false);
+
+  const exportResponse = await registered.get("export_file")?.callback({
+    workspaceId: "ws_test",
+    path: "probe.bin",
+  }) as {
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image"; data: string; mimeType: string }
+      | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } }
+    >;
+    structuredContent: Record<string, unknown>;
+  };
+  assert.equal(exportResponse.content[1]?.type, "resource");
+  const resource = exportResponse.content[1];
+  assert.equal(resource?.type, "resource");
+  if (resource?.type === "resource") {
+    assert.deepEqual(Buffer.from(resource.resource.blob, "base64"), bytes);
+    assert.equal(resource.resource.mimeType, "application/octet-stream");
+    assert.match(resource.resource.uri, /^devspace:\/\/artifact\/[0-9a-f-]+\/probe\.bin$/u);
+  }
+  assert.equal(exportResponse.structuredContent.name, "probe.bin");
+  assert.equal(exportResponse.structuredContent.size, bytes.length);
+
+  const imageResponse = await registered.get("export_file")?.callback({
+    workspaceId: "ws_test",
+    path: "probe.png",
+  }) as {
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image"; data: string; mimeType: string }
+    >;
+  };
+  assert.equal(imageResponse.content[1]?.type, "image");
+  const image = imageResponse.content[1];
+  if (image?.type === "image") {
+    assert.equal(image.mimeType, "image/png");
+    assert.deepEqual(Buffer.from(image.data, "base64"), pngBytes);
+  }
+
+  if (!isArtifactDownloadSupportedPlatform()) return;
+  const downloadDescriptor = registered.get("download_artifact")?.descriptor;
+  assert.ok(downloadDescriptor);
+  assert.deepEqual(downloadDescriptor._meta, { "openai/fileParams": ["file"] });
+  assert.deepEqual(
+    Object.keys(downloadDescriptor.inputSchema as object).sort(),
+    ["file", "path", "workspaceId"],
+  );
+  assert.deepEqual(Object.keys(downloadDescriptor.outputSchema as object), ["path"]);
+  assert.equal((downloadDescriptor.annotations as { destructiveHint?: boolean }).destructiveHint, false);
+
+  const fileSchema = (downloadDescriptor.inputSchema as z.ZodRawShape).file as z.ZodType;
   const valid = {
     download_url: "https://files.oaiusercontent.com/file_123/download?sig=secret",
     file_id: "file_123",
@@ -104,6 +189,104 @@ function testPlatformSupportContract(): void {
   assert.equal(isArtifactDownloadSupportedPlatform("openbsd"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("netbsd"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("win32"), false);
+}
+
+async function testWorkspaceFileExport(testRoot: string): Promise<void> {
+  const workspaceRoot = join(testRoot, "workspace");
+  await mkdir(join(workspaceRoot, "reports"), { recursive: true });
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
+  await writeFile(join(workspaceRoot, "reports", "result.zip"), bytes);
+
+  const exported = await exportWorkspaceFile({
+    workspaceId: "ws_test",
+    workspaceRoot,
+    maxFileBytes: 1024,
+    path: "reports/result.zip",
+  });
+  assert.equal(exported.path, "reports/result.zip");
+  assert.equal(exported.name, "result.zip");
+  assert.equal(exported.mimeType, "application/zip");
+  assert.equal(exported.size, bytes.length);
+  assert.deepEqual(Buffer.from(exported.blob, "base64"), bytes);
+  assert.match(exported.sha256, /^sha256:[0-9a-f]{64}$/u);
+  assert.match(exported.uri, /^devspace:\/\/artifact\/[0-9a-f-]+\/result\.zip$/u);
+
+  const overridden = await exportWorkspaceFile({
+    workspaceId: "ws_test",
+    workspaceRoot,
+    maxFileBytes: 1024,
+    path: "reports/result.zip",
+    mimeType: "application/vnd.example.archive",
+  });
+  assert.equal(overridden.mimeType, "application/vnd.example.archive");
+  assert.equal(inferMimeType("document.PDF"), "application/pdf");
+  assert.equal(inferMimeType("module.wasm"), "application/wasm");
+  assert.equal(inferMimeType("unknown.custom"), "application/octet-stream");
+  assert.equal(isLikelyBinaryFile("native.node"), true);
+  assert.equal(isLikelyBinaryFile("source.ts"), false);
+}
+
+async function testWorkspaceFileExportValidation(testRoot: string): Promise<void> {
+  const workspaceRoot = join(testRoot, "workspace");
+  const siblingRoot = join(testRoot, "sibling");
+  await mkdir(workspaceRoot, { recursive: true });
+  await mkdir(siblingRoot, { recursive: true });
+  await writeFile(join(workspaceRoot, "small.bin"), Buffer.from("12345"));
+  await writeFile(join(siblingRoot, "outside.bin"), Buffer.from("outside"));
+
+  for (const path of ["../outside.bin", "nested/../outside.bin", "/absolute.bin", "folder/"]) {
+    await expectArtifactError(
+      exportWorkspaceFile({
+        workspaceId: "ws_test",
+        workspaceRoot,
+        maxFileBytes: 1024,
+        path,
+      }),
+      "artifact_source_invalid",
+    );
+  }
+
+  await expectArtifactError(
+    exportWorkspaceFile({
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 4,
+      path: "small.bin",
+    }),
+    "artifact_file_too_large",
+  );
+  await expectArtifactError(
+    exportWorkspaceFile({
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 1024,
+      path: "small.bin",
+      mimeType: "invalid",
+    }),
+    "artifact_mime_type_invalid",
+  );
+  await expectArtifactError(
+    exportWorkspaceFile({
+      workspaceId: "ws_test",
+      workspaceRoot,
+      maxFileBytes: 1024,
+      path: ".",
+    }),
+    "artifact_source_invalid",
+  );
+
+  if (process.platform !== "win32") {
+    await symlink(join(siblingRoot, "outside.bin"), join(workspaceRoot, "escaped.bin"));
+    await expectArtifactError(
+      exportWorkspaceFile({
+        workspaceId: "ws_test",
+        workspaceRoot,
+        maxFileBytes: 1024,
+        path: "escaped.bin",
+      }),
+      "artifact_source_unsafe",
+    );
+  }
 }
 
 async function testUnsupportedPlatform(testRoot: string): Promise<void> {
@@ -362,6 +545,17 @@ function testLogRedaction(): void {
   assert.equal(serialized.includes("log-secret"), false);
   assert.equal(serialized.includes("ws_secret"), true);
   assert.equal(serialized.includes("files.oaiusercontent.com"), true);
+
+  const outgoingFields = outgoingArtifactToolLogFields({
+    workspaceId: "ws_export",
+    path: "reports/archive.zip",
+    mimeType: "application/zip",
+    blob: "must-not-be-logged",
+  });
+  const outgoingSerialized = JSON.stringify(outgoingFields);
+  assert.equal(outgoingSerialized.includes("must-not-be-logged"), false);
+  assert.equal(outgoingSerialized.includes("ws_export"), true);
+  assert.equal(outgoingSerialized.includes("reports/archive.zip"), true);
 }
 
 function registryFor(source: {

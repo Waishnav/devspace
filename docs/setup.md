@@ -82,6 +82,23 @@ Run:
 npx @waishnav/devspace serve
 ```
 
+On macOS with a named Cloudflare Tunnel configured in
+`~/.cloudflared/config.yml`, the repository helper starts both long-running
+processes in an inspectable tmux session:
+
+```bash
+./scripts/devspace-service.sh start
+./scripts/devspace-service.sh status
+./scripts/devspace-service.sh stop
+```
+
+The helper never configures Cloudflare, DNS, or the ChatGPT plugin. Those remain
+one-time manual steps. Attach to the live processes at any time with:
+
+```bash
+tmux attach -t devspace-service
+```
+
 If your tunnel URL changes for one run, override it without rewriting config:
 
 ```bash
@@ -108,6 +125,28 @@ The default config files are:
 ```
 
 Keep `auth.json` private.
+
+Approving a replacement ChatGPT account automatically revokes the previous
+client and its tokens. To revoke access before connecting the replacement, run:
+
+```bash
+npx @waishnav/devspace auth reset
+```
+
+## Multiple Macs
+
+Give each Mac its own stable subdomain, named Cloudflare Tunnel, DevSpace state,
+and ChatGPT plugin. For example:
+
+```text
+devspace-primary.example.com -> local_agent
+devspace-work.example.com    -> local_work
+devspace-home.example.com    -> local_home
+```
+
+Each hostname must point to the named tunnel running on that Mac. Do not copy
+`~/.cloudflared` credentials, `~/.devspace/auth.json`, or the DevSpace SQLite
+state between computers.
 
 ## Check Your Setup
 

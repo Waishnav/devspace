@@ -19,6 +19,10 @@ export interface DevspaceUserConfig {
   worktreeRoot?: string;
   artifactsEnabled?: boolean;
   artifactMaxFileBytes?: number;
+  computerUseEnabled?: boolean;
+  computerUseBackend?: "codex" | "swift";
+  chromeDefaultProfile?: string;
+  requiredToolMode?: "minimal" | "full" | "codex";
   agentDir?: string;
   subagents?: boolean;
 }

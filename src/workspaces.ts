@@ -141,25 +141,23 @@ export class WorkspaceRegistry {
   }
 
   resolveReadPath(workspace: Workspace, inputPath: string): WorkspaceReadPath {
-    try {
-      return {
-        absolutePath: this.resolvePath(workspace, inputPath),
-        readRoots: [workspace.root],
-      };
-    } catch (workspaceError) {
-      const skillRead = resolveSkillReadPath(
-        workspace.skills,
-        workspace.activatedSkillDirs,
-        inputPath,
-      );
-      if (!skillRead) throw workspaceError;
-
+    const skillRead = resolveSkillReadPath(
+      workspace.skills,
+      workspace.activatedSkillDirs,
+      inputPath,
+    );
+    if (skillRead) {
       return {
         absolutePath: skillRead.absolutePath,
         readRoots: [workspace.root, skillRead.skill.baseDir],
         skillRead,
       };
     }
+
+    return {
+      absolutePath: this.resolvePath(workspace, inputPath),
+      readRoots: [workspace.root],
+    };
   }
 
   markReadPathLoaded(workspace: Workspace, readPath: WorkspaceReadPath): void {

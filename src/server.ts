@@ -7,7 +7,11 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ElicitResultSchema,
+  isInitializeRequest,
+  type ElicitRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import {
   registerAppResource,
@@ -24,9 +28,33 @@ import {
 } from "./artifact-tools.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
 import {
+  CodexComputerUseAdapter,
+  type CodexComputerUseInput,
+} from "./codex-computer-use.js";
+import {
+  CodexChromeUseAdapter,
+  type CodexChromeUseInput,
+} from "./codex-chrome-use.js";
+import type { CodexMcpToolResult } from "./codex-mcp-client.js";
+import type { CodexExecutionContext } from "./codex-request-context.js";
+import { CodexRuntimeHost } from "./codex-runtime-host.js";
+import {
+  captureComputerScreen,
+  ComputerUseError,
+  isComputerUseSupportedPlatform,
+  performComputerAction,
+  type ComputerActionInput,
+  type ScreenCaptureResult,
+} from "./computer-use.js";
+import {
   createOpenAIIncomingArtifactAdapter,
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
+import {
+  exportWorkspaceFile,
+  isLikelyBinaryFile,
+  isModelImageMimeType,
+} from "./outgoing-artifacts.js";
 import {
   logEvent,
   requestIp,
@@ -172,7 +200,16 @@ const toolNames = {
   glob: "glob",
   ls: "ls",
   shell: "bash",
+  captureScreen: "capture_screen",
+  computerAction: "computer_action",
+  computerUse: "computer_use",
+  chromeUse: "chrome_use",
 } as const;
+
+export interface LocalControlAdapters {
+  computerUse?: CodexComputerUseAdapter;
+  chromeUse?: CodexChromeUseAdapter;
+}
 
 interface ToolLogFields {
   tool: string;
@@ -187,16 +224,27 @@ interface ToolLogFields {
 }
 
 function serverInstructions(config: ServerConfig): string {
-  const artifactInstruction = config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
-    ? " When the user supplies or generates a file that is not present on the DevSpace host, use download_artifact with its native file value, the existing workspace ID, and a suitable relative destination path chosen from the user's request and project structure. The tool refuses to overwrite an existing destination and returns the normalized workspace-relative path. Use normal workspace tools when explicit inspection, replacement, movement, renaming, or deletion is needed. Do not recreate binary files with write/edit calls or place signed URLs, native file objects, base64 content, or invented host paths in shell commands or logs."
+  const artifactExportInstruction = config.artifactsEnabled
+    ? " When the user asks to receive, inspect, or download a file that exists on the DevSpace host, use export_file with the existing workspace ID and workspace-relative path. The tool returns the original bytes as an MCP embedded resource with file metadata and integrity information; do not recreate binary content with text tools or place base64 data in shell commands or logs."
     : "";
+  const artifactDownloadInstruction = config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
+    ? " When the user supplies or generates a file that is not present on the DevSpace host, use download_artifact with its native file value, the existing workspace ID, and a suitable relative destination path chosen from the user's request and project structure. The tool refuses to overwrite an existing destination and returns the normalized workspace-relative path. Use normal workspace tools when explicit inspection, replacement, movement, renaming, or deletion is needed. Do not place signed URLs, native file objects, or invented host paths in shell commands or logs."
+    : "";
+  const artifactInstruction = `${artifactExportInstruction}${artifactDownloadInstruction}`;
+  const computerUseInstruction = !config.computerUseEnabled
+    ? ""
+    : config.computerUseBackend === "codex"
+      ? " For native macOS applications, use computer_use to list apps, observe one app as a screenshot plus accessibility tree, and perform bounded semantic or coordinate actions. For Chrome pages, use chrome_use and prefer DOM snapshots plus Playwright selectors over desktop coordinates. Both tools return fresh state after actions. Chrome Use can operate while macOS is locked; native Computer Use fails closed while locked unless authentic Codex thread metadata is present."
+      : isComputerUseSupportedPlatform()
+        ? " For legacy desktop computer-use diagnostics, call capture_screen to observe the selected display, then call computer_action to perform one bounded action and receive a fresh screenshot. The read tool also accepts @screen as a compatibility alias for display 1."
+        : "";
   const showChangesInstruction =
     config.widgets === "changes"
       ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
       : "";
 
   if (config.toolMode === "codex") {
-    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${artifactInstruction}${showChangesInstruction}`;
+    return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree and reuse its workspaceId. Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.${artifactInstruction}${computerUseInstruction}${showChangesInstruction}`;
   }
 
   const inspection = config.toolMode !== "full"
@@ -209,7 +257,7 @@ function serverInstructions(config: ServerConfig): string {
 
   const agentsMd = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
 
-  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${artifactInstruction}${showChangesInstruction}`;
+  return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${artifactInstruction}${computerUseInstruction}${showChangesInstruction}`;
 }
 
 function formatVisibleAgent(agent: {
@@ -240,6 +288,118 @@ function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
         "Model-readable result text for follow-up reasoning and plain MCP hosts.",
       ),
     ...extra,
+  };
+}
+
+function screenCaptureSummary(capture: ScreenCaptureResult) {
+  return {
+    display: capture.display.index,
+    displayId: capture.display.id,
+    originX: capture.display.x,
+    originY: capture.display.y,
+    screenWidth: capture.display.width,
+    screenHeight: capture.display.height,
+    imageWidth: capture.width,
+    imageHeight: capture.height,
+    includeCursor: capture.includeCursor,
+    mimeType: capture.mimeType,
+    size: capture.size,
+    sha256: capture.sha256,
+  };
+}
+
+function computerUseErrorCode(error: unknown): string {
+  if (error instanceof ComputerUseError) return error.code;
+  if (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return "internal_error";
+}
+
+function codexToolContent(result: CodexMcpToolResult): ToolContent[] {
+  return result.content.flatMap((item): ToolContent[] => {
+    if (item.type === "text") return [{ type: "text", text: item.text }];
+    if (item.type === "image") {
+      return [{ type: "image", data: item.data, mimeType: item.mimeType }];
+    }
+    return [];
+  });
+}
+
+function codexToolSummary(action: string, result: CodexMcpToolResult) {
+  const content = codexToolContent(result);
+  return {
+    action,
+    isError: result.isError,
+    text: contentText(content),
+    imageCount: content.filter((item) => item.type === "image").length,
+  };
+}
+
+type CodexElicitationAction = "accept" | "decline" | "cancel";
+
+type CodexElicitationFallback = {
+  explicitAction?: CodexElicitationAction;
+  onUnsupported?: (params: Record<string, unknown>) => void;
+};
+
+function codexExecutionContextFromToolExtra(
+  extra: {
+    _meta?: unknown;
+    sessionId?: string;
+    requestId: string | number;
+    sendRequest: (
+      request: ElicitRequest,
+      resultSchema: typeof ElicitResultSchema,
+    ) => Promise<unknown>;
+  },
+  fallback: CodexElicitationFallback = {},
+): CodexExecutionContext {
+  return {
+    requestMeta:
+      typeof extra._meta === "object" && extra._meta !== null && !Array.isArray(extra._meta)
+        ? extra._meta as Record<string, unknown>
+        : undefined,
+    mcpSessionId: extra.sessionId,
+    requestId: extra.requestId,
+    onElicitation: async (params) => {
+      if (fallback.explicitAction) {
+        return { action: fallback.explicitAction, content: {} };
+      }
+      try {
+        const result = await extra.sendRequest(
+          { method: "elicitation/create", params } as ElicitRequest,
+          ElicitResultSchema,
+        );
+        if (typeof result !== "object" || result === null || Array.isArray(result)) {
+          throw new Error("MCP client returned an invalid elicitation response.");
+        }
+        return result as Record<string, unknown>;
+      } catch (error) {
+        if (!fallback.onUnsupported) throw error;
+        fallback.onUnsupported(params);
+        return { action: "decline", content: {} };
+      }
+    },
+  };
+}
+
+function summarizeElicitation(params: Record<string, unknown>): {
+  message: string;
+  requestedSchema?: unknown;
+} {
+  return {
+    message: typeof params.message === "string"
+      ? params.message
+      : "This action requires explicit user approval.",
+    ...(typeof params.requestedSchema === "object" && params.requestedSchema !== null
+      ? { requestedSchema: params.requestedSchema }
+      : {}),
   };
 }
 
@@ -353,6 +513,10 @@ function logFailedToolResponse(
 
 function textBlock(text: string): ToolContent {
   return { type: "text", text };
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function textSummary(content: ToolContent[]): {
@@ -693,13 +857,14 @@ function registerCodexProcessTools(
   );
 }
 
-function createMcpServer(
+export function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
   localAgentProviders: LocalAgentProviderAvailability[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
+  localControls: LocalControlAdapters,
 ): McpServer {
   const server = new McpServer(
     {
@@ -912,7 +1077,9 @@ function createMcpServer(
       title: "Read file",
       description:
         [
-          "Read a file inside an open workspace. Use this for file inspection instead of shell commands like cat or sed. Call open_workspace first and pass workspaceId.",
+          config.computerUseEnabled && config.computerUseBackend === "swift"
+            ? "Read a file inside an open workspace. Use this for file inspection instead of shell commands like cat or sed. Call open_workspace first and pass workspaceId. With the legacy Swift computer-use backend, path @screen captures display 1 as native image content."
+            : "Read a file inside an open workspace. Use this for file inspection instead of shell commands like cat or sed. Call open_workspace first and pass workspaceId.",
           "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_workspace before working in nested directories.",
           config.skillsEnabled
             ? "If available skills were returned and a task matches one, read that skill's path before proceeding. Skill paths may be outside the workspace; only advertised SKILL.md files and files under already-loaded skill directories are readable."
@@ -951,7 +1118,101 @@ function createMcpServer(
     async ({ workspaceId, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
+      if (
+        config.computerUseEnabled
+        && config.computerUseBackend === "swift"
+        && input.path === "@screen"
+        && input.offset === undefined
+        && input.limit === undefined
+      ) {
+        const capture = await captureComputerScreen({
+          stateDir: config.stateDir,
+          maxFileBytes: config.artifactMaxFileBytes,
+          display: 1,
+          includeCursor: true,
+        });
+        const result = screenCaptureSummary(capture);
+        const resultText = JSON.stringify(result);
+        logToolCall(config, {
+          tool: toolNames.read,
+          workspaceId,
+          path: input.path,
+          success: true,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        return {
+          content: [
+            { type: "text" as const, text: resultText },
+            { type: "image" as const, data: capture.data, mimeType: capture.mimeType },
+          ],
+          _meta: {
+            tool: toolNames.read,
+            card: {
+              workspaceId,
+              path: input.path,
+              summary: result,
+            },
+          },
+          structuredContent: { result: resultText },
+        };
+      }
       const readPath = workspaces.resolveReadPath(workspace, input.path);
+      if (
+        config.artifactsEnabled
+        && input.offset === undefined
+        && input.limit === undefined
+        && readPath.skillRead === undefined
+        && isLikelyBinaryFile(input.path)
+      ) {
+        const exported = await exportWorkspaceFile({
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.root,
+          maxFileBytes: config.artifactMaxFileBytes,
+          path: input.path,
+        });
+        const result = {
+          path: exported.path,
+          name: exported.name,
+          mimeType: exported.mimeType,
+          size: exported.size,
+          sha256: exported.sha256,
+        };
+        const resultText = JSON.stringify(result);
+        logToolCall(config, {
+          tool: toolNames.read,
+          workspaceId,
+          path: input.path,
+          success: true,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        const binaryContent = isModelImageMimeType(exported.mimeType)
+          ? { type: "image" as const, data: exported.blob, mimeType: exported.mimeType }
+          : {
+              type: "resource" as const,
+              resource: {
+                uri: exported.uri,
+                mimeType: exported.mimeType,
+                blob: exported.blob,
+              },
+            };
+        return {
+          content: [
+            { type: "text" as const, text: resultText },
+            binaryContent,
+          ],
+          _meta: {
+            tool: toolNames.read,
+            card: {
+              workspaceId,
+              path: input.path,
+              summary: result,
+            },
+          },
+          structuredContent: {
+            result: resultText,
+          },
+        };
+      }
       const response = await readFileTool(
         { ...input, path: readPath.absolutePath },
         {
@@ -1001,6 +1262,518 @@ function createMcpServer(
       };
     },
   );
+
+  if (localControls.computerUse) {
+    registerAppTool(
+      server,
+      toolNames.computerUse,
+      {
+        title: "Use a macOS application",
+        description:
+          "Use OpenAI's signed Codex Computer Use runtime to list applications, observe one application as a screenshot plus accessibility tree, or perform one bounded action. Call get_app_state before interacting and use element indices from the latest state when possible. Actions return fresh application state. Native application control fails closed while macOS is locked unless the incoming request contains authentic Codex thread metadata. If the MCP host cannot render the official application approval elicitation, the result returns approvalRequired; retry with appApproval only after the user has explicitly approved or declined that bounded request.",
+        inputSchema: {
+          workspaceId: z.string().min(1).describe(
+            "Workspace identifier returned by open_workspace. It authorizes this local-control session.",
+          ),
+          action: z.enum([
+            "list_apps",
+            "get_app_state",
+            "click",
+            "perform_secondary_action",
+            "set_value",
+            "select_text",
+            "scroll",
+            "drag",
+            "press_key",
+            "type_text",
+          ]),
+          app: z.string().max(1024).optional().describe(
+            "Application name, full path, or unambiguous bundle identifier. Required except for list_apps.",
+          ),
+          appApproval: z.enum(["accept", "decline", "cancel"]).optional().describe(
+            "Legacy explicit response to an official application approval request. Set accept only after the user has approved this bounded action.",
+          ),
+          elicitationAction: z.enum(["accept", "decline", "cancel"]).optional().describe(
+            "Explicit response to the immediately preceding application approval request. Set accept only after the user has approved that bounded request.",
+          ),
+          elementIndex: z.string().max(256).optional().describe(
+            "Accessibility element index from the latest application state.",
+          ),
+          x: z.number().finite().optional(),
+          y: z.number().finite().optional(),
+          clickCount: z.number().int().min(1).max(3).optional(),
+          mouseButton: z.enum(["left", "right", "middle"]).optional(),
+          secondaryAction: z.string().max(1024).optional(),
+          value: z.string().max(100000).optional().describe(
+            "Value for set_value. Value content is not written to normal logs.",
+          ),
+          text: z.string().max(100000).optional().describe(
+            "Text for select_text or type_text. Text content is not written to normal logs.",
+          ),
+          prefix: z.string().max(100000).optional(),
+          suffix: z.string().max(100000).optional(),
+          selection: z.enum(["text", "cursor_before", "cursor_after"]).optional(),
+          direction: z.enum(["up", "down", "left", "right"]).optional(),
+          pages: z.number().positive().max(100).optional(),
+          fromX: z.number().finite().optional(),
+          fromY: z.number().finite().optional(),
+          toX: z.number().finite().optional(),
+          toY: z.number().finite().optional(),
+          key: z.string().max(256).optional(),
+        },
+        outputSchema: {
+          action: z.string(),
+          isError: z.boolean(),
+          text: z.string(),
+          imageCount: z.number().int().nonnegative(),
+          approvalRequired: z.boolean().optional(),
+          approvalMessage: z.string().optional(),
+          approvalSchema: z.unknown().optional(),
+        },
+        _meta: {},
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async ({ workspaceId, appApproval, elicitationAction, ...input }, extra) => {
+        const startedAt = performance.now();
+        workspaces.getWorkspace(workspaceId);
+        const action = input.action;
+        let unsupportedElicitation: ReturnType<typeof summarizeElicitation> | undefined;
+        try {
+          const result = await localControls.computerUse!.invoke(
+            input as CodexComputerUseInput,
+            codexExecutionContextFromToolExtra(extra, {
+              explicitAction: elicitationAction ?? appApproval,
+              onUnsupported: (params) => {
+                unsupportedElicitation = summarizeElicitation(params);
+              },
+            }),
+          );
+          if (unsupportedElicitation) {
+            const summary = {
+              action,
+              isError: false,
+              text: unsupportedElicitation.message,
+              imageCount: 0,
+              approvalRequired: true,
+              approvalMessage: unsupportedElicitation.message,
+              ...(unsupportedElicitation.requestedSchema === undefined
+                ? {}
+                : { approvalSchema: unsupportedElicitation.requestedSchema }),
+            };
+            logEvent(config.logging, "info", "computer_use_tool_call", {
+              backend: "codex",
+              tool: toolNames.computerUse,
+              workspaceId,
+              action,
+              appPresent: input.app !== undefined,
+              approvalRequired: true,
+              success: false,
+              durationMs: Math.round(performance.now() - startedAt),
+            });
+            return {
+              content: [{ type: "text" as const, text: JSON.stringify(summary) }],
+              isError: false,
+              structuredContent: summary,
+            };
+          }
+          const summary = codexToolSummary(action, result);
+          const content = codexToolContent(result);
+          logEvent(config.logging, result.isError ? "warn" : "info", "computer_use_tool_call", {
+            backend: "codex",
+            tool: toolNames.computerUse,
+            workspaceId,
+            action,
+            appPresent: input.app !== undefined,
+            hasCoordinates: input.x !== undefined || input.y !== undefined,
+            hasText: input.text !== undefined || input.value !== undefined,
+            imageCount: summary.imageCount,
+            success: !result.isError,
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          return {
+            content: content.length > 0
+              ? content
+              : [{ type: "text" as const, text: JSON.stringify(summary) }],
+            isError: result.isError,
+            structuredContent: summary,
+          };
+        } catch (error) {
+          logEvent(config.logging, "warn", "computer_use_tool_call", {
+            backend: "codex",
+            tool: toolNames.computerUse,
+            workspaceId,
+            action,
+            success: false,
+            errorCode: computerUseErrorCode(error),
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          throw error;
+        }
+      },
+    );
+  }
+
+  if (localControls.chromeUse) {
+    registerAppTool(
+      server,
+      toolNames.chromeUse,
+      {
+        title: "Use Google Chrome",
+        description:
+          "Use the signed Codex Chrome runtime with the user's real Chrome profiles. Call open_workspace first and reuse its workspaceId. Use list_profiles to inspect profiles and status to verify the selected profile. The machine default is used unless this ChatGPT conversation selects another profile by name, Google account email, or profile path. Profile selection is sticky within the conversation. Supports isolated tabs, explicitly claimed user tabs, navigation, DOM snapshots, screenshots, and Playwright-based interactions. Prefer DOM and selectors over coordinates. Existing user tabs remain untouched unless list_user_tabs or claim_tab is explicitly requested. Read the devspace-chrome-use skill before Chrome work.",
+        inputSchema: {
+          workspaceId: z.string().min(1).describe(
+            "Workspace identifier returned by open_workspace. It authorizes this browser-control session.",
+          ),
+          action: z.enum([
+            "status",
+            "list_profiles",
+            "list_tabs",
+            "list_user_tabs",
+            "new_tab",
+            "claim_tab",
+            "goto",
+            "snapshot",
+            "screenshot",
+            "click",
+            "fill",
+            "type",
+            "press",
+            "reload",
+            "wait",
+            "close",
+          ]),
+          profile: z.string().max(512).optional().describe(
+            "Optional Chrome profile selector by profile name, Google account email, or profile path. When supplied, it becomes the sticky profile for this ChatGPT conversation. Omit it to use the conversation's current profile or the machine default.",
+          ),
+          tabId: z.string().max(1024).optional().describe(
+            "Controlled tab identifier returned by new_tab, claim_tab, or list_tabs.",
+          ),
+          userTabId: z.string().max(1024).optional().describe(
+            "Existing user-tab identifier returned by list_user_tabs. Required for claim_tab.",
+          ),
+          url: z.string().max(8192).optional().describe(
+            "Absolute http, https, or file URL for new_tab or goto.",
+          ),
+          selector: z.string().max(8192).optional().describe(
+            "Playwright selector for click, fill, type, or press.",
+          ),
+          text: z.string().max(100000).optional().describe(
+            "Text for fill or type. Text content is not written to normal logs.",
+          ),
+          key: z.string().max(256).optional(),
+          timeoutMs: z.number().int().min(0).max(120000).optional(),
+          fullPage: z.boolean().optional(),
+          observe: z.enum(["none", "dom", "screenshot", "both"]).optional().describe(
+            "Fresh observation returned after the action. Mutating actions default to dom.",
+          ),
+        },
+        outputSchema: {
+          action: z.string(),
+          isError: z.boolean(),
+          text: z.string(),
+          imageCount: z.number().int().nonnegative(),
+        },
+        _meta: {},
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async ({ workspaceId, ...input }, extra) => {
+        const startedAt = performance.now();
+        workspaces.getWorkspace(workspaceId);
+        const action = input.action;
+        try {
+          const result = await localControls.chromeUse!.invoke(
+            input as CodexChromeUseInput,
+            codexExecutionContextFromToolExtra(extra),
+          );
+          const summary = codexToolSummary(action, result);
+          const content = codexToolContent(result);
+          logEvent(config.logging, result.isError ? "warn" : "info", "chrome_use_tool_call", {
+            tool: toolNames.chromeUse,
+            workspaceId,
+            action,
+            tabIdPresent: input.tabId !== undefined,
+            urlPresent: input.url !== undefined,
+            selectorPresent: input.selector !== undefined,
+            hasText: input.text !== undefined,
+            imageCount: summary.imageCount,
+            success: !result.isError,
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          return {
+            content: content.length > 0
+              ? content
+              : [{ type: "text" as const, text: JSON.stringify(summary) }],
+            isError: result.isError,
+            structuredContent: summary,
+          };
+        } catch (error) {
+          logEvent(config.logging, "warn", "chrome_use_tool_call", {
+            tool: toolNames.chromeUse,
+            workspaceId,
+            action,
+            success: false,
+            errorCode: computerUseErrorCode(error),
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          throw error;
+        }
+      },
+    );
+  }
+
+  if (
+    config.computerUseEnabled
+    && config.computerUseBackend === "swift"
+    && isComputerUseSupportedPlatform()
+  ) {
+    registerAppTool(
+      server,
+      toolNames.captureScreen,
+      {
+        title: "Capture desktop screen",
+        description:
+          "Capture one macOS display and return the screenshot as native image content for multimodal inspection. Coordinates in the returned image correspond to display-relative coordinates accepted by computer_action.",
+        inputSchema: {
+          workspaceId: z.string().min(1).describe(
+            "Workspace identifier returned by open_workspace. It authorizes this computer-use session.",
+          ),
+          display: z.number().int().positive().optional().describe(
+            "1-based display index. Display 1 is the main display.",
+          ),
+          includeCursor: z.boolean().optional().describe(
+            "Whether the mouse cursor should be visible in the screenshot. Defaults to true.",
+          ),
+        },
+        outputSchema: {
+          display: z.number().int().positive(),
+          displayId: z.number().int().nonnegative(),
+          originX: z.number(),
+          originY: z.number(),
+          screenWidth: z.number().positive(),
+          screenHeight: z.number().positive(),
+          imageWidth: z.number().int().positive(),
+          imageHeight: z.number().int().positive(),
+          includeCursor: z.boolean(),
+          mimeType: z.literal("image/png"),
+          size: z.number().int().positive(),
+          sha256: z.string(),
+        },
+        _meta: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ workspaceId, display, includeCursor }) => {
+        const startedAt = performance.now();
+        workspaces.getWorkspace(workspaceId);
+        try {
+          const capture = await captureComputerScreen({
+            stateDir: config.stateDir,
+            maxFileBytes: config.artifactMaxFileBytes,
+            display,
+            includeCursor,
+          });
+          const result = screenCaptureSummary(capture);
+          logToolCall(config, {
+            tool: toolNames.captureScreen,
+            workspaceId,
+            path: `display:${result.display}`,
+            success: true,
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(result) },
+              { type: "image" as const, data: capture.data, mimeType: capture.mimeType },
+            ],
+            structuredContent: result,
+          };
+        } catch (error) {
+          logEvent(config.logging, "warn", "computer_use_tool_call", {
+            tool: toolNames.captureScreen,
+            workspaceId,
+            display,
+            success: false,
+            errorCode: computerUseErrorCode(error),
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          throw error;
+        }
+      },
+    );
+
+    registerAppTool(
+      server,
+      toolNames.computerAction,
+      {
+        title: "Control desktop computer",
+        description:
+          "Perform one macOS desktop action, wait briefly for the UI to settle, and return a fresh screenshot. Supported actions: move, click, double_click, right_click, drag, scroll, key, type_text, activate_app, wait, and request_permissions. Mouse coordinates are relative to the selected display screenshot.",
+        inputSchema: {
+          workspaceId: z.string().min(1).describe(
+            "Workspace identifier returned by open_workspace. It authorizes this computer-use session.",
+          ),
+          action: z.enum([
+            "move",
+            "click",
+            "double_click",
+            "right_click",
+            "drag",
+            "scroll",
+            "key",
+            "type_text",
+            "activate_app",
+            "wait",
+            "request_permissions",
+          ]),
+          display: z.number().int().positive().optional().describe(
+            "1-based display index. Defaults to display 1.",
+          ),
+          x: z.number().optional().describe(
+            "Display-relative horizontal coordinate for pointer actions.",
+          ),
+          y: z.number().optional().describe(
+            "Display-relative vertical coordinate for pointer actions.",
+          ),
+          endX: z.number().optional().describe(
+            "Display-relative drag destination x coordinate.",
+          ),
+          endY: z.number().optional().describe(
+            "Display-relative drag destination y coordinate.",
+          ),
+          button: z.enum(["left", "right", "center"]).optional(),
+          deltaX: z.number().int().min(-100000).max(100000).optional().describe(
+            "Horizontal pixel scroll amount.",
+          ),
+          deltaY: z.number().int().min(-100000).max(100000).optional().describe(
+            "Vertical pixel scroll amount. Positive values scroll upward.",
+          ),
+          durationMs: z.number().int().min(0).max(30000).optional().describe(
+            "Drag duration or wait duration in milliseconds.",
+          ),
+          key: z.string().max(32).optional().describe(
+            "Named key such as return, tab, escape, left, right, up, down, f1, or a single alphanumeric key.",
+          ),
+          modifiers: z.array(
+            z.enum(["command", "control", "option", "shift", "function"]),
+          ).max(5).optional(),
+          text: z.string().max(65536).optional().describe(
+            "Unicode text for type_text. The text is never written to tool logs.",
+          ),
+          app: z.string().max(256).optional().describe(
+            "Application name or bundle identifier for activate_app.",
+          ),
+          settleMs: z.number().int().min(0).max(5000).optional().describe(
+            "Delay after the action before taking the screenshot. Defaults to 250 ms.",
+          ),
+          includeCursor: z.boolean().optional().describe(
+            "Whether the post-action screenshot includes the cursor. Defaults to true.",
+          ),
+        },
+        outputSchema: {
+          action: z.string(),
+          permissions: z.object({
+            screenCapture: z.boolean(),
+            accessibility: z.boolean(),
+          }),
+          cursor: z.object({ x: z.number(), y: z.number() }).optional(),
+          screenshot: z.object({
+            display: z.number().int().positive(),
+            displayId: z.number().int().nonnegative(),
+            originX: z.number(),
+            originY: z.number(),
+            screenWidth: z.number().positive(),
+            screenHeight: z.number().positive(),
+            imageWidth: z.number().int().positive(),
+            imageHeight: z.number().int().positive(),
+            includeCursor: z.boolean(),
+            mimeType: z.literal("image/png"),
+            size: z.number().int().positive(),
+            sha256: z.string(),
+          }).optional(),
+        },
+        _meta: {},
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async ({ workspaceId, settleMs, includeCursor, ...rawAction }) => {
+        const startedAt = performance.now();
+        workspaces.getWorkspace(workspaceId);
+        const safeLogFields = {
+          tool: toolNames.computerAction,
+          workspaceId,
+          action: rawAction.action,
+          display: rawAction.display,
+          hasCoordinates: rawAction.x !== undefined || rawAction.y !== undefined,
+          hasText: rawAction.text !== undefined,
+        };
+        try {
+          const actionResult = await performComputerAction(
+            config.stateDir,
+            rawAction as ComputerActionInput,
+          );
+          const delayMs = settleMs ?? (rawAction.action === "wait" ? 0 : 250);
+          if (delayMs > 0) await sleep(delayMs);
+
+          let capture: ScreenCaptureResult | undefined;
+          if (actionResult.permissions.screenCapture) {
+            capture = await captureComputerScreen({
+              stateDir: config.stateDir,
+              maxFileBytes: config.artifactMaxFileBytes,
+              display: rawAction.display ?? 1,
+              includeCursor,
+            });
+          }
+          const result = {
+            action: actionResult.action,
+            permissions: actionResult.permissions,
+            cursor: actionResult.cursor,
+            screenshot: capture ? screenCaptureSummary(capture) : undefined,
+          };
+          logEvent(config.logging, "info", "computer_use_tool_call", {
+            ...safeLogFields,
+            success: true,
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(result) },
+              ...(capture
+                ? [{ type: "image" as const, data: capture.data, mimeType: capture.mimeType }]
+                : []),
+            ],
+            structuredContent: result,
+          };
+        } catch (error) {
+          logEvent(config.logging, "warn", "computer_use_tool_call", {
+            ...safeLogFields,
+            success: false,
+            errorCode: computerUseErrorCode(error),
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+          throw error;
+        }
+      },
+    );
+  }
 
   if (config.toolMode !== "codex") {
   registerAppTool(
@@ -1606,7 +2379,7 @@ function createMcpServer(
     registerCodexProcessTools(server, config, workspaces, processSessions);
   }
 
-  if (config.artifactsEnabled && isArtifactDownloadSupportedPlatform()) {
+  if (config.artifactsEnabled) {
     registerArtifactTools(server, {
       config,
       workspaces,
@@ -1650,6 +2423,21 @@ export function createServer(
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
     : [];
+  const codexRuntimeHost = config.computerUseEnabled && config.computerUseBackend === "codex"
+    ? new CodexRuntimeHost({
+        onAppServerMethod: (method) => {
+          logEvent(config.logging, "debug", "codex_app_server_method", { method });
+        },
+      })
+    : undefined;
+  const localControls: LocalControlAdapters = codexRuntimeHost
+    ? {
+        computerUse: new CodexComputerUseAdapter(codexRuntimeHost),
+        chromeUse: new CodexChromeUseAdapter(codexRuntimeHost, {
+          defaultProfile: config.chromeDefaultProfile,
+        }),
+      }
+    : {};
 
   const logSessionCloseResults = (
     reason: "idle_timeout" | "server_shutdown",
@@ -1736,7 +2524,7 @@ export function createServer(
   );
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    res.json({ ok: true, name: "devspace", toolMode: config.toolMode, widgets: config.widgets });
   });
 
   app.all("/mcp", async (req, res) => {
@@ -1811,6 +2599,7 @@ export function createServer(
           processSessions,
           localAgentProviders,
           incomingArtifactAdapters,
+          localControls,
         );
         await server.connect(transport);
       } else {
@@ -1841,6 +2630,9 @@ export function createServer(
         const results = await transports.closeAll();
         logSessionCloseResults("server_shutdown", results);
         processSessions.shutdown();
+        await localControls.computerUse?.close().catch(() => undefined);
+        await localControls.chromeUse?.close().catch(() => undefined);
+        await codexRuntimeHost?.close().catch(() => undefined);
         oauthProvider.close();
         workspaceStore.close?.();
       })();
@@ -1874,7 +2666,16 @@ if (await isMainModule()) {
       : isArtifactDownloadSupportedPlatform()
         ? "enabled"
         : `unsupported on ${process.platform}`;
+    console.log(`native file export: ${config.artifactsEnabled ? "enabled" : "disabled"}`);
     console.log(`native artifact download: ${artifactDownloadStatus}`);
+    const computerUseStatus = !config.computerUseEnabled
+      ? "disabled"
+      : !isComputerUseSupportedPlatform()
+        ? `unsupported on ${process.platform}`
+        : config.computerUseBackend === "codex"
+          ? "enabled (Codex Computer Use + Chrome Use)"
+          : "enabled (legacy Swift rollback backend)";
+    console.log(`local computer control: ${computerUseStatus}`);
     if (config.subagents) {
       console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
     }

@@ -21,6 +21,11 @@ import {
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
 import { logEvent } from "./logger.js";
+import {
+  exportWorkspaceFile,
+  isModelImageMimeType,
+  type ExportedWorkspaceFile,
+} from "./outgoing-artifacts.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
 
 const ARTIFACT_WRITE_ANNOTATIONS = {
@@ -28,6 +33,12 @@ const ARTIFACT_WRITE_ANNOTATIONS = {
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,
+};
+const ARTIFACT_READ_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
 };
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const DIRECTORY_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | NO_FOLLOW;
@@ -90,8 +101,49 @@ export function registerArtifactTools(
     incomingArtifactAdapters = [],
   }: ArtifactToolRegistrationOptions,
 ): void {
-  const incomingRegistry = new IncomingArtifactAdapterRegistry(incomingArtifactAdapters);
+  registerAppTool(
+    server,
+    "export_file",
+    {
+      title: "Export workspace file to the conversation",
+      description:
+        "Read one regular file from an already-open workspace and return it to the MCP host as an embedded binary resource. Use this when the user asks to receive, inspect, or download a file that exists on the DevSpace machine.",
+      inputSchema: {
+        workspaceId: z.string().min(1).describe(
+          "Workspace identifier returned by open_workspace.",
+        ),
+        path: z.string().min(1).describe(
+          "Relative path of the file inside the selected workspace.",
+        ),
+        mimeType: z.string().min(3).optional().describe(
+          "Optional MIME type override in type/subtype form. Omit to infer it from the file extension.",
+        ),
+      },
+      outputSchema: {
+        path: z.string(),
+        name: z.string(),
+        mimeType: z.string(),
+        size: z.number().int().nonnegative(),
+        sha256: z.string(),
+      },
+      _meta: {},
+      annotations: ARTIFACT_READ_ANNOTATIONS,
+    },
+    async (input) => executeExportArtifactTool(config, input, async () => {
+      const workspace = workspaces.getWorkspace(input.workspaceId);
+      return exportWorkspaceFile({
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.root,
+        maxFileBytes: config.artifactMaxFileBytes,
+        path: input.path,
+        mimeType: input.mimeType,
+      });
+    }),
+  );
 
+  if (!isArtifactDownloadSupportedPlatform()) return;
+
+  const incomingRegistry = new IncomingArtifactAdapterRegistry(incomingArtifactAdapters);
   registerAppTool(
     server,
     "download_artifact",
@@ -297,6 +349,50 @@ export function artifactToolLogFields(
   };
 }
 
+export function outgoingArtifactToolLogFields(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    workspaceId: input.workspaceId,
+    path: input.path,
+    mimeTypeOverrideProvided: input.mimeType !== undefined,
+  };
+}
+
+async function executeExportArtifactTool(
+  config: ServerConfig,
+  input: Record<string, unknown>,
+  operation: () => Promise<ExportedWorkspaceFile>,
+) {
+  const startedAt = performance.now();
+  try {
+    const exported = await operation();
+    if (config.logging.toolCalls) {
+      logEvent(config.logging, "info", "artifact_tool_call", {
+        tool: "export_file",
+        ...outgoingArtifactToolLogFields(input),
+        size: exported.size,
+        sha256: exported.sha256,
+        mimeType: exported.mimeType,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+    }
+    return exportArtifactToolResponse(exported);
+  } catch (error) {
+    if (config.logging.toolCalls) {
+      logEvent(config.logging, "warn", "artifact_tool_call", {
+        tool: "export_file",
+        ...outgoingArtifactToolLogFields(input),
+        success: false,
+        errorCode: error instanceof ArtifactError ? error.code : "internal_error",
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+    }
+    throw error;
+  }
+}
+
 async function executeArtifactTool(
   config: ServerConfig,
   input: Record<string, unknown>,
@@ -337,6 +433,33 @@ async function executeArtifactTool(
 function artifactToolResponse(result: { path: string }) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
+    structuredContent: result,
+  };
+}
+
+function exportArtifactToolResponse(exported: ExportedWorkspaceFile) {
+  const result = {
+    path: exported.path,
+    name: exported.name,
+    mimeType: exported.mimeType,
+    size: exported.size,
+    sha256: exported.sha256,
+  };
+  const binaryContent = isModelImageMimeType(exported.mimeType)
+    ? { type: "image" as const, data: exported.blob, mimeType: exported.mimeType }
+    : {
+        type: "resource" as const,
+        resource: {
+          uri: exported.uri,
+          mimeType: exported.mimeType,
+          blob: exported.blob,
+        },
+      };
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(result) },
+      binaryContent,
+    ],
     structuredContent: result,
   };
 }

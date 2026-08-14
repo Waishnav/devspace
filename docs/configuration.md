@@ -24,6 +24,8 @@ npx @waishnav/devspace serve
 npx @waishnav/devspace doctor
 npx @waishnav/devspace config get
 npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
+npx @waishnav/devspace config set requiredToolMode codex
+npx @waishnav/devspace auth reset
 ```
 
 ## Core Environment Variables
@@ -68,12 +70,62 @@ It does not accept conflict modes, expected hashes, arbitrary URL strings, local
 paths, embedded credentials, or extra object fields.
 
 There is no artifact root, total quota, TTL, pinning, persistent database record,
-or background artifact cleanup service. See [Native File Download](artifact-exchange.md)
+or background artifact cleanup service. See [Native File Exchange](artifact-exchange.md)
 for the supported connector shape and security boundaries.
+
+## macOS Computer Use
+
+Desktop capture and input control are disabled by default:
+
+```bash
+DEVSPACE_COMPUTER_USE=1 npx @waishnav/devspace serve
+```
+
+The same setting may be persisted as `computerUseEnabled` in
+`~/.devspace/config.json`.
+
+The default backend is `codex`. It registers `computer_use` and `chrome_use`,
+discovers the installed ChatGPT/Codex/plugin versions dynamically, verifies the
+OpenAI code-signing identity, and proxies the signed local runtimes without
+creating a Codex model thread or turn.
+
+```bash
+DEVSPACE_COMPUTER_USE_BACKEND=codex
+```
+
+Chrome Use defaults to the Chrome profile selected by
+`chromeDefaultProfile` in `~/.devspace/config.json`; the environment override is
+`DEVSPACE_CHROME_DEFAULT_PROFILE`. The selector may be a Chrome profile path,
+profile name, or Google account email. The maintained deployment uses
+`Default`. An explicit `chrome_use.profile` selection is sticky only for the
+current ChatGPT conversation and does not change this machine default.
+
+The legacy `swift` backend is an explicit rollback path only. It registers
+`capture_screen`, `computer_action`, and the `read({ path: "@screen" })`
+compatibility path and requires separate Screen Recording and Accessibility
+permission for DevSpace. It is never selected automatically after a Codex
+runtime failure.
+
+```bash
+DEVSPACE_COMPUTER_USE_BACKEND=swift
+```
+
+`DEVSPACE_CODEX_APP_PATH` can override ChatGPT.app discovery for diagnostics.
+`DEVSPACE_CODEX_SKIP_SIGNATURE_CHECK=1` exists only for isolated development
+and must not be used in the maintained deployment. Screenshot payloads continue
+to use `DEVSPACE_ARTIFACT_MAX_FILE_BYTES`.
+
+See [Local Multimodal Files, Computer Use, and Chrome Use](computer-use.md) for
+the target architecture, routing policy, lock-screen behavior, and acceptance
+matrix.
 
 ## OAuth
 
 DevSpace uses a single-user OAuth approval flow.
+
+Only the most recently approved MCP client remains authorized. A successful
+Owner-password approval revokes older client registrations and tokens. Run
+`devspace auth reset` to revoke the current client immediately.
 
 | Variable | Default |
 | --- | --- |
@@ -81,6 +133,11 @@ DevSpace uses a single-user OAuth approval flow.
 | `DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
 | `DEVSPACE_OAUTH_SCOPES` | `devspace` |
 | `DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS` | `chatgpt.com,localhost,127.0.0.1` |
+| `DEVSPACE_COMPUTER_USE` | `0` unless persisted locally |
+| `DEVSPACE_COMPUTER_USE_BACKEND` | `codex` |
+| `DEVSPACE_CHROME_DEFAULT_PROFILE` | `Default` |
+| `DEVSPACE_CODEX_APP_PATH` | `/Applications/ChatGPT.app` discovery candidate |
+| `DEVSPACE_CLOUDFLARED_PROTOCOL` | `http2` in the maintained service helper |
 
 MCP clients discover metadata from:
 
@@ -97,7 +154,21 @@ MCP clients discover metadata from:
 | --- | --- |
 | `minimal` | Default. Exposes `open_workspace`, `read`, `write`, `edit`, and `bash`. Clients use `bash` with tools such as `rg`, `find`, and `ls` for inspection. |
 | `full` | Exposes the minimal tools plus dedicated `grep`, `glob`, and `ls` tools. |
-| `codex` | Experimental. Exposes `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. Existing mutation and shell tools are hidden. |
+| `codex` | Exposes the compact coding-agent surface: `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. Existing mutation and shell tools are hidden. Upstream still treats this as opt-in; the maintained ChatGPT deployment uses it after local acceptance. |
+
+A deployment may persist `requiredToolMode` in `~/.devspace/config.json` to lock
+its tool contract. When set, the persisted value becomes the default and any
+conflicting `DEVSPACE_TOOL_MODE` or `DEVSPACE_MINIMAL_TOOLS` request is rejected
+before the server starts listening. This is intended for stable MCP endpoints
+whose client-side schema may remain cached across backend restarts.
+
+```bash
+npx @waishnav/devspace config set requiredToolMode codex
+```
+
+Use `null` to remove the lock for a different deployment profile. Do not clear
+the lock merely to run a diagnostic on the same production endpoint; use a
+separate `DEVSPACE_CONFIG_DIR` instead.
 
 `DEVSPACE_MINIMAL_TOOLS` remains a backward-compatible alias when
 `DEVSPACE_TOOL_MODE` is unset: `1` selects `minimal` and `0` selects `full`.
@@ -108,6 +179,14 @@ Codex-mode commands run without a PTY by default. Set `tty: true` on
 `exec_command` for interactive terminal programs. PTY support uses the optional
 `node-pty` dependency; `write_stdin` can send input, poll output, and resize PTY
 sessions.
+
+The maintained two-host ChatGPT deployment pins `codex` in
+`scripts/devspace-service.sh` and persists `requiredToolMode=codex`. `minimal`
+remains an isolated diagnostic mode, not the normal production surface. With
+`DEVSPACE_WIDGETS=changes`, `DEVSPACE_ARTIFACTS=1`, and the Codex computer-use
+backend enabled, the expected local extensions remain available alongside the
+five core coding tools: `show_changes`, `export_file`, `computer_use`, and
+`chrome_use`.
 
 ## Widgets
 

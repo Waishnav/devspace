@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { loadConfig } from "./config.js";
 import { GitWorktreeError } from "./git-worktrees.js";
+import { formatPathForPrompt } from "./skills.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { ensureCheckoutWorkspaceRoot, WorkspaceRegistry } from "./workspaces.js";
 
@@ -48,6 +49,8 @@ try {
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SUBAGENTS: "1",
+    DEVSPACE_COMPUTER_USE: "1",
+    DEVSPACE_COMPUTER_USE_BACKEND: "codex",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
@@ -79,6 +82,12 @@ try {
       },
     ],
   );
+  const chromeUseSkill = workspace.skills.find((skill) => skill.name === "devspace-chrome-use");
+  assert.ok(chromeUseSkill);
+  const advertisedChromeUsePath = formatPathForPrompt(chromeUseSkill.filePath);
+  const chromeUseReadPath = registry.resolveReadPath(workspace, advertisedChromeUsePath);
+  assert.equal(chromeUseReadPath.absolutePath, chromeUseSkill.filePath);
+  assert.equal(chromeUseReadPath.skillRead?.isSkillFile, true);
 
   if (platform() !== "win32") {
     const unsafeAgentDir = join(root, ".pi", "unsafe-agent");

@@ -35,6 +35,7 @@ try {
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
   await mkdir(join(explicitSkills, "subagent-delegation"), { recursive: true });
+  await mkdir(join(explicitSkills, "devspace-chrome-use"), { recursive: true });
   await mkdir(join(devspaceSkills, "devspace-local-skill"), { recursive: true });
 
   await writeFile(
@@ -159,6 +160,17 @@ try {
       "# Hidden Skill",
     ].join("\n"),
   );
+  await writeFile(
+    join(explicitSkills, "devspace-chrome-use", "SKILL.md"),
+    [
+      "---",
+      "name: devspace-chrome-use",
+      "description: Environment copy must not shadow the DevSpace runtime skill.",
+      "---",
+      "",
+      "# Environment Chrome Use",
+    ].join("\n"),
+  );
 
   const disabledConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
@@ -174,6 +186,8 @@ try {
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SKILL_PATHS: [explicitSkills, "~/.claude/skills", "./.claude/skills"].join(","),
+    DEVSPACE_COMPUTER_USE: "1",
+    DEVSPACE_COMPUTER_USE_BACKEND: "codex",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
@@ -184,6 +198,10 @@ try {
   assert.equal(loaded.skills.some((skill) => skill.name === "claude-project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
   assert.equal(loaded.skills.some((skill) => skill.name === "devspace-local-skill"), true);
+  const chromeUseSkill = loaded.skills.find((skill) => skill.name === "devspace-chrome-use");
+  assert.ok(chromeUseSkill);
+  assert.notEqual(chromeUseSkill.description, "Environment copy must not shadow the DevSpace runtime skill.");
+  assert.match(chromeUseSkill.filePath, /skills[/\\]devspace-chrome-use[/\\]SKILL\.md$/u);
   assert.equal(loaded.skills.some((skill) => skill.name === "subagent-delegation"), false);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
@@ -195,16 +213,38 @@ try {
     false,
   );
 
+  const noChromeConfig = loadConfig({
+    DEVSPACE_ALLOWED_ROOTS: projectRoot,
+    DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_SKILL_PATHS: explicitSkills,
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  assert.equal(
+    loadWorkspaceSkills(noChromeConfig, projectRoot).skills.some(
+      (skill) => skill.name === "devspace-chrome-use",
+    ),
+    false,
+  );
+
   const experimentalConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_SUBAGENTS: "1",
+    DEVSPACE_COMPUTER_USE: "1",
+    DEVSPACE_COMPUTER_USE_BACKEND: "codex",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
   assert.equal(
     loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
       (skill) => skill.name === "subagent-delegation",
+    ),
+    true,
+  );
+  assert.equal(
+    loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
+      (skill) => skill.name === "devspace-chrome-use",
     ),
     true,
   );

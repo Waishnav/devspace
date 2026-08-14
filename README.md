@@ -140,6 +140,8 @@ DevSpace gives ChatGPT tools to:
 - follow project instructions from `AGENTS.md` and `CLAUDE.md`
 - discover local agent skills from your skill folders
 - show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
+- read local images and binary files as native MCP content
+- use OpenAI-signed Codex Computer Use for macOS apps and Codex Chrome Use for the connected Chrome profile when explicitly enabled
 
 ## Mental Model
 
@@ -180,7 +182,8 @@ devspace doctor
 - [Setup Guide](https://github.com/Waishnav/devspace/blob/main/docs/setup.md)
 - [ChatGPT Coding Workflow](https://github.com/Waishnav/devspace/blob/main/docs/chatgpt-coding-workflow.md)
 - [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
-- [Native File Download](https://github.com/Waishnav/devspace/blob/main/docs/artifact-exchange.md)
+- [Native File Exchange](https://github.com/Waishnav/devspace/blob/main/docs/artifact-exchange.md)
+- [Local Multimodal Files, Computer Use, and Chrome Use](https://github.com/Waishnav/devspace/blob/main/docs/computer-use.md)
 - [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
 - [Troubleshooting Gotchas](https://github.com/Waishnav/devspace/blob/main/docs/gotchas.md)
 

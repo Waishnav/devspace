@@ -167,6 +167,8 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       return;
     }
 
+    this.oauthStore.activateClient(client.client_id);
+    this.codes.clear();
     const code = `code-${randomUUID()}`;
     this.codes.set(code, {
       clientId: client.client_id,

@@ -25,6 +25,12 @@ export interface PersistedTokenPair {
   refreshToken: PersistedRefreshTokenRecord;
 }
 
+export interface OAuthResetResult {
+  clients: number;
+  accessTokens: number;
+  refreshTokens: number;
+}
+
 function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boolean {
   let parsed: URL;
   try {
@@ -51,6 +57,35 @@ export class SqliteOAuthStore {
       .get(clientId) as { client_json: string } | undefined;
 
     return row ? (JSON.parse(row.client_json) as OAuthClientInformationFull) : undefined;
+  }
+
+  activateClient(clientId: string): OAuthResetResult {
+    const activate = this.database.sqlite.transaction(() => {
+      const clientExists = this.database.sqlite
+        .prepare("select 1 from oauth_clients where client_id = ?")
+        .get(clientId);
+      if (!clientExists) {
+        throw new Error(`OAuth client does not exist: ${clientId}`);
+      }
+
+      const counts = this.authorizationCounts(clientId);
+      this.database.sqlite
+        .prepare("delete from oauth_clients where client_id <> ?")
+        .run(clientId);
+      return counts;
+    });
+
+    return activate.immediate();
+  }
+
+  resetAuthorization(): OAuthResetResult {
+    const reset = this.database.sqlite.transaction(() => {
+      const counts = this.authorizationCounts();
+      this.database.sqlite.prepare("delete from oauth_clients").run();
+      return counts;
+    });
+
+    return reset.immediate();
   }
 
   registerClient(
@@ -184,6 +219,24 @@ export class SqliteOAuthStore {
   private deleteExpiredTokens(nowSeconds: number): void {
     this.database.sqlite.prepare("delete from oauth_access_tokens where expires_at < ?").run(nowSeconds);
     this.database.sqlite.prepare("delete from oauth_refresh_tokens where expires_at < ?").run(nowSeconds);
+  }
+
+  private authorizationCounts(excludedClientId?: string): OAuthResetResult {
+    const condition = excludedClientId ? " where client_id <> ?" : "";
+    const parameters = excludedClientId ? [excludedClientId] : [];
+    const count = (table: string) => Number(
+      (
+        this.database.sqlite
+          .prepare(`select count(*) as count from ${table}${condition}`)
+          .get(...parameters) as { count: number }
+      ).count,
+    );
+
+    return {
+      clients: count("oauth_clients"),
+      accessTokens: count("oauth_access_tokens"),
+      refreshTokens: count("oauth_refresh_tokens"),
+    };
   }
 }
 
