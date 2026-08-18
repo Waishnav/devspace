@@ -58,6 +58,40 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.agents));
 });
 
+test("bash guidance allows Git writes without authorizing shell-based source edits", async (t) => {
+  for (const toolMode of ["full", "minimal"] as const) {
+    await t.test(toolMode, async (t) => {
+      const context = await fixture(t, { toolMode });
+      const tools = await context.client.listTools();
+      const bashTool = tools.tools.find((tool) => tool.name === "bash");
+      assert.ok(bashTool?.description);
+
+      const commandDescription = (
+        bashTool.inputSchema as {
+          properties?: { command?: { description?: string } };
+        }
+      ).properties?.command?.description;
+      assert.ok(commandDescription);
+
+      const instructions = context.client.getInstructions();
+      assert.ok(instructions);
+
+      for (const guidance of [bashTool.description, commandDescription, instructions]) {
+        for (const command of ["git add", "git commit", "git fetch", "git pull", "git push"]) {
+          assert.match(guidance, new RegExp(`\\b${command}\\b`));
+        }
+        for (const command of ["git reset --hard", "git clean", "git checkout --", "branch deletion"]) {
+          assert.match(guidance, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        }
+        assert.match(guidance, /does not authorize destructive Git commands/);
+        assert.match(guidance, /project source files/);
+        assert.doesNotMatch(guidance, /Use only for/);
+        assert.doesNotMatch(guidance, /Must not create or modify project files/);
+      }
+    });
+  }
+});
+
 test("concurrent checkout opens return one full context and one reuse instruction", async (t) => {
   const context = await fixture(t);
   const [first, second] = await Promise.all([
@@ -175,7 +209,10 @@ interface ServerFixture {
   close: () => Promise<void>;
 }
 
-async function fixture(t: TestContext, options: { git?: boolean } = {}): Promise<ServerFixture> {
+async function fixture(
+  t: TestContext,
+  options: { git?: boolean; toolMode?: "full" | "minimal" } = {},
+): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
   const project = join(root, "project");
   const agentDir = join(root, "agent");
@@ -209,7 +246,7 @@ async function fixture(t: TestContext, options: { git?: boolean } = {}): Promise
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_WIDGETS: "full",
-    DEVSPACE_TOOL_MODE: "full",
+    DEVSPACE_TOOL_MODE: options.toolMode ?? "full",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
