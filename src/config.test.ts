@@ -33,6 +33,21 @@ assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_ARTIFACT_MAX_FILE_BYTES: "123" }).artifactMaxFileBytes,
   123,
 );
+assert.deepEqual(loadConfig(baseEnv).clientAccess, {
+  mode: "off",
+  deniedClients: [],
+});
+assert.deepEqual(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_CLIENT_ACCESS_MODE: "enforce",
+    DEVSPACE_DENIED_CLIENTS: "codex",
+  }).clientAccess,
+  {
+    mode: "enforce",
+    deniedClients: ["codex"],
+  },
+);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(
@@ -66,6 +81,14 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CLIENT_ACCESS_MODE: "audit" }),
+  /Invalid DEVSPACE_CLIENT_ACCESS_MODE: audit/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_CLIENT_ACCESS_MODE: "" }),
+  /Invalid DEVSPACE_CLIENT_ACCESS_MODE:/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
@@ -176,6 +199,10 @@ writeFileSync(
     subagents: true,
     artifactsEnabled: true,
     artifactMaxFileBytes: 321,
+    clientAccess: {
+      mode: "enforce",
+      deniedClients: ["codex"],
+    },
   }),
 );
 writeFileSync(
@@ -192,6 +219,10 @@ assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.equal(fileConfig.subagents, true);
 assert.equal(fileConfig.artifactsEnabled, true);
 assert.equal(fileConfig.artifactMaxFileBytes, 321);
+assert.deepEqual(fileConfig.clientAccess, {
+  mode: "enforce",
+  deniedClients: ["codex"],
+});
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",
