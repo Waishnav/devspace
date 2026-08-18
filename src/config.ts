@@ -3,7 +3,12 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
+import {
+  deriveClientRegistrationKey,
+  devspaceAgentsDir,
+  devspaceSkillsDir,
+  loadDevspaceFiles,
+} from "./user-config.js";
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
@@ -162,20 +167,39 @@ function parseWidgetMode(value: string | undefined): WidgetMode {
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
 }
 
-function parseRequiredSecret(value: string | undefined, name: string): string {
+function parseRequiredSecret(
+  value: string | undefined,
+  name: string,
+  minimumLength = 16,
+): string {
   const secret = value?.trim();
   if (!secret) {
     throw new Error(`${name} is required for DevSpace OAuth. Run: devspace init`);
   }
-  if (secret.length < 16) {
-    throw new Error(`${name} must be at least 16 characters long.`);
+  if (secret.length < minimumLength) {
+    throw new Error(`${name} must be at least ${minimumLength} characters long.`);
   }
   return secret;
 }
 
-function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
+function parseOAuthConfig(
+  env: NodeJS.ProcessEnv,
+  ownerToken: string | undefined,
+  clientRegistrationKey: string | undefined,
+): OAuthConfig {
+  const resolvedOwnerToken = parseRequiredSecret(
+    env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken,
+    "DEVSPACE_OAUTH_OWNER_TOKEN",
+  );
   return {
-    ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken, "DEVSPACE_OAUTH_OWNER_TOKEN"),
+    ownerToken: resolvedOwnerToken,
+    clientRegistrationKey: parseRequiredSecret(
+      env.DEVSPACE_OAUTH_CLIENT_REGISTRATION_KEY ??
+        clientRegistrationKey ??
+        deriveClientRegistrationKey(resolvedOwnerToken),
+      "DEVSPACE_OAUTH_CLIENT_REGISTRATION_KEY",
+      32,
+    ),
     accessTokenTtlSeconds: parsePositiveInteger(
       env.DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
       DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
@@ -226,7 +250,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken, files.auth.clientRegistrationKey),
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,

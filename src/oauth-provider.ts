@@ -14,6 +14,7 @@ import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 
 export interface OAuthConfig {
   ownerToken: string;
+  clientRegistrationKey: string;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   scopes: string[];
@@ -124,7 +125,11 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
     this.oauthStore = new SqliteOAuthStore(stateDir);
-    this.clientsStore = new SqliteOAuthClientsStore(this.oauthStore, config.allowedRedirectHosts);
+    this.clientsStore = new SqliteOAuthClientsStore(
+      this.oauthStore,
+      config.allowedRedirectHosts,
+      config.clientRegistrationKey,
+    );
   }
 
   async authorize(
@@ -165,6 +170,10 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
         }),
       );
       return;
+    }
+
+    if (!this.oauthStore.getClient(client.client_id)) {
+      this.oauthStore.restoreClient(client, this.config.allowedRedirectHosts);
     }
 
     const code = `code-${randomUUID()}`;
