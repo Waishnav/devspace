@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,9 +10,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig, type ServerConfig } from "./config.js";
+import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
@@ -165,6 +168,89 @@ test("checkout reuse and context suppression survive a registry restart", async 
   } finally {
     await closeRestored();
   }
+});
+
+test("the MCP root alias requires explicit opt-in and preserves /mcp", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-http-route-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const request = async (mcpRootAlias: boolean, path: string): Promise<Response> => {
+    const config = loadConfig({
+      DEVSPACE_CONFIG_DIR: join(root, mcpRootAlias ? "funnel-config" : "default-config"),
+      DEVSPACE_STATE_DIR: join(root, mcpRootAlias ? "funnel-state" : "default-state"),
+      DEVSPACE_ALLOWED_ROOTS: root,
+      DEVSPACE_PUBLIC_BASE_URL: "https://machine.tail1234.ts.net",
+      DEVSPACE_TAILSCALE_FUNNEL: mcpRootAlias ? "1" : "0",
+      DEVSPACE_TOOL_MODE: "full",
+      DEVSPACE_WIDGETS: "full",
+      DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    });
+    const accessToken = `route-access-${mcpRootAlias}-${path}`;
+    const refreshToken = `route-refresh-${mcpRootAlias}-${path}`;
+    const resource = new URL("/mcp", config.publicBaseUrl).href;
+    const tokenStore = new SqliteOAuthStore(config.stateDir);
+    const client = new SqliteOAuthClientsStore(
+      tokenStore,
+      config.oauth.allowedRedirectHosts,
+    ).registerClient({
+      redirect_uris: ["http://localhost/callback"],
+      client_name: "route-integration-test",
+    });
+    tokenStore.saveTokenPair({
+      accessTokenHash: createHash("sha256").update(accessToken).digest("base64url"),
+      accessToken: {
+        clientId: client.client_id,
+        scopes: config.oauth.scopes,
+        expiresAt: Math.floor(Date.now() / 1_000) + 60,
+        resource,
+      },
+      refreshTokenHash: createHash("sha256").update(refreshToken).digest("base64url"),
+      refreshToken: {
+        clientId: client.client_id,
+        scopes: config.oauth.scopes,
+        expiresAt: Math.floor(Date.now() / 1_000) + 60,
+        resource,
+      },
+    });
+    tokenStore.close();
+
+    const running = createServer(config);
+    const listener = running.app.listen(0, "127.0.0.1");
+    try {
+      await once(listener, "listening");
+      const address = listener.address();
+      assert.ok(address && typeof address === "object");
+
+      const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "route-integration-test", version: "1.0.0" },
+          },
+        }),
+      });
+      await response.arrayBuffer();
+      return response;
+    } finally {
+      await running.close();
+      await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
+    }
+  };
+
+  assert.equal((await request(true, "/")).status, 200);
+  assert.equal((await request(false, "/")).status, 404);
+  assert.equal((await request(false, "/mcp")).status, 200);
 });
 
 interface ServerFixture {

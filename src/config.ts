@@ -18,6 +18,8 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
+  /** Register the MCP handler at the root path for a path-stripping proxy. */
+  mcpRootAlias: boolean;
   toolMode: ToolMode;
   widgets: WidgetMode;
   stateDir: string;
@@ -230,6 +232,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
+    mcpRootAlias: parseBoolean(env.DEVSPACE_TAILSCALE_FUNNEL),
     toolMode: parseToolMode(env),
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),

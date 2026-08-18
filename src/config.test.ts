@@ -28,6 +28,29 @@ assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents
 assert.equal(loadConfig(baseEnv).subagents, false);
 assert.equal(loadConfig(baseEnv).artifactsEnabled, false);
 assert.equal(loadConfig(baseEnv).artifactMaxFileBytes, 100 * 1024 * 1024);
+assert.equal(loadConfig(baseEnv).mcpRootAlias, false);
+assert.equal(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_PUBLIC_BASE_URL: "https://my-machine.tail1234.ts.net",
+  }).mcpRootAlias,
+  false,
+);
+assert.equal(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_TAILSCALE_FUNNEL: "1",
+  }).mcpRootAlias,
+  true,
+);
+assert.equal(
+  loadConfig({
+    ...baseEnv,
+    DEVSPACE_PUBLIC_BASE_URL: "https://devspace.example.com",
+    DEVSPACE_TAILSCALE_FUNNEL: "0",
+  }).mcpRootAlias,
+  false,
+);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_ARTIFACTS: "1" }).artifactsEnabled, true);
 assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_ARTIFACT_MAX_FILE_BYTES: "123" }).artifactMaxFileBytes,

@@ -1783,7 +1783,7 @@ export function createServer(
     res.json({ ok: true, name: "devspace" });
   });
 
-  app.all("/mcp", async (req, res) => {
+  const handleMcpRequest = async (req: Request, res: Response) => {
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
@@ -1872,7 +1872,11 @@ export function createServer(
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
     }
-  });
+  };
+
+  // Some upstream proxies strip the configured path prefix before forwarding
+  // requests. Register the root alias only when the adapter explicitly opts in.
+  app.all(config.mcpRootAlias ? ["/mcp", "/"] : "/mcp", handleMcpRequest);
 
   let closePromise: Promise<void> | undefined;
   return {
