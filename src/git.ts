@@ -12,7 +12,7 @@ export interface GitCommandResult {
 export interface GitEligibility {
   ok: boolean;
   gitRoot?: string;
-  reason?: "not_git" | "no_head";
+  reason?: "not_git";
   message?: string;
 }
 
@@ -42,17 +42,6 @@ export async function getGitEligibility(cwd: string): Promise<GitEligibility> {
   }
 
   const gitRoot = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
-  try {
-    await git(gitRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
-  } catch {
-    return {
-      ok: false,
-      gitRoot,
-      reason: "no_head",
-      message: "repository has no HEAD commit",
-    };
-  }
-
   return { ok: true, gitRoot };
 }
 

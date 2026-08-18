@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parsePatchFiles } from "@pierre/diffs";
 import { git, getGitEligibility, safeWorkspaceRefSegment } from "./git.js";
 
 export type ReviewSince = "last_shown" | "workspace_open";
@@ -47,6 +48,7 @@ export interface ReviewCheckpointManager {
 }
 
 const REVIEW_REF_PREFIX = "refs/devspace/review";
+const REVIEW_DIFF_MAX_BUFFER = 10_000_000;
 
 export function createReviewCheckpointManager(): ReviewCheckpointManager {
   const states = new Map<string, WorkspaceReviewState>();
@@ -107,14 +109,21 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
 
       const baselineRef = effectiveSince === "workspace_open" ? state.openRef : state.baselineRef;
       const baseline = (await git(state.gitRoot, ["rev-parse", "--verify", `${baselineRef}^{commit}`])).stdout.trim();
-      const current = await createWorkingTreeSnapshot(state.gitRoot);
-      const patch = (await git(state.gitRoot, ["diff", "--binary", "--no-color", baseline, current], {
-        maxBuffer: 50 * 1024 * 1024,
+      const current = await createWorkingTreeSnapshot(state.gitRoot, state.root);
+      const patch = (await git(state.root, [
+        "diff",
+        "--relative",
+        "--patch",
+        "--find-renames",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        baseline,
+        current,
+      ], {
+        maxBuffer: REVIEW_DIFF_MAX_BUFFER,
       })).stdout;
-      const numstat = (await git(state.gitRoot, ["diff", "--numstat", "-z", baseline, current], {
-        maxBuffer: 50 * 1024 * 1024,
-      })).stdout;
-      const files = parseNumstat(numstat);
+      const files = parseReviewFiles(patch);
       const summary = summarizeFiles(files);
 
       if (markReviewed) {
@@ -137,6 +146,47 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       };
     },
   };
+}
+
+function parseReviewFiles(patch: string): ReviewFile[] {
+  if (patch.length === 0) return [];
+
+  try {
+    return parsePatchFiles(patch, "review", true).flatMap((parsedPatch) =>
+      parsedPatch.files.map((file) => {
+        const stats = file.hunks.reduce(
+          (total, hunk) => ({
+            additions: total.additions + hunk.additionLines,
+            removals: total.removals + hunk.deletionLines,
+          }),
+          { additions: 0, removals: 0 },
+        );
+
+        return {
+          path: file.name,
+          previousPath: file.prevName,
+          type: reviewFileType(file.type),
+          ...stats,
+        };
+      }),
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Review diff could not be rendered: ${detail}`);
+  }
+}
+
+function reviewFileType(type: string): ReviewFile["type"] {
+  switch (type) {
+    case "rename-pure":
+    case "rename-changed":
+    case "new":
+    case "deleted":
+    case "change":
+      return type;
+    default:
+      return "change";
+  }
 }
 
 function assertWorkspaceRoot(
@@ -175,7 +225,7 @@ async function initializeWorkspaceState(
     ]);
 
     if (!openCommit && !baselineCommit) {
-      const initialCommit = await createWorkingTreeSnapshot(eligibility.gitRoot);
+      const initialCommit = await createWorkingTreeSnapshot(eligibility.gitRoot, root);
       await git(eligibility.gitRoot, ["update-ref", state.openRef, initialCommit]);
       await git(eligibility.gitRoot, ["update-ref", state.baselineRef, initialCommit]);
       state.openRefAvailable = true;
@@ -215,17 +265,18 @@ function reviewRefs(
   };
 }
 
-async function createWorkingTreeSnapshot(gitRoot: string): Promise<string> {
+async function createWorkingTreeSnapshot(gitRoot: string, workspaceRoot: string): Promise<string> {
   const tempDir = await mkdtemp(join(tmpdir(), "devspace-review-index-"));
   const indexPath = join(tempDir, "index");
   const env = checkpointEnv(indexPath);
 
   try {
-    await git(gitRoot, ["read-tree", "HEAD"], { env });
-    await git(gitRoot, ["add", "-A", "--", "."], { env });
+    if (await commitForRef(gitRoot, "HEAD")) {
+      await git(gitRoot, ["read-tree", "HEAD"], { env });
+    }
+    await git(workspaceRoot, ["add", "-A", "--", "."], { env });
     const tree = (await git(gitRoot, ["write-tree"], { env })).stdout.trim();
-    const parent = (await git(gitRoot, ["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
-    return (await git(gitRoot, ["commit-tree", tree, "-p", parent, "-m", "DevSpace review snapshot"], { env })).stdout.trim();
+    return (await git(gitRoot, ["commit-tree", tree, "-m", "DevSpace review snapshot"], { env })).stdout.trim();
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -239,56 +290,6 @@ function checkpointEnv(indexPath: string): NodeJS.ProcessEnv {
     GIT_COMMITTER_NAME: "DevSpace",
     GIT_COMMITTER_EMAIL: "devspace@users.noreply.local",
   };
-}
-
-function parseNumstat(output: string): ReviewFile[] {
-  const fields = output.split("\0").filter((field) => field.length > 0);
-  const files: ReviewFile[] = [];
-
-  for (let index = 0; index < fields.length;) {
-    const header = fields[index++] ?? "";
-    const parts = header.split("\t");
-    const additions = parseStatNumber(parts[0]);
-    const removals = parseStatNumber(parts[1]);
-
-    if (parts.length >= 3) {
-      const path = parts[2] ?? "";
-      if (path) files.push({ path, type: fileType(path, undefined, additions, removals), additions, removals });
-      continue;
-    }
-
-    const previousPath = fields[index++];
-    const path = fields[index++];
-    if (!path) continue;
-
-    files.push({
-      path,
-      previousPath,
-      type: fileType(path, previousPath, additions, removals),
-      additions,
-      removals,
-    });
-  }
-
-  return files;
-}
-
-function parseStatNumber(value: string | undefined): number {
-  if (!value || value === "-") return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function fileType(
-  path: string,
-  previousPath: string | undefined,
-  additions: number,
-  removals: number,
-): ReviewFile["type"] {
-  if (previousPath) return additions === 0 && removals === 0 ? "rename-pure" : "rename-changed";
-  if (additions > 0 && removals === 0) return "new";
-  if (additions === 0 && removals > 0) return "deleted";
-  return "change";
 }
 
 function summarizeFiles(files: ReviewFile[]): ReviewSummary {

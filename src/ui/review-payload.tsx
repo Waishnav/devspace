@@ -25,6 +25,11 @@ interface MountedPayload {
   unmount(): void;
 }
 
+interface ParsedReviewPatch {
+  files: FileDiffMetadata[];
+  error?: string;
+}
+
 export function mountReviewPayload(
   container: HTMLElement,
   options: PayloadRendererOptions,
@@ -50,13 +55,15 @@ function ReviewPayload({
 }: PayloadRendererOptions) {
   const patch = card.payload?.patch;
   const themeType: ThemeType = hostContext?.theme === "light" ? "light" : "dark";
-  const files = useMemo(() => parseFiles(patch), [patch]);
+  const parsedPatch = useMemo(() => parseFiles(patch), [patch]);
+  const files = parsedPatch.files;
   const visibleFiles = typeof visibleFileCount === "number"
     ? files.slice(0, visibleFileCount)
     : files;
   const [openFiles, setOpenFiles] = useState(() => new Set<string>());
 
   if (errorMessage) return <StatusLine message={errorMessage} tone="error" />;
+  if (parsedPatch.error) return <StatusLine message={parsedPatch.error} tone="error" />;
   if (!patch) return <StatusLine message="Diff payload is not available." />;
   if (files.length === 0) return <StatusLine message="No diff hunks to review." />;
 
@@ -177,9 +184,19 @@ function fileChangeSymbol(kind: FileChangeKind): string {
   }
 }
 
-function parseFiles(patch: string | undefined): FileDiffMetadata[] {
-  if (!patch) return [];
-  return parsePatchFiles(patch, "review", true).flatMap((parsedPatch) => parsedPatch.files);
+function parseFiles(patch: string | undefined): ParsedReviewPatch {
+  if (!patch) return { files: [] };
+
+  try {
+    return {
+      files: parsePatchFiles(patch, "review", true).flatMap((parsedPatch) => parsedPatch.files),
+    };
+  } catch {
+    return {
+      files: [],
+      error: "Review diff could not be rendered.",
+    };
+  }
 }
 
 function diffStats(fileDiff: FileDiffMetadata): { additions: number; removals: number } {
