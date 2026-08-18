@@ -125,6 +125,30 @@ test("a host without conversation metadata receives normal explicit-workspace be
   assert.doesNotMatch(responseText(second), /conversation metadata/i);
 });
 
+test("open_workspace returns only root context when the nested instruction inventory is too large", async (t) => {
+  const context = await fixture(t);
+  for (let index = 0; index < 101; index += 1) {
+    const directory = join(context.project, `nested-${index}`);
+    await mkdir(directory);
+    await writeFile(join(directory, "AGENTS.md"), "nested instructions\n");
+  }
+
+  const result = await callOpen(context.client, context.project, "chat-1");
+  const structured = structuredContent(result);
+  const card = responseCard(result);
+
+  assert.ok(Array.isArray(structured.agentsFiles));
+  assert.equal(structured.availableAgentsFiles, undefined);
+  assert.deepEqual(structured.instructionDiscovery, {
+    status: "incomplete",
+    reason: "result_limit_exceeded",
+  });
+  assert.equal(card.availableAgentsFiles, undefined);
+  assert.deepEqual(card.instructionDiscovery, structured.instructionDiscovery);
+  assert.match(responseText(result), /Only global and root-level instructions are loaded/);
+  assert.match(responseText(result), /Open the specific project directory/);
+});
+
 test("checkout reuse and context suppression survive a registry restart", async (t) => {
   const context = await fixture(t);
   const first = await callOpen(context.client, context.project, "chat-1");

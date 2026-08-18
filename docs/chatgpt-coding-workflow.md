@@ -101,6 +101,14 @@ When a workspace opens, DevSpace loads root-level instruction files:
 Nested instruction files are returned as `availableAgentsFiles`. The model
 should read the relevant nested file before working under that directory.
 
+Nested discovery is intentionally bounded so opening a broad directory such as
+the user's home does not make the MCP request depend on its full descendant
+tree. DevSpace returns the complete nested inventory only when it contains at
+most 100 files, uses at most 16 KiB of relative paths, and completes within two
+seconds. If any limit is exceeded, `open_workspace` returns only global and
+root-level instructions, marks `instructionDiscovery` as incomplete, and asks
+the model to open the specific project directory before working inside it.
+
 This keeps instructions explicit and inspectable instead of silently injecting
 new context during later tool calls.
 

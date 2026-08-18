@@ -26,6 +26,20 @@ test("a conversation reuses its checkout context", async (t) => {
   assert.deepEqual(second.workspace.agentProfiles, first.workspace.agentProfiles);
 });
 
+test("a reused checkout keeps its bounded instruction snapshot", async (t) => {
+  const { project, registry } = await fixture(t);
+
+  const first = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
+  const nested = join(project, "nested");
+  await mkdir(nested);
+  await writeFile(join(nested, "AGENTS.md"), "new nested instructions\n");
+  const second = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
+
+  assert.deepEqual(first.availableAgentsFiles, []);
+  assert.deepEqual(second.availableAgentsFiles, first.availableAgentsFiles);
+  assert.deepEqual(second.instructionDiscovery, first.instructionDiscovery);
+});
+
 test("different conversations receive separate checkout workspaces", async (t) => {
   const { project, registry } = await fixture(t);
 

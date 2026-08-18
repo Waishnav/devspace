@@ -516,6 +516,13 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
     card.availableAgentsFiles ?? [],
   );
 
+  if (card.instructionDiscovery?.status === "incomplete") {
+    const reason = card.instructionDiscovery.reason === "deadline_exceeded"
+      ? "Nested discovery exceeded its time budget. Open a narrower project workspace."
+      : "Too many nested instruction files were found. Open a narrower project workspace.";
+    appendWorkspaceTextRow(rows, "Nested context", reason, toolIcons.warning);
+  }
+
   const skills = card.skills ?? [];
   if (skills.length > 0) {
     appendWorkspaceSkills(rows, skills);

@@ -59,6 +59,10 @@ export interface ToolResultCard {
   availableAgentsFiles?: Array<{
     path?: string;
   }>;
+  instructionDiscovery?: {
+    status?: "incomplete";
+    reason?: "deadline_exceeded" | "result_limit_exceeded";
+  };
   skills?: Array<{
     name?: string;
     description?: string;
@@ -172,6 +176,7 @@ export function isExpandableCard(card: ToolResultCard): boolean {
       Number(card.summary?.agents ?? 0) > 0 ||
       Boolean(card.agentsFiles?.length) ||
       Boolean(card.availableAgentsFiles?.length) ||
+      card.instructionDiscovery?.status === "incomplete" ||
       Boolean(card.skills?.length) ||
       Boolean(card.agentProviders?.length) ||
       Boolean(card.agents?.length) ||
