@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "./config.js";
+import { loadConfig, publicBaseUrlStatus } from "./config.js";
 import { ensureDevspaceDefaultSkills, resolveSubagentsFlag } from "./user-config.js";
 
 const emptyConfigDir = mkdtempSync(join(tmpdir(), "devspace-empty-config-test-"));
@@ -151,6 +151,11 @@ assert.throws(
 );
 
 assert.equal(loadConfig(baseEnv).publicBaseUrl, "http://127.0.0.1:7676");
+assert.equal(publicBaseUrlStatus("https://devspace.example.com"), "ok");
+assert.equal(
+  publicBaseUrlStatus("https://devspace.example.com/mcp"),
+  "invalid path /mcp; use the origin only (https://devspace.example.com)",
+);
 assert.deepEqual(loadConfig(baseEnv).allowedHosts, ["localhost", "127.0.0.1", "::1"]);
 
 assert.equal(

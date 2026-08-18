@@ -268,6 +268,13 @@ function parsePublicBaseUrl(value: string): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
+export function publicBaseUrlStatus(value: string): string {
+  const parsed = new URL(value);
+  if (parsed.pathname === "/") return "ok";
+
+  return `invalid path ${parsed.pathname}; use the origin only (${parsed.origin})`;
+}
+
 function localPublicBaseUrl(host: string, port: number): string {
   const publicHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   const formattedHost = publicHost.includes(":") && !publicHost.startsWith("[")

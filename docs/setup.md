@@ -118,7 +118,7 @@ npx @waishnav/devspace doctor
 ```
 
 The doctor command reports the resolved config, Node version, Node ABI, platform,
-Git, Bash, public URL, allowed hosts, and SQLite native dependency status.
+Git, Bash, public URL, public base URL status, allowed hosts, and SQLite native dependency status.
 
 ## Running From A Local Checkout
 
