@@ -86,6 +86,7 @@ function parseBoolean(value: string | undefined): boolean {
 
 function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
   const mode = env.DEVSPACE_TOOL_MODE;
+  if (mode === "native") return "codex";
   if (mode === "minimal" || mode === "full" || mode === "codex") return mode;
   if (mode) throw new Error(`Invalid DEVSPACE_TOOL_MODE: ${mode}`);
 
@@ -222,6 +223,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     new URL(publicBaseUrl).hostname,
     ...(files.config.allowedHosts ?? []),
   ];
+  const nativeMode = env.DEVSPACE_TOOL_MODE === "native";
 
   return {
     host,
@@ -247,8 +249,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),
-    subagents:
-      env.DEVSPACE_SUBAGENTS === undefined
+    // Native mode is deliberately host-driven. Never let this mode invoke a
+    // second model/provider even when an older persisted config enabled it.
+    subagents: nativeMode
+      ? false
+      : env.DEVSPACE_SUBAGENTS === undefined
         ? files.config.subagents === true
         : parseBoolean(env.DEVSPACE_SUBAGENTS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
