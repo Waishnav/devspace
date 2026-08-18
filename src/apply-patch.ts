@@ -20,6 +20,13 @@ export interface ApplyPatchResult {
   removals: number;
 }
 
+export interface ApplyPatchOptions {
+  beforeApply?: (input: {
+    paths: readonly string[];
+    files: readonly AppliedPatchFile[];
+  }) => Promise<void> | void;
+}
+
 interface HunkLine {
   kind: "context" | "add" | "remove";
   text: string;
@@ -340,7 +347,11 @@ export async function isSamePatchFile(
   }
 }
 
-export async function applyPatch(root: string, patch: string): Promise<ApplyPatchResult> {
+export async function applyPatch(
+  root: string,
+  patch: string,
+  options: ApplyPatchOptions = {},
+): Promise<ApplyPatchResult> {
   const actions = parsePatch(patch);
   const results: AppliedPatchFile[] = [];
   const patches: string[] = [];
@@ -395,6 +406,11 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
       results.push({ path: action.path, operation: "update" });
     }
   }
+
+  await options.beforeApply?.({
+    paths: [...staged.keys()],
+    files: results,
+  });
 
   for (const [absolute, file] of staged) {
     if (file) await writeTextFile(absolute, file.content, file.mode);

@@ -63,6 +63,7 @@ assert.equal(await readFile(join(root, "windows.txt"), "utf8"), "first\r\nupdate
 await assert.rejects(readFile(join(root, "remove.txt"), "utf8"), /ENOENT/);
 
 if (process.platform !== "win32") await chmod(join(root, "alpha.txt"), 0o755);
+let movePreparedBeforeMutation = false;
 const moveResult = await applyPatch(
   root,
   `*** Begin Patch
@@ -73,7 +74,22 @@ const moveResult = await applyPatch(
 +ONE
  changed
 *** End Patch`,
+  {
+    beforeApply: async ({ paths, files }) => {
+      assert.deepEqual(new Set(paths), new Set([
+        join(root, "alpha.txt"),
+        join(root, "moved", "alpha.txt"),
+      ]));
+      assert.deepEqual(files, [
+        { path: "moved/alpha.txt", previousPath: "alpha.txt", operation: "move" },
+      ]);
+      assert.equal(await readFile(join(root, "alpha.txt"), "utf8"), "one\nchanged\nthree\n");
+      await assert.rejects(readFile(join(root, "moved", "alpha.txt"), "utf8"), /ENOENT/);
+      movePreparedBeforeMutation = true;
+    },
+  },
 );
+assert.equal(movePreparedBeforeMutation, true);
 assert.deepEqual(moveResult.files, [
   { path: "moved/alpha.txt", previousPath: "alpha.txt", operation: "move" },
 ]);

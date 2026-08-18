@@ -125,6 +125,100 @@ test("a host without conversation metadata receives normal explicit-workspace be
   assert.doesNotMatch(responseText(second), /conversation metadata/i);
 });
 
+test("show_changes reviews successful writes outside Git repositories", async (t) => {
+  const context = await fixture(t, { widgets: "changes" });
+  const opened = await callOpen(context.client, context.project, "chat-1");
+  const workspaceId = structuredContent(opened).workspaceId as string;
+
+  await context.client.callTool({
+    name: "write",
+    arguments: {
+      workspaceId,
+      path: "journal.txt",
+      content: "journal change\n",
+    },
+  });
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+
+  const card = responseCard(review);
+  const files = card.files as Array<{ path?: string }>;
+  const payload = card.payload as { patch?: string };
+  assert.deepEqual(files.map((file) => file.path), ["journal.txt"]);
+  assert.match(payload.patch ?? "", /journal change/);
+});
+
+test("journal-owned reviews exclude unrelated working-tree changes and keep Git fallback synchronized", async (t) => {
+  const context = await fixture(t, { git: true, widgets: "changes" });
+  const opened = await callOpen(context.client, context.project, "chat-1");
+  const workspaceId = structuredContent(opened).workspaceId as string;
+
+  await writeFile(join(context.project, "manual.txt"), "manual change\n");
+  await context.client.callTool({
+    name: "write",
+    arguments: {
+      workspaceId,
+      path: "agent.txt",
+      content: "agent change\n",
+    },
+  });
+
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  const card = responseCard(review);
+  const files = card.files as Array<{ path?: string }>;
+  const payload = card.payload as { patch?: string };
+  assert.deepEqual(files.map((file) => file.path), ["agent.txt"]);
+  assert.match(payload.patch ?? "", /agent change/);
+  assert.doesNotMatch(payload.patch ?? "", /manual change/);
+
+  const nextReview = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  assert.match(responseText(nextReview), /No changes since last shown changes/);
+});
+
+test("apply_patch moves are journaled as one net rename outside Git", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", widgets: "changes" });
+  await writeFile(join(context.project, "before.txt"), "before\n");
+  const opened = await callOpen(context.client, context.project, "chat-1");
+  const workspaceId = structuredContent(opened).workspaceId as string;
+
+  await context.client.callTool({
+    name: "apply_patch",
+    arguments: {
+      workspaceId,
+      patch: `*** Begin Patch
+*** Update File: before.txt
+*** Move to: after.txt
+@@
+-before
++after
+*** End Patch`,
+    },
+  });
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+
+  const card = responseCard(review);
+  assert.deepEqual(card.files, [
+    {
+      path: "after.txt",
+      previousPath: "before.txt",
+      type: "rename-changed",
+      additions: 1,
+      removals: 1,
+    },
+  ]);
+});
+
 test("checkout reuse and context suppression survive a registry restart", async (t) => {
   const context = await fixture(t);
   const first = await callOpen(context.client, context.project, "chat-1");
@@ -175,7 +269,14 @@ interface ServerFixture {
   close: () => Promise<void>;
 }
 
-async function fixture(t: TestContext, options: { git?: boolean } = {}): Promise<ServerFixture> {
+async function fixture(
+  t: TestContext,
+  options: {
+    git?: boolean;
+    widgets?: "full" | "changes";
+    toolMode?: "full" | "codex";
+  } = {},
+): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
   const project = join(root, "project");
   const agentDir = join(root, "agent");
@@ -208,8 +309,8 @@ async function fixture(t: TestContext, options: { git?: boolean } = {}): Promise
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_WIDGETS: "full",
-    DEVSPACE_TOOL_MODE: "full",
+    DEVSPACE_WIDGETS: options.widgets ?? "full",
+    DEVSPACE_TOOL_MODE: options.toolMode ?? "full",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
