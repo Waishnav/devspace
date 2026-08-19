@@ -39,6 +39,11 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
 
+DevSpace uses stateless Streamable HTTP for MCP requests. Each HTTP request gets
+a fresh MCP transport/server pair, while durable workspace, process, OAuth, and
+review state remains in DevSpace's own stores. There is therefore no retained
+MCP transport-session pool to tune or prune.
+
 ## Native Artifact Download
 
 Native-file download is disabled by default. Enable it when ChatGPT needs to hand

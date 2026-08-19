@@ -50,6 +50,7 @@ export interface ArtifactToolRegistrationOptions {
   config: ServerConfig;
   workspaces: WorkspaceRegistry;
   incomingArtifactAdapters?: readonly IncomingArtifactAdapter[];
+  trackActivity?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 export interface DownloadIncomingArtifactInput {
@@ -88,6 +89,7 @@ export function registerArtifactTools(
     config,
     workspaces,
     incomingArtifactAdapters = [],
+    trackActivity = (operation) => operation(),
   }: ArtifactToolRegistrationOptions,
 ): void {
   const incomingRegistry = new IncomingArtifactAdapterRegistry(incomingArtifactAdapters);
@@ -116,7 +118,7 @@ export function registerArtifactTools(
       _meta: { "openai/fileParams": ["file"] },
       annotations: ARTIFACT_WRITE_ANNOTATIONS,
     },
-    async (input) => executeArtifactTool(config, input, async () => {
+    async (input) => trackActivity(() => executeArtifactTool(config, input, async () => {
       const workspace = workspaces.getWorkspace(input.workspaceId);
       const downloaded = await downloadIncomingArtifact({
         registry: incomingRegistry,
@@ -130,7 +132,7 @@ export function registerArtifactTools(
         publicResult: { path: downloaded.path },
         logResult: downloaded,
       };
-    }),
+    })),
   );
 }
 
