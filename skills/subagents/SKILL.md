@@ -1,58 +1,54 @@
 ---
 name: subagents
-description: Delegate focused work to isolated DevSpace coding agents.
+description: Delegate focused coding, research, review, or verification work to a bounded DevSpace subagent. Use for one independent task, a specialist perspective, or a follow-up with the same worker; use Dynamic Workflows instead for programmed fan-out or multiple dependent stages.
 ---
 
-Each subagent is headless, has its own context window, cannot see the parent conversation, cannot ask the user, and cannot spawn subagents or workflows. Give every child a self-contained prompt with paths, constraints, and the expected report.
+# DevSpace subagents
+
+Use the DevSpace CLI through the host's shell or process tool. Run commands from the project the subagent should work on. DevSpace scopes sessions to the host workspace when supplied, otherwise to the current Git repository or project directory.
 
 ## Choose a target
 
-Prefer a configured profile that matches the task. Use a raw provider when the
-user explicitly names that harness or no profile fits. Use target information
-already available in the current host. When the choices are not known, run:
+Discover usable targets instead of guessing names:
 
 ```bash
-devspace agents targets
+devspace agents targets --json
 ```
 
-Do not guess profile names or provider identifiers.
+Prefer a configured profile whose description matches the task. Use a provider target when no profile fits or the user requests that provider. Unavailable providers are omitted.
 
-## Write the brief
+Profiles carry their own provider, instructions, model, and effort defaults. Only pass `--model` or `--effort` when the user supplied an exact value or the value is already known to be valid for that target.
 
-Describe the task directly. Include decisions and constraints that exist only
-in the parent conversation. Mention relevant paths or scope when useful. Do not
-repeat project instructions that the child can discover from the repository.
+## Start work
 
-## Run and continue
+Give the child a self-contained brief. Include the objective, relevant paths, constraints, decisions from the parent conversation, and the expected result. A child cannot see the parent conversation or ask the user for missing context.
 
 ```bash
-devspace agents targets [--json]
-devspace agents run <profile-or-provider> "<brief>"
-devspace agents show <id>
-devspace agents run <id> "<follow-up>"
-devspace agents ls
+devspace agents run <profile-or-provider> "<brief>" --json
+devspace agents run <profile-or-provider> --model <model> --effort <effort> "<brief>" --json
 ```
 
-`targets` lists currently usable profiles and providers. `run` with a profile
-or provider starts a child and returns its id. `show` reads its latest status
-and response. `run` with an existing id continues the same child session. `ls`
-lists sessions for the current project.
+The result contains an agent `id` and current status. Execution continues independently, so retain the id.
 
-Do not invoke provider CLIs directly; use `devspace agents` so DevSpace keeps
-session and provider handling consistent.
-
-## Model and effort overrides
-
-Normally omit `--model` and `--effort`. When an exact override is needed, read
-`references/<provider>.md` first. Do not guess values or transfer an effort
-name between providers merely because both use the same word.
+## Inspect and continue
 
 ```bash
-devspace agents run <target> --model <model> --effort <effort> "<brief>"
+devspace agents show <id> --json
+devspace agents run <id> "<follow-up brief>" --json
+devspace agents ls --json
 ```
 
-## Direct subagent or workflow
+- `show` returns the current status and includes the response or error when available.
+- `run <id>` continues the same agent session with a new prompt.
+- `ls` returns sessions belonging to the current project.
 
-Use a direct subagent for one focused delegation or a follow-up with the same
-child. Use a dynamic workflow when the task needs programmed fan-out, stages,
-branching, nesting, or replay.
+Poll `show --json` while the status is `starting` or `running`. `idle` means the response is ready; `error` and `stopped` are terminal without a successful response. Use a continuation only when the same context is valuable; start a new subagent for independent work.
+
+## Good uses
+
+- Review a change for correctness, security, or test gaps.
+- Investigate a bounded part of a codebase and report findings.
+- Implement one isolated feature with clear acceptance criteria.
+- Run a focused verification pass after another agent's work.
+
+Use a Dynamic Workflow when the task needs several agents, explicit phases, fan-out, pipelines, structured aggregation, or resumable orchestration.
