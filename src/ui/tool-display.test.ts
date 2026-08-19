@@ -5,8 +5,6 @@ import { getToolDisplay, getToolHeaderSummary } from "./tool-display.js";
 
 const displayCases: Array<[ToolResultCard, { title: string; tone: string }]> = [
   [{ tool: "open_workspace", root: "/tmp/project" }, { title: "Opened workspace", tone: "workspace" }],
-  [{ tool: "run_workflow", runId: "wfr_1", name: "Review" }, { title: "Started workflow", tone: "workflow" }],
-  [{ tool: "workflow_status", runId: "wfr_1", name: "Review" }, { title: "Workflow status", tone: "workflow" }],
   [{ tool: "read", path: "src/read.ts" }, { title: "Read file", tone: "read" }],
   [{ tool: "write", path: "src/write.ts" }, { title: "Wrote file", tone: "write" }],
   [{ tool: "edit", path: "src/edit.ts" }, { title: "Edited file", tone: "edit" }],
@@ -27,7 +25,6 @@ for (const [card, expected] of displayCases) {
 }
 
 assert.equal(getToolDisplay({ tool: "open_workspace", root: "/tmp/project" }).label, "/tmp/project");
-assert.equal(getToolDisplay({ tool: "run_workflow", runId: "wfr_1" }).label, "wfr_1");
 assert.equal(
   getToolDisplay({ tool: "grep", summary: { pattern: "needle", scope: "src" } }).label,
   "needle in src",
@@ -123,15 +120,6 @@ assert.deepEqual(
   getToolHeaderSummary({ tool: "open_workspace" }),
   { kind: "empty" },
 );
-assert.deepEqual(
-  getToolHeaderSummary({
-    tool: "workflow_status",
-    status: "running",
-    callSummary: { running: 2, failed: 1 },
-  }),
-  { kind: "text", text: "running · 2 running · 1 failed" },
-);
-
 function pickDisplay(display: ReturnType<typeof getToolDisplay>) {
   return {
     title: display.title,

@@ -1,10 +1,7 @@
 import type { App } from "@modelcontextprotocol/ext-apps";
-import type { WorkflowRunSummaryView } from "../workflow-ui.js";
 
 export type ToolName =
   | "open_workspace"
-  | "run_workflow"
-  | "workflow_status"
   | "show_changes"
   | "apply_patch"
   | "exec_command"
@@ -21,6 +18,17 @@ export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
 export type PatchOperation = "add" | "update" | "delete" | "move";
 
+export interface CardActiveWorkflowSummary {
+  id?: string;
+  name?: string;
+  status?: string;
+  calls?: Partial<{
+    running: number;
+    completed: number;
+    failed: number;
+  }>;
+}
+
 export interface ToolResultCard {
   tool: ToolName;
   workspaceId?: string;
@@ -36,9 +44,6 @@ export interface ToolResultCard {
     detached?: boolean;
     managed?: boolean;
   };
-  status?: string;
-  name?: string;
-  runId?: string;
   summary?: Record<string, unknown>;
   files?: Array<{
     path?: string;
@@ -61,34 +66,12 @@ export interface ToolResultCard {
     description?: string;
     path?: string;
   }>;
-  activeWorkflows?: WorkflowRunSummaryView[];
-  callSummary?: {
-    reused?: number;
-    live?: number;
-    failed?: number;
-    running?: number;
-    total?: number;
-  };
-  agentProviders?: Array<{
-    name?: string;
-    model?: {
-      supported?: boolean;
-      discovery?: string;
-    };
-    effort?: {
-      supported?: boolean;
-      semantics?: string;
-      discovery?: string;
-    };
-  }>;
+  activeWorkflows?: CardActiveWorkflowSummary[];
+  agentProviders?: string[];
   agents?: Array<{
     name?: string;
     description?: string;
-    provider?: string;
-    model?: string;
-    effort?: string;
   }>;
-  skillDiagnostics?: unknown[];
   instruction?: string;
 }
 
@@ -108,8 +91,6 @@ export interface ToolPayload {
 export function isToolName(value: unknown): value is ToolName {
   return (
     value === "open_workspace" ||
-    value === "run_workflow" ||
-    value === "workflow_status" ||
     value === "show_changes" ||
     value === "apply_patch" ||
     value === "exec_command" ||
@@ -152,10 +133,6 @@ export function isReviewTool(tool: ToolName): boolean {
   return tool === "show_changes";
 }
 
-export function isWorkflowTool(tool: ToolName): boolean {
-  return tool === "run_workflow" || tool === "workflow_status";
-}
-
 export function isToolResultCard(value: unknown): value is Omit<ToolResultCard, "tool"> {
   return Boolean(value && typeof value === "object");
 }
@@ -185,18 +162,14 @@ export function isExpandableCard(card: ToolResultCard): boolean {
     return (
       Number(card.summary?.agentsFiles ?? 0) > 0 ||
       Number(card.summary?.skills ?? 0) > 0 ||
-      Number(card.summary?.skillDiagnostics ?? 0) > 0 ||
       Boolean(card.agentsFiles?.length) ||
       Boolean(card.availableAgentsFiles?.length) ||
       Boolean(card.skills?.length) ||
       Boolean(card.activeWorkflows?.length) ||
       Boolean(card.agentProviders?.length) ||
-      Boolean(card.agents?.length) ||
-      Boolean(card.skillDiagnostics?.length)
+      Boolean(card.agents?.length)
     );
   }
-
-  if (isWorkflowTool(card.tool)) return Boolean(card.runId);
 
   if (isReviewTool(card.tool)) return Boolean(card.files?.length || card.payload?.patch);
   if (isPatchTool(card.tool)) return Boolean(card.payload?.patch);

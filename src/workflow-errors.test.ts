@@ -28,36 +28,11 @@ import {
 import { WorkflowStore } from "./workflow-store.js";
 import { enforceAgentSchemaResult } from "./workflow-schema.js";
 import { createWorkflowWorktreeResult } from "./workflow-worktrees.js";
-import { requireWorkflowRunInWorkspace } from "./workflow-tools.js";
 
 {
   const invalid = parseWorkflowArgFlagsResult(["--arg", "missing-equals"]);
   assert.ok(invalid.isErr());
   if (invalid.isErr()) assert.ok(InvalidWorkflowInputError.is(invalid.error));
-}
-
-{
-  const identifiedRun = {
-    id: "wfr_identified",
-    workspaceId: "ws_owner",
-    workspaceRoot: "/project",
-  };
-  assert.doesNotThrow(() =>
-    requireWorkflowRunInWorkspace(identifiedRun, "ws_owner", "/different-checkout"),
-  );
-  assert.throws(
-    () => requireWorkflowRunInWorkspace(identifiedRun, "ws_other", "/project"),
-    /Unknown workflow run: wfr_identified/,
-  );
-
-  const legacyRun = { id: "wfr_legacy", workspaceRoot: "/project" };
-  assert.doesNotThrow(() =>
-    requireWorkflowRunInWorkspace(legacyRun, "ws_current", "/project/./"),
-  );
-  assert.throws(
-    () => requireWorkflowRunInWorkspace(legacyRun, "ws_current", "/other-project"),
-    /Unknown workflow run: wfr_legacy/,
-  );
 }
 
 {

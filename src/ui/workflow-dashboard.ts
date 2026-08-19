@@ -1,10 +1,4 @@
-import type { WorkflowRunSummaryView } from "../workflow-ui.js";
-import type {
-  WorkflowCallView,
-  WorkflowProjectView,
-  WorkflowRunView,
-} from "../workflow-view.js";
-import type { ToolResultCard } from "./card-types.js";
+import type { CardActiveWorkflowSummary, ToolResultCard } from "./card-types.js";
 import { renderIcon, toolIcons } from "./icons.js";
 
 export interface DashboardDisplayOptions {
@@ -16,17 +10,16 @@ export interface DashboardDisplayOptions {
 export function renderWorkspaceDashboard(
   container: HTMLElement,
   card: ToolResultCard,
-  project: WorkflowProjectView | null,
   display: DashboardDisplayOptions,
 ): void {
   const root = node("div", {
     className: `workspace-dashboard ${display.fullscreen ? "fullscreen" : "inline"}`,
   });
-  const runs = project?.runs ?? card.activeWorkflows ?? [];
+  const runs = card.activeWorkflows ?? [];
 
   root.append(
     renderDashboardToolbar("Workspace overview", display),
-    ...(card.activeWorkflows !== undefined || project !== null
+    ...(card.activeWorkflows !== undefined
       ? [renderWorkflowSummarySection(runs)]
       : []),
     renderAccordion(
@@ -86,120 +79,18 @@ export function renderWorkspaceDashboard(
           renderList(
             card.agents.map((agent) => ({
               title: agent.name ?? "Unnamed profile",
-              description: [agent.provider, agent.model, agent.effort].filter(Boolean).join(" · "),
-              meta: agent.description,
+              description: agent.description,
             })),
             "No agent profiles loaded.",
           ),
         )]
       : []),
     renderAccordion(
-      `Warnings · ${card.skillDiagnostics?.length ?? 0}`,
-      false,
-      renderList(
-        card.skillDiagnostics?.map((diagnostic, index) => ({
-          title: `Diagnostic ${index + 1}`,
-          description: summarizeDiagnostic(diagnostic),
-        })) ?? [],
-        "No workspace warnings.",
-      ),
-    ),
-    renderAccordion(
       "Model handoff",
       false,
       node("div", { className: "workspace-handoff", text: card.instruction ?? "No handoff instruction." }),
     ),
   );
-
-  container.replaceChildren(root);
-}
-
-export function renderWorkflowDashboard(
-  container: HTMLElement,
-  run: WorkflowRunView | null,
-  fallback: ToolResultCard,
-  display: DashboardDisplayOptions,
-): void {
-  const root = node("div", {
-    className: `workflow-dashboard ${display.fullscreen ? "fullscreen" : "inline"}`,
-  });
-  root.append(renderDashboardToolbar("Workflow monitor", display));
-
-  if (!run) {
-    root.append(
-      node("div", {
-        className: "dashboard-empty",
-        text: fallback.runId ? "Loading workflow activity…" : "No workflow run selected.",
-      }),
-    );
-    container.replaceChildren(root);
-    return;
-  }
-
-  const heading = node("section", { className: "workflow-heading" });
-  const titleRow = node("div", { className: "workflow-title-row" });
-  titleRow.append(
-    node("span", { className: `workflow-status-dot ${run.status}`, ariaHidden: "true" }),
-    node("div", { className: "workflow-title-copy" }, [
-      node("strong", { text: run.name }),
-      node("span", {
-        className: "workflow-subtitle",
-        text: `${run.status}${run.currentPhase ? ` · ${run.currentPhase}` : ""}`,
-      }),
-    ]),
-  );
-  heading.append(titleRow, renderCallCounts(run));
-  root.append(heading);
-
-  const phases = node("section", { className: "workflow-phases" });
-  for (const phase of run.phases) {
-    const phaseSection = node("section", { className: "workflow-phase" });
-    phaseSection.append(node("h3", { text: phase.title }));
-    const calls = node("div", { className: "workflow-call-list" });
-    for (const call of phase.calls) calls.append(renderCall(call));
-    if (phase.calls.length === 0) {
-      calls.append(node("div", { className: "dashboard-empty", text: "No observed calls in this phase." }));
-    }
-    phaseSection.append(calls);
-    phases.append(phaseSection);
-  }
-  if (run.unphasedCalls.length > 0) {
-    const unphased = node("section", { className: "workflow-phase" });
-    unphased.append(node("h3", { text: "Other calls" }));
-    const calls = node("div", { className: "workflow-call-list" });
-    for (const call of run.unphasedCalls) calls.append(renderCall(call));
-    unphased.append(calls);
-    phases.append(unphased);
-  }
-  if (run.phases.length === 0 && run.unphasedCalls.length === 0) {
-    phases.append(node("div", { className: "dashboard-empty", text: "No agent calls observed yet." }));
-  }
-  root.append(phases);
-
-  if (run.recentActivity.length > 0) {
-    const activity = node("section", { className: "workflow-activity" });
-    activity.append(node("h3", { text: "Recent activity" }));
-    for (const event of run.recentActivity.slice(-8).reverse()) {
-      activity.append(
-        node("div", { className: "workflow-event" }, [
-          node("time", { text: formatTime(event.createdAt) }),
-          node("span", {
-            text: `${event.label ?? event.phase ?? event.type.replaceAll("_", " ")}${event.detail ? ` · ${event.detail}` : ""}`,
-          }),
-        ]),
-      );
-    }
-    root.append(activity);
-  }
-
-  if (run.error) {
-    root.append(
-      node("section", { className: "workflow-error" }, [
-        node("strong", { text: run.errorKind ?? "Workflow error" }),
-        node("p", { text: run.error }),
-      ]),
-    );
-  }
 
   container.replaceChildren(root);
 }
@@ -224,7 +115,7 @@ function renderDashboardToolbar(
 }
 
 function renderWorkflowSummarySection(
-  runs: Array<WorkflowRunView | WorkflowRunSummaryView>,
+  runs: CardActiveWorkflowSummary[],
 ): HTMLElement {
   const section = node("section", { className: "active-workflows" });
   section.append(node("h3", { text: `Active workflows · ${runs.length}` }));
@@ -233,60 +124,20 @@ function renderWorkflowSummarySection(
     return section;
   }
   for (const run of runs) {
+    const summary = workflowSummaryText(run);
     const row = node("div", { className: "active-workflow-row" });
     row.append(
-      node("span", { className: `workflow-status-dot ${run.status}`, ariaHidden: "true" }),
+      node("span", { className: `workflow-status-dot ${summary.status}`, ariaHidden: "true" }),
       node("div", { className: "active-workflow-copy" }, [
-        node("strong", { text: run.name }),
+        node("strong", { text: summary.name }),
         node("span", {
-          text: `${run.currentPhase ?? run.status} · ${summaryCounts(run.calls)}`,
+          text: `${summary.status} · ${summary.calls}`,
         }),
       ]),
     );
     section.append(row);
   }
   return section;
-}
-
-function renderCallCounts(run: WorkflowRunView): HTMLElement {
-  const counts = node("div", { className: "workflow-counts" });
-  const values = [
-    ["Completed", run.calls.completed],
-    ["Replayed", run.calls.cached],
-    ["Running", run.calls.running],
-    ["Failed", run.calls.failed],
-  ] as const;
-  for (const [label, value] of values) {
-    if (!value) continue;
-    counts.append(node("span", { text: `${value} ${label.toLowerCase()}` }));
-  }
-  if (counts.childElementCount === 0) {
-    counts.append(node("span", { text: "No agent calls yet" }));
-  }
-  return counts;
-}
-
-function renderCall(call: WorkflowCallView): HTMLElement {
-  const row = node("article", { className: `workflow-call ${call.status}` });
-  const main = node("div", { className: "workflow-call-main" });
-  main.append(
-    node("span", { className: `call-status ${call.status}`, text: callGlyph(call.status) }),
-    node("div", { className: "workflow-call-copy" }, [
-      node("strong", { text: call.label ?? `Agent #${call.callIndex}` }),
-      node("span", {
-        text: [
-          call.model ? `${call.provider}/${call.model}` : call.provider,
-          call.isolation === "worktree" ? "worktree" : undefined,
-          call.fromCache ? "replayed" : undefined,
-        ].filter(Boolean).join(" · "),
-      }),
-    ]),
-  );
-  row.append(main);
-  if (call.error) {
-    row.append(node("p", { className: "workflow-call-error", text: `${call.errorKind ?? "error"}: ${call.error}` }));
-  }
-  return row;
 }
 
 function renderAccordion(title: string, open: boolean, content: HTMLElement): HTMLElement {
@@ -306,15 +157,7 @@ function renderKeyValues(entries: Array<[string, string]>): HTMLElement {
 
 function renderProviderList(card: ToolResultCard): HTMLElement {
   return renderList(
-    card.agentProviders?.map((provider) => ({
-      title: provider.name ?? "Unknown provider",
-      description: [
-        provider.model?.supported ? `model: ${provider.model.discovery ?? "supported"}` : undefined,
-        provider.effort?.supported
-          ? `effort: ${provider.effort.semantics ?? "supported"} (${provider.effort.discovery ?? "unknown"})`
-          : undefined,
-      ].filter(Boolean).join(" · "),
-    })) ?? [],
+    card.agentProviders?.map((provider) => ({ title: provider })) ?? [],
     "No subagent providers exposed.",
   );
 }
@@ -340,44 +183,31 @@ function renderList(
   return list;
 }
 
-function summaryCounts(calls: WorkflowRunSummaryView["calls"]): string {
+function summaryCounts(calls: CardActiveWorkflowSummary["calls"]): string {
   const parts = [
-    calls.completed ? `${calls.completed} done` : undefined,
-    calls.cached ? `${calls.cached} replayed` : undefined,
-    calls.running ? `${calls.running} running` : undefined,
-    calls.failed ? `${calls.failed} failed` : undefined,
+    calls?.completed ? `${calls.completed} done` : undefined,
+    calls?.running ? `${calls.running} running` : undefined,
+    calls?.failed ? `${calls.failed} failed` : undefined,
   ].filter((part): part is string => Boolean(part));
   return parts.join(" · ") || "no calls yet";
 }
 
-function callGlyph(status: WorkflowCallView["status"]): string {
-  if (status === "completed" || status === "from_cache") return "✓";
-  if (status === "failed") return "✕";
-  if (status === "cancelled") return "−";
-  return "●";
-}
-
-function formatTime(value: string): string {
-  return new Date(value).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+export function workflowSummaryText(run: CardActiveWorkflowSummary): {
+  name: string;
+  status: string;
+  calls: string;
+} {
+  return {
+    name: run.name ?? "Unnamed workflow",
+    status: run.status ?? "unknown",
+    calls: summaryCounts(run.calls),
+  };
 }
 
 function summarizeText(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length > 140 ? `${compact.slice(0, 139)}…` : compact;
-}
-
-function summarizeDiagnostic(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "Unserializable diagnostic";
-  }
 }
 
 function stringValue(value: unknown): string | undefined {

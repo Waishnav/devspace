@@ -3,7 +3,6 @@ import {
   isPatchTool,
   isReviewTool,
   isShellTool,
-  isWorkflowTool,
   isWriteTool,
   summaryNumber,
   type ToolResultCard,
@@ -31,20 +30,6 @@ export function getToolDisplay(card: ToolResultCard): ToolDisplay {
         title: "Opened workspace",
         label: card.root ?? card.path,
         tone: "workspace",
-      };
-    case "run_workflow":
-      return {
-        icon: toolIcons.workflow,
-        title: card.status === "completed" ? "Workflow completed" : "Started workflow",
-        label: card.name ?? card.runId,
-        tone: "workflow",
-      };
-    case "workflow_status":
-      return {
-        icon: toolIcons.workflow,
-        title: "Workflow status",
-        label: card.name ?? card.runId,
-        tone: "workflow",
       };
     case "read":
       return {
@@ -145,15 +130,6 @@ export function getToolHeaderSummary(card: ToolResultCard): ToolHeaderSummary {
     return parts.length > 0 ? { kind: "text", text: parts.join(" · ") } : { kind: "empty" };
   }
 
-  if (isWorkflowTool(card.tool)) {
-    const parts = [
-      card.status,
-      card.callSummary?.running ? `${card.callSummary.running} running` : undefined,
-      card.callSummary?.failed ? `${card.callSummary.failed} failed` : undefined,
-    ].filter((part): part is string => Boolean(part));
-    return parts.length > 0 ? { kind: "text", text: parts.join(" · ") } : { kind: "empty" };
-  }
-
   if (isShellTool(card.tool)) {
     const parts = [
       countLabel(summaryNumber(summary, "lines"), "line"),
@@ -222,4 +198,3 @@ function durationLabel(durationMs: number | undefined): string | undefined {
   if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
   return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 }
-
