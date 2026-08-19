@@ -21,12 +21,32 @@ try {
     workspaceRoot: join(root, "project"),
     workspaceId: "ws_1",
     argsJson: JSON.stringify({ files: ["a.ts"] }),
+    phases: [
+      { title: "Planning", detail: "Understand the change" },
+      { title: "Review" },
+    ],
   });
 
   assert.match(run.id, /^wfr_[a-f0-9]{12}$/);
   assert.equal(run.status, "starting");
   assert.equal(run.cancelRequested, false);
   assert.equal(store.getRun(run.id)?.name, "fanout");
+  assert.deepEqual(store.getRun(run.id)?.phases, [
+    { title: "Planning", detail: "Understand the change" },
+    { title: "Review" },
+  ]);
+  assert.throws(
+    () =>
+      store.createRun({
+        name: "invalid phases",
+        source: "inline",
+        scriptPath: join(root, "invalid.js"),
+        scriptHash: "invalid-phases",
+        workspaceRoot: join(root, "project"),
+        phases: [{ title: "" }],
+      }),
+    /Too small/,
+  );
 
   const claimed = store.claimRun(run.id, process.pid);
   assert.equal(claimed?.status, "running");
@@ -82,6 +102,55 @@ try {
     worktreePath: "/tmp/wt",
     replayReason: "identity_changed:prompt",
   });
+  store.attachAgentSession(run.id, 0, "sess_live");
+  const partialUsage = store.updateAgentUsage(run.id, 0, {
+    inputTokens: 1_000,
+    cachedInputTokens: 700,
+    outputTokens: 200,
+    totalTokens: 1_200,
+    state: "partial",
+  });
+  assert.equal(partialUsage.state, "partial");
+  assert.throws(
+    () =>
+      store.updateAgentUsage(run.id, 0, {
+        totalTokens: 1_300,
+        state: "unknown" as never,
+      }),
+    /Invalid option/,
+  );
+  assert.equal(store.getAgentCall(run.id, 0)?.usage?.totalTokens, 1_200);
+  store.appendAgentActivity({
+    runId: run.id,
+    callIndex: 0,
+    kind: "command",
+    status: "running",
+    label: "npm test",
+  });
+  store.appendAgentActivity({
+    runId: run.id,
+    callIndex: 0,
+    kind: "command",
+    status: "completed",
+    label: "npm test",
+    detail: "passed",
+  });
+  assert.deepEqual(
+    store.listAgentActivity(run.id, 0).map((activity) => activity.status),
+    ["running", "completed"],
+  );
+  assert.throws(
+    () =>
+      store.appendAgentActivity({
+        runId: run.id,
+        callIndex: 0,
+        kind: "network" as never,
+        status: "running",
+        label: "invalid activity",
+      }),
+    /Invalid option/,
+  );
+  assert.equal(store.listAgentActivity(run.id, 0).length, 2);
   store.completeAgentCall({
     runId: run.id,
     callIndex: 0,
@@ -91,11 +160,20 @@ try {
     providerSessionId: "sess_1",
     dirty: true,
   });
+  store.updateAgentUsage(run.id, 0, {
+    inputTokens: 1_100,
+    cachedInputTokens: 700,
+    outputTokens: 250,
+    totalTokens: 1_350,
+    state: "final",
+  });
   const call = store.getAgentCall(run.id, 0);
   assert.equal(call?.status, "completed");
   assert.equal(call?.isolation, "worktree");
   assert.equal(call?.dirty, true);
   assert.equal(call?.providerSessionId, "sess_1");
+  assert.equal(call?.usage?.totalTokens, 1_350);
+  assert.equal(call?.usage?.state, "final");
   assert.equal(call?.effort, "high");
   assert.equal(call?.profileName, "reviewer");
   assert.equal(call?.profileFingerprint, "profile-hash");

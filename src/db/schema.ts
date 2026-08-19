@@ -108,6 +108,7 @@ export const workflowRuns = sqliteTable(
     workspaceRoot: text("workspace_root").notNull(),
     workspaceId: text("workspace_id"),
     argsJson: text("args_json").notNull().default("null"),
+    phasesJson: text("phases_json").notNull().default("[]"),
     status: text("status").notNull(),
     error: text("error"),
     errorKind: text("error_kind"),
@@ -169,6 +170,13 @@ export const workflowAgentCalls = sqliteTable(
     status: text("status").notNull(),
     fromCache: text("from_cache").notNull().default("false"),
     providerSessionId: text("provider_session_id"),
+    usageInputTokens: integer("usage_input_tokens"),
+    usageCachedInputTokens: integer("usage_cached_input_tokens"),
+    usageCacheCreationInputTokens: integer("usage_cache_creation_input_tokens"),
+    usageOutputTokens: integer("usage_output_tokens"),
+    usageTotalTokens: integer("usage_total_tokens"),
+    usageState: text("usage_state"),
+    usageUpdatedAt: text("usage_updated_at"),
     responseText: text("response_text"),
     structuredJson: text("structured_json"),
     returnValueJson: text("return_value_json"),
@@ -196,6 +204,26 @@ export const workflowAgentCalls = sqliteTable(
   ],
 );
 
+export const workflowAgentActivity = sqliteTable(
+  "workflow_agent_activity",
+  {
+    runId: text("run_id").notNull().references(() => workflowRuns.id, { onDelete: "cascade" }),
+    callIndex: integer("call_index").notNull(),
+    seq: integer("seq").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    label: text("label").notNull(),
+    detail: text("detail"),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.callIndex, table.seq] }),
+    index("workflow_agent_activity_call_seq_idx").on(table.runId, table.callIndex, table.seq),
+  ],
+);
+
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
@@ -205,3 +233,4 @@ export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;
 export type WorkflowRunRow = typeof workflowRuns.$inferSelect;
 export type WorkflowEventRow = typeof workflowEvents.$inferSelect;
 export type WorkflowAgentCallRow = typeof workflowAgentCalls.$inferSelect;
+export type WorkflowAgentActivityRow = typeof workflowAgentActivity.$inferSelect;

@@ -24,12 +24,19 @@ const script = (name: string, value = 1) =>
 
   const launched = await launchWorkflowRun({
     ...common,
-    source: { kind: "inline", script: script("launch-demo") },
+    source: {
+      kind: "inline",
+      script: `export const meta = { name: 'launch-demo', description: 'd', phases: [{ title: 'Plan' }, { title: 'Build', detail: 'Implement it' }] }\nreturn 1\n`,
+    },
     args: { n: 1 },
   });
   if (launched.isErr()) throw launched.error;
   assert.equal(launched.value.run.status, "starting");
   assert.equal(launched.value.run.argsJson, JSON.stringify({ n: 1 }));
+  assert.deepEqual(launched.value.run.phases, [
+    { title: "Plan" },
+    { title: "Build", detail: "Implement it" },
+  ]);
 
   const workflowDir = join(dir, ".devspace", "workflows");
   await mkdir(workflowDir, { recursive: true });

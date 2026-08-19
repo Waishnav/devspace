@@ -47,6 +47,11 @@ const migrations: Migration[] = [
     name: "workflow-agent-profiles",
     up: migrateWorkflowAgentProfiles,
   },
+  {
+    version: 9,
+    name: "workflow-observability",
+    up: migrateWorkflowObservability,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -324,9 +329,40 @@ function migrateWorkflowAgentProfiles(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workflow_agent_calls", "profile_fingerprint", "text");
 }
 
+function migrateWorkflowObservability(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_runs", "phases_json", "text not null default '[]'");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_cached_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_cache_creation_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_output_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_total_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_state", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_updated_at", "text");
+
+  sqlite.exec(`
+    create table if not exists workflow_agent_activity (
+      run_id text not null,
+      call_index integer not null,
+      seq integer not null,
+      kind text not null,
+      status text not null,
+      label text not null,
+      detail text,
+      started_at text,
+      completed_at text,
+      created_at text not null,
+      primary key (run_id, call_index, seq),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_agent_activity_call_seq_idx
+      on workflow_agent_activity(run_id, call_index, seq);
+  `);
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions" | "workflow_agent_calls",
+  table: "workspace_sessions" | "local_agent_sessions" | "workflow_runs" | "workflow_agent_calls",
   column: string,
   definition: string,
 ): void {

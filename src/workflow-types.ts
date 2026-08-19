@@ -67,6 +67,7 @@ export const WORKFLOW_LIMITS = {
   scriptSourceBytes: 512 * 1024,
   eventDrainDefault: 200,
   eventDrainMax: 500,
+  activityPerCall: 500,
 } as const;
 
 export type AgentProviderId = LocalAgentProvider;
@@ -88,6 +89,7 @@ export interface WorkflowRunRecord {
   workspaceRoot: string;
   workspaceId?: string;
   argsJson: string;
+  phases?: WorkflowPhaseMeta[];
   status: WorkflowRunStatus;
   error?: string;
   errorKind?: WorkflowErrorKind;
@@ -102,6 +104,32 @@ export interface WorkflowRunRecord {
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+}
+
+export interface WorkflowTokenUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  outputTokens?: number;
+  totalTokens: number;
+  state: "partial" | "final";
+  updatedAt: string;
+}
+
+export type WorkflowAgentActivityKind = "tool" | "command" | "file" | "status";
+export type WorkflowAgentActivityStatus = "running" | "completed" | "failed";
+
+export interface WorkflowAgentActivityRecord {
+  runId: string;
+  callIndex: number;
+  seq: number;
+  kind: WorkflowAgentActivityKind;
+  status: WorkflowAgentActivityStatus;
+  label: string;
+  detail?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
 }
 
 export interface WorkflowEventRecord {
@@ -130,6 +158,7 @@ export interface WorkflowAgentCallRecord {
   status: WorkflowAgentCallStatus;
   fromCache: boolean;
   providerSessionId?: string;
+  usage?: WorkflowTokenUsage;
   responseText?: string;
   structuredJson?: string;
   returnValueJson?: string;
