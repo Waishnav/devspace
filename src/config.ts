@@ -4,6 +4,11 @@ import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
+import {
+  isLocalAgentProvider,
+  LOCAL_AGENT_PROVIDERS,
+  type LocalAgentProvider,
+} from "./local-agent-profiles.js";
 
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
@@ -27,6 +32,7 @@ export interface ServerConfig {
   devspaceAgentsDir: string;
   subagents: boolean;
   workflows: boolean;
+  agentProviders: LocalAgentProvider[];
   agentDir: string;
   logging: LoggingConfig;
 }
@@ -114,6 +120,22 @@ function parsePathList(value: string | undefined): string[] {
       .map((entry) => entry.trim())
       .filter(Boolean) ?? []
   );
+}
+
+function parseAgentProviders(
+  value: string | string[] | undefined,
+): LocalAgentProvider[] {
+  if (value === undefined) return [...LOCAL_AGENT_PROVIDERS];
+  const entries = (Array.isArray(value) ? value : value.split(","))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const invalid = entries.find((entry) => !isLocalAgentProvider(entry));
+  if (invalid) {
+    throw new Error(
+      `Invalid agent provider: ${invalid}. Expected one of ${LOCAL_AGENT_PROVIDERS.join(", ")}.`,
+    );
+  }
+  return Array.from(new Set(entries)) as LocalAgentProvider[];
 }
 
 function parseStringList(value: string | undefined, fallback: string[]): string[] {
@@ -219,8 +241,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     env.DEVSPACE_SUBAGENTS === undefined
       ? files.config.subagents === true
       : parseBoolean(env.DEVSPACE_SUBAGENTS);
-  // Experimental compatibility: workflows follow the existing subagents gate
-  // unless explicitly overridden for runtime testing.
+  // Agent tooling is one user-facing capability: enabling direct subagents
+  // also enables workflows. Keep the environment override for deployments
+  // that need to expose only one CLI surface.
   const workflows =
     env.DEVSPACE_WORKFLOWS === undefined
       ? subagents
@@ -243,6 +266,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     devspaceAgentsDir: devspaceAgentsDir(env),
     subagents,
     workflows,
+    agentProviders: parseAgentProviders(
+      env.DEVSPACE_AGENT_PROVIDERS ?? files.config.agentProviders,
+    ),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
   };

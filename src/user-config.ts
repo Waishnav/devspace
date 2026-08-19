@@ -8,6 +8,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
 export interface DevspaceUserConfig {
   host?: string;
@@ -19,6 +20,7 @@ export interface DevspaceUserConfig {
   worktreeRoot?: string;
   agentDir?: string;
   subagents?: boolean;
+  agentProviders?: LocalAgentProvider[];
 }
 
 export interface DevspaceAuthConfig {

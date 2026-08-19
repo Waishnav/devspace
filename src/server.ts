@@ -724,7 +724,7 @@ function createMcpServer(
     "DevSpace App",
     WORKSPACE_APP_URI,
     {
-      description: "Interactive DevSpace workspace, workflow, and file-change views.",
+      description: "Interactive DevSpace workspace and file-change views.",
       _meta: {
         ui: {
           csp: appCsp(config),
@@ -1632,7 +1632,7 @@ export function createServer(config = loadConfig()): RunningServer {
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
   const localAgentProviders = config.subagents
-    ? getLocalAgentProviderAvailabilitySnapshot()
+    ? getLocalAgentProviderAvailabilitySnapshot(process.env, config.agentProviders)
     : [];
   const workflowReaper = config.workflows
     ? startWorkflowReaper(config, {

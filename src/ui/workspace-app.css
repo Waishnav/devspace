@@ -388,15 +388,13 @@ html[data-display-mode="fullscreen"] .tool-card {
   border-radius: 0;
 }
 
-.workspace-dashboard,
-.workflow-dashboard {
+.workspace-dashboard {
   display: grid;
   gap: 0;
   color: var(--color-text-primary, #f5f5f6);
 }
 
-.workspace-dashboard.fullscreen,
-.workflow-dashboard.fullscreen {
+.workspace-dashboard.fullscreen {
   min-height: calc(100vh - 83px);
   align-content: start;
 }
@@ -435,32 +433,21 @@ html[data-display-mode="fullscreen"] .tool-card {
   height: 15px;
 }
 
-.active-workflows,
-.workflow-heading,
-.workflow-phases,
-.workflow-activity,
-.workflow-error {
+.active-workflows {
   padding: 16px;
 }
 
-.active-workflows,
-.workflow-heading,
-.workflow-phases,
-.workflow-activity {
+.active-workflows {
   border-bottom: 1px solid var(--tool-card-divider);
 }
 
-.active-workflows h3,
-.workflow-phase h3,
-.workflow-activity h3 {
+.active-workflows h3 {
   margin: 0 0 12px;
   font-size: var(--font-text-sm-size, 13px);
   font-weight: 600;
 }
 
-.active-workflow-row,
-.workflow-title-row,
-.workflow-call-main {
+.active-workflow-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -494,8 +481,6 @@ html[data-display-mode="fullscreen"] .tool-card {
 }
 
 .active-workflow-copy,
-.workflow-title-copy,
-.workflow-call-copy,
 .workspace-list-row {
   display: grid;
   min-width: 0;
@@ -503,8 +488,6 @@ html[data-display-mode="fullscreen"] .tool-card {
 }
 
 .active-workflow-copy span,
-.workflow-subtitle,
-.workflow-call-copy span,
 .workspace-list-row span,
 .workspace-list-row code {
   overflow: hidden;
@@ -571,100 +554,14 @@ html[data-display-mode="fullscreen"] .tool-card {
   line-height: 1.55;
 }
 
-.workflow-heading {
-  display: grid;
-  gap: 12px;
-}
-
-.workflow-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.workflow-counts span {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--tool-card-hover-bg);
-  color: var(--color-text-secondary, #d6d6dc);
-  font-size: var(--font-text-sm-size, 12px);
-}
-
-.workflow-phases {
-  display: grid;
-  gap: 20px;
-}
-
-.workflow-call-list {
-  display: grid;
-  gap: 8px;
-}
-
-.workflow-call {
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--tool-card-hover-bg) 54%, transparent);
-}
-
-.call-status {
-  width: 16px;
-  flex: 0 0 auto;
-  color: var(--color-text-tertiary, #a3a3aa);
-  text-align: center;
-}
-
-.call-status.completed,
-.call-status.from_cache {
-  color: var(--color-success-text, #6fda83);
-}
-
-.call-status.failed {
-  color: var(--color-danger-text, #ee7676);
-}
-
-.workflow-call-error,
-.workflow-error p {
-  margin: 8px 0 0 26px;
-  color: var(--color-danger-text, #ee7676);
-  font-size: var(--font-text-sm-size, 12px);
-  line-height: 1.45;
-}
-
-.workflow-activity {
-  display: grid;
-  gap: 8px;
-}
-
-.workflow-event {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 10px;
-  color: var(--color-text-secondary, #d6d6dc);
-  font-size: var(--font-text-sm-size, 12px);
-}
-
-.workflow-event time {
-  color: var(--color-text-tertiary, #a3a3aa);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-}
-
-.workflow-error {
-  color: var(--color-danger-text, #ee7676);
-}
-
 .dashboard-empty {
   color: var(--color-text-secondary, #b7b7bf);
   font-size: var(--font-text-sm-size, 13px);
 }
 
 @media (min-width: 860px) {
-  .workspace-dashboard.fullscreen,
-  .workflow-dashboard.fullscreen {
+  .workspace-dashboard.fullscreen {
     width: min(1120px, 100%);
     margin: 0 auto;
-  }
-
-  .workflow-dashboard.fullscreen .workflow-phases {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -27,6 +27,18 @@ assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
 assert.equal(loadConfig(baseEnv).subagents, false);
 assert.equal(loadConfig(baseEnv).workflows, false);
+assert.deepEqual(loadConfig(baseEnv).agentProviders, [
+  "codex",
+  "claude",
+  "opencode",
+  "pi",
+  "cursor",
+  "copilot",
+]);
+assert.deepEqual(
+  loadConfig({ ...baseEnv, DEVSPACE_AGENT_PROVIDERS: "codex,pi,codex" }).agentProviders,
+  ["codex", "pi"],
+);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
 assert.equal(
@@ -65,6 +77,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_AGENT_PROVIDERS: "codex,unknown" }),
+  /Invalid agent provider: unknown/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {
@@ -169,6 +185,7 @@ writeFileSync(
     allowedRoots: [process.cwd()],
     publicBaseUrl: "https://devspace.example.com",
     subagents: true,
+    agentProviders: ["claude"],
   }),
 );
 writeFileSync(
@@ -183,9 +200,27 @@ assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
 assert.equal(fileConfig.subagents, true);
+assert.deepEqual(fileConfig.agentProviders, ["claude"]);
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",
   "::1",
   "devspace.example.com",
 ]);
+
+const disabledAgentConfigDir = mkdtempSync(join(tmpdir(), "devspace-disabled-agent-config-test-"));
+writeFileSync(
+  join(disabledAgentConfigDir, "config.json"),
+  JSON.stringify({
+    allowedRoots: [process.cwd()],
+    subagents: false,
+  }),
+);
+writeFileSync(
+  join(disabledAgentConfigDir, "auth.json"),
+  JSON.stringify({ ownerToken: "persisted-owner-token-long-enough" }),
+);
+assert.deepEqual(loadConfig({
+  DEVSPACE_CONFIG_DIR: disabledAgentConfigDir,
+  DEVSPACE_SUBAGENTS: "1",
+}).agentProviders, ["codex", "claude", "opencode", "pi", "cursor", "copilot"]);

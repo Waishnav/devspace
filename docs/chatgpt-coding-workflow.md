@@ -85,18 +85,16 @@ DevSpace discovers standard Agent Skills from:
 - project `.agents/skills`
 - `~/.devspace/skills`
 
-It also includes:
+It also includes the managed `subagents` and `dynamic-workflows` skills that
+setup installs in `~/.devspace/skills` when agent tooling is enabled, plus:
 
-- the package-managed `subagents` skill when the Subagents capability is enabled
-- the package-managed `dynamic-workflows` skill when the Dynamic Workflows capability is enabled
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-When Subagents are enabled, DevSpace discovers agent profiles
-from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
-`open_workspace` exposes a compact catalog with profile names, descriptions,
-providers, and optional models/effort levels so the model can choose a configured agent
-without seeing provider-specific launch details.
+When agent tooling is enabled, DevSpace discovers agent profiles from
+`~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
+`open_workspace` exposes only usable provider names and profile names with
+descriptions. Disabled or unavailable providers and their profiles are omitted.
 
 Example profiles are packaged under `examples/agents/` for users who want
 starter templates. Copy or adapt them into one of the active profile directories
@@ -113,16 +111,15 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 - files under a skill directory after that skill's `SKILL.md` has been read
 
 Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Set
-`DEVSPACE_SUBAGENTS=1` to expose the experimental subagent catalog and
-`subagents` skill. That skill can use target information already supplied by the
-host or discover it with `devspace agents targets`. `devspace agents ls` lists
-existing subagent sessions for the current workspace.
+`DEVSPACE_SUBAGENTS=1` to enable both direct subagents and Dynamic Workflows.
+The skills invoke the DevSpace CLI through `bash` or `exec_command`; DevSpace
+does not expose dedicated workflow-execution MCP tools. Models discover the
+usable execution catalog with `devspace agents targets --json`.
 
-Set `DEVSPACE_WORKFLOWS=1` to enable Dynamic Workflows independently. When the
-variable is omitted, Dynamic Workflows follows the effective Subagents setting,
-including persisted config and any environment override. Disabled features are
-omitted from the `open_workspace` schema and response rather than returned as
-empty capability arrays.
+`DEVSPACE_AGENT_PROVIDERS` can narrow the configured provider allowlist.
+`DEVSPACE_WORKFLOWS` remains an optional runtime override; normally workflows
+follow the agent-tooling setting. Disabled features are omitted from the
+`open_workspace` schema and response.
 
 ## Tool Names
 
@@ -158,16 +155,10 @@ a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
 By default, `DEVSPACE_WIDGETS=full`.
 
-In that mode, DevSpace attaches widget UI to the exposed workspace, workflow,
-file, edit, and shell tools. The `open_workspace` dropdown presents the opened
-root, loaded skills and instructions, available agent providers/profiles, and
-currently active workflows for that workspace.
-
-Dynamic Workflow views are read-only. They refresh through app-only MCP tools
-and show observed phases, agent calls, replay state, worktree isolation, errors,
-and recent activity. When the host supports MCP Apps fullscreen display mode,
-the card offers an **Open dashboard** presentation control. It does not add
-cancel, resume, apply, or cleanup actions.
+In that mode, DevSpace attaches widget UI to the exposed workspace, file, edit,
+and shell tools. The `open_workspace` dropdown presents the opened root, loaded
+skills and instructions, usable agent provider/profile names, and a compact
+snapshot of active workflows with running, completed, and failed call counts.
 
 The aggregate `show_changes` tool is not exposed by default.
 

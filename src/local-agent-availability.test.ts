@@ -28,6 +28,14 @@ assert.equal(checkLocalAgentProviderAvailability("codex").available, true);
   assert.equal(snapshot.find((provider) => provider.name === "pi")?.available, false);
 }
 
+{
+  const snapshot = getLocalAgentProviderAvailabilitySnapshot(
+    process.env,
+    ["claude", "codex"],
+  );
+  assert.deepEqual(snapshot.map((provider) => provider.name), ["claude", "codex"]);
+}
+
 assert.equal(
   formatLocalAgentProviderAvailabilitySummary([
     { name: "codex", available: true },

@@ -1,7 +1,7 @@
 # Setup Guide
 
-This guide is for users who want ChatGPT or another MCP host to work in local
-projects through DevSpace.
+This guide covers both local coding harnesses that use the DevSpace CLI and MCP
+hosts such as ChatGPT or Claude.
 
 ## Requirements
 
@@ -9,10 +9,10 @@ projects through DevSpace.
 - npm
 - Git
 - Bash, including Git Bash or WSL on Windows
-- a public HTTPS URL that forwards to the local DevSpace server
+- a public HTTPS URL only when a remote MCP host must reach DevSpace
 
-DevSpace does not create the public tunnel for you. Use Cloudflare Tunnel,
-ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
+DevSpace does not create a public tunnel. Remote MCP users can use Cloudflare
+Tunnel, ngrok, Pinggy, Tailscale Funnel, or their own HTTPS reverse proxy.
 
 ## Install And Configure
 
@@ -26,8 +26,7 @@ The setup flow asks one question at a time.
 
 ### Project Roots
 
-Choose the folders ChatGPT is allowed to open through DevSpace. Keep this
-narrow.
+Choose the folders DevSpace is allowed to open. Keep this narrow.
 
 Examples:
 
@@ -55,8 +54,8 @@ http://127.0.0.1:7676/mcp
 
 ### Public Base URL
 
-Start your tunnel or reverse proxy before entering this value. Point the tunnel
-at:
+Setup first asks whether ChatGPT or Claude will connect over the internet. Say
+no for CLI-only use. If yes, start your tunnel or reverse proxy and point it at:
 
 ```text
 http://127.0.0.1:7676
@@ -74,7 +73,28 @@ Configure the MCP client with the full MCP endpoint:
 https://your-tunnel-host.example.com/mcp
 ```
 
+### Agent Tooling
+
+Enable agent tooling to use both direct subagents and Dynamic Workflows. Setup
+shows currently available providers and persists only the providers you select.
+Unavailable and unselected providers are not exposed to models.
+
+The two model skills are installed in:
+
+```text
+~/.devspace/skills/subagents
+~/.devspace/skills/dynamic-workflows
+```
+
+DevSpace updates its managed copies on later forced setup runs and preserves a
+same-named directory that does not carry the DevSpace management marker.
+
+Coding harnesses can now run `devspace agents` and `devspace workflow` from a
+project directory without starting the MCP server.
+
 ## Start The Server
+
+This step is only required for MCP clients.
 
 Run:
 
