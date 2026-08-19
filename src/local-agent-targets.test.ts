@@ -33,6 +33,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "hello", "world"]), {
   prompt: "hello world",
   model: undefined,
   effort: undefined,
+  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model", "gpt-5.1", "hello"]), {
@@ -40,6 +41,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model", "gpt-5.1", "hello"]
   prompt: "hello",
   model: "gpt-5.1",
   effort: undefined,
+  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model=gpt-5.1", "hello"]), {
@@ -47,6 +49,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model=gpt-5.1", "hello"]), 
   prompt: "hello",
   model: "gpt-5.1",
   effort: undefined,
+  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort", "high", "hello"]), {
@@ -54,6 +57,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort", "high", "hello"]),
   prompt: "hello",
   model: undefined,
   effort: "high",
+  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort=high", "hello"]), {
@@ -61,6 +65,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort=high", "hello"]), {
   prompt: "hello",
   model: undefined,
   effort: "high",
+  json: false,
 });
 
 // Legacy --thinking alias maps to effort.
@@ -69,6 +74,23 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--thinking", "high", "hello"]
   prompt: "hello",
   model: undefined,
   effort: "high",
+  json: false,
+});
+
+assert.deepEqual(parseLocalAgentRunArgs(["codex", "explain", "--json", "output"]), {
+  target: "codex",
+  prompt: "explain --json output",
+  model: undefined,
+  effort: undefined,
+  json: false,
+});
+
+assert.deepEqual(parseLocalAgentRunArgs(["codex", "review changes", "--json"]), {
+  target: "codex",
+  prompt: "review changes",
+  model: undefined,
+  effort: undefined,
+  json: true,
 });
 
 assert.throws(
@@ -79,6 +101,11 @@ assert.throws(
 assert.throws(
   () => parseLocalAgentRunArgs(["codex", "--effort"]),
   /Missing value for --effort/,
+);
+
+assert.throws(
+  () => parseLocalAgentRunArgs([]),
+  /"<prompt>" \[--json\]$/,
 );
 
 {

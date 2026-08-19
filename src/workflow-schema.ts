@@ -110,7 +110,7 @@ export async function enforceAgentSchemaResult(
     },
     catch: (cause) => new SchemaConfigurationError(cause),
   });
-  if (compiled.isErr()) return compiled;
+  if (compiled.isErr()) return Result.err(compiled.error);
   const validate = compiled.value;
   const maxRetries = input.maxRetries ?? WORKFLOW_MAX_SCHEMA_RETRIES;
   const native = supportsNativeStructuredOutput(input.provider);
@@ -146,7 +146,7 @@ export async function enforceAgentSchemaResult(
         });
         continue;
       }
-      return runResult;
+      return Result.err(runResult.error);
     }
     const result = runResult.value;
     providerSessionId = result.providerSessionId ?? providerSessionId;

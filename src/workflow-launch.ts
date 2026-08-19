@@ -74,7 +74,7 @@ export async function launchWorkflowRun(
 ): Promise<BetterResult<LaunchWorkflowRunResult, LaunchWorkflowError>> {
   try {
     const resolved = await resolveLaunchSource(input);
-    if (resolved.isErr()) return resolved;
+    if (resolved.isErr()) return Result.err(resolved.error);
 
     const {
       sourceText,
@@ -158,7 +158,7 @@ async function resolveLaunchSource(
 
   if (source.kind === "resume") {
     const priorResult = store.getRunResult(source.runId);
-    if (priorResult.isErr()) return priorResult;
+    if (priorResult.isErr()) return Result.err(priorResult.error);
     const prior = priorResult.value;
     if (!prior) return Result.err(new WorkflowNotFoundError(source.runId));
     if (!runBelongsToWorkspace(prior, input.workspaceId, workspaceRoot)) {
@@ -184,7 +184,7 @@ async function resolveLaunchSource(
         workspaceRoot,
         stateDir: config.stateDir,
       });
-      if (named.isErr()) return named;
+      if (named.isErr()) return Result.err(named.error);
       sourceText = named.value.source;
       scriptHash = named.value.scriptHash;
       nameHint = named.value.nameHint;
@@ -198,7 +198,7 @@ async function resolveLaunchSource(
       filename = file.value.scriptPath;
     } else {
       const priorScript = await readWorkflowScriptFileResult(prior.scriptPath);
-      if (priorScript.isErr()) return priorScript;
+      if (priorScript.isErr()) return Result.err(priorScript.error);
       sourceText = priorScript.value.source;
       scriptHash = priorScript.value.scriptHash;
       nameHint = prior.name;
@@ -244,7 +244,7 @@ async function resolveLaunchSource(
       workspaceRoot,
       stateDir: config.stateDir,
     });
-    if (named.isErr()) return named;
+    if (named.isErr()) return Result.err(named.error);
     return Result.ok({
       sourceText: named.value.source,
       scriptHash: named.value.scriptHash,

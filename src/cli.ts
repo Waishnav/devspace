@@ -42,6 +42,14 @@ import {
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
+import {
+  assertRecordInCliWorkspace,
+  resolveCliWorkspaceContext,
+} from "./cli-workspace.js";
+import {
+  localAgentOutput,
+  localAgentTargetsOutput,
+} from "./cli-output.js";
 
 import { runWorkflowCommand } from "./workflow-cli.js";
 import {
@@ -356,7 +364,7 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   switch (subcommand) {
     case "ls":
     case "list":
-      await runAgentsList();
+      await runAgentsList(rest);
       return;
     case "targets":
       await runAgentsTargets(rest);
@@ -381,11 +389,16 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runAgentsList(): Promise<void> {
+async function runAgentsList(args: string[]): Promise<void> {
+  const json = parseJsonOnlyOption(args, "devspace agents ls [--json]");
   const config = loadConfig();
   const store = createLocalAgentStore(config);
-  const agents = store.list(resolveCurrentWorkspaceScope());
+  const agents = store.list(resolveCliWorkspaceContext());
 
+  if (json) {
+    printJson({ agents: agents.map((agent) => localAgentOutput(agent)) });
+    return;
+  }
   if (agents.length === 0) {
     console.log("No subagent sessions found for this workspace.");
     return;
@@ -403,7 +416,7 @@ async function runAgentsTargets(args: string[]): Promise<void> {
   }
 
   const config = loadConfig();
-  const workspaceRoot = resolveCurrentWorkspaceRoot();
+  const { workspaceRoot } = resolveCliWorkspaceContext();
   const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
   const catalog = buildLocalAgentCatalog(
     profiles,
@@ -411,7 +424,7 @@ async function runAgentsTargets(args: string[]): Promise<void> {
   );
   console.log(
     args.includes("--json")
-      ? JSON.stringify(catalog, null, 2)
+      ? JSON.stringify(localAgentTargetsOutput(catalog), null, 2)
       : formatLocalAgentCatalog(catalog),
   );
 }
@@ -420,11 +433,13 @@ async function runAgentsRun(args: string[]): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
 
   const config = loadConfig();
-  const workspaceRoot = resolveCurrentWorkspaceRoot();
+  const workspace = resolveCliWorkspaceContext();
+  const workspaceRoot = workspace.workspaceRoot;
   const store = createLocalAgentStore(config);
   const existing = store.get(parsed.target);
 
   if (existing) {
+    assertRecordInCliWorkspace(existing, workspace, "Subagent session");
     if (!isLocalAgentProvider(existing.provider)) {
       throw new Error(`Unknown subagent provider for existing session: ${existing.provider}`);
     }
@@ -438,12 +453,14 @@ async function runAgentsRun(args: string[]): Promise<void> {
       error: undefined,
     });
     spawnAgentWorker(existing.id, promptFile);
-    console.log(formatAgentLine({
+    const running = {
       ...existing,
       status: "running",
       model: parsed.model ?? existing.model,
       effort: parsed.effort ?? existing.effort,
-    }));
+    } as LocalAgentRecord;
+    if (parsed.json) printJson({ agent: localAgentOutput(running) });
+    else console.log(formatAgentLine(running));
     return;
   }
 
@@ -466,7 +483,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
 
   const promptFile = writeAgentPromptFile(parsed.prompt);
   const record = store.create({
-    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    workspaceId: workspace.workspaceId,
     workspaceRoot,
     profileName: target.name,
     provider: target.provider,
@@ -475,22 +492,35 @@ async function runAgentsRun(args: string[]): Promise<void> {
   });
 
   spawnAgentWorker(record.id, promptFile);
-  console.log(formatAgentLine({ ...record, status: "running" }));
+  const running = { ...record, status: "running" } as LocalAgentRecord;
+  if (parsed.json) printJson({ agent: localAgentOutput(running) });
+  else console.log(formatAgentLine(running));
 }
 
 async function runAgentsShow(args: string[]): Promise<void> {
-  const [id] = args;
+  const json = args.includes("--json");
+  const [id, ...unknownArgs] = args.filter((arg) => arg !== "--json");
   if (!id) throw new Error("Usage: devspace agents show <id>");
+  if (unknownArgs.length > 0) throw new Error("Usage: devspace agents show <id> [--json]");
 
   const config = loadConfig();
   const store = createLocalAgentStore(config);
+  const workspace = resolveCliWorkspaceContext();
   let record = store.get(id);
   if (!record) throw new Error(`Unknown subagent id: ${id}`);
+  assertRecordInCliWorkspace(record, workspace, "Subagent session");
 
-  const deadline = Date.now() + 15_000;
-  while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
-    await sleep(500);
-    record = store.get(id) ?? record;
+  if (!json) {
+    const deadline = Date.now() + 15_000;
+    while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
+      await sleep(500);
+      record = store.get(id) ?? record;
+    }
+  }
+
+  if (json) {
+    printJson({ agent: localAgentOutput(record, { includeResult: true }) });
+    return;
   }
 
   console.log(formatAgentLine(record));
@@ -576,17 +606,6 @@ function writeAgentPromptFile(prompt: string): string {
   return filePath;
 }
 
-function resolveCurrentWorkspaceRoot(): string {
-  return resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
-}
-
-function resolveCurrentWorkspaceScope(): { workspaceId?: string; workspaceRoot: string } {
-  return {
-    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
-    workspaceRoot: resolveCurrentWorkspaceRoot(),
-  };
-}
-
 function formatAgentLine(agent: Pick<
   LocalAgentRecord,
   "id" | "status" | "profileName" | "provider" | "model" | "effort"
@@ -594,6 +613,15 @@ function formatAgentLine(agent: Pick<
   const model = agent.model ? ` ${agent.model}` : "";
   const effort = agent.effort ? ` effort=${agent.effort}` : "";
   return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${effort}`;
+}
+
+function parseJsonOnlyOption(args: string[], usage: string): boolean {
+  if (args.some((arg) => arg !== "--json")) throw new Error(`Usage: ${usage}`);
+  return args.includes("--json");
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -606,10 +634,10 @@ function printAgentsHelp(): void {
       "DevSpace agents",
       "",
       "Usage:",
-      "  devspace agents ls",
+      "  devspace agents ls [--json]",
       "  devspace agents targets [--json]",
-      "  devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] <prompt>",
-      "  devspace agents show <id>",
+      "  devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] <prompt> [--json]",
+      "  devspace agents show <id> [--json]",
     ].join("\n"),
   );
 }

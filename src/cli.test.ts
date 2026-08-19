@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { LocalAgentStore } from "./local-agent-store.js";
+import { WorkflowStore } from "./workflow-store.js";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -107,6 +108,69 @@ try {
   assert.deepEqual(targets.profiles.map((profile) => profile.name), ["reviewer"]);
   assert.equal(targets.profiles[0]?.provider, "codex");
   assert.equal(targets.providers.some((provider) => provider.name === "codex"), true);
+
+  const agentsJson = JSON.parse(execFileSync(
+    "node",
+    ["--import", "tsx", "src/cli.ts", "agents", "ls", "--json"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEVSPACE_CONFIG_DIR: configDir,
+        DEVSPACE_ALLOWED_ROOTS: projectRoot,
+        DEVSPACE_STATE_DIR: stateDir,
+        DEVSPACE_WORKSPACE_ID: "ws_current",
+        DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        DEVSPACE_SUBAGENTS: "1",
+        DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+      },
+    },
+  )) as { agents: Array<{ id: string }> };
+  assert.deepEqual(agentsJson.agents.map((agent) => agent.id), [current.id]);
+
+  const workflowStore = new WorkflowStore(stateDir);
+  const currentWorkflow = workflowStore.createRun({
+    name: "current",
+    source: "inline",
+    scriptPath: join(projectRoot, "current.js"),
+    scriptHash: "current",
+    workspaceRoot: projectRoot,
+    workspaceId: "ws_current",
+  });
+  workflowStore.createRun({
+    name: "other",
+    source: "inline",
+    scriptPath: join(projectRoot, "other.js"),
+    scriptHash: "other",
+    workspaceRoot: projectRoot,
+    workspaceId: "ws_other",
+  });
+  workflowStore.close();
+
+  const workflowsJson = JSON.parse(execFileSync(
+    "node",
+    ["--import", "tsx", "src/cli.ts", "workflow", "ls", "--json"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEVSPACE_CONFIG_DIR: configDir,
+        DEVSPACE_ALLOWED_ROOTS: projectRoot,
+        DEVSPACE_STATE_DIR: stateDir,
+        DEVSPACE_WORKSPACE_ID: "ws_current",
+        DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        DEVSPACE_SUBAGENTS: "1",
+        DEVSPACE_WORKFLOWS: "1",
+        DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+      },
+    },
+  )) as { workflows: Array<{ id: string }> };
+  assert.deepEqual(
+    workflowsJson.workflows.map((workflow) => workflow.id),
+    [currentWorkflow.id],
+  );
 
   assert.equal(loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

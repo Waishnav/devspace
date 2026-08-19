@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
-import { jsonValueSchema, type JsonValue } from "./json-types.js";
+import { jsonValueSchema, parseJsonText, type JsonValue } from "./json-types.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
 import { createWorkflowStore } from "./workflow-store.js";
 import {

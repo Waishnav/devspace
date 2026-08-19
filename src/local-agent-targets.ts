@@ -13,15 +13,17 @@ export interface ParsedLocalAgentRunArgs {
   prompt: string;
   model?: string;
   effort?: string;
+  json: boolean;
 }
 
 export type LocalAgentTarget = ResolvedLocalAgentExecution;
 
 const USAGE =
-  'Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] "<prompt>"';
+  'Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] "<prompt>" [--json]';
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
-  const [target, ...rest] = args;
+  const json = args.at(-1) === "--json";
+  const [target, ...rest] = json ? args.slice(0, -1) : args;
   if (!target) {
     throw new Error(USAGE);
   }
@@ -72,7 +74,7 @@ export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs 
     throw new Error(USAGE);
   }
 
-  return { target, prompt, model, effort };
+  return { target, prompt, model, effort, json };
 }
 
 export function resolveLocalAgentTarget(
