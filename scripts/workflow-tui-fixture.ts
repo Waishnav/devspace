@@ -7,6 +7,14 @@ import type { WorkflowRunRecord } from "../src/workflow-types.js";
 
 const FIXTURE_VERSION = "large-v2";
 const WORKFLOW_NAME = "Ship multi-service authentication";
+const WORKFLOW_PHASES = [
+  { title: "Discovery", detail: "Map the existing authentication surface" },
+  { title: "Architecture", detail: "Choose service and data boundaries" },
+  { title: "Backend implementation", detail: "Implement services and migrations" },
+  { title: "Frontend integration", detail: "Connect the client experience" },
+  { title: "Verification", detail: "Exercise security and integration boundaries" },
+  { title: "Release", detail: "Prepare the rollout" },
+];
 
 const fixtureNames = [
   "empty",
@@ -90,6 +98,7 @@ function seedFixture(
       scriptPath: join(stateDir, "fixtures", `${name}.js`),
       scriptHash,
       workspaceRoot: workspace,
+      phases: WORKFLOW_PHASES,
       resumedFromRunId: replayParent?.id,
     });
 
@@ -235,6 +244,24 @@ function startCall(
       ? join(tmpdir(), `devspace-fixture-worktree-${callIndex}`)
       : undefined,
   });
+  store.attachAgentSession(runId, callIndex, `${provider}-fixture-${callIndex}`);
+  store.updateAgentUsage(runId, callIndex, fixtureUsage(callIndex, "partial"));
+  store.appendAgentActivity({
+    runId,
+    callIndex,
+    kind: "status",
+    status: "completed",
+    label: "session started",
+    detail: `${provider} accepted the task`,
+  });
+  store.appendAgentActivity({
+    runId,
+    callIndex,
+    kind: worktree ? "file" : "tool",
+    status: "running",
+    label: worktree ? "editing isolated worktree" : "inspecting workspace",
+    detail: label,
+  });
 }
 
 function startPhase(store: WorkflowStore, runId: string, phase: string): void {
@@ -256,7 +283,32 @@ function addCompletedCall(
   worktree = false,
 ): void {
   startCall(store, runId, callIndex, label, provider, phase, worktree);
+  store.appendAgentActivity({
+    runId,
+    callIndex,
+    kind: worktree ? "file" : "tool",
+    status: "completed",
+    label: worktree ? "updated implementation" : "inspected workspace",
+    detail: label,
+  });
+  store.updateAgentUsage(runId, callIndex, fixtureUsage(callIndex, "final"));
   store.completeAgentCall({ runId, callIndex, responseText: `${label} completed` });
+}
+
+function fixtureUsage(
+  callIndex: number,
+  state: "partial" | "final",
+): Parameters<WorkflowStore["updateAgentUsage"]>[2] {
+  const multiplier = state === "final" ? 1 : 0.7;
+  const inputTokens = Math.floor((18_000 + callIndex * 4_300) * multiplier);
+  const outputTokens = Math.floor((4_500 + callIndex * 1_700) * multiplier);
+  return {
+    inputTokens,
+    cachedInputTokens: Math.floor(inputTokens * 0.25),
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    state,
+  };
 }
 
 function addCompletedPhase(
