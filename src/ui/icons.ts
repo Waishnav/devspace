@@ -52,16 +52,45 @@ export const toolIcons = {
 
 export type ToolIcon = IconNode;
 
-const providerLogos = {
-  claude: new URL("./assets/provider-logos/claude.svg", import.meta.url).href,
-  codex: new URL("./assets/provider-logos/openai-dark.svg", import.meta.url).href,
-  copilot: new URL("./assets/provider-logos/copilot-dark.svg", import.meta.url).href,
-  cursor: new URL("./assets/provider-logos/cursor-dark.svg", import.meta.url).href,
-  opencode: new URL("./assets/provider-logos/opencode-dark.svg", import.meta.url).href,
-  pi: new URL("./assets/provider-logos/pi-on-dark.svg", import.meta.url).href,
-} as const;
+export interface ProviderLogo {
+  light: string;
+  dark: string;
+  invertInLight?: boolean;
+}
 
-export function getProviderLogo(name: string): string | undefined {
+const claudeLogo = new URL("./assets/provider-logos/claude.svg", import.meta.url).href;
+const codexLogo = new URL(
+  "./assets/provider-logos/openai-dark.svg",
+  import.meta.url,
+).href;
+const copilotLogo = new URL(
+  "./assets/provider-logos/copilot-dark.svg",
+  import.meta.url,
+).href;
+const cursorLightLogo = new URL(
+  "./assets/provider-logos/cursor-light.svg",
+  import.meta.url,
+).href;
+const cursorDarkLogo = new URL(
+  "./assets/provider-logos/cursor-dark.svg",
+  import.meta.url,
+).href;
+const opencodeLogo = new URL(
+  "./assets/provider-logos/opencode-dark.svg",
+  import.meta.url,
+).href;
+const piLogo = new URL("./assets/provider-logos/pi-on-dark.svg", import.meta.url).href;
+
+const providerLogos = {
+  claude: { light: claudeLogo, dark: claudeLogo },
+  codex: { light: codexLogo, dark: codexLogo, invertInLight: true },
+  copilot: { light: copilotLogo, dark: copilotLogo, invertInLight: true },
+  cursor: { light: cursorLightLogo, dark: cursorDarkLogo },
+  opencode: { light: opencodeLogo, dark: opencodeLogo },
+  pi: { light: piLogo, dark: piLogo, invertInLight: true },
+} as const satisfies Record<string, ProviderLogo>;
+
+export function getProviderLogo(name: string): ProviderLogo | undefined {
   const normalizedName = name.trim().toLowerCase() as keyof typeof providerLogos;
   return providerLogos[normalizedName];
 }

@@ -458,6 +458,22 @@ body {
   object-fit: contain;
 }
 
+.workspace-provider-logo-theme-light {
+  display: none;
+}
+
+:root[data-theme="light"] .workspace-provider-logo-theme-light {
+  display: block;
+}
+
+:root[data-theme="light"] .workspace-provider-logo-theme-dark {
+  display: none;
+}
+
+:root[data-theme="light"] .workspace-provider-logo-invert-in-light {
+  filter: invert(1);
+}
+
 .workspace-provider-logo.muted {
   opacity: 0.62;
 }
