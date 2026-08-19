@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "./db/client.js";
+import { createWorkflowAgentObserver } from "./workflow-agent-observer.js";
 import { WorkflowStore } from "./workflow-store.js";
 
 const root = mkdtempSync(join(tmpdir(), "devspace-workflow-store-test-"));
@@ -442,6 +443,37 @@ try {
   }
 
   assert.ok(store.listRuns().length >= 3);
+
+  const observedRun = store.createRun({
+    name: "Observe provider",
+    source: "inline",
+    scriptPath: join(root, "observe.js"),
+    scriptHash: "observer-test",
+    workspaceRoot: join(root, "project"),
+  });
+  store.startAgentCall({
+    runId: observedRun.id,
+    callIndex: 0,
+    cacheKey: "observer",
+    prompt: "Inspect the project",
+    provider: "codex",
+  });
+  const observer = createWorkflowAgentObserver(store, observedRun.id, 0, 60_000);
+  observer.onSession?.("session_123");
+  observer.onActivity?.({ kind: "command", status: "running", label: "npm test" });
+  observer.onUsage?.({ inputTokens: 100, outputTokens: 20, totalTokens: 120, state: "partial" });
+  observer.onUsage?.({ inputTokens: 180, outputTokens: 40, totalTokens: 220, state: "final" });
+  observer.close();
+
+  const retryObserver = createWorkflowAgentObserver(store, observedRun.id, 0, 60_000);
+  retryObserver.onUsage?.({ inputTokens: 50, outputTokens: 30, totalTokens: 80, state: "final" });
+  retryObserver.close();
+  assert.equal(store.getAgentCall(observedRun.id, 0)?.providerSessionId, "session_123");
+  assert.equal(store.getAgentCall(observedRun.id, 0)?.usage?.inputTokens, 230);
+  assert.equal(store.getAgentCall(observedRun.id, 0)?.usage?.outputTokens, 70);
+  assert.equal(store.getAgentCall(observedRun.id, 0)?.usage?.totalTokens, 300);
+  assert.equal(store.getAgentCall(observedRun.id, 0)?.usage?.state, "final");
+  assert.equal(store.listAgentActivity(observedRun.id, 0)[0]?.label, "npm test");
 
   // Second store instance sees same rows
   const other = new WorkflowStore(root);

@@ -9,12 +9,64 @@ import {
   extractPiFinalResponse,
   extractPiProviderError,
   extractPiStreamingText,
+  observeClaudeUsage,
   piCommandEnvironment,
   resolveAcpModelConfigUpdate,
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
+
+const observedClaudeUsage: LocalAgentUsageSnapshot[] = [];
+let claudeUsage = observeClaudeUsage({
+  type: "assistant",
+  message: {
+    usage: {
+      input_tokens: 100,
+      cache_read_input_tokens: 20,
+      cache_creation_input_tokens: 10,
+      output_tokens: 30,
+    },
+  },
+}, undefined, { onUsage: (usage) => observedClaudeUsage.push(usage) });
+assert.deepEqual(claudeUsage, {
+  inputTokens: 100,
+  cachedInputTokens: 20,
+  cacheCreationInputTokens: 10,
+  outputTokens: 30,
+  totalTokens: 160,
+  state: "partial",
+});
+
+claudeUsage = observeClaudeUsage({
+  type: "result",
+  usage: {
+    input_tokens: 200,
+    cache_read_input_tokens: 40,
+    cache_creation_input_tokens: 15,
+    output_tokens: 60,
+  },
+}, claudeUsage, { onUsage: (usage) => observedClaudeUsage.push(usage) });
+assert.deepEqual(claudeUsage, {
+  inputTokens: 200,
+  cachedInputTokens: 40,
+  cacheCreationInputTokens: 15,
+  outputTokens: 60,
+  totalTokens: 315,
+  state: "final",
+});
+assert.deepEqual(observedClaudeUsage, [
+  {
+    inputTokens: 100,
+    cachedInputTokens: 20,
+    cacheCreationInputTokens: 10,
+    outputTokens: 30,
+    totalTokens: 160,
+    state: "partial",
+  },
+  claudeUsage,
+]);
 
 const providers: LocalAgentProvider[] = [
   "codex",

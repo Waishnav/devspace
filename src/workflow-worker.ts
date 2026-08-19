@@ -4,6 +4,7 @@ import { availableParallelism } from "node:os";
 import type { ServerConfig } from "./config.js";
 import { parseJsonText, type JsonValue } from "./json-types.js";
 import { runLocalAgentProviderResult } from "./local-agent-adapters.js";
+import { createWorkflowAgentObserver } from "./workflow-agent-observer.js";
 import {
   isLocalAgentProvider,
   loadLocalAgentProfiles,
@@ -98,15 +99,25 @@ export async function runWorkflowWorker(
         if (abort.signal.aborted || store.isCancelRequested(runId)) {
           throw Object.assign(new Error("Workflow cancelled"), { name: "AbortError" });
         }
-        const providerRun = await runLocalAgentProviderResult(input.provider, {
-          prompt: input.prompt,
-          workspace: input.workspace,
-          providerSessionId: input.providerSessionId,
-          model: input.model,
-          effort: input.effort,
-          writeMode: "allowed",
-          schema: input.schema,
-        });
+        const observer = createWorkflowAgentObserver(store, runId, input.callIndex);
+        let providerRun;
+        try {
+          providerRun = await runLocalAgentProviderResult(
+            input.provider,
+            {
+              prompt: input.prompt,
+              workspace: input.workspace,
+              providerSessionId: input.providerSessionId,
+              model: input.model,
+              effort: input.effort,
+              writeMode: "allowed",
+              schema: input.schema,
+            },
+            observer,
+          );
+        } finally {
+          observer.close();
+        }
         if (providerRun.isErr()) throw providerRun.error;
         const providerResult = providerRun.value;
         return {
