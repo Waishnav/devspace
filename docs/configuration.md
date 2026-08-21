@@ -48,9 +48,11 @@ an attached or generated file into an already-open workspace:
 DEVSPACE_ARTIFACTS=1 npx @waishnav/devspace serve
 ```
 
-This feature currently supports Linux. It is not registered on macOS, Windows,
-or BSD because the secure publication path depends on traversable,
-descriptor-anchored directory paths provided by Linux procfs.
+This feature supports Linux, macOS, and Windows. Linux uses procfs-backed
+directory descriptors, macOS uses descriptor-relative filesystem operations,
+and Windows pins each destination directory with a non-delete-sharing handle
+while rejecting junctions and other reparse points. The tool is not registered
+on the remaining BSD platforms.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -64,6 +66,8 @@ The same settings may be persisted in `~/.devspace/config.json` as
 a `workspaceId` returned by `open_workspace`, and a relative workspace `path`.
 DevSpace safely creates missing parent directories, refuses to overwrite an
 existing destination, and returns only the normalized workspace-relative path.
+Windows alternate data streams, device names, ambiguous trailing dots or spaces,
+and other reserved path segments are rejected.
 It does not accept conflict modes, expected hashes, arbitrary URL strings, local
 paths, embedded credentials, or extra object fields.
 

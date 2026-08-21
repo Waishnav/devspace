@@ -1,19 +1,15 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import {
-  link,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  unlink,
-  type FileHandle,
-} from "node:fs/promises";
-import { isAbsolute, join, normalize, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { link } from "node:fs/promises";
+import { isAbsolute, normalize, sep } from "node:path";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { ArtifactError } from "./artifact-error.js";
+import {
+  isSecureArtifactPlatformSupported,
+  openSecureArtifactTarget,
+  type SecureArtifactTarget,
+} from "./artifact-secure-filesystem.js";
 import type { ServerConfig } from "./config.js";
 import {
   describeIncomingArtifactValue,
@@ -29,13 +25,6 @@ const ARTIFACT_WRITE_ANNOTATIONS = {
   idempotentHint: false,
   openWorldHint: true,
 };
-const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
-const DIRECTORY_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | NO_FOLLOW;
-const PARTIAL_PREFIX = ".devspace-download-";
-const PARTIAL_SUFFIX = ".partial";
-const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
-const MAX_STALE_PARTIAL_CLEANUP = 32;
-const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux"]);
 
 const openAIFileReferenceInputSchema = z.strictObject({
   download_url: z.string(),
@@ -67,13 +56,7 @@ export interface DownloadIncomingArtifactResult {
 export function isArtifactDownloadSupportedPlatform(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  return ARTIFACT_DOWNLOAD_PLATFORMS.has(platform);
-}
-
-interface SecureDestinationDirectory {
-  handle: FileHandle;
-  anchorPath: string;
-  close(): Promise<void>;
+  return isSecureArtifactPlatformSupported(platform);
 }
 
 interface ArtifactDestination {
@@ -161,7 +144,7 @@ export async function downloadIncomingArtifact({
   if (!isArtifactDownloadSupportedPlatform()) {
     throw new ArtifactError(
       "artifact_platform_unsupported",
-      "Native file download requires descriptor-anchored directory operations on this platform.",
+      "Native file download requires secure platform filesystem primitives.",
     );
   }
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
@@ -179,10 +162,7 @@ export async function downloadIncomingArtifact({
 
   const destination = normalizeArtifactDestination(path);
   const opened = await registry.open(file);
-  let workspaceHandle: FileHandle | undefined;
-  let destinationDirectory: SecureDestinationDirectory | undefined;
-  let partialPath: string | undefined;
-  let handle: FileHandle | undefined;
+  let target: SecureArtifactTarget | undefined;
 
   try {
     if (opened.size !== undefined && opened.size > maxFileBytes) {
@@ -192,26 +172,12 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    workspaceHandle = await openDirectoryNoFollow(
+    target = await openSecureArtifactTarget({
       workspaceRoot,
-      "artifact_workspace_unsafe",
-      "Selected workspace root is not a real directory.",
-    );
-    destinationDirectory = await prepareDestinationDirectory(
-      workspaceHandle,
-      destination.parentParts,
-    );
-    await cleanupStalePartials(destinationDirectory);
-
-    partialPath = join(
-      destinationDirectory.anchorPath,
-      `${PARTIAL_PREFIX}${randomUUID()}${PARTIAL_SUFFIX}`,
-    );
-    handle = await open(
-      partialPath,
-      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NO_FOLLOW,
-      0o600,
-    );
+      parentParts: destination.parentParts,
+      name: destination.name,
+      publishLink,
+    });
 
     const hash = createHash("sha256");
     let size = 0;
@@ -223,7 +189,7 @@ export async function downloadIncomingArtifact({
           "Native file exceeds the configured per-file limit.",
         );
       }
-      await writeAll(handle, chunk, size);
+      await target.writeAll(chunk, size);
       hash.update(chunk);
       size += chunk.length;
     }
@@ -235,39 +201,8 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    await handle.sync();
-    const writtenEntry = await handle.stat();
-    if (!writtenEntry.isFile() || writtenEntry.size !== size) {
-      throw new ArtifactError(
-        "artifact_write_integrity_failed",
-        "Native file could not be verified before publication.",
-      );
-    }
-
-    const partialEntry = await lstat(partialPath);
-    if (
-      partialEntry.isSymbolicLink()
-      || !partialEntry.isFile()
-      || partialEntry.dev !== writtenEntry.dev
-      || partialEntry.ino !== writtenEntry.ino
-      || partialEntry.size !== writtenEntry.size
-    ) {
-      throw new ArtifactError(
-        "artifact_partial_unsafe",
-        "Native file partial changed before publication.",
-      );
-    }
-
-    await publishDestination(
-      destinationDirectory,
-      partialPath,
-      destination.name,
-      writtenEntry,
-      handle,
-      publishLink,
-    );
-    await unlink(partialPath).catch(() => undefined);
-    partialPath = undefined;
+    await target.syncAndVerify(size);
+    await target.publish();
 
     return {
       path: destination.path,
@@ -278,10 +213,7 @@ export async function downloadIncomingArtifact({
     opened.stream.destroy();
     throw error;
   } finally {
-    await handle?.close().catch(() => undefined);
-    if (partialPath) await unlink(partialPath).catch(() => undefined);
-    await destinationDirectory?.close().catch(() => undefined);
-    await workspaceHandle?.close().catch(() => undefined);
+    await target?.close().catch(() => undefined);
   }
 }
 
@@ -341,43 +273,8 @@ function artifactToolResponse(result: { path: string }) {
   };
 }
 
-async function openDirectoryNoFollow(
-  path: string,
-  code: string,
-  message: string,
-): Promise<FileHandle> {
-  let handle: FileHandle | undefined;
-  try {
-    handle = await open(path, DIRECTORY_FLAGS);
-    await assertDirectoryHandle(handle);
-    return handle;
-  } catch (error) {
-    await handle?.close().catch(() => undefined);
-    if (error instanceof ArtifactError) throw error;
-    throw new ArtifactError(code, message);
-  }
-}
-
-async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
-  const entry = await handle.stat();
-  if (!entry.isDirectory()) {
-    throw new ArtifactError(
-      "artifact_directory_unsafe",
-      "Artifact destination parent is not a directory.",
-    );
-  }
-}
-
-function descriptorDirectoryPath(handle: FileHandle): string {
-  if (isArtifactDownloadSupportedPlatform()) return `/proc/self/fd/${handle.fd}`;
-  throw new ArtifactError(
-    "artifact_platform_unsupported",
-    "Native file download requires descriptor-anchored directory operations on this platform.",
-  );
-}
-
 function normalizeArtifactDestination(value: string): ArtifactDestination {
-  const rawParts = value.split(sep);
+  const rawParts = process.platform === "win32" ? value.split(/[\\/]/) : value.split(sep);
   if (
     !value
     || value.includes("\u0000")
@@ -404,6 +301,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   const parts = normalized.split(sep);
+  if (process.platform === "win32") validateWindowsDestinationParts(parts);
   const name = parts.at(-1);
   if (!name || name === "." || name === "..") {
     throw new ArtifactError(
@@ -413,162 +311,28 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   return {
-    path: normalized,
+    path: parts.join("/"),
     parentParts: parts.slice(0, -1),
     name,
   };
 }
 
-async function prepareDestinationDirectory(
-  rootHandle: FileHandle,
-  parentParts: readonly string[],
-): Promise<SecureDestinationDirectory> {
-  const openedHandles: FileHandle[] = [];
-  let parentHandle = rootHandle;
-  let parentAnchor = descriptorDirectoryPath(rootHandle);
-
-  try {
-    for (const part of parentParts) {
-      const child = await ensureWorkspaceChildDirectory(
-        parentHandle,
-        parentAnchor,
-        part,
-      );
-      openedHandles.push(child);
-      parentHandle = child;
-      parentAnchor = descriptorDirectoryPath(child);
-    }
-
-    return {
-      handle: parentHandle,
-      anchorPath: parentAnchor,
-      async close() {
-        for (const handle of openedHandles.reverse()) {
-          await handle.close().catch(() => undefined);
-        }
-      },
-    };
-  } catch (error) {
-    for (const handle of openedHandles.reverse()) {
-      await handle.close().catch(() => undefined);
-    }
-    throw error;
-  }
-}
-
-async function ensureWorkspaceChildDirectory(
-  parentHandle: FileHandle,
-  parentAnchor: string,
-  name: string,
-): Promise<FileHandle> {
-  await assertDirectoryHandle(parentHandle);
-  const path = join(parentAnchor, name);
-  try {
-    await mkdir(path, { mode: 0o755 });
-  } catch (error) {
-    if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-  }
-
-  return openDirectoryNoFollow(
-    path,
-    "artifact_destination_parent_unsafe",
-    "Artifact destination parent must be a real directory inside the workspace.",
-  );
-}
-
-async function publishDestination(
-  directory: SecureDestinationDirectory,
-  partialPath: string,
-  filename: string,
-  writtenEntry: Awaited<ReturnType<FileHandle["stat"]>>,
-  handle: FileHandle,
-  publishLink: typeof link,
-): Promise<void> {
-  await assertDirectoryHandle(directory.handle);
-  const candidate = join(directory.anchorPath, filename);
-  try {
-    await publishLink(partialPath, candidate);
-    assertPublishedArtifactEntry(await lstat(candidate), writtenEntry);
-  } catch (error) {
-    if (isNodeError(error) && error.code === "EEXIST") {
-      throw new ArtifactError(
-        "artifact_destination_exists",
-        "Artifact destination already exists.",
-      );
-    }
-    // Once the destination path exists, never unlink it during failure cleanup.
-    // Another process may have replaced that path after publication, and a
-    // path-based verification followed by unlink would introduce another race.
-    throw error;
-  }
-}
-
-function assertPublishedArtifactEntry(
-  entry: Awaited<ReturnType<typeof lstat>>,
-  writtenEntry: Awaited<ReturnType<FileHandle["stat"]>>,
-): void {
-  if (
-    entry.isSymbolicLink()
-    || !entry.isFile()
-    || entry.dev !== writtenEntry.dev
-    || entry.ino !== writtenEntry.ino
-    || entry.size !== writtenEntry.size
-  ) {
-    throw new ArtifactError(
-      "artifact_destination_publish_failed",
-      "Published artifact did not match the verified download.",
-    );
-  }
-}
-
-async function cleanupStalePartials(
-  directory: SecureDestinationDirectory,
-): Promise<void> {
-  await assertDirectoryHandle(directory.handle);
-  const entries = await readdir(directory.anchorPath, { withFileTypes: true });
-  let inspected = 0;
-  const cutoff = Date.now() - STALE_PARTIAL_AGE_MS;
-  for (const entry of entries) {
-    if (inspected >= MAX_STALE_PARTIAL_CLEANUP) break;
+function validateWindowsDestinationParts(parts: readonly string[]): void {
+  const reservedDevice = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i;
+  const forbiddenCharacter = /[<>:"|?*\u0000-\u001f]/;
+  for (const part of parts) {
     if (
-      !entry.name.startsWith(PARTIAL_PREFIX)
-      || !entry.name.endsWith(PARTIAL_SUFFIX)
-    ) continue;
-    inspected += 1;
-
-    const path = join(directory.anchorPath, entry.name);
-    const metadata = await lstatOrUndefined(path);
-    if (
-      !metadata
-      || metadata.isSymbolicLink()
-      || !metadata.isFile()
-      || metadata.mtimeMs >= cutoff
-      || (process.getuid?.() !== undefined && metadata.uid !== process.getuid?.())
-    ) continue;
-    await unlink(path).catch(() => undefined);
-  }
-}
-
-async function writeAll(
-  handle: FileHandle,
-  buffer: Buffer,
-  position: number,
-): Promise<void> {
-  let offset = 0;
-  while (offset < buffer.length) {
-    const { bytesWritten } = await handle.write(
-      buffer,
-      offset,
-      buffer.length - offset,
-      position + offset,
-    );
-    if (bytesWritten <= 0) {
+      !part
+      || part.endsWith(".")
+      || part.endsWith(" ")
+      || forbiddenCharacter.test(part)
+      || reservedDevice.test(part)
+    ) {
       throw new ArtifactError(
-        "artifact_short_write",
-        "Native file was not fully written.",
+        "artifact_destination_invalid",
+        "Artifact destination contains a Windows-reserved path segment.",
       );
     }
-    offset += bytesWritten;
   }
 }
 
@@ -596,17 +360,4 @@ function incomingStreamChunk(value: unknown): Buffer {
     "invalid_incoming_artifact_chunk",
     "Incoming artifact stream yielded a value that is not bytes or text.",
   );
-}
-
-async function lstatOrUndefined(path: string) {
-  try {
-    return await lstat(path);
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
