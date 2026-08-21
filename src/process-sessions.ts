@@ -222,6 +222,10 @@ export class ProcessSessionManager {
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
   }
 
+  get size(): number {
+    return this.sessions.size;
+  }
+
   async start(input: StartCommandInput): Promise<ProcessSnapshot> {
     const session = this.createSession(input);
     this.sessions.set(session.id, session);

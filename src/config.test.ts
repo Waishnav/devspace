@@ -28,6 +28,12 @@ assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents
 assert.equal(loadConfig(baseEnv).subagents, false);
 assert.equal(loadConfig(baseEnv).artifactsEnabled, false);
 assert.equal(loadConfig(baseEnv).artifactMaxFileBytes, 100 * 1024 * 1024);
+assert.equal(loadConfig(baseEnv).heapSnapshotThresholdBytes, undefined);
+assert.equal(
+  loadConfig({ ...baseEnv, DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES: "1073741824" })
+    .heapSnapshotThresholdBytes,
+  1024 * 1024 * 1024,
+);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_ARTIFACTS: "1" }).artifactsEnabled, true);
 assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_ARTIFACT_MAX_FILE_BYTES: "123" }).artifactMaxFileBytes,
@@ -66,6 +72,10 @@ assert.throws(
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
   /Invalid DEVSPACE_TOOL_MODE: invalid/,
+);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES: "0" }),
+  /Invalid DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES: 0/,
 );
 
 assert.deepEqual(loadConfig(baseEnv).logging, {

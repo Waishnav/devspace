@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,10 +9,11 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig, type ServerConfig } from "./config.js";
+import { startHeapSnapshotGuard } from "./heap-snapshot-guard.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
@@ -181,6 +183,119 @@ test("checkout reuse and context suppression survive a registry restart", async 
   } finally {
     await closeRestored();
   }
+});
+
+test("heap snapshot guard captures one diagnostic after the configured threshold", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-heap-guard-test-"));
+  let rss = 512;
+  let writes = 0;
+  const guard = startHeapSnapshotGuard({
+    stateDir: root,
+    thresholdBytes: 1_024,
+    intervalMs: 60_000,
+    memoryUsage: () => ({ rss }),
+    now: () => new Date("2026-08-21T05:00:00.000Z"),
+    writeSnapshot: (filename) => {
+      writes += 1;
+      writeFileSync(filename, "snapshot");
+      return filename;
+    },
+  });
+  t.after(() => {
+    guard.stop();
+    return rm(root, { recursive: true, force: true });
+  });
+
+  assert.equal(guard.checkNow(), undefined);
+  rss = 2_048;
+  const snapshotPath = guard.checkNow();
+  assert.ok(snapshotPath);
+  assert.equal(existsSync(snapshotPath), true);
+  assert.equal(writes, 1);
+  assert.equal(guard.checkNow(), undefined);
+  assert.equal(writes, 1);
+
+  const restoredGuard = startHeapSnapshotGuard({
+    stateDir: root,
+    thresholdBytes: 1_024,
+    intervalMs: 60_000,
+    memoryUsage: () => ({ rss }),
+    writeSnapshot: (filename) => {
+      writes += 1;
+      writeFileSync(filename, "unexpected");
+      return filename;
+    },
+  });
+  restoredGuard.stop();
+  assert.equal(restoredGuard.checkNow(), undefined);
+  assert.equal(writes, 1);
+});
+
+test("health endpoint reports bounded runtime state without exposing paths", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-health-test-"));
+  const config = loadConfig({
+    DEVSPACE_CONFIG_DIR: join(root, ".config"),
+    DEVSPACE_STATE_DIR: join(root, ".state"),
+    DEVSPACE_ALLOWED_ROOTS: root,
+    DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
+    DEVSPACE_AGENT_DIR: join(root, "agent"),
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    DEVSPACE_LOG_LEVEL: "silent",
+    PORT: "1",
+  });
+  const running = createServer(config, { incomingArtifactAdapters: [] });
+  const httpServer = running.app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => (error ? reject(error) : resolve()));
+    });
+    await running.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const response = await fetch(`http://127.0.0.1:${address.port}/healthz`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    ok: boolean;
+    name: string;
+    memory: Record<string, number>;
+    sessions: {
+      mcp: number;
+      process: number;
+      workspaceCache: {
+        cachedWorkspaces: number;
+        maxCachedWorkspaces: number;
+        workspaceIdleTimeoutMs: number;
+        oldestIdleMs: number;
+      };
+      persistedWorkspaces: number;
+      conversationBindings: number;
+    };
+  };
+
+  assert.equal(body.ok, true);
+  assert.equal(body.name, "devspace");
+  assert.ok(body.memory.rssBytes > 0);
+  assert.ok(body.memory.heapUsedBytes > 0);
+  assert.deepEqual(body.sessions, {
+    mcp: 0,
+    process: 0,
+    workspaceCache: {
+      cachedWorkspaces: 0,
+      maxCachedWorkspaces: 32,
+      workspaceIdleTimeoutMs: 60 * 60 * 1_000,
+      oldestIdleMs: 0,
+    },
+    persistedWorkspaces: 0,
+    conversationBindings: 0,
+  });
+  assert.equal(JSON.stringify(body).includes(root), false);
 });
 
 interface ServerFixture {

@@ -23,6 +23,7 @@ import {
   registerArtifactTools,
 } from "./artifact-tools.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
+import { startHeapSnapshotGuard } from "./heap-snapshot-guard.js";
 import {
   createOpenAIIncomingArtifactAdapter,
   type IncomingArtifactAdapter,
@@ -65,8 +66,10 @@ import {
 type Transport = StreamableHTTPServerTransport;
 // MCP clients can reconnect without closing the previous transport. Bound stale
 // session retention so abandoned MCP servers do not accumulate for the life of the process.
-const MCP_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
-const MCP_SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
+const MCP_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
+const RUNTIME_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1_000;
+const WORKSPACE_BINDING_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const WORKSPACE_BINDING_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
 const WRITE_TOOL_ANNOTATIONS = {
@@ -1699,6 +1702,17 @@ export function createServer(
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
     : [];
+  const heapSnapshotGuard = config.heapSnapshotThresholdBytes
+    ? startHeapSnapshotGuard({
+        stateDir: config.stateDir,
+        thresholdBytes: config.heapSnapshotThresholdBytes,
+        onError: (error) => {
+          logEvent(config.logging, "warn", "heap_snapshot_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      })
+    : undefined;
 
   const logSessionCloseResults = (
     reason: "idle_timeout" | "server_shutdown",
@@ -1724,12 +1738,33 @@ export function createServer(
     }
   };
 
-  const sessionCleanupTimer = setInterval(() => {
+  let lastBindingPruneAtMs = Number.NEGATIVE_INFINITY;
+  const pruneWorkspaceState = () => {
+    const now = Date.now();
+    const cachedWorkspacesRemoved = workspaces.pruneIdleWorkspaces();
+    let conversationBindingsRemoved = 0;
+    if (now - lastBindingPruneAtMs >= WORKSPACE_BINDING_PRUNE_INTERVAL_MS) {
+      const cutoffIso = new Date(now - WORKSPACE_BINDING_RETENTION_MS).toISOString();
+      conversationBindingsRemoved =
+        workspaceStore.pruneStaleConversationBindings(cutoffIso);
+      lastBindingPruneAtMs = now;
+    }
+    if (cachedWorkspacesRemoved > 0 || conversationBindingsRemoved > 0) {
+      logEvent(config.logging, "info", "workspace_state_pruned", {
+        cachedWorkspacesRemoved,
+        conversationBindingsRemoved,
+      });
+    }
+  };
+
+  pruneWorkspaceState();
+  const runtimeMaintenanceTimer = setInterval(() => {
+    pruneWorkspaceState();
     void transports
       .closeIdle(MCP_SESSION_IDLE_TIMEOUT_MS)
       .then((results) => logSessionCloseResults("idle_timeout", results));
-  }, MCP_SESSION_CLEANUP_INTERVAL_MS);
-  sessionCleanupTimer.unref();
+  }, RUNTIME_MAINTENANCE_INTERVAL_MS);
+  runtimeMaintenanceTimer.unref();
 
   if (config.logging.trustProxy) {
     app.set("trust proxy", true);
@@ -1785,7 +1820,25 @@ export function createServer(
   );
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    const memory = process.memoryUsage();
+    const persistedWorkspaces = workspaceStore.getStats();
+    res.json({
+      ok: true,
+      name: "devspace",
+      memory: {
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+        heapTotalBytes: memory.heapTotal,
+        externalBytes: memory.external,
+      },
+      sessions: {
+        mcp: transports.size,
+        process: processSessions.size,
+        workspaceCache: workspaces.getStats(),
+        persistedWorkspaces: persistedWorkspaces.workspaceSessions,
+        conversationBindings: persistedWorkspaces.conversationBindings,
+      },
+    });
   });
 
   app.all("/mcp", async (req, res) => {
@@ -1886,10 +1939,11 @@ export function createServer(
     localAgentProviders,
     close: () => {
       closePromise ??= (async () => {
-        clearInterval(sessionCleanupTimer);
+        clearInterval(runtimeMaintenanceTimer);
         const results = await transports.closeAll();
         logSessionCloseResults("server_shutdown", results);
         processSessions.shutdown();
+        heapSnapshotGuard?.stop();
         oauthProvider.close();
         workspaceStore.close?.();
       })();
