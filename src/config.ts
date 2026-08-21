@@ -24,6 +24,7 @@ export interface ServerConfig {
   worktreeRoot: string;
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
+  heapSnapshotThresholdBytes?: number;
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
@@ -243,6 +244,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       DEFAULT_ARTIFACT_MAX_FILE_BYTES,
       "DEVSPACE_ARTIFACT_MAX_FILE_BYTES",
     ),
+    heapSnapshotThresholdBytes:
+      env.DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES === undefined
+        ? undefined
+        : parsePositiveInteger(
+            env.DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES,
+            1,
+            "DEVSPACE_HEAP_SNAPSHOT_THRESHOLD_BYTES",
+          ),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),

@@ -22,6 +22,11 @@ export interface WorkspaceSession {
   lastUsedAt: string;
 }
 
+export interface WorkspaceStoreStats {
+  workspaceSessions: number;
+  conversationBindings: number;
+}
+
 export interface WorkspaceConversationBinding {
   conversationScopeId: string;
   targetKey: string;
@@ -53,6 +58,8 @@ export interface WorkspaceStore {
   }): WorkspaceConversationBinding;
   touchConversationBinding(conversationScopeId: string, targetKey: string): void;
   deleteConversationBinding(conversationScopeId: string, targetKey: string): void;
+  getStats(): WorkspaceStoreStats;
+  pruneStaleConversationBindings(cutoffIso: string): number;
   close?(): void;
 }
 
@@ -199,6 +206,27 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
         ),
       )
       .run();
+  }
+
+  getStats(): WorkspaceStoreStats {
+    const workspaceSessions = this.database.sqlite
+      .prepare("select count(*) as count from workspace_sessions")
+      .get() as { count: number };
+    const conversationBindings = this.database.sqlite
+      .prepare("select count(*) as count from workspace_conversation_bindings")
+      .get() as { count: number };
+    return {
+      workspaceSessions: workspaceSessions.count,
+      conversationBindings: conversationBindings.count,
+    };
+  }
+
+  pruneStaleConversationBindings(cutoffIso: string): number {
+    return this.database.sqlite
+      .prepare(
+        "delete from workspace_conversation_bindings where last_used_at < ?",
+      )
+      .run(cutoffIso).changes;
   }
 
   close(): void {

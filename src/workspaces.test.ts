@@ -129,6 +129,50 @@ test("persisted checkout and worktree sessions restore after recreating the regi
   }
 });
 
+test("workspace cache evicts least-recently-used contexts and restores them by id", async (t) => {
+  const context = await fixture(t);
+  const stateDir = join(context.root, ".bounded-state");
+  const store = new SqliteWorkspaceStore(stateDir);
+  t.after(() => store.close());
+
+  let now = 0;
+  const registry = new WorkspaceRegistry(context.config, store, {
+    maxCachedWorkspaces: 2,
+    workspaceIdleTimeoutMs: 100,
+    now: () => now,
+  });
+  const roots = ["project-a", "project-b", "project-c"].map((name) => join(context.root, name));
+  await Promise.all(roots.map((root) => mkdir(root)));
+
+  const first = await registry.openWorkspace(roots[0]!);
+  now = 10;
+  await registry.openWorkspace(roots[1]!);
+  now = 20;
+  const third = await registry.openWorkspace(roots[2]!);
+
+  assert.equal(registry.getStats().cachedWorkspaces, 2);
+
+  now = 30;
+  const restoredFirst = registry.getWorkspace(first.workspace.id);
+  assert.equal(restoredFirst.id, first.workspace.id);
+  assert.equal(restoredFirst.root, roots[0]);
+  assert.equal(registry.getStats().cachedWorkspaces, 2);
+
+  now = 121;
+  registry.getWorkspace(restoredFirst.id);
+  assert.equal(registry.pruneIdleWorkspaces(), 1);
+  assert.deepEqual(registry.getStats(), {
+    cachedWorkspaces: 1,
+    maxCachedWorkspaces: 2,
+    workspaceIdleTimeoutMs: 100,
+    oldestIdleMs: 0,
+  });
+
+  const restoredThird = registry.getWorkspace(third.workspace.id);
+  assert.equal(restoredThird.root, roots[2]);
+  assert.equal(registry.getStats().cachedWorkspaces, 2);
+});
+
 test("workspace paths outside the allowed roots are rejected", async (t) => {
   const context = await fixture(t);
 

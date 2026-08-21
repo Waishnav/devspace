@@ -82,20 +82,51 @@ export interface OpenWorkspaceOptions {
   conversationScopeId?: string;
 }
 
+export interface WorkspaceRegistryOptions {
+  maxCachedWorkspaces?: number;
+  workspaceIdleTimeoutMs?: number;
+  now?: () => number;
+}
+
+export interface WorkspaceRegistryStats {
+  cachedWorkspaces: number;
+  maxCachedWorkspaces: number;
+  workspaceIdleTimeoutMs: number;
+  oldestIdleMs: number;
+}
+
 type PathStats = Stats;
 type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
   mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
 };
 
+const DEFAULT_MAX_CACHED_WORKSPACES = 32;
+const DEFAULT_WORKSPACE_IDLE_TIMEOUT_MS = 60 * 60 * 1_000;
+
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
+  private readonly workspaceLastAccessMs = new Map<string, number>();
   private readonly pendingCheckoutOpens = new Map<string, Promise<WorkspaceContext>>();
+  private readonly maxCachedWorkspaces: number;
+  private readonly workspaceIdleTimeoutMs: number;
+  private readonly now: () => number;
 
   constructor(
     private readonly config: ServerConfig,
     private readonly store?: WorkspaceStore,
-  ) {}
+    options: WorkspaceRegistryOptions = {},
+  ) {
+    this.maxCachedWorkspaces = positiveInteger(
+      options.maxCachedWorkspaces,
+      DEFAULT_MAX_CACHED_WORKSPACES,
+    );
+    this.workspaceIdleTimeoutMs = positiveInteger(
+      options.workspaceIdleTimeoutMs,
+      DEFAULT_WORKSPACE_IDLE_TIMEOUT_MS,
+    );
+    this.now = options.now ?? Date.now;
+  }
 
   async openWorkspace(
     input: string | OpenWorkspaceInput,
@@ -174,7 +205,7 @@ export class WorkspaceRegistry {
         };
       }
 
-      this.workspaces.delete(binding.workspaceSessionId);
+      this.forgetWorkspace(binding.workspaceSessionId);
       this.store?.deleteConversationBinding(conversationScopeId, targetKey);
     }
 
@@ -245,6 +276,7 @@ export class WorkspaceRegistry {
   getWorkspace(workspaceId: string): Workspace {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace) {
+      this.touchWorkspace(workspaceId);
       this.store?.touchSession(workspaceId);
       return workspace;
     }
@@ -278,9 +310,35 @@ export class WorkspaceRegistry {
       activatedSkillDirs: new Set(),
     };
     this.store?.touchSession(workspaceId);
-    this.workspaces.set(restoredWorkspace.id, restoredWorkspace);
+    this.rememberWorkspace(restoredWorkspace);
 
     return restoredWorkspace;
+  }
+
+  getStats(): WorkspaceRegistryStats {
+    const now = this.now();
+    let oldestIdleMs = 0;
+    for (const lastAccessMs of this.workspaceLastAccessMs.values()) {
+      oldestIdleMs = Math.max(oldestIdleMs, Math.max(0, now - lastAccessMs));
+    }
+
+    return {
+      cachedWorkspaces: this.workspaces.size,
+      maxCachedWorkspaces: this.maxCachedWorkspaces,
+      workspaceIdleTimeoutMs: this.workspaceIdleTimeoutMs,
+      oldestIdleMs,
+    };
+  }
+
+  pruneIdleWorkspaces(): number {
+    const now = this.now();
+    let removed = 0;
+    for (const [workspaceId, lastAccessMs] of this.workspaceLastAccessMs) {
+      if (now - lastAccessMs <= this.workspaceIdleTimeoutMs) continue;
+      this.forgetWorkspace(workspaceId);
+      removed += 1;
+    }
+    return removed;
   }
 
   resolvePath(workspace: Workspace, inputPath: string): string {
@@ -376,7 +434,7 @@ export class WorkspaceRegistry {
       baseSha: workspace.worktree?.baseSha,
       managed: workspace.worktree?.managed,
     });
-    this.workspaces.set(workspace.id, workspace);
+    this.rememberWorkspace(workspace);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
     const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
 
@@ -387,6 +445,33 @@ export class WorkspaceRegistry {
       workspaceReused: false,
       includeBootstrapContext: true,
     };
+  }
+
+  private rememberWorkspace(workspace: Workspace): void {
+    this.pruneIdleWorkspaces();
+    this.workspaces.set(workspace.id, workspace);
+    this.touchWorkspace(workspace.id);
+
+    while (this.workspaces.size > this.maxCachedWorkspaces) {
+      let oldestWorkspaceId: string | undefined;
+      let oldestAccessMs = Number.POSITIVE_INFINITY;
+      for (const [workspaceId, lastAccessMs] of this.workspaceLastAccessMs) {
+        if (lastAccessMs >= oldestAccessMs) continue;
+        oldestWorkspaceId = workspaceId;
+        oldestAccessMs = lastAccessMs;
+      }
+      if (!oldestWorkspaceId) break;
+      this.forgetWorkspace(oldestWorkspaceId);
+    }
+  }
+
+  private touchWorkspace(workspaceId: string): void {
+    this.workspaceLastAccessMs.set(workspaceId, this.now());
+  }
+
+  private forgetWorkspace(workspaceId: string): void {
+    this.workspaces.delete(workspaceId);
+    this.workspaceLastAccessMs.delete(workspaceId);
   }
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {
@@ -459,6 +544,14 @@ export class WorkspaceRegistry {
 
     return discovered.sort((a, b) => a.path.localeCompare(b.path));
   }
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Expected a positive integer, received: ${value}`);
+  }
+  return value;
 }
 
 async function canonicalPath(path: string): Promise<string> {

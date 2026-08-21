@@ -26,6 +26,41 @@ test("a conversation reuses its checkout context", async (t) => {
   assert.deepEqual(second.workspace.agentProfiles, first.workspace.agentProfiles);
 });
 
+test("workspace store prunes stale conversation bindings without deleting sessions", async (t) => {
+  const context = await fixture(t);
+  const oldWorkspace = await context.registry.openWorkspace(context.project, {
+    conversationScopeId: "chat-old",
+  });
+  await context.registry.openWorkspace(context.project, {
+    conversationScopeId: "chat-current",
+  });
+
+  const database = openDatabase(context.stateDir);
+  try {
+    database.sqlite
+      .prepare(
+        "update workspace_conversation_bindings set last_used_at = ? where conversation_scope_id = ?",
+      )
+      .run("2026-01-01T00:00:00.000Z", "chat-old");
+  } finally {
+    database.close();
+  }
+
+  assert.deepEqual(context.store.getStats(), {
+    workspaceSessions: 2,
+    conversationBindings: 2,
+  });
+  assert.equal(
+    context.store.pruneStaleConversationBindings("2026-02-01T00:00:00.000Z"),
+    1,
+  );
+  assert.deepEqual(context.store.getStats(), {
+    workspaceSessions: 2,
+    conversationBindings: 1,
+  });
+  assert.equal(context.store.getSession(oldWorkspace.workspace.id)?.status, "active");
+});
+
 test("different conversations receive separate checkout workspaces", async (t) => {
   const { project, registry } = await fixture(t);
 
