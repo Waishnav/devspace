@@ -14,6 +14,7 @@ export interface DevspaceUserConfig {
   port?: number;
   allowedRoots?: string[];
   publicBaseUrl?: string | null;
+  widgets?: "off" | "changes" | "full";
   allowedHosts?: string[];
   stateDir?: string;
   worktreeRoot?: string;
