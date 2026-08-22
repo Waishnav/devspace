@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { assertAllowedPath, expandHomePath, resolveAllowedPath } from "./roots.js";
+import {
+  AccessDeniedError,
+  assertAllowedPath,
+  expandHomePath,
+  resolveAllowedPath,
+} from "./roots.js";
 
 const home = homedir();
 
@@ -23,6 +28,21 @@ assert.equal(
 assert.equal(
   resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
   resolve("/workspace", "~/file.txt"),
+);
+
+const rejectedPath = resolve(home, "outside", "project");
+const allowedRoots = [resolve(home, "personal"), resolve(home, "work")];
+assert.throws(
+  () => assertAllowedPath(rejectedPath, allowedRoots),
+  (error: unknown) => {
+    assert.ok(error instanceof AccessDeniedError);
+    assert.equal(
+      error.message,
+      `Path is outside allowed roots: ${rejectedPath}\nAllowed roots:\n` +
+        allowedRoots.map((root) => `- ${root}`).join("\n"),
+    );
+    return true;
+  },
 );
 
 if (process.platform === "win32") {

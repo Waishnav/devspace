@@ -37,7 +37,9 @@ export function assertAllowedPath(path: string, allowedRoots: string[]): string 
     return resolvedPath;
   }
 
-  throw new AccessDeniedError(`Path is outside allowed roots: ${path}`);
+  throw new AccessDeniedError(
+    `Path is outside allowed roots: ${path}\nAllowed roots:\n${allowedRoots.map((root) => `- ${root}`).join("\n")}`,
+  );
 }
 
 export function resolveAllowedPath(inputPath: string, cwd: string, allowedRoots: string[]): string {
