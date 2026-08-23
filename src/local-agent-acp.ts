@@ -10,6 +10,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { terminateProcessTree } from "./process-platform.js";
+import { DEVSPACE_VERSION } from "./version.js";
 import {
   GrokPromptCompletionRegistry,
   GROK_DEFAULT_MODEL,
@@ -36,7 +37,6 @@ const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 const ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
-const DEVSPACE_VERSION = readDevspaceVersion();
 
 const observeChildError = (): void => {};
 
@@ -849,14 +849,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-function readDevspaceVersion(): string {
-  const packageJson = require("../package.json") as { version?: unknown };
-  if (typeof packageJson.version !== "string" || !packageJson.version) {
-    throw new Error("Unable to read DevSpace package version.");
-  }
-  return packageJson.version;
 }
 
 function readArray(value: unknown, key: string): unknown[] | undefined {

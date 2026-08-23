@@ -11,16 +11,43 @@ const baseEnv = {
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
-assert.equal(loadConfig(baseEnv).toolMode, "minimal");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).toolMode, "minimal");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "codex");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).toolMode, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "minimal");
+assert.deepEqual(loadConfig(baseEnv).presentation, { mode: "inline" });
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).presentation, {
+  mode: "change-review",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).presentation, {
+  mode: "inline",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).presentation, {
+  mode: "off",
+});
+assert.deepEqual(loadConfig(baseEnv).harness, {
+  kind: "claude-code",
+  inspection: "shell",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).harness, {
+  kind: "claude-code",
+  inspection: "shell",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).harness, {
+  kind: "claude-code",
+  inspection: "dedicated",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).harness, {
+  kind: "codex",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).harness, {
+  kind: "claude-code",
+  inspection: "dedicated",
+});
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).harness, {
+  kind: "claude-code",
+  inspection: "shell",
+});
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "maybe" }),
+  /Invalid DEVSPACE_MINIMAL_TOOLS: maybe/,
+);
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
@@ -34,10 +61,18 @@ assert.equal(
 );
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "treu" }),
+  /Invalid DEVSPACE_SKILLS: treu/,
+);
 assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents, {
   enabled: true,
   providers: [],
 });
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "sometimes" }),
+  /Invalid DEVSPACE_SUBAGENTS: sometimes/,
+);
 assert.throws(
   () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "invalid" }),
   /Invalid DEVSPACE_WIDGETS: invalid/,
@@ -186,3 +221,69 @@ assert.deepEqual(fileConfig.allowedHosts, [
   "::1",
   "devspace.example.com",
 ]);
+
+const jsoncConfigDir = mkdtempSync(join(tmpdir(), "devspace-jsonc-load-config-test-"));
+writeFileSync(
+  join(jsoncConfigDir, "config.jsonc"),
+  `{
+    // Structured v1 configuration.
+    "version": 1,
+    "server": {
+      "port": 8989,
+      "allowedRoots": [${JSON.stringify(process.cwd())}],
+      "publicBaseUrl": "https://jsonc.devspace.example.com"
+    },
+    "harness": {
+      "kind": "codex"
+    },
+    "presentation": {
+      "mode": "change-review"
+    },
+    "skills": {
+      "enabled": false,
+      "paths": ["~/.custom-skills"]
+    },
+    "artifacts": {
+      "enabled": true,
+      "maxFileBytes": 456
+    },
+    "logging": {
+      "level": "debug",
+      "requests": false
+    },
+    "oauth": {
+      "accessTokenTtlSeconds": 120,
+      "scopes": ["devspace", "admin"]
+    }
+  }`,
+);
+writeFileSync(
+  join(jsoncConfigDir, "auth.json"),
+  JSON.stringify({ ownerToken: "jsonc-owner-token-long-enough" }),
+);
+
+const jsoncConfig = loadConfig({ DEVSPACE_CONFIG_DIR: jsoncConfigDir });
+assert.equal(jsoncConfig.port, 8989);
+assert.equal(jsoncConfig.publicBaseUrl, "https://jsonc.devspace.example.com");
+assert.deepEqual(jsoncConfig.harness, { kind: "codex" });
+assert.deepEqual(jsoncConfig.presentation, { mode: "change-review" });
+assert.equal(jsoncConfig.skillsEnabled, false);
+assert.deepEqual(jsoncConfig.skillPaths, ["~/.custom-skills"]);
+assert.equal(jsoncConfig.artifactsEnabled, true);
+assert.equal(jsoncConfig.artifactMaxFileBytes, 456);
+assert.equal(jsoncConfig.logging.level, "debug");
+assert.equal(jsoncConfig.logging.requests, false);
+assert.equal(jsoncConfig.oauth.accessTokenTtlSeconds, 120);
+assert.deepEqual(jsoncConfig.oauth.scopes, ["devspace", "admin"]);
+
+const envOverride = loadConfig({
+  DEVSPACE_CONFIG_DIR: jsoncConfigDir,
+  DEVSPACE_TOOL_MODE: "full",
+  DEVSPACE_WIDGETS: "off",
+  DEVSPACE_SKILLS: "1",
+  DEVSPACE_LOG_LEVEL: "warn",
+});
+assert.deepEqual(envOverride.harness, { kind: "claude-code", inspection: "dedicated" });
+assert.deepEqual(envOverride.presentation, { mode: "off" });
+assert.equal(envOverride.skillsEnabled, true);
+assert.equal(envOverride.logging.level, "warn");

@@ -5,9 +5,17 @@ import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
 import { resolveSubagentsConfig, type SubagentsConfig } from "./local-agent-config.js";
+import {
+  harnessFromLegacyToolMode,
+  type HarnessConfig,
+  type LegacyToolMode,
+} from "./harness.js";
+import {
+  presentationFromLegacyWidgetMode,
+  type LegacyWidgetMode,
+  type PresentationConfig,
+} from "./presentation.js";
 
-export type ToolMode = "minimal" | "full" | "codex";
-export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_ARTIFACT_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -19,8 +27,8 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
-  toolMode: ToolMode;
-  widgets: WidgetMode;
+  harness: HarnessConfig;
+  presentation: PresentationConfig;
   stateDir: string;
   worktreeRoot: string;
   artifactsEnabled: boolean;
@@ -81,36 +89,44 @@ function normalizeAllowedHosts(rawHosts: string[], derivedHosts: string[]): stri
   return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)));
 }
 
-function parseBoolean(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
+function parseBoolean(value: string | undefined, name: string): boolean {
+  if (value === undefined) return false;
+
+  const normalized = value.toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`Invalid ${name}: ${value}`);
 }
 
-function parseToolMode(env: NodeJS.ProcessEnv): ToolMode {
+function parseLegacyToolModeOverride(env: NodeJS.ProcessEnv): LegacyToolMode | undefined {
   const mode = env.DEVSPACE_TOOL_MODE;
   if (mode === "minimal" || mode === "full" || mode === "codex") return mode;
   if (mode) throw new Error(`Invalid DEVSPACE_TOOL_MODE: ${mode}`);
 
   if (env.DEVSPACE_MINIMAL_TOOLS !== undefined) {
-    return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS) ? "minimal" : "full";
+    return parseBoolean(env.DEVSPACE_MINIMAL_TOOLS, "DEVSPACE_MINIMAL_TOOLS") ? "minimal" : "full";
   }
-  return "minimal";
+  return undefined;
 }
 
-function parseLogLevel(value: string | undefined): LogLevel {
-  if (!value || value === "info") return "info";
+function parseLogLevel(value: string | undefined, fallback: LogLevel = "info"): LogLevel {
+  if (!value) return fallback;
+  if (value === "info") return "info";
   if (["silent", "error", "warn", "debug"].includes(value)) return value as LogLevel;
 
   throw new Error(`Invalid DEVSPACE_LOG_LEVEL: ${value}`);
 }
 
-function parseLogFormat(value: string | undefined): LogFormat {
-  if (!value || value === "json") return "json";
+function parseLogFormat(value: string | undefined, fallback: LogFormat = "json"): LogFormat {
+  if (!value) return fallback;
+  if (value === "json") return "json";
   if (value === "pretty") return "pretty";
 
   throw new Error(`Invalid DEVSPACE_LOG_FORMAT: ${value}`);
 }
 
-function parsePathList(value: string | undefined): string[] {
+function parsePathList(value: string | undefined, fallback: string[] = []): string[] {
+  if (value === undefined) return fallback;
   return (
     value
       ?.split(",")
@@ -144,20 +160,34 @@ function parsePositiveInteger(
   return parsed;
 }
 
-function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
+function parseLoggingConfig(
+  env: NodeJS.ProcessEnv,
+  stored: Partial<LoggingConfig> = {},
+): LoggingConfig {
   return {
-    level: parseLogLevel(env.DEVSPACE_LOG_LEVEL),
-    format: parseLogFormat(env.DEVSPACE_LOG_FORMAT),
-    requests: env.DEVSPACE_LOG_REQUESTS === undefined ? true : parseBoolean(env.DEVSPACE_LOG_REQUESTS),
-    assets: parseBoolean(env.DEVSPACE_LOG_ASSETS),
-    toolCalls: env.DEVSPACE_LOG_TOOL_CALLS === undefined ? true : parseBoolean(env.DEVSPACE_LOG_TOOL_CALLS),
-    shellCommands: parseBoolean(env.DEVSPACE_LOG_SHELL_COMMANDS),
-    trustProxy: parseBoolean(env.DEVSPACE_TRUST_PROXY),
+    level: parseLogLevel(env.DEVSPACE_LOG_LEVEL, stored.level),
+    format: parseLogFormat(env.DEVSPACE_LOG_FORMAT, stored.format),
+    requests: env.DEVSPACE_LOG_REQUESTS === undefined
+      ? stored.requests ?? true
+      : parseBoolean(env.DEVSPACE_LOG_REQUESTS, "DEVSPACE_LOG_REQUESTS"),
+    assets: env.DEVSPACE_LOG_ASSETS === undefined
+      ? stored.assets ?? false
+      : parseBoolean(env.DEVSPACE_LOG_ASSETS, "DEVSPACE_LOG_ASSETS"),
+    toolCalls: env.DEVSPACE_LOG_TOOL_CALLS === undefined
+      ? stored.toolCalls ?? true
+      : parseBoolean(env.DEVSPACE_LOG_TOOL_CALLS, "DEVSPACE_LOG_TOOL_CALLS"),
+    shellCommands: env.DEVSPACE_LOG_SHELL_COMMANDS === undefined
+      ? stored.shellCommands ?? false
+      : parseBoolean(env.DEVSPACE_LOG_SHELL_COMMANDS, "DEVSPACE_LOG_SHELL_COMMANDS"),
+    trustProxy: env.DEVSPACE_TRUST_PROXY === undefined
+      ? stored.trustProxy ?? false
+      : parseBoolean(env.DEVSPACE_TRUST_PROXY, "DEVSPACE_TRUST_PROXY"),
   };
 }
 
-function parseWidgetMode(value: string | undefined): WidgetMode {
-  if (!value || value === "full") return "full";
+function parseLegacyWidgetModeOverride(value: string | undefined): LegacyWidgetMode | undefined {
+  if (!value) return undefined;
+  if (value === "full") return "full";
   if (value === "off" || value === "changes") return value;
 
   throw new Error(`Invalid DEVSPACE_WIDGETS: ${value}`);
@@ -174,25 +204,33 @@ function parseRequiredSecret(value: string | undefined, name: string): string {
   return secret;
 }
 
-function parseOAuthConfig(env: NodeJS.ProcessEnv, ownerToken: string | undefined): OAuthConfig {
+function parseOAuthConfig(
+  env: NodeJS.ProcessEnv,
+  ownerToken: string | undefined,
+  stored: {
+    accessTokenTtlSeconds?: number;
+    refreshTokenTtlSeconds?: number;
+    scopes?: string[];
+    allowedRedirectHosts?: string[];
+  } = {},
+): OAuthConfig {
   return {
     ownerToken: parseRequiredSecret(env.DEVSPACE_OAUTH_OWNER_TOKEN ?? ownerToken, "DEVSPACE_OAUTH_OWNER_TOKEN"),
     accessTokenTtlSeconds: parsePositiveInteger(
-      env.DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      env.DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS ?? numberConfigValue(stored.accessTokenTtlSeconds),
       DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
       "DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS",
     ),
     refreshTokenTtlSeconds: parsePositiveInteger(
-      env.DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+      env.DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS ?? numberConfigValue(stored.refreshTokenTtlSeconds),
       DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
       "DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
     ),
-    scopes: parseStringList(env.DEVSPACE_OAUTH_SCOPES, ["devspace"]),
-    allowedRedirectHosts: parseStringList(env.DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS, [
-      "chatgpt.com",
-      "localhost",
-      "127.0.0.1",
-    ]),
+    scopes: parseStringList(env.DEVSPACE_OAUTH_SCOPES, stored.scopes ?? ["devspace"]),
+    allowedRedirectHosts: parseStringList(
+      env.DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS,
+      stored.allowedRedirectHosts ?? ["chatgpt.com", "localhost", "127.0.0.1"],
+    ),
   };
 }
 
@@ -210,10 +248,13 @@ function defaultAgentDir(): string {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
-  const host = env.HOST ?? files.config.host ?? "127.0.0.1";
-  const port = parsePort(env.PORT ?? files.config.port);
+  const storedServer = files.config.server ?? {};
+  const storedSkills = files.config.skills ?? {};
+  const storedArtifacts = files.config.artifacts ?? {};
+  const host = env.HOST ?? storedServer.host ?? "127.0.0.1";
+  const port = parsePort(env.PORT ?? storedServer.port);
   const publicBaseUrl = parsePublicBaseUrl(
-    env.DEVSPACE_PUBLIC_BASE_URL ?? files.config.publicBaseUrl ?? localPublicBaseUrl(host, port),
+    env.DEVSPACE_PUBLIC_BASE_URL ?? storedServer.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
   const derivedAllowedHosts = [
     "localhost",
@@ -221,36 +262,44 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     "::1",
     host,
     new URL(publicBaseUrl).hostname,
-    ...(files.config.allowedHosts ?? []),
+    ...(storedServer.allowedHosts ?? []),
   ];
+  const legacyToolMode = parseLegacyToolModeOverride(env);
+  const legacyWidgetMode = parseLegacyWidgetModeOverride(env.DEVSPACE_WIDGETS);
 
   return {
     host,
     port,
-    oauth: parseOAuthConfig(env, files.auth.ownerToken),
-    allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? files.config.allowedRoots),
+    oauth: parseOAuthConfig(env, files.auth.ownerToken, files.config.oauth),
+    allowedRoots: parseAllowedRoots(env.DEVSPACE_ALLOWED_ROOTS ?? storedServer.allowedRoots),
     allowedHosts: parseAllowedHosts(env.DEVSPACE_ALLOWED_HOSTS, derivedAllowedHosts),
     publicBaseUrl,
-    toolMode: parseToolMode(env),
-    widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
-    stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
-    worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
+    harness: legacyToolMode
+      ? harnessFromLegacyToolMode(legacyToolMode)
+      : files.config.harness ?? { kind: "claude-code", inspection: "shell" },
+    presentation: legacyWidgetMode
+      ? presentationFromLegacyWidgetMode(legacyWidgetMode)
+      : files.config.presentation ?? { mode: "inline" },
+    stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? storedServer.stateDir ?? defaultStateDir())),
+    worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? storedServer.worktreeRoot ?? defaultWorktreeRoot())),
     artifactsEnabled:
       env.DEVSPACE_ARTIFACTS === undefined
-        ? files.config.artifactsEnabled === true
-        : parseBoolean(env.DEVSPACE_ARTIFACTS),
+        ? storedArtifacts.enabled === true
+        : parseBoolean(env.DEVSPACE_ARTIFACTS, "DEVSPACE_ARTIFACTS"),
     artifactMaxFileBytes: parsePositiveInteger(
-      env.DEVSPACE_ARTIFACT_MAX_FILE_BYTES ?? numberConfigValue(files.config.artifactMaxFileBytes),
+      env.DEVSPACE_ARTIFACT_MAX_FILE_BYTES ?? numberConfigValue(storedArtifacts.maxFileBytes),
       DEFAULT_ARTIFACT_MAX_FILE_BYTES,
       "DEVSPACE_ARTIFACT_MAX_FILE_BYTES",
     ),
-    skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
-    skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
+    skillsEnabled: env.DEVSPACE_SKILLS === undefined
+      ? storedSkills.enabled ?? true
+      : parseBoolean(env.DEVSPACE_SKILLS, "DEVSPACE_SKILLS"),
+    skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS, storedSkills.paths ?? []),
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),
     subagents: resolveSubagentsConfig(files.config.subagents, env),
-    agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
-    logging: parseLoggingConfig(env),
+    agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? storedSkills.agentDir ?? defaultAgentDir())),
+    logging: parseLoggingConfig(env, files.config.logging),
   };
 }
 

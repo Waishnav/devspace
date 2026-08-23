@@ -56,7 +56,7 @@ remain limited to the roots configured for ChatGPT.
 
 Setup detects supported Coding Agents and asks which ones DevSpace may use.
 These choices are stored as provider objects under `subagents` in
-`~/.devspace/config.json`.
+`~/.devspace/config.jsonc`.
 
 If you selected Coding Agents, setup prints:
 
@@ -120,7 +120,7 @@ password approval page. Enter the Owner password printed during setup.
 The default config files are:
 
 ```text
-~/.devspace/config.json
+~/.devspace/config.jsonc
 ~/.devspace/auth.json
 ```
 

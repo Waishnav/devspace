@@ -143,7 +143,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
           hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
         },
       ],
-      initialValues: files.config.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
+      initialValues: files.config.server?.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
       required: true,
     });
     if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
@@ -153,7 +153,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     let allowedRoots: string[] | undefined;
     if (useChatGpt) {
-      const defaultRoots = files.config.allowedRoots?.join(", ") || process.cwd();
+      const defaultRoots = files.config.server?.allowedRoots?.join(", ") || process.cwd();
       const rootsAnswer = await textPrompt({
         message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
         placeholder: defaultRoots,
@@ -166,7 +166,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         .filter(Boolean);
     }
 
-    const port = isValidPort(files.config.port) ? files.config.port : 7676;
+    const port = isValidPort(files.config.server?.port) ? files.config.server?.port : 7676;
 
     let publicBaseUrl: string | null = null;
     if (useChatGpt) {
@@ -180,11 +180,11 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         "Connect ChatGPT",
       );
       publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-        message: files.config.publicBaseUrl
-          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.publicBaseUrl}`
+        message: files.config.server?.publicBaseUrl
+          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.server.publicBaseUrl}`
           : "What public URL will ChatGPT connect to?",
-        placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-        defaultValue: files.config.publicBaseUrl ?? "",
+        placeholder: files.config.server?.publicBaseUrl ?? "https://your-tunnel-host.example.com",
+        defaultValue: files.config.server?.publicBaseUrl ?? "",
         validate: validateRequiredPublicBaseUrl,
       }));
     }
@@ -220,17 +220,21 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const config: DevspaceUserConfig = {
       ...files.config,
-      host: files.config.host ?? "127.0.0.1",
-      port,
-      ...(allowedRoots ? { allowedRoots } : {}),
-      publicBaseUrl,
+      version: 1,
+      server: {
+        ...files.config.server,
+        host: files.config.server?.host ?? "127.0.0.1",
+        port,
+        ...(allowedRoots ? { allowedRoots } : {}),
+        publicBaseUrl,
+      },
       subagents,
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
     };
 
-    writeDevspaceConfig(config);
+    writeDevspaceConfig(config, process.env, files);
     writeDevspaceAuth(auth);
 
     const lines = [
@@ -322,7 +326,7 @@ async function serve(): Promise<void> {
 async function runDoctor(): Promise<void> {
   const files = loadDevspaceFiles();
   console.log(`Config dir: ${files.dir}`);
-  console.log(`Config file: ${files.configExists ? files.configPath : "missing"}`);
+  console.log(`Config file: ${files.configSourcePath ?? "missing"}`);
   console.log(`Auth file: ${files.authExists ? files.authPath : "missing"}`);
   console.log(`Node: ${process.version} (${nodeVersionStatus()})`);
   console.log(`Node ABI: ${process.versions.modules}`);
@@ -371,8 +375,12 @@ function runConfigCommand(args: string[]): void {
 
   writeDevspaceConfig({
     ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
+    version: 1,
+    server: {
+      ...files.config.server,
+      publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
+    },
+  }, process.env, files);
   console.log(`Updated ${files.configPath}`);
 }
 
@@ -384,7 +392,7 @@ function printHelp(): void {
       "Usage:",
       "  devspace                 Run first-time setup if needed, then start the server",
       "  devspace serve           Start the server",
-      "  devspace init            Create or update ~/.devspace/config.json and auth.json",
+      "  devspace init            Create or update ~/.devspace/config.jsonc and auth.json",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",

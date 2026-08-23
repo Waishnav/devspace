@@ -26,7 +26,8 @@ These ideas should stay true as the project evolves:
 - **Allowed root** — a configured filesystem boundary within which a workspace may be opened. It is not itself necessarily a workspace.
 - **Checkout mode** — operating on an existing checkout supplied by the user.
 - **Worktree mode** — operating in an isolated Git worktree.
-- **Tool surface** — the tools exposed by a configured mode, such as minimal, full, or Codex-compatible.
+- **Coding harness** — the model-facing coding tool contract. DevSpace currently composes a Claude Code-style harness or a Codex-style harness.
+- **Presentation profile** — the host-rendered UI/review behavior: inline tool UI, aggregate change review, or off.
 - **Process session** — a long-running command tracked for later input, output, or termination.
 - **Instruction file** — an `AGENTS.md` or `CLAUDE.md` discovered while navigating a workspace.
 - **Subagent** — a bounded model invocation delegated and coordinated by the host.
@@ -62,8 +63,8 @@ Determine how the user will consume the change and verify that path. Behavior ma
 - a fresh process and a server or host that needs restarting;
 - checkout mode and worktree mode;
 - Linux, macOS, and Windows Bash environments;
-- minimal, full, and Codex-compatible tool surfaces;
-- widgets enabled, disabled, or limited to change review.
+- Claude Code shell-inspection, Claude Code dedicated-inspection, and Codex harnesses;
+- inline, change-review, and off presentation profiles.
 
 State clearly when only a narrower proxy was verified. For model-facing schemas, inspect what the host receives. For UI and artifacts, inspect the rendered result rather than inferring success from the producing command.
 

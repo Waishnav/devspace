@@ -14,6 +14,7 @@ import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
+import { compileRuntime } from "./runtime-config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
@@ -78,6 +79,53 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
     providerNote,
   );
   assert.ok(Array.isArray(card.agents));
+});
+
+test("legacy tool modes resolve to the intended coding harness tool contracts", async (t) => {
+  const cases = [
+    {
+      mode: "minimal" as const,
+      tools: ["open_workspace", "read", "write", "edit", "bash"],
+    },
+    {
+      mode: "full" as const,
+      tools: ["open_workspace", "read", "write", "edit", "grep", "glob", "ls", "bash"],
+    },
+    {
+      mode: "codex" as const,
+      tools: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin"],
+    },
+  ];
+
+  for (const { mode, tools } of cases) {
+    const context = await fixture(t, { toolMode: mode });
+    const listed = await context.client.listTools();
+    assert.deepEqual(listed.tools.map((tool) => tool.name), tools);
+    await context.close();
+  }
+});
+
+test("legacy widget modes resolve to the intended presentation contracts", async (t) => {
+  const full = await fixture(t, { widgetMode: "full" });
+  const fullTools = await full.client.listTools();
+  assert.equal(fullTools.tools.some((tool) => tool.name === "show_changes"), false);
+  assert.ok(toolUiMeta(fullTools.tools.find((tool) => tool.name === "open_workspace")));
+  assert.ok(toolUiMeta(fullTools.tools.find((tool) => tool.name === "read")));
+  await full.close();
+
+  const changes = await fixture(t, { widgetMode: "changes" });
+  const changeTools = await changes.client.listTools();
+  assert.ok(toolUiMeta(changeTools.tools.find((tool) => tool.name === "open_workspace")));
+  assert.equal(toolUiMeta(changeTools.tools.find((tool) => tool.name === "read")), undefined);
+  assert.ok(toolUiMeta(changeTools.tools.find((tool) => tool.name === "show_changes")));
+  await changes.close();
+
+  const off = await fixture(t, { widgetMode: "off" });
+  const offTools = await off.client.listTools();
+  assert.equal(offTools.tools.some((tool) => tool.name === "show_changes"), false);
+  assert.equal(toolUiMeta(offTools.tools.find((tool) => tool.name === "open_workspace")), undefined);
+  assert.equal(toolUiMeta(offTools.tools.find((tool) => tool.name === "read")), undefined);
+  await off.close();
 });
 
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
@@ -200,7 +248,7 @@ test("checkout reuse and context suppression survive a registry restart", async 
 
   const restoredStore = new SqliteWorkspaceStore(context.stateDir);
   const restoredServer = createMcpServer(
-    context.config,
+    compileRuntime(context.config, { artifactDownloadSupported: true }),
     new WorkspaceRegistry(context.config, restoredStore),
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
@@ -247,6 +295,8 @@ async function fixture(
     git?: boolean;
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
+    toolMode?: "minimal" | "full" | "codex";
+    widgetMode?: "off" | "changes" | "full";
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -284,8 +334,8 @@ async function fixture(
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_WIDGETS: "full",
-    DEVSPACE_TOOL_MODE: "full",
+    DEVSPACE_WIDGETS: options.widgetMode ?? "full",
+    DEVSPACE_TOOL_MODE: options.toolMode ?? "full",
     DEVSPACE_SUBAGENTS: options.localAgentProviders ? "1" : "0",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
@@ -313,7 +363,7 @@ async function fixture(
   const store = new SqliteWorkspaceStore(stateDir);
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
-    config,
+    compileRuntime(config, { artifactDownloadSupported: true }),
     workspaces,
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
@@ -342,6 +392,10 @@ async function fixture(
   });
 
   return { client, project, config, stateDir, close };
+}
+
+function toolUiMeta(tool: { _meta?: Record<string, unknown> } | undefined): unknown {
+  return tool?._meta?.ui;
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {

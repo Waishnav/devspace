@@ -253,12 +253,16 @@ If a skill appears in `open_workspace`, the model must read that skill's
 
 ## Review Card Does Not Appear
 
-Per-tool widget cards are enabled by default with:
+Per-tool widget cards are enabled by default through the inline presentation:
 
-```bash
-DEVSPACE_WIDGETS=full
+```jsonc
+{
+  "version": 1,
+  "presentation": { "mode": "inline" }
+}
 ```
 
 The aggregate `show_changes` tool is only exposed with
-`DEVSPACE_WIDGETS=changes`. Plain MCP clients may ignore ChatGPT Apps widget
-metadata and only show text results.
+`presentation.mode: "change-review"`. `DEVSPACE_WIDGETS=changes` remains a
+compatibility override. Plain MCP clients may ignore ChatGPT Apps widget metadata
+and only show text results.

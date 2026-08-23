@@ -148,9 +148,9 @@ configuration. The bundled `subagents` skill teaches the minimal
 comes from `open_workspace`; `devspace agents ls` lists existing subagent
 sessions for that workspace.
 
-## Tool Names
+## Coding Harness
 
-DevSpace exposes these tool names:
+The default `claude-code` harness with `inspection: "shell"` exposes:
 
 - `open_workspace`
 - `read`
@@ -158,14 +158,23 @@ DevSpace exposes these tool names:
 - `edit`
 - `bash`
 
-By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
-`grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
-such as `rg`, `find`, and `ls` for search and directory inspection.
+Dedicated `grep`, `glob`, and `ls` tools are hidden in that configuration. Use
+`bash` with command-line tools such as `rg`, `find`, and `ls` for search and
+directory inspection.
 
-Use `DEVSPACE_TOOL_MODE=full` to restore dedicated search and directory tools.
+Set `harness.inspection` to `"dedicated"` in `~/.devspace/config.jsonc` to expose
+the dedicated inspection tools.
 
-The experimental Codex-style surface is enabled with
-`DEVSPACE_TOOL_MODE=codex`. It exposes:
+The Codex harness is selected with:
+
+```jsonc
+{
+  "version": 1,
+  "harness": { "kind": "codex" }
+}
+```
+
+It exposes:
 
 - `open_workspace`
 - `read`
@@ -173,20 +182,22 @@ The experimental Codex-style surface is enabled with
 - `exec_command`
 - `write_stdin`
 
-In this mode, `write`, `edit`, `bash`, `grep`, `glob`, and `ls` are not
+In this harness, `write`, `edit`, `bash`, `grep`, `glob`, and `ls` are not
 registered. `exec_command` returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
+`DEVSPACE_TOOL_MODE=minimal|full|codex` remains a compatibility override for
+older deployments.
+
 ## Show Changes
 
-By default, `DEVSPACE_WIDGETS=full`.
+By default, `presentation.mode` is `"inline"`, which attaches widget UI to the
+normal exposed tools without registering the aggregate review tool.
 
-In that mode, DevSpace attaches widget UI to the exposed workspace, file, edit,
-and shell tools. The aggregate `show_changes` tool is not exposed by default.
-
-Use `DEVSPACE_WIDGETS=off` to disable widget UI, or `DEVSPACE_WIDGETS=changes`
-to expose the aggregate show-changes flow.
+Use `presentation.mode: "off"` to disable widget UI, or
+`presentation.mode: "change-review"` to expose the aggregate `show_changes`
+flow. `DEVSPACE_WIDGETS=off|changes|full` remains a compatibility override.
 
 When `show_changes` is exposed, call it exactly once after the final file
 modification in any turn that changes files. It shows the combined changes for

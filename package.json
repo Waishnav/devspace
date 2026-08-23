@@ -1,6 +1,6 @@
 {
   "name": "@waishnav/devspace",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "Expose a secure local coding workspace through an MCP server.",
   "type": "module",
   "main": "dist/server.js",
@@ -15,6 +15,7 @@
     "dist",
     "docs",
     "examples",
+    "schema",
     "scripts",
     "skills",
     "README.md"
@@ -29,7 +30,7 @@
     "dev": "node scripts/dev-server.mjs",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "start": "node dist/cli.js serve",
-    "test": "tsx src/config.test.ts && tsx src/onboarding.test.ts && tsx src/cli-workspace.test.ts && tsx src/request-meta.test.ts && tsx src/incoming-artifacts.test.ts && tsx src/artifact-download.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/ui/tool-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-config.test.ts && tsx src/local-agent-catalog.test.ts && tsx src/local-agent-presentation.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-daemon-lifecycle.test.ts && tsx src/local-agent-daemon-protocol.test.ts && tsx src/local-agent-daemon.test.ts && tsx src/local-agent-codex.test.ts && tsx src/local-agent-opencode.test.ts && tsx src/local-agent-acp.test.ts && tsx src/local-agent-grok.test.ts && tsx src/local-agent-pi-sandbox.test.ts && tsx src/local-agent-pi.test.ts && tsx src/local-agent-claude.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/local-agent-manager.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/workspace-conversation.test.ts && tsx src/review-checkpoints.test.ts && tsx src/server.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts",
+    "test": "tsx src/config.test.ts && tsx src/user-config.test.ts && tsx src/config-schema.test.ts && tsx src/runtime-config.test.ts && tsx src/onboarding.test.ts && tsx src/cli-workspace.test.ts && tsx src/request-meta.test.ts && tsx src/incoming-artifacts.test.ts && tsx src/artifact-download.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/ui/tool-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-config.test.ts && tsx src/local-agent-catalog.test.ts && tsx src/local-agent-presentation.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-daemon-lifecycle.test.ts && tsx src/local-agent-daemon-protocol.test.ts && tsx src/local-agent-daemon.test.ts && tsx src/local-agent-codex.test.ts && tsx src/local-agent-opencode.test.ts && tsx src/local-agent-acp.test.ts && tsx src/local-agent-grok.test.ts && tsx src/local-agent-pi-sandbox.test.ts && tsx src/local-agent-pi.test.ts && tsx src/local-agent-claude.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/local-agent-manager.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/workspace-conversation.test.ts && tsx src/review-checkpoints.test.ts && tsx src/server.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
@@ -51,6 +52,7 @@
     "diff": "^8.0.3",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "jsonc-parser": "^3.3.1",
     "lucide": "^1.24.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

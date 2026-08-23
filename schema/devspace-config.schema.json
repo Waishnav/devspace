@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "JSON Schema URL used by editors.",
+      "type": "string"
+    },
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "server": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "Local bind host. Defaults to 127.0.0.1.",
+          "type": "string"
+        },
+        "port": {
+          "description": "Local MCP server port.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "allowedRoots": {
+          "description": "Project roots DevSpace may open.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publicBaseUrl": {
+          "description": "Public origin used by remote MCP hosts.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedHosts": {
+          "description": "Optional HTTP Host allowlist.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stateDir": {
+          "description": "Directory containing persisted DevSpace state.",
+          "type": "string"
+        },
+        "worktreeRoot": {
+          "description": "Directory for DevSpace-managed Git worktrees.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "harness": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "claude-code",
+              "description": "Expose the Claude Code-style coding harness."
+            },
+            "inspection": {
+              "type": "string",
+              "enum": [
+                "shell",
+                "dedicated"
+              ],
+              "description": "Use shell inspection or expose dedicated grep/glob/ls tools."
+            }
+          },
+          "required": [
+            "kind",
+            "inspection"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "codex",
+              "description": "Expose the Codex-style coding harness."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "presentation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "off"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "inline"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "change-review"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether skills are exposed to the host model.",
+          "type": "boolean"
+        },
+        "paths": {
+          "description": "Additional skill directories.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "agentDir": {
+          "description": "Compatibility agent directory. Defaults to ~/.codex.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable native MCP-host artifact download.",
+          "type": "boolean"
+        },
+        "maxFileBytes": {
+          "description": "Maximum bytes accepted for one artifact.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "subagents": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "opencode",
+                  "pi",
+                  "cursor",
+                  "copilot",
+                  "grok"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "enabled"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "providers"
+      ],
+      "additionalProperties": false
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "silent",
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "pretty"
+          ]
+        },
+        "requests": {
+          "type": "boolean"
+        },
+        "assets": {
+          "type": "boolean"
+        },
+        "toolCalls": {
+          "type": "boolean"
+        },
+        "shellCommands": {
+          "type": "boolean"
+        },
+        "trustProxy": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "oauth": {
+      "type": "object",
+      "properties": {
+        "accessTokenTtlSeconds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "refreshTokenTtlSeconds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allowedRedirectHosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false,
+  "$id": "https://raw.githubusercontent.com/Waishnav/devspace/refs/tags/v1.1.0/schema/devspace-config.schema.json",
+  "title": "DevSpace configuration",
+  "description": "Versioned configuration for the DevSpace server and coding harness."
+}

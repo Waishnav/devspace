@@ -11,7 +11,7 @@ const providerSchema = z.object({
   effort: z.string().trim().min(1).optional(),
 }).strict();
 
-const subagentsSchema = z.object({
+export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
@@ -29,8 +29,13 @@ const subagentsSchema = z.object({
 });
 
 export type SubagentProviderConfig = z.infer<typeof providerSchema>;
-export type SubagentsConfig = z.infer<typeof subagentsSchema>;
-export type StoredSubagentsConfig = boolean | SubagentsConfig;
+export const storedSubagentsConfigSchema = z.union([
+  z.boolean(),
+  subagentsConfigSchema,
+]);
+
+export type SubagentsConfig = z.infer<typeof subagentsConfigSchema>;
+export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 
 export function resolveSubagentsConfig(
   value: unknown,
@@ -40,7 +45,7 @@ export function resolveSubagentsConfig(
     ? { enabled: false, providers: [] }
     : typeof value === "boolean"
       ? legacySubagentsConfig(value)
-      : subagentsSchema.parse(value);
+      : subagentsConfigSchema.parse(value);
   return {
     ...stored,
     enabled: env.DEVSPACE_SUBAGENTS === undefined
@@ -73,5 +78,8 @@ function legacySubagentsConfig(enabled: boolean): SubagentsConfig {
 }
 
 function parseBoolean(value: string): boolean {
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+  const normalized = value.toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`Invalid DEVSPACE_SUBAGENTS: ${value}`);
 }
