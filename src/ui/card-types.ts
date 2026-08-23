@@ -65,18 +65,17 @@ export interface ToolResultCard {
     path?: string;
   }>;
   agentProviders?: Array<{
-    name?: string;
-    available?: boolean;
-    reason?: string;
+    id?: string;
+    model?: string;
+    effort?: string;
+    note?: string;
   }>;
   agents?: Array<{
     name?: string;
     description?: string;
     provider?: string;
     model?: string;
-    thinking?: string;
-    providerAvailable?: boolean;
-    providerUnavailableReason?: string;
+    effort?: string;
   }>;
   instruction?: string;
 }

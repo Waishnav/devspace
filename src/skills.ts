@@ -21,15 +21,15 @@ export interface SkillReadResolution {
   isSkillFile: boolean;
 }
 
-const SUBAGENT_DELEGATION_NAME = "subagent-delegation";
-const SUBAGENT_DELEGATION_SKILL = join(SUBAGENT_DELEGATION_NAME, "SKILL.md");
+const SUBAGENTS_SKILL_NAME = "subagents";
+const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function hasSubagentDelegationSkill(skillDir: string): boolean {
-  return existsSync(join(skillDir, SUBAGENT_DELEGATION_SKILL));
+function hasSubagentsSkill(skillDir: string): boolean {
+  return existsSync(join(skillDir, SUBAGENTS_SKILL));
 }
 
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
@@ -39,7 +39,7 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
+    config.subagents.enabled && !hasSubagentsSkill(config.devspaceSkillsDir)
       ? bundledSkills
       : undefined,
   ];
@@ -71,13 +71,13 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  if (config.subagents) return result;
+  if (config.subagents.enabled) return result;
 
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),
+    skills: result.skills.filter((skill) => skill.name !== SUBAGENTS_SKILL_NAME),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
-      return !(collision?.resourceType === "skill" && collision.name === SUBAGENT_DELEGATION_NAME);
+      return !(collision?.resourceType === "skill" && collision.name === SUBAGENTS_SKILL_NAME);
     }),
   };
 }

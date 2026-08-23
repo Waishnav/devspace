@@ -526,35 +526,33 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
   const agentChips: WorkspaceChip[] = agents.map((agent) => {
     const name = agent.name ?? "Unnamed agent";
     const providerName = agent.provider?.trim();
-    const unavailable = agent.providerAvailable === false;
     const title = [
       agent.description,
       providerName ? `Provider: ${providerName}` : undefined,
       agent.model ? `Model: ${agent.model}` : undefined,
-      agent.thinking ? `Thinking: ${agent.thinking}` : undefined,
-      unavailable
-        ? agent.providerUnavailableReason ?? "Provider unavailable"
-        : undefined,
+      agent.effort ? `Effort: ${agent.effort}` : undefined,
     ].filter((value): value is string => Boolean(value)).join("\n");
     return {
       label: name,
       logo: providerName ? getProviderLogo(providerName) : undefined,
       profile: true,
-      tone: unavailable ? "muted" as const : undefined,
       title: title || undefined,
     };
   });
   const providerChips: WorkspaceChip[] = providers.map((provider) => {
-    const name = provider.name?.trim() || "Unknown provider";
-    const unavailable = provider.available === false;
+    const name = provider.id?.trim() || "Unknown provider";
     const logo = getProviderLogo(name);
+    const title = [
+      provider.model ? `Model: ${provider.model}` : undefined,
+      provider.effort ? `Effort: ${provider.effort}` : undefined,
+      provider.note,
+    ].filter((value): value is string => Boolean(value)).join("\n");
     return {
       label: name,
       logo,
       bareLogo: Boolean(logo),
       ariaLabel: name,
-      tone: unavailable ? "muted" as const : undefined,
-      title: unavailable ? provider.reason ?? "Provider unavailable" : name,
+      title: title || name,
     };
   });
 

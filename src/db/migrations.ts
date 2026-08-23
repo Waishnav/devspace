@@ -27,6 +27,16 @@ const migrations: Migration[] = [
     name: "workspace-conversation-bindings",
     up: migrateWorkspaceConversationBindings,
   },
+  {
+    version: 5,
+    name: "local-agent-structured-errors",
+    up: migrateLocalAgentStructuredErrors,
+  },
+  {
+    version: 6,
+    name: "local-agent-effort-rename",
+    up: migrateLocalAgentEffortRename,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -157,7 +167,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
       profile_name text not null,
       provider text not null,
       model text,
-      thinking text,
+      effort text,
       provider_session_id text,
       status text not null,
       latest_response text,
@@ -176,7 +186,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
       on local_agent_sessions(provider_session_id);
   `);
 
-  addColumnIfMissing(sqlite, "local_agent_sessions", "thinking", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
 }
 
 function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
@@ -196,6 +206,33 @@ function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
     create index if not exists workspace_conversation_bindings_workspace_idx
       on workspace_conversation_bindings(workspace_session_id);
   `);
+}
+
+function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_code", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_retryable", "text");
+}
+
+function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
+  const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(columns.map((column) => column.name));
+  if (names.has("effort")) {
+    if (names.has("thinking")) {
+      sqlite.exec(`
+        update local_agent_sessions
+        set effort = thinking
+        where effort is null and thinking is not null
+      `);
+    }
+    return;
+  }
+  if (!names.has("thinking")) {
+    addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
+    return;
+  }
+  sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
 function addColumnIfMissing(

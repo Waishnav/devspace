@@ -31,10 +31,10 @@ try {
   await mkdir(join(projectClaudeSkills, "claude-project-skill"), { recursive: true });
   await mkdir(join(projectRoot, ".pi", "skills", "project-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
-  await mkdir(join(agentDir, "skills", "subagent-delegation"), { recursive: true });
+  await mkdir(join(agentDir, "skills", "subagents"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
-  await mkdir(join(explicitSkills, "subagent-delegation"), { recursive: true });
+  await mkdir(join(explicitSkills, "subagents"), { recursive: true });
   await mkdir(join(devspaceSkills, "devspace-local-skill"), { recursive: true });
 
   await writeFile(
@@ -126,10 +126,10 @@ try {
     ].join("\n"),
   );
   await writeFile(
-    join(agentDir, "skills", "subagent-delegation", "SKILL.md"),
+    join(agentDir, "skills", "subagents", "SKILL.md"),
     [
       "---",
-      "name: subagent-delegation",
+      "name: subagents",
       "description: Hidden subagent skill winner.",
       "---",
       "",
@@ -137,10 +137,10 @@ try {
     ].join("\n"),
   );
   await writeFile(
-    join(explicitSkills, "subagent-delegation", "SKILL.md"),
+    join(explicitSkills, "subagents", "SKILL.md"),
     [
       "---",
-      "name: subagent-delegation",
+      "name: subagents",
       "description: Hidden subagent skill loser.",
       "---",
       "",
@@ -184,13 +184,13 @@ try {
   assert.equal(loaded.skills.some((skill) => skill.name === "claude-project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
   assert.equal(loaded.skills.some((skill) => skill.name === "devspace-local-skill"), true);
-  assert.equal(loaded.skills.some((skill) => skill.name === "subagent-delegation"), false);
+  assert.equal(loaded.skills.some((skill) => skill.name === "subagents"), false);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
   assert.equal(loaded.diagnostics.some((diagnostic) => diagnostic.type === "collision"), true);
   assert.equal(
     loaded.diagnostics.some(
-      (diagnostic) => diagnostic.collision?.name === "subagent-delegation",
+      (diagnostic) => diagnostic.collision?.name === "subagents",
     ),
     false,
   );
@@ -204,7 +204,7 @@ try {
   });
   assert.equal(
     loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
-      (skill) => skill.name === "subagent-delegation",
+      (skill) => skill.name === "subagents",
     ),
     true,
   );

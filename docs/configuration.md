@@ -124,7 +124,7 @@ sessions.
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
-| `DEVSPACE_SUBAGENTS` | Set to `1` to expose configured agent profiles as Subagents. Experimental and disabled by default. |
+| `DEVSPACE_SUBAGENTS` | Optional master override for the persisted Subagents configuration. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -136,7 +136,7 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `subagent-delegation` skill when `DEVSPACE_SUBAGENTS=1`, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
+- the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
@@ -146,13 +146,72 @@ from:
 - `~/.devspace/agents/*.md`
 - project `.devspace/agents/*.md`
 
+Enable providers and set their defaults in `~/.devspace/config.json`:
+
+```json
+{
+  "subagents": {
+    "enabled": true,
+    "providers": [
+      {
+        "id": "codex",
+        "enabled": true,
+        "model": "gpt-5.4",
+        "effort": "high"
+      },
+      {
+        "id": "claude",
+        "enabled": true,
+        "model": "sonnet"
+      },
+      {
+        "id": "grok",
+        "enabled": true,
+        "model": "grok-4.5",
+        "effort": "low"
+      }
+    ]
+  }
+}
+```
+
+Each entry controls one provider. Providers omitted from the array are disabled.
+`model` and `effort` are optional defaults; an invocation override wins over a
+profile value, which wins over the provider default. The legacy boolean
+`"subagents": true` remains readable and enables every provider, but new
+configuration should use the explicit object form.
+
+`devspace agents targets` shows usable providers and profiles for the current
+workspace. Add `--json` for a compact list of exact target names and their
+selection metadata. Disabled, unavailable, and unconfigured providers are
+omitted. Provider availability is runtime state and never rewrites the
+configuration.
+
+Grok Build is discovered from the `grok` executable. Authenticate it with
+`grok login` or `XAI_API_KEY`; DevSpace does not read or store Grok credentials.
+Grok supports `grok-build` by default and validates explicit model and effort
+values against the ACP session metadata when available. Set `GROK_COMMAND` when
+the executable is not on the normal PATH. If your Grok installation selects a
+custom agent profile, set `GROK_AGENT_PROFILE` to that profile's path; DevSpace
+passes it to `grok agent stdio` without writing to Grok's configuration.
+
 `open_workspace` returns a compact catalog containing profile names,
-descriptions, providers, and optional models/thinking levels so the host model can choose an
-agent without reading provider-specific launch details. `devspace agents ls`
+descriptions, providers, and optional models/effort levels so the host model can choose an
+agent without reading provider-specific launch details. Disabled or unavailable
+providers and their profiles are omitted from this model-facing catalog. `devspace agents ls`
 lists existing subagent sessions for the current workspace, scoped by the
-workspace environment injected into shell commands. The `subagent-delegation`
+workspace environment injected into shell commands. The `subagents`
 skill teaches the model to use only the minimal `devspace agents ls`,
-`devspace agents run`, and `devspace agents show` workflow.
+`devspace agents targets`, `devspace agents run`, `devspace agents continue`,
+and `devspace agents show` workflow.
+
+For Codex, Claude Code, OpenCode, Pi, or another supported Coding Agent, use
+the Skills CLI to install the same skill. DevSpace setup prints this command but
+does not run it or write into agent skill directories:
+
+```bash
+npx skills add Waishnav/devspace --skill subagents --global
+```
 
 Starter profile templates are available under `examples/agents/`. Copy or adapt
 them into one of the active profile directories before use.

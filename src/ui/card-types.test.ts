@@ -72,7 +72,7 @@ test("a workspace card expands when it contains provider metadata", () => {
   assert.equal(
     isExpandableCard({
       tool: "open_workspace",
-      agentProviders: [{ name: "codex", available: true }],
+      agentProviders: [{ id: "codex" }],
     }),
     true,
   );
