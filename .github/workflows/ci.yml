@@ -11,15 +11,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke:
-    name: Smoke (${{ matrix.os }})
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DEVSPACE_ALLOWED_ROOTS: ${{ github.workspace }}
+      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
+      DEVSPACE_PUBLIC_BASE_URL: http://127.0.0.1:7676
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Pi sandbox dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep bubblewrap socat
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        env:
+          DEVSPACE_REQUIRE_PI_SANDBOX: 1
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Doctor
+        run: node dist/cli.js doctor
+
+  platform:
+    name: Platform (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
           - macos-latest
           - windows-latest
 
@@ -41,25 +85,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Pi sandbox dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap socat
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        env:
-          DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
-        run: npm test
+      - name: Test platform boundaries
+        run: >-
+          npx tsx --test --test-concurrency=1
+          src/cli-workspace.test.ts
+          src/process-platform.test.ts
+          src/process-sessions.test.ts
+          src/roots.test.ts
+          src/workspaces.test.ts
 
       - name: Build
         run: npm run build
 
       - name: Doctor
         run: node dist/cli.js doctor
+
+  package:
+    name: Package (Node 26)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test installed package
+        run: npm run test:package

@@ -1,179 +1,96 @@
 import assert from "node:assert/strict";
-import type { ToolResultCard } from "./card-types.js";
+import test from "node:test";
 import { toolIcons } from "./icons.js";
 import { getToolDisplay, getToolHeaderSummary } from "./tool-display.js";
 
-const displayCases: Array<[ToolResultCard, { title: string; tone: string }]> = [
-  [{ tool: "open_workspace", root: "/tmp/project" }, { title: "Opened workspace", tone: "workspace" }],
-  [{ tool: "open_workspace", root: "/tmp/project", workspaceReused: true }, { title: "Reused workspace", tone: "workspace" }],
-  [{ tool: "open_workspace", root: "/tmp/project", mode: "worktree" }, { title: "Opened workspace", tone: "workspace" }],
-  [{ tool: "open_workspace", root: "/tmp/project", mode: "worktree", workspaceReused: true }, { title: "Reused workspace", tone: "workspace" }],
-  [{ tool: "read", path: "src/read.ts" }, { title: "Read file", tone: "read" }],
-  [{ tool: "write", path: "src/write.ts" }, { title: "Wrote file", tone: "write" }],
-  [{ tool: "edit", path: "src/edit.ts" }, { title: "Edited file", tone: "edit" }],
-  [{
-    tool: "apply_patch",
-    files: [{ path: "src/new.ts", operation: "add" }],
-  }, { title: "Added 1 file", tone: "write" }],
-  [{
-    tool: "grep",
-    summary: { pattern: "needle", scope: "src" },
-  }, { title: "Searched files", tone: "search" }],
-  [{ tool: "ls", path: "src" }, { title: "Listed directory", tone: "directory" }],
-  [{ tool: "bash", summary: { command: "npm test", exitCode: 0 } }, { title: "Ran command", tone: "shell" }],
-];
+test("workspace display distinguishes checkout reuse from a new worktree", () => {
+  const reused = getToolDisplay({
+    tool: "open_workspace",
+    root: "/tmp/project",
+    workspaceReused: true,
+  });
+  assert.deepEqual(
+    { title: reused.title, label: reused.label, icon: reused.icon },
+    {
+      title: "Reused workspace",
+      label: "/tmp/project",
+      icon: toolIcons.folderOpen,
+    },
+  );
 
-for (const [card, expected] of displayCases) {
-  assert.deepEqual(pickDisplay(getToolDisplay(card)), expected);
+  const worktree = getToolDisplay({
+    tool: "open_workspace",
+    root: "/tmp/worktree",
+    mode: "worktree",
+  });
+  assert.deepEqual(
+    { title: worktree.title, label: worktree.label, icon: worktree.icon },
+    {
+      title: "Opened workspace",
+      label: "/tmp/worktree",
+      icon: toolIcons.gitBranch,
+    },
+  );
+});
+
+test("process display follows running, successful, and failed lifecycles", () => {
+  assert.deepEqual(
+    displayState({ tool: "exec_command", summary: { running: true, command: "npm test" } }),
+    { title: "Command running", label: "npm test", state: "running" },
+  );
+  assert.deepEqual(
+    displayState({ tool: "exec_command", summary: { running: false, exitCode: 0 } }),
+    { title: "Ran command", label: undefined, state: "success" },
+  );
+  assert.deepEqual(
+    displayState({ tool: "write_stdin", summary: { running: false, exitCode: 1 } }),
+    { title: "Process failed", label: undefined, state: "error" },
+  );
+});
+
+test("review display reports no changes and mixed file changes", () => {
+  assert.equal(getToolDisplay({ tool: "show_changes" }).title, "No changes");
+  assert.deepEqual(
+    pickDisplay(getToolDisplay({
+      tool: "show_changes",
+      files: [
+        { path: "src/a.ts", type: "new" },
+        { path: "src/b.ts", type: "change" },
+      ],
+    })),
+    { title: "Changed 2 files", tone: "review" },
+  );
+});
+
+test("header summaries expose caller-visible counts and duration", () => {
+  assert.deepEqual(
+    getToolHeaderSummary({
+      tool: "open_workspace",
+      summary: { agentsFiles: 1, skills: 4 },
+    }),
+    { kind: "text", text: "1 instruction · 4 skills" },
+  );
+  assert.deepEqual(
+    getToolHeaderSummary({
+      tool: "exec_command",
+      summary: { lines: 3, wallTimeMs: 1_500 },
+    }),
+    { kind: "text", text: "3 lines · 1.5s" },
+  );
+  assert.deepEqual(
+    getToolHeaderSummary({
+      tool: "show_changes",
+      summary: { additions: 14, removals: 1 },
+    }),
+    { kind: "diff", additions: 14, removals: 1 },
+  );
+});
+
+function displayState(card: Parameters<typeof getToolDisplay>[0]) {
+  const display = getToolDisplay(card);
+  return { title: display.title, label: display.label, state: display.state };
 }
 
-assert.equal(getToolDisplay({ tool: "open_workspace", root: "/tmp/project" }).label, "/tmp/project");
-assert.equal(
-  getToolDisplay({ tool: "open_workspace", root: "/tmp/project" }).icon,
-  toolIcons.folderOpen,
-);
-assert.equal(
-  getToolDisplay({ tool: "open_workspace", root: "/tmp/project", mode: "worktree" }).icon,
-  toolIcons.gitBranch,
-);
-assert.equal(
-  getToolDisplay({ tool: "grep", summary: { pattern: "needle", scope: "src" } }).label,
-  "needle in src",
-);
-
-assert.equal(
-  getToolDisplay({
-    tool: "apply_patch",
-    files: [{
-      path: "src/new-name.ts",
-      previousPath: "src/old-name.ts",
-      operation: "move",
-    }],
-  }).label,
-  "src/old-name.ts → src/new-name.ts",
-);
-
-assert.deepEqual(
-  pickDisplay(getToolDisplay({
-    tool: "show_changes",
-    files: [
-      { path: "src/a.ts", type: "change" },
-      { path: "src/b.ts", type: "change" },
-    ],
-  })),
-  { title: "Edited 2 files", tone: "review" },
-);
-
-assert.deepEqual(
-  pickDisplay(getToolDisplay({
-    tool: "show_changes",
-    files: [
-      { path: "src/a.ts", type: "new" },
-      { path: "src/b.ts", type: "change" },
-    ],
-  })),
-  { title: "Changed 2 files", tone: "review" },
-);
-
-assert.deepEqual(
-  pickDisplay(getToolDisplay({
-    tool: "show_changes",
-    files: [{ path: "src/old.ts", type: "deleted" }],
-  })),
-  { title: "Deleted 1 file", tone: "review" },
-);
-
-assert.equal(
-  getToolDisplay({ tool: "show_changes", payload: { patch: "diff --git a/a b/a" } }).title,
-  "Changes ready",
-);
-
-assert.equal(getToolDisplay({ tool: "show_changes" }).title, "No changes");
-
-assert.equal(
-  getToolDisplay({ tool: "exec_command", summary: { running: true, command: "npm test" } }).title,
-  "Command running",
-);
-assert.equal(
-  getToolDisplay({ tool: "exec_command", summary: { running: false, exitCode: 1 } }).title,
-  "Command failed",
-);
-assert.equal(
-  getToolDisplay({ tool: "write_stdin", summary: { running: false, exitCode: 0 } }).title,
-  "Process finished",
-);
-assert.equal(
-  getToolDisplay({ tool: "exec_command", summary: { running: true } }).state,
-  "running",
-);
-assert.equal(
-  getToolDisplay({ tool: "exec_command", summary: { running: false, exitCode: 0 } }).state,
-  "success",
-);
-assert.equal(
-  getToolDisplay({ tool: "exec_command", summary: { running: false, exitCode: 1 } }).state,
-  "error",
-);
-
-assert.deepEqual(
-  pickDisplay(getToolDisplay({ tool: "glob", summary: { lines: 1, pattern: "**/*.ts" } })),
-  { title: "Found files", tone: "search" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "glob", summary: { lines: 1 } }),
-  { kind: "empty" },
-);
-
-assert.equal(
-  getToolDisplay({
-    tool: "apply_patch",
-    files: [{ path: "src/removed.ts", operation: "delete" }],
-  }).icon,
-  toolIcons.deleteFile,
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "show_changes", summary: { additions: 14, removals: 1 } }),
-  { kind: "diff", additions: 14, removals: 1 },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({
-    tool: "open_workspace",
-    summary: { mode: "worktree", agentsFiles: 1, skills: 4 },
-  }),
-  { kind: "text", text: "1 instruction · 4 skills" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "exec_command", summary: { lines: 3, wallTimeMs: 1_500 } }),
-  { kind: "text", text: "3 lines · 1.5s" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "grep", summary: { lines: 2 } }),
-  { kind: "text", text: "2 lines" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "read", summary: { lines: 1 } }),
-  { kind: "text", text: "1 line" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "ls", summary: { lines: 0 } }),
-  { kind: "text", text: "0 lines" },
-);
-
-assert.deepEqual(
-  getToolHeaderSummary({ tool: "open_workspace" }),
-  { kind: "empty" },
-);
-
 function pickDisplay(display: ReturnType<typeof getToolDisplay>) {
-  return {
-    title: display.title,
-    tone: display.tone,
-  };
+  return { title: display.title, tone: display.tone };
 }

@@ -1800,6 +1800,22 @@ export function createServer(
     const requestId = res.locals.requestId as string | undefined;
     const sessionId = req.header("mcp-session-id");
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
+    const origin = req.header("origin");
+
+    // Streamable HTTP clients normally omit Origin. Browser requests must come
+    // from the configured public origin so another site cannot drive the local
+    // MCP endpoint through DNS rebinding.
+    if (origin && !isConfiguredOrigin(origin, config.publicBaseUrl)) {
+      logEvent(config.logging, "warn", "auth_denied", {
+        requestId,
+        method: req.method,
+        path: requestPath(req),
+        reason: "invalid_origin",
+        ...requestLogFields(req, config),
+      });
+      sendJsonRpcError(res, 403, -32000, "Invalid Origin");
+      return;
+    }
 
     await new Promise<void>((resolve, reject) => {
       bearerAuth(req, res, (error?: unknown) => {
@@ -1904,6 +1920,14 @@ export function createServer(
       return closePromise;
     },
   };
+}
+
+function isConfiguredOrigin(origin: string, publicBaseUrl: string): boolean {
+  try {
+    return new URL(origin).origin === new URL(publicBaseUrl).origin;
+  } catch {
+    return false;
+  }
 }
 
 async function isMainModule(): Promise<boolean> {
