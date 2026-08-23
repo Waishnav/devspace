@@ -76,13 +76,27 @@ export function loadDevspaceFiles(env: NodeJS.ProcessEnv = process.env): Devspac
   };
 }
 
+export function normalizePublicBaseUrl(value: string): string {
+  const parsed = new URL(value);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("publicBaseUrl must use http or https.");
+  }
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/$/, "");
+}
+
 export function writeDevspaceConfig(
   config: DevspaceUserConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const filePath = devspaceConfigPath(env);
+  const normalizedConfig = config.publicBaseUrl == null
+    ? config
+    : { ...config, publicBaseUrl: normalizePublicBaseUrl(config.publicBaseUrl) };
   mkdirSync(devspaceConfigDir(env), { recursive: true });
-  writeJsonFile(filePath, config, 0o600);
+  writeJsonFile(filePath, normalizedConfig, 0o600);
   return filePath;
 }
 

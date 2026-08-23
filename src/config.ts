@@ -3,7 +3,12 @@ import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
+import {
+  devspaceAgentsDir,
+  devspaceSkillsDir,
+  loadDevspaceFiles,
+  normalizePublicBaseUrl,
+} from "./user-config.js";
 import { resolveSubagentsConfig, type SubagentsConfig } from "./local-agent-config.js";
 
 export type ToolMode = "minimal" | "full" | "codex";
@@ -212,7 +217,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const host = env.HOST ?? files.config.host ?? "127.0.0.1";
   const port = parsePort(env.PORT ?? files.config.port);
-  const publicBaseUrl = parsePublicBaseUrl(
+  const publicBaseUrl = normalizePublicBaseUrl(
     env.DEVSPACE_PUBLIC_BASE_URL ?? files.config.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
   const derivedAllowedHosts = [
@@ -256,14 +261,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
 function numberConfigValue(value: number | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
-}
-
-function parsePublicBaseUrl(value: string): string {
-  const parsed = new URL(value);
-  parsed.hash = "";
-  parsed.search = "";
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-  return parsed.toString().replace(/\/$/, "");
 }
 
 function localPublicBaseUrl(host: string, port: number): string {
