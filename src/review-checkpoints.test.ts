@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -48,6 +48,82 @@ test("show_changes reports and advances the last-shown checkpoint", async (t) =>
   const afterReviewed = await manager.reviewChanges({ workspaceId: "ws_incremental", root });
   assert.equal(afterReviewed.summary.files, 0);
   assert.equal(afterReviewed.patch, "");
+});
+
+test("a nested workspace only reviews changes inside its workspace root", async (t) => {
+  const repositoryRoot = await committedRepository(t);
+  const workspaceRoot = join(repositoryRoot, "packages", "app");
+  const siblingRoot = join(repositoryRoot, "packages", "other");
+  await mkdir(workspaceRoot, { recursive: true });
+  await mkdir(siblingRoot, { recursive: true });
+  await writeFile(join(workspaceRoot, "app.txt"), "app\n");
+  await writeFile(join(siblingRoot, "other.txt"), "other\n");
+  await git(repositoryRoot, ["add", "."]);
+  await git(repositoryRoot, ["commit", "-m", "Add packages"]);
+
+  const manager = createReviewCheckpointManager();
+  await manager.initializeWorkspace({ workspaceId: "ws_nested", root: workspaceRoot });
+
+  await writeFile(join(workspaceRoot, "app.txt"), "app changed\n");
+  await writeFile(join(siblingRoot, "other.txt"), "other changed\n");
+
+  const review = await manager.reviewChanges({
+    workspaceId: "ws_nested",
+    root: workspaceRoot,
+    markReviewed: false,
+  });
+
+  assert.deepEqual(review.files.map((file) => file.path), ["app.txt"]);
+  assert.match(review.patch, /app changed/);
+  assert.doesNotMatch(review.patch, /other changed/);
+});
+
+test("binary changes use a renderable review patch instead of a Git binary patch", async (t) => {
+  const root = await committedRepository(t);
+  await writeFile(join(root, "asset.bin"), Buffer.from([0, 1, 2, 3]));
+  await git(root, ["add", "asset.bin"]);
+  await git(root, ["commit", "-m", "Add binary asset"]);
+
+  const manager = createReviewCheckpointManager();
+  await manager.initializeWorkspace({ workspaceId: "ws_binary", root });
+  await writeFile(join(root, "asset.bin"), Buffer.from([0, 1, 9, 3]));
+
+  const review = await manager.reviewChanges({
+    workspaceId: "ws_binary",
+    root,
+    markReviewed: false,
+  });
+
+  assert.deepEqual(review.files.map((file) => file.path), ["asset.bin"]);
+  assert.match(review.patch, /Binary files/);
+  assert.doesNotMatch(review.patch, /GIT binary patch/);
+});
+
+test("review metadata preserves pure renames from the rendered patch", async (t) => {
+  const root = await committedRepository(t);
+  await writeFile(join(root, "before.txt"), "same content\n");
+  await git(root, ["add", "before.txt"]);
+  await git(root, ["commit", "-m", "Add rename source"]);
+
+  const manager = createReviewCheckpointManager();
+  await manager.initializeWorkspace({ workspaceId: "ws_rename", root });
+  await rename(join(root, "before.txt"), join(root, "after.txt"));
+
+  const review = await manager.reviewChanges({
+    workspaceId: "ws_rename",
+    root,
+    markReviewed: false,
+  });
+
+  assert.deepEqual(review.files, [
+    {
+      path: "after.txt",
+      previousPath: "before.txt",
+      type: "rename-pure",
+      additions: 0,
+      removals: 0,
+    },
+  ]);
 });
 
 test("review checkpoints survive a manager restart", async (t) => {
@@ -173,27 +249,21 @@ test("a concurrent review rejects a different root after initialization", async 
   }
 });
 
-test("an unborn repository becomes reviewable after its first commit", async (t) => {
+test("an unborn repository is reviewable without creating a commit", async (t) => {
   const root = await unbornRepository(t);
   const manager = createReviewCheckpointManager();
 
   await manager.initializeWorkspace({ workspaceId: "ws_unborn", root });
-  await assert.rejects(
-    () => manager.reviewChanges({ workspaceId: "ws_unborn", root }),
-    /repository has no HEAD commit/,
-  );
+  await writeFile(join(root, "README.md"), "first file\n");
 
-  await writeFile(join(root, "README.md"), "first commit\n");
-  await git(root, ["add", "README.md"]);
-  await git(root, ["commit", "-m", "Initial commit"]);
-
-  const afterFirstCommit = await manager.reviewChanges({
+  const review = await manager.reviewChanges({
     workspaceId: "ws_unborn",
     root,
     markReviewed: false,
   });
-  assert.equal(afterFirstCommit.summary.files, 0);
-  assert.equal(afterFirstCommit.patch, "");
+  assert.deepEqual(review.files.map((file) => file.path), ["README.md"]);
+  assert.equal(review.files[0]?.type, "new");
+  assert.match(review.patch, /first file/);
 });
 
 async function committedRepository(t: TestContext): Promise<string> {
