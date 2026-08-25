@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
+import { writeDevspaceConfig } from "./user-config.js";
 
 const emptyConfigDir = mkdtempSync(join(tmpdir(), "devspace-empty-config-test-"));
 const baseEnv = {
@@ -148,10 +149,41 @@ assert.deepEqual(
   loadConfig({ ...baseEnv, DEVSPACE_PUBLIC_BASE_URL: "https://abc.trycloudflare.com/" }).allowedHosts,
   ["localhost", "127.0.0.1", "::1", "abc.trycloudflare.com"],
 );
+assert.throws(
+  () => loadConfig({ ...baseEnv, DEVSPACE_PUBLIC_BASE_URL: "ftp://example.com/devspace" }),
+  /publicBaseUrl must use http or https/,
+);
 assert.deepEqual(
   loadConfig({ ...baseEnv, DEVSPACE_ALLOWED_HOSTS: "*" }).allowedHosts,
   ["*"],
 );
+
+const invalidConfigDir = mkdtempSync(join(tmpdir(), "devspace-invalid-public-url-test-"));
+writeFileSync(
+  join(invalidConfigDir, "config.json"),
+  JSON.stringify({
+    allowedRoots: [process.cwd()],
+    publicBaseUrl: "ftp://example.com/devspace",
+  }),
+);
+writeFileSync(
+  join(invalidConfigDir, "auth.json"),
+  JSON.stringify({ ownerToken: "persisted-owner-token-long-enough" }),
+);
+assert.throws(
+  () => loadConfig({ DEVSPACE_CONFIG_DIR: invalidConfigDir }),
+  /publicBaseUrl must use http or https/,
+);
+
+const writeConfigDir = mkdtempSync(join(tmpdir(), "devspace-public-url-write-test-"));
+const writeEnv = { DEVSPACE_CONFIG_DIR: writeConfigDir };
+writeDevspaceConfig({ publicBaseUrl: "https://devspace.example.com/" }, writeEnv);
+const persistedBeforeInvalidWrite = readFileSync(join(writeConfigDir, "config.json"), "utf8");
+assert.throws(
+  () => writeDevspaceConfig({ publicBaseUrl: "ftp://example.com/devspace" }, writeEnv),
+  /publicBaseUrl must use http or https/,
+);
+assert.equal(readFileSync(join(writeConfigDir, "config.json"), "utf8"), persistedBeforeInvalidWrite);
 
 const configDir = mkdtempSync(join(tmpdir(), "devspace-config-test-"));
 writeFileSync(
