@@ -3,6 +3,13 @@ import { createRoot } from "react-dom/client";
 import { parsePatchFiles, type FileDiffMetadata, type FileDiffOptions } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import type { HostContext, ToolResultCard } from "./card-types.js";
+import {
+  fileChangeKindLabel,
+  getRenderedFileChangePathDisplay,
+  getRenderedFileChangeKind,
+  type FileChangeKind,
+} from "./patch-display.js";
+import { pierrePrettyScrollbarCss } from "./scrollbar.js";
 
 type ThemeType = "light" | "dark";
 
@@ -55,13 +62,42 @@ function ReviewPayload({
 
   const options = diffOptions(themeType);
 
+  if (files.length === 1) {
+    return (
+      <div className="review-single-file">
+        <FileDiff
+          fileDiff={files[0]}
+          options={options}
+          className="pierre-diff pretty-scrollbar"
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="review-diff">
+    <div className="review-diff pretty-scrollbar">
       <div className="review-diff-files">
         {visibleFiles.map((fileDiff, index) => {
           const key = fileDiff.cacheKey ?? `${fileDiff.prevName ?? ""}->${fileDiff.name}-${index}`;
           const stats = diffStats(fileDiff);
           const isOpen = openFiles.has(key);
+          const changeKind = getRenderedFileChangeKind(
+            card.files ?? [],
+            {
+              path: fileDiff.name,
+              previousPath: fileDiff.prevName,
+              type: fileDiff.type,
+            },
+            index,
+          );
+          const pathDisplay = getRenderedFileChangePathDisplay(
+            card.files ?? [],
+            {
+              path: fileDiff.name,
+              previousPath: fileDiff.prevName,
+            },
+            index,
+          );
 
           return (
             <div className="review-diff-file" key={key}>
@@ -79,14 +115,43 @@ function ReviewPayload({
                   setOpenFiles(next);
                 }}
               >
-                <span className="review-diff-file-name">{fileDiff.name}</span>
+                <span
+                  className={`review-file-kind ${changeKind}`}
+                  role="img"
+                  title={fileChangeKindLabel(changeKind)}
+                  aria-label={fileChangeKindLabel(changeKind)}
+                >
+                  {fileChangeSymbol(changeKind)}
+                </span>
+                {pathDisplay?.previous ? (
+                  <span
+                    className="review-diff-file-name renamed"
+                    title={pathDisplay.title}
+                  >
+                    <span className="review-diff-file-path previous">
+                      {pathDisplay.previous}
+                    </span>
+                    <span className="review-diff-file-arrow">→</span>
+                    <span className="review-diff-file-path current">
+                      {pathDisplay.current}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="review-diff-file-name" title={pathDisplay?.title ?? fileDiff.name}>
+                    {pathDisplay?.current ?? fileDiff.name}
+                  </span>
+                )}
                 <span className="review-diff-file-stats">
                   <span className="add">+{stats.additions}</span>
                   <span className="remove">-{stats.removals}</span>
                 </span>
               </button>
               {isOpen ? (
-                <FileDiff fileDiff={fileDiff} options={options} className="pierre-diff" />
+                <FileDiff
+                  fileDiff={fileDiff}
+                  options={options}
+                  className="pierre-diff pretty-scrollbar"
+                />
               ) : null}
             </div>
           );
@@ -94,6 +159,22 @@ function ReviewPayload({
       </div>
     </div>
   );
+}
+
+function fileChangeSymbol(kind: FileChangeKind): string {
+  switch (kind) {
+    case "added":
+      return "A";
+    case "edited":
+      return "M";
+    case "deleted":
+      return "D";
+    case "renamed":
+    case "renamed-edited":
+      return "R";
+    case "unknown":
+      return "•";
+  }
 }
 
 function parseFiles(patch: string | undefined): FileDiffMetadata[] {
@@ -123,6 +204,7 @@ function diffOptions(themeType: ThemeType): FileDiffOptions<undefined> {
     hunkSeparators: "line-info",
     lineDiffType: "word-alt",
     overflow: "scroll",
+    unsafeCSS: pierrePrettyScrollbarCss,
     collapsedContextThreshold: 4,
     expansionLineCount: 20,
     stickyHeader: false,

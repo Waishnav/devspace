@@ -1,70 +1,42 @@
 import assert from "node:assert/strict";
-import { getPatchDisplayParts } from "./patch-display.js";
+import test from "node:test";
+import {
+  getFileChangePathDisplay,
+  getPatchDisplayParts,
+  getRenderedFileChangeKind,
+} from "./patch-display.js";
 
-assert.deepEqual(getPatchDisplayParts({}), {
-  title: "Applied patch",
-  tone: "edit",
+test("review titles describe a uniform or mixed file set", () => {
+  assert.equal(getPatchDisplayParts(
+    { files: [] },
+    { emptyTitle: "Changes ready" },
+  ).title, "Changes ready");
+  assert.equal(getPatchDisplayParts({
+    files: [{ path: "a.ts", type: "new" }],
+  }).title, "Added 1 file");
+  assert.equal(getPatchDisplayParts({
+    files: [
+      { path: "a.ts", type: "new" },
+      { path: "b.ts", type: "change" },
+    ],
+  }).title, "Changed 2 files");
 });
 
-assert.deepEqual(
-  getPatchDisplayParts({ files: [{ path: "created.ts", operation: "add" }] }),
-  {
-    title: "Added 1 file",
-    iconOperation: "add",
-    tone: "write",
-  },
-);
+test("rename paths stay compact within one directory", () => {
+  assert.deepEqual(getFileChangePathDisplay({
+    path: "src/new.ts",
+    previousPath: "src/old.ts",
+  }), {
+    current: "new.ts",
+    previous: "old.ts",
+    title: "src/old.ts → src/new.ts",
+  });
+});
 
-assert.deepEqual(
-  getPatchDisplayParts({
-    files: [
-      { path: "a.ts", operation: "add" },
-      { path: "b.ts", operation: "add" },
-    ],
-  }),
-  {
-    title: "Added 2 files",
-    iconOperation: "add",
-    tone: "write",
-  },
-);
-
-assert.deepEqual(
-  getPatchDisplayParts({
-    files: [
-      { path: "created.ts", operation: "add" },
-      { path: "edited.ts", operation: "update" },
-    ],
-  }),
-  {
-    title: "Changed 2 files",
-    tone: "edit",
-  },
-);
-
-assert.deepEqual(
-  getPatchDisplayParts({
-    files: [
-      { path: "same.ts", operation: "add" },
-      { path: "same.ts", operation: "update" },
-    ],
-  }),
-  {
-    title: "Changed 1 file",
-    tone: "edit",
-  },
-);
-
-assert.deepEqual(
-  getPatchDisplayParts({
-    files: [
-      { path: "edited.ts", operation: "update" },
-      { path: "moved.ts", previousPath: "old.ts", operation: "move" },
-      { path: "removed.ts", operation: "delete" },
-    ],
-  }),
-  {
-    title: "Changed 3 files",
-    tone: "edit",
-  },
-);
+test("card metadata fills gaps in parsed diff metadata", () => {
+  assert.equal(getRenderedFileChangeKind(
+    [{ path: "renamed.ts", type: "rename-pure" }],
+    { path: "renamed.ts" },
+    0,
+  ), "renamed");
+});

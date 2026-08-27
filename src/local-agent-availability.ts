@@ -1,6 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { delimiter, resolve } from "node:path";
-import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
@@ -10,6 +9,7 @@ export interface LocalAgentProviderAvailability {
   name: LocalAgentProvider;
   available: boolean;
   reason?: string;
+  note?: string;
 }
 
 export function getLocalAgentProviderAvailabilitySnapshot(
@@ -24,19 +24,19 @@ export function checkLocalAgentProviderAvailability(
 ): LocalAgentProviderAvailability {
   switch (provider) {
     case "codex":
-      return packageAvailability(provider, "@openai/codex-sdk");
+      return codexAvailability(env);
     case "claude":
       return packageAvailability(provider, "@anthropic-ai/claude-agent-sdk");
     case "opencode":
       return packageAvailability(provider, "@opencode-ai/sdk/v2");
     case "pi":
-      return commandAvailability(provider, env.PI_COMMAND ?? "pi", {
-        env: piAvailabilityEnvironment(env),
-      });
+      return packageAvailability(provider, "@earendil-works/pi-coding-agent");
     case "cursor":
-      return commandAvailability(provider, "cursor-agent");
+      return commandAvailability(provider, env.CURSOR_COMMAND ?? "cursor-agent", env);
     case "copilot":
-      return commandAvailability(provider, "copilot");
+      return commandAvailability(provider, env.COPILOT_COMMAND ?? "copilot", env);
+    case "grok":
+      return commandAvailability(provider, env.GROK_COMMAND ?? "grok", env);
   }
 }
 
@@ -56,7 +56,7 @@ export function formatLocalAgentProviderAvailabilitySummary(
 ): string {
   const available = providers
     .filter((provider) => provider.available)
-    .map((provider) => provider.name);
+    .map(formatAvailableProvider);
   const unavailable = providers
     .filter((provider) => !provider.available)
     .map((provider) => `${provider.name} (${provider.reason ?? "unavailable"})`);
@@ -82,70 +82,58 @@ function packageAvailability(
   }
 }
 
+function codexAvailability(env: NodeJS.ProcessEnv): LocalAgentProviderAvailability {
+  const availability = commandAvailability("codex", env.CODEX_COMMAND ?? "codex", env);
+  return availability.available
+    ? {
+        ...availability,
+        note: "available",
+      }
+    : availability;
+}
+
 function commandAvailability(
   provider: LocalAgentProvider,
   command: string,
-  options: { env?: NodeJS.ProcessEnv } = {},
+  env: NodeJS.ProcessEnv,
 ): LocalAgentProviderAvailability {
-  const executable = resolveCommand(command, options.env);
-  if (!executable) {
-    return {
-      name: provider,
-      available: false,
-      reason: `${command} executable not found`,
-    };
-  }
-
-  return { name: provider, available: true };
+  if (resolveCommand(command, env)) return { name: provider, available: true };
+  return {
+    name: provider,
+    available: false,
+    reason: `${command} executable not found`,
+  };
 }
 
-function resolveCommand(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const commandHasPath = command.includes("/") || command.includes("\\");
-  if (commandHasPath) return executableExists(command, env) ? command : undefined;
-
-  for (const candidate of candidateCommandPaths(command, env)) {
-    if (executableExists(candidate, env)) return candidate;
+function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (command.includes("/") || command.includes("\\")) {
+    return executableExists(command) ? command : undefined;
+  }
+  const path = env.PATH;
+  if (!path) return undefined;
+  const extensions = process.platform === "win32"
+    ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
+    : [""];
+  for (const directory of path.split(delimiter)) {
+    if (!directory) continue;
+    for (const extension of extensions) {
+      const candidate = resolve(directory, `${command}${extension}`);
+      if (executableExists(candidate)) return candidate;
+    }
   }
   return undefined;
 }
 
-function candidateCommandPaths(command: string, env: NodeJS.ProcessEnv): string[] {
-  const path = env.PATH;
-  if (!path) return [];
-  const extensions = process.platform === "win32"
-    ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-      .split(";")
-      .filter(Boolean)
-    : [""];
-  const candidates: string[] = [];
-  for (const directory of path.split(delimiter)) {
-    if (!directory) continue;
-    for (const extension of extensions) {
-      candidates.push(resolve(directory, `${command}${extension}`));
-    }
+function formatAvailableProvider(provider: LocalAgentProviderAvailability): string {
+  return provider.note ? `${provider.name} (${provider.note})` : provider.name;
+}
+
+function executableExists(command: string): boolean {
+  const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
+  try {
+    accessSync(command, mode);
+    return true;
+  } catch {
+    return false;
   }
-  return candidates;
-}
-
-function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    env,
-    windowsHide: true,
-    timeout: 5_000,
-  });
-  const code = typeof result.error === "object" && result.error && "code" in result.error
-    ? result.error.code
-    : undefined;
-  return code !== "ENOENT";
-}
-
-function piAvailabilityEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (env.PI_COMMAND) return env;
-  const path = env.PATH;
-  if (!path) return env;
-  return {
-    ...env,
-    PATH: removeDevspaceNodeModulesBinFromPath(path),
-  };
 }

@@ -38,6 +38,23 @@ export const loadedAgentFiles = sqliteTable(
   ],
 );
 
+export const workspaceConversationBindings = sqliteTable(
+  "workspace_conversation_bindings",
+  {
+    conversationScopeId: text("conversation_scope_id").notNull(),
+    targetKey: text("target_key").notNull(),
+    workspaceSessionId: text("workspace_session_id")
+      .notNull()
+      .references(() => workspaceSessions.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+    lastUsedAt: text("last_used_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.conversationScopeId, table.targetKey] }),
+    index("workspace_conversation_bindings_workspace_idx").on(table.workspaceSessionId),
+  ],
+);
+
 export const oauthClients = sqliteTable(
   "oauth_clients",
   {
@@ -82,11 +99,13 @@ export const localAgentSessions = sqliteTable(
     profileName: text("profile_name").notNull(),
     provider: text("provider").notNull(),
     model: text("model"),
-    thinking: text("thinking"),
+    effort: text("effort"),
     providerSessionId: text("provider_session_id"),
     status: text("status").notNull(),
     latestResponse: text("latest_response"),
     error: text("error"),
+    errorCode: text("error_code"),
+    errorRetryable: text("error_retryable"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -101,5 +120,7 @@ export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+export type WorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferSelect;
+export type NewWorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferInsert;
 export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
 export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;

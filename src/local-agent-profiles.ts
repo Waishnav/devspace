@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
 
-export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
+export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot" | "grok";
 
 export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
   "codex",
@@ -13,6 +13,7 @@ export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
   "pi",
   "cursor",
   "copilot",
+  "grok",
 ];
 
 export interface LocalAgentProfile {
@@ -20,7 +21,7 @@ export interface LocalAgentProfile {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
-  thinking?: string;
+  effort?: string;
   filePath: string;
   body: string;
   disabled: boolean;
@@ -31,7 +32,7 @@ export interface LocalAgentProfileSummary {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
-  thinking?: string;
+  effort?: string;
 }
 
 interface ParsedFrontmatter {
@@ -45,8 +46,9 @@ const PROVIDERS = new Set<LocalAgentProvider>(LOCAL_AGENT_PROVIDERS);
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
   workspaceRoot: string,
+  options: { includeDisabled?: boolean } = {},
 ): Promise<LocalAgentProfile[]> {
-  if (!config.subagents) return [];
+  if (!config.subagents.enabled) return [];
 
   const profileDirs = [
     config.devspaceAgentsDir,
@@ -61,7 +63,7 @@ export async function loadLocalAgentProfiles(
   }
 
   return Array.from(profilesByName.values())
-    .filter((profile) => !profile.disabled)
+    .filter((profile) => options.includeDisabled || !profile.disabled)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -73,7 +75,7 @@ export function summarizeLocalAgentProfile(
     description: profile.description,
     provider: profile.provider,
     model: profile.model,
-    thinking: profile.thinking,
+    effort: profile.effort,
   };
 }
 
@@ -157,7 +159,7 @@ function profileFromFrontmatter(
     description,
     provider,
     model: readString(frontmatter, "model"),
-    thinking: readString(frontmatter, "thinking"),
+    effort: readString(frontmatter, "effort"),
     filePath,
     body,
     disabled: frontmatter.disabled === true,
@@ -171,7 +173,7 @@ function readProvider(frontmatter: Record<string, unknown>, filePath: string): L
   }
   if (!PROVIDERS.has(provider as LocalAgentProvider)) {
     throw new Error(
-      `Subagent profile provider must be codex, claude, opencode, pi, cursor, or copilot: ${filePath}`,
+      `Subagent profile provider must be codex, claude, opencode, pi, cursor, copilot, or grok: ${filePath}`,
     );
   }
   return provider as LocalAgentProvider;

@@ -4,7 +4,7 @@ name: opencode-explorer
 description: Read-only profile for fast relevant-file discovery and small architecture questions.
 provider: opencode
 model: opencode/deepseek-v4-flash-free
-thinking: high
+effort: high
 ---
 
 Find the answer quickly without editing. Use this profile when the main need is

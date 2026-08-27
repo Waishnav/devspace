@@ -1,12 +1,21 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { Stats } from "node:fs";
-import type { WorkspaceMode, WorkspaceStore } from "./workspace-store.js";
+import type {
+  WorkspaceConversationBinding,
+  WorkspaceMode,
+  WorkspaceStore,
+} from "./workspace-store.js";
 import { mkdir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
-import { assertAllowedPath, isPathInsideRoot, resolveAllowedPath } from "./roots.js";
+import {
+  AccessDeniedError,
+  assertAllowedPath,
+  isPathInsideRoot,
+  resolveAllowedPath,
+} from "./roots.js";
 import {
   loadWorkspaceSkills,
   markSkillActivated,
@@ -55,6 +64,8 @@ export interface WorkspaceContext {
   workspace: Workspace;
   agentsFiles: LoadedAgentsFile[];
   availableAgentsFiles: AvailableAgentsFile[];
+  workspaceReused: boolean;
+  includeBootstrapContext: boolean;
 }
 
 export interface WorkspaceReadPath {
@@ -69,6 +80,10 @@ export interface OpenWorkspaceInput {
   baseRef?: string;
 }
 
+export interface OpenWorkspaceOptions {
+  conversationScopeId?: string;
+}
+
 type PathStats = Stats;
 type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
@@ -77,14 +92,63 @@ type DirectoryOps = {
 
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
+  private readonly pendingCheckoutOpens = new Map<string, Promise<WorkspaceContext>>();
 
   constructor(
     private readonly config: ServerConfig,
     private readonly store?: WorkspaceStore,
   ) {}
 
-  async openWorkspace(input: string | OpenWorkspaceInput): Promise<WorkspaceContext> {
-    const options = typeof input === "string" ? { path: input } : input;
+  async openWorkspace(
+    input: string | OpenWorkspaceInput,
+    openOptions: OpenWorkspaceOptions = {},
+  ): Promise<WorkspaceContext> {
+    const workspaceInput = typeof input === "string" ? { path: input } : input;
+    const conversationScopeId = openOptions.conversationScopeId;
+    if (!conversationScopeId || !this.store) {
+      return this.openNewWorkspace(workspaceInput);
+    }
+
+    const projectKey = await this.conversationProjectKey(workspaceInput);
+    const mode = workspaceInput.mode ?? "checkout";
+    if (mode === "worktree") {
+      const context = await this.openWorktreeWorkspace(workspaceInput.path, workspaceInput.baseRef);
+      return {
+        ...context,
+        // A new worktree always has its own workspace-specific context.
+        includeBootstrapContext: true,
+      };
+    }
+
+    const targetKey = this.conversationCheckoutTargetKey(projectKey);
+    const operationKey = JSON.stringify([conversationScopeId, targetKey]);
+    const pending = this.pendingCheckoutOpens.get(operationKey);
+    if (pending) {
+      const context = await pending;
+      return {
+        ...context,
+        workspaceReused: true,
+        includeBootstrapContext: false,
+      };
+    }
+
+    const open = this.openConversationCheckout(
+      workspaceInput,
+      conversationScopeId,
+      targetKey,
+    );
+    this.pendingCheckoutOpens.set(operationKey, open);
+
+    try {
+      return await open;
+    } finally {
+      if (this.pendingCheckoutOpens.get(operationKey) === open) {
+        this.pendingCheckoutOpens.delete(operationKey);
+      }
+    }
+  }
+
+  private async openNewWorkspace(options: OpenWorkspaceInput): Promise<WorkspaceContext> {
     const mode = options.mode ?? "checkout";
 
     if (mode === "worktree") {
@@ -92,6 +156,92 @@ export class WorkspaceRegistry {
     }
 
     return this.openCheckoutWorkspace(options.path);
+  }
+
+  private async openConversationCheckout(
+    input: OpenWorkspaceInput,
+    conversationScopeId: string,
+    targetKey: string,
+  ): Promise<WorkspaceContext> {
+    const binding = this.store?.getConversationBinding(conversationScopeId, targetKey);
+    if (binding) {
+      const reusableWorkspace = await this.findReusableCheckoutWorkspace(binding);
+
+      if (reusableWorkspace) {
+        const context = await this.reusedWorkspaceContext(reusableWorkspace);
+        this.store?.touchConversationBinding(conversationScopeId, targetKey);
+        return {
+          ...context,
+          includeBootstrapContext: false,
+        };
+      }
+
+      this.workspaces.delete(binding.workspaceSessionId);
+      this.store?.deleteConversationBinding(conversationScopeId, targetKey);
+    }
+
+    const context = await this.openCheckoutWorkspace(input.path);
+    this.store?.setConversationBinding({
+      conversationScopeId,
+      targetKey,
+      workspaceSessionId: context.workspace.id,
+    });
+    return {
+      ...context,
+      includeBootstrapContext: true,
+    };
+  }
+
+  private async findReusableCheckoutWorkspace(
+    binding: WorkspaceConversationBinding,
+  ): Promise<Workspace | undefined> {
+    const session = this.store?.getSession(binding.workspaceSessionId);
+    if (!session || session.status !== "active" || session.mode !== "checkout") {
+      return undefined;
+    }
+
+    let root: string;
+    try {
+      root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+      const rootStats = await stat(root);
+      if (!rootStats.isDirectory()) return undefined;
+    } catch (error) {
+      if (
+        error instanceof AccessDeniedError ||
+        (isErrnoException(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+      ) {
+        return undefined;
+      }
+
+      throw error;
+    }
+
+    const workspace = this.getWorkspace(binding.workspaceSessionId);
+    if (workspace.mode !== "checkout" || workspace.root !== root) return undefined;
+    return workspace;
+  }
+
+  private async conversationProjectKey(input: OpenWorkspaceInput): Promise<string> {
+    const path = assertAllowedPath(input.path, this.config.allowedRoots);
+    return canonicalPath(path);
+  }
+
+  private conversationCheckoutTargetKey(projectKey: string): string {
+    return JSON.stringify(["checkout", projectKey, null]);
+  }
+
+  private async reusedWorkspaceContext(workspace: Workspace): Promise<WorkspaceContext> {
+    workspace.agentProfiles = await loadLocalAgentProfiles(this.config, workspace.root);
+    const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
+    await this.rememberAgentsFiles(workspace, agentsFiles);
+
+    return {
+      workspace,
+      agentsFiles,
+      availableAgentsFiles: [],
+      workspaceReused: true,
+      includeBootstrapContext: true,
+    };
   }
 
   getWorkspace(workspaceId: string): Workspace {
@@ -103,7 +253,9 @@ export class WorkspaceRegistry {
 
     const session = this.store?.getSession(workspaceId);
     if (!session) {
-      throw new Error(`Unknown workspaceId: ${workspaceId}. Call open_workspace first.`);
+      throw new Error(
+        `Unknown workspaceId: ${workspaceId}. Open the target project or worktree again and continue with the new workspaceId.`,
+      );
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
@@ -274,7 +426,7 @@ export class WorkspaceRegistry {
     worktree?: WorkspaceWorktree;
   }): Promise<WorkspaceContext> {
     const workspace: Workspace = {
-      id: `ws_${randomUUID()}`,
+      id: `ws_${randomBytes(5).toString("hex")}`,
       root: input.root,
       mode: input.mode,
       sourceRoot: input.sourceRoot,
@@ -299,7 +451,13 @@ export class WorkspaceRegistry {
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
     await this.rememberAgentsFiles(workspace, agentsFiles);
 
-    return { workspace, agentsFiles, availableAgentsFiles: [] };
+    return {
+      workspace,
+      agentsFiles,
+      availableAgentsFiles: [],
+      workspaceReused: false,
+      includeBootstrapContext: true,
+    };
   }
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {
@@ -357,6 +515,26 @@ export class WorkspaceRegistry {
       workspace.loadedAgentsPaths.add(resolve(file.path));
       const realPath = realPaths?.[index] ?? await tryRealpath(file.path);
       if (realPath) workspace.loadedAgentsRealPaths.add(realPath);
+    }
+  }
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  const missingSegments: string[] = [];
+  let candidate = path;
+
+  while (true) {
+    try {
+      return resolve(await realpath(candidate), ...missingSegments.slice().reverse());
+    } catch (error) {
+      if (!isErrnoException(error) || (error.code !== "ENOENT" && error.code !== "ENOTDIR")) {
+        throw error;
+      }
+
+      const parent = dirname(candidate);
+      if (parent === candidate) return path;
+      missingSegments.push(basename(candidate));
+      candidate = parent;
     }
   }
 }

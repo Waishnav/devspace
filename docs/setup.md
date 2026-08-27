@@ -1,7 +1,6 @@
 # Setup Guide
 
-This guide is for users who want ChatGPT or another MCP host to work in local
-projects through DevSpace.
+This guide covers ChatGPT and Coding Agents using DevSpace with local projects.
 
 ## Requirements
 
@@ -9,10 +8,12 @@ projects through DevSpace.
 - npm
 - Git
 - Bash, including Git Bash or WSL on Windows
-- a public HTTPS URL that forwards to the local DevSpace server
+- a public HTTPS URL that forwards to the local DevSpace server, only when
+  ChatGPT will connect
 
-DevSpace does not create the public tunnel for you. Use Cloudflare Tunnel,
-ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
+DevSpace does not create the public tunnel for you. ChatGPT users can use
+Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or their own HTTPS reverse
+proxy.
 
 ## Install And Configure
 
@@ -24,10 +25,13 @@ npx @waishnav/devspace init
 
 The setup flow asks one question at a time.
 
-### Project Roots
+First choose where you will use DevSpace: ChatGPT, Coding Agents, or both.
+DevSpace uses that answer to skip setup that does not apply to you.
 
-Choose the folders ChatGPT is allowed to open through DevSpace. Keep this
-narrow.
+### Project roots
+
+If you selected ChatGPT, choose the project folders it may open through
+DevSpace. Keep this narrow.
 
 Examples:
 
@@ -43,20 +47,31 @@ Examples:
 C:\Users\alice\dev,C:\Users\alice\work
 ```
 
-### Local Port
+A Coding Agents-only setup skips this question. Direct `devspace agents`
+commands use the current Git project, or the current directory outside a
+repository, with the authority of your local shell. MCP workspace operations
+remain limited to the roots configured for ChatGPT.
 
-The default is `7676`.
+### Coding Agents
 
-The local MCP URL is:
+Setup detects supported Coding Agents and asks which ones DevSpace may use.
+These choices are stored as provider objects under `subagents` in
+`~/.devspace/config.jsonc`.
 
-```text
-http://127.0.0.1:7676/mcp
+If you selected Coding Agents, setup prints:
+
+```bash
+npx skills add Waishnav/devspace --skill subagents --global
 ```
 
-### Public Base URL
+The Skills CLI asks which installed Coding Agents should receive the skill.
+The skill uses `devspace agents targets`, `run`, `continue`, `show`, and `ls`.
+These commands do not require `devspace serve`.
 
-Start your tunnel or reverse proxy before entering this value. Point the tunnel
-at:
+### Connect ChatGPT
+
+Setup only asks for a public URL if you selected ChatGPT. Start your tunnel or
+reverse proxy first and point it at:
 
 ```text
 http://127.0.0.1:7676
@@ -74,6 +89,8 @@ Configure the MCP client with the full MCP endpoint:
 https://your-tunnel-host.example.com/mcp
 ```
 
+A Coding Agents-only setup skips this section.
+
 ## Start The Server
 
 Run:
@@ -82,13 +99,7 @@ Run:
 npx @waishnav/devspace serve
 ```
 
-If your tunnel URL changes for one run, override it without rewriting config:
-
-```bash
-DEVSPACE_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @waishnav/devspace serve
-```
-
-For a stable public URL, persist it:
+If your tunnel URL changes, update the persisted value before starting:
 
 ```bash
 npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
@@ -103,7 +114,7 @@ password approval page. Enter the Owner password printed during setup.
 The default config files are:
 
 ```text
-~/.devspace/config.json
+~/.devspace/config.jsonc
 ~/.devspace/auth.json
 ```
 

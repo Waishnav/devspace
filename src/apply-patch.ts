@@ -365,7 +365,7 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
       const original = await readStagedOptional(absolute, action.path);
       staged.set(absolute, { content: action.content, mode: original?.mode });
       patches.push(unifiedFilePatch(action.path, action.path, original?.content ?? null, action.content));
-      results.push({ path: action.path, operation: "add" });
+      results.push({ path: action.path, operation: original ? "update" : "add" });
       continue;
     }
 
