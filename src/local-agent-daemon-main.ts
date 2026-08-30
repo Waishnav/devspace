@@ -22,7 +22,7 @@ const log = (
 const store = new LocalAgentStore(paths.stateDir);
 const manager = new LocalAgentManager({
   store,
-  drivers: createLocalAgentDrivers(),
+  drivers: createLocalAgentDrivers({ subagents: config.subagents }),
   pool: new LocalAgentRuntimePool({ logger: log }),
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,

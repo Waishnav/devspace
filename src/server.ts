@@ -813,11 +813,11 @@ export function createServer(
   const toolActivities = new ToolActivityTracker();
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
-    getLocalAgentProviderAvailabilitySnapshot(),
+    getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
   const resolveLocalAgentProviders = () => buildLocalAgentProviderStatuses(
     config.subagents,
-    getLocalAgentProviderAvailabilitySnapshot(),
+    getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
   const modernToolSurface = getToolSurface(config.toolMode);
   const bindModernMcpSurface = compileMcpRegistrationSurface((target) => {

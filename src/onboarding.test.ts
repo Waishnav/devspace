@@ -32,7 +32,14 @@ const configured = {
   enabled: true,
   instructions: "preload" as const,
   providers: [
-    { id: "codex" as const, enabled: true, model: "gpt-5.4", effort: "high" },
+    {
+      id: "codex" as const,
+      enabled: true,
+      model: "gpt-5.4",
+      effort: "high",
+      command: "/opt/bin/codex-wrapper",
+      env: { OPENAI_API_KEY: "configured", EMPTY_VALUE: "" },
+    },
     { id: "claude" as const, enabled: true, model: "sonnet" },
   ],
 };
@@ -42,7 +49,14 @@ assert.deepEqual(
     enabled: true,
     instructions: "preload",
     providers: [
-      { id: "codex", enabled: false, model: "gpt-5.4", effort: "high" },
+      {
+        id: "codex",
+        enabled: false,
+        model: "gpt-5.4",
+        effort: "high",
+        command: "/opt/bin/codex-wrapper",
+        env: { OPENAI_API_KEY: "configured", EMPTY_VALUE: "" },
+      },
       { id: "claude", enabled: true, model: "sonnet" },
     ],
   },
