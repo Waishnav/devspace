@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { loadConfig } from "./config.js";
-import { localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
+import {
+  LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  localAgentDaemonPaths,
+} from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -100,7 +103,7 @@ try {
       if (request.method === "agent.start") {
         socket.end(encodeLocalAgentDaemonResponse({
           requestId: request.requestId,
-          protocolVersion: 3,
+          protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
           ok: false,
           error: {
             code: "UNKNOWN_TARGET",
@@ -113,10 +116,17 @@ try {
       }
       const result = request.method === "agent.list"
         ? [current]
+        : request.method === "agent.get"
+          ? current
+          : request.method === "agent.wait"
+            ? [
+                { id: current.id, status: "completed", response: "Review complete." },
+                { id: other.id, status: "running", wait: "timeout" },
+              ]
         : request.method === "hello"
           ? {
               state: "ready",
-              protocolVersion: 3,
+              protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
               pid: process.pid,
               endpoint: daemonSocket,
               startedAt: "now",
@@ -127,7 +137,7 @@ try {
           : null;
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
-        protocolVersion: 3,
+        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
         ok: true,
         result,
       }));
@@ -191,6 +201,69 @@ try {
     assert.match(directOutput, new RegExp(current.id));
     const directList = [...daemonRequests].reverse().find((request) => request.method === "agent.list");
     assert.deepEqual(directList?.params, { workspaceRoot: realpathSync.native(projectRoot) });
+
+    const { stdout: showOutput } = await execFileAsync(
+      "node",
+      ["--import", "tsx", "src/cli.ts", "agents", "show", current.id],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    );
+    assert.equal(
+      showOutput,
+      `<agent id="${current.id}" status="completed">Review complete.</agent>\n`,
+    );
+    assert.equal(
+      daemonRequests.filter((request) => request.method === "agent.get").length,
+      1,
+      "show must be an immediate snapshot",
+    );
+
+    const { stdout: waitOutput } = await execFileAsync(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli.ts",
+        "agents",
+        "wait",
+        current.id,
+        other.id,
+        "--timeout",
+        "0",
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    );
+    assert.equal(
+      waitOutput,
+      [
+        `<agent id="${current.id}" status="completed">Review complete.</agent>`,
+        `<agent id="${other.id}" status="running" wait="timeout"/>`,
+        "",
+      ].join("\n"),
+    );
+    const waitRequest = daemonRequests.find((request) => request.method === "agent.wait");
+    assert.deepEqual(waitRequest?.params, {
+      ids: [current.id, other.id],
+      scope: { workspaceId: "ws_current", workspaceRoot: realpathSync.native(projectRoot) },
+      timeoutMs: 0,
+    });
 
     let commandFailure: unknown;
     try {

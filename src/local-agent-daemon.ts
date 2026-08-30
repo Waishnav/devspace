@@ -37,6 +37,8 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentWaitError,
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -53,6 +55,12 @@ export interface LocalAgentDaemonManager {
   continue(agentId: string, prompt: string, overrides: RunOverrides | undefined, scope: LocalAgentWorkspaceScope): Promise<Result<LocalAgentRecord, AgentContinueError>>;
   get(agentId: string, scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord, AgentLookupError>;
   list(scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord[], AgentListError>;
+  wait(
+    agentIds: readonly string[],
+    scope: LocalAgentWorkspaceScope,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<Result<LocalAgentWaitResult[], AgentWaitError>>;
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
   readonly activeTurnCount: number;
@@ -210,6 +218,7 @@ export class LocalAgentDaemon {
 
   private handleConnection(socket: Socket): void {
     this.sockets.add(socket);
+    const disconnected = new AbortController();
     socket.setEncoding("utf8");
     let buffer = "";
     let handled = false;
@@ -243,14 +252,17 @@ export class LocalAgentDaemon {
       handled = true;
       clearTimeout(requestTimer);
       const line = buffer.slice(0, newline);
-      void this.handleLine(socket, line);
+      void this.handleLine(socket, line, disconnected.signal);
     });
     socket.on("error", () => undefined);
-    socket.on("close", () => this.sockets.delete(socket));
+    socket.on("close", () => {
+      disconnected.abort();
+      this.sockets.delete(socket);
+    });
     socket.on("error", () => clearTimeout(requestTimer));
   }
 
-  private async handleLine(socket: Socket, line: string): Promise<void> {
+  private async handleLine(socket: Socket, line: string, signal: AbortSignal): Promise<void> {
     let requestId = "";
     try {
       let parsed: unknown;
@@ -261,7 +273,7 @@ export class LocalAgentDaemon {
       }
       requestId = readRequestId(parsed);
       const request = decodeLocalAgentDaemonRequest(parsed);
-      const response = await this.dispatch(request);
+      const response = await this.dispatch(request, signal);
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
         protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -274,7 +286,7 @@ export class LocalAgentDaemon {
     }
   }
 
-  private async dispatch(request: LocalAgentDaemonRequest): Promise<unknown> {
+  private async dispatch(request: LocalAgentDaemonRequest, signal: AbortSignal): Promise<unknown> {
     if (request.protocolVersion !== LOCAL_AGENT_DAEMON_PROTOCOL_VERSION) {
       throw new LocalAgentDaemonProtocolError(
         "PROTOCOL_MISMATCH",
@@ -307,6 +319,13 @@ export class LocalAgentDaemon {
         return unwrapManagerResult(this.manager.get(request.params.id, request.params.scope));
       case "agent.list":
         return unwrapManagerResult(this.manager.list(request.params));
+      case "agent.wait":
+        return unwrapManagerResult(await this.manager.wait(
+          request.params.ids,
+          request.params.scope,
+          request.params.timeoutMs,
+          signal,
+        ));
       case "daemon.status":
         return this.status();
       case "daemon.stop":

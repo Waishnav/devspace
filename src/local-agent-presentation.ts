@@ -46,7 +46,7 @@ export interface AgentCommandErrorOutput {
 }
 
 export type AgentObservationOutput =
-  | { id: string; status: "running" }
+  | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: AgentFailureOutput }
   | { id: string; status: "stopped"; error?: AgentFailureOutput };
@@ -123,6 +123,9 @@ export function formatAgentSummary(summary: AgentSummaryOutput): string {
 }
 
 export function formatAgentObservation(observation: AgentObservationOutput): string {
+  if (observation.status === "running" && observation.wait) {
+    return `<agent id="${escapeXmlAttribute(observation.id)}" status="running" wait="${observation.wait}"/>`;
+  }
   if (observation.status === "completed" && observation.response !== undefined) {
     return `<agent id="${escapeXmlAttribute(observation.id)}" status="completed">${escapeXmlText(observation.response)}</agent>`;
   }
