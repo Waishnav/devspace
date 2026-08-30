@@ -246,28 +246,25 @@ export class LocalAgentManager {
       }));
     }
 
-    const updated = this.store.updateResult(record.id, {
-      status: "running",
+    const begun = this.store.beginTurnResult(record.id, {
+      prompt,
       model: overrides.model ?? record.model,
       effort: overrides.effort ?? record.effort,
-      latestResponse: undefined,
-      error: undefined,
-      errorCode: undefined,
-      errorRetryable: undefined,
     });
-    if (updated.isErr()) return updated;
+    if (begun.isErr()) return begun;
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
     const turn = Promise.resolve().then(() => (
-      this.runTurn(updated.value, prompt, overrides, workspaceId)
+      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId)
     ));
     this.activeTurns.set(record.id, turn);
     void turn.catch(() => undefined);
-    return updated;
+    return Result.ok(begun.value.agent);
   }
 
   private async runTurn(
     record: LocalAgentRecord,
+    turnId: number,
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
@@ -281,7 +278,7 @@ export class LocalAgentManager {
     try {
       const authorized = this.authorizeWorkspace(record.workspaceRoot, workspaceId, "run");
       if (authorized.isErr()) {
-        this.persistRunError(record, authorized.error, startedAt);
+        this.persistRunError(record, turnId, authorized.error, startedAt);
         return;
       }
       const workspaceRoot = authorized.value;
@@ -290,22 +287,22 @@ export class LocalAgentManager {
         : { ...record, workspaceRoot };
       const profiles = await this.loadProfilesResult(workspaceRoot, record.profileName);
       if (profiles.isErr()) {
-        this.persistRunError(record, profiles.error, startedAt);
+        this.persistRunError(record, turnId, profiles.error, startedAt);
         return;
       }
       const profile = this.profileForRecordResult(record, profiles.value);
       if (profile.isErr()) {
-        this.persistRunError(record, profile.error, startedAt);
+        this.persistRunError(record, turnId, profile.error, startedAt);
         return;
       }
       const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides);
       if (input.isErr()) {
-        this.persistRunError(record, input.error, startedAt);
+        this.persistRunError(record, turnId, input.error, startedAt);
         return;
       }
       const driver = this.driverResult(record.provider, "run", record.id);
       if (driver.isErr()) {
-        this.persistRunError(record, driver.error, startedAt);
+        this.persistRunError(record, turnId, driver.error, startedAt);
         return;
       }
       const context: LocalAgentRuntimeContext = {
@@ -329,20 +326,17 @@ export class LocalAgentManager {
       };
       const result = await this.pool.run(driver.value, context, input.value, callbacks);
       if (result.isErr()) {
-        this.persistRunError(record, result.error, startedAt);
+        this.persistRunError(record, turnId, result.error, startedAt);
         return;
       }
       const runResult = result.value;
       const current = this.store.getByIdResult(record.id);
       if (current.isErr()) throw current.error;
       if (!current.value) return;
-      const updated = this.store.updateResult(record.id, {
+      const updated = this.store.finishTurnResult(record.id, turnId, {
         providerSessionId: runResult.providerSessionId ?? current.value.providerSessionId,
-        status: "idle",
-        latestResponse: runResult.finalResponse,
-        error: undefined,
-        errorCode: undefined,
-        errorRetryable: undefined,
+        status: "completed",
+        response: runResult.finalResponse,
       });
       if (updated.isErr()) throw updated.error;
       this.log("info", "agent_run_completed", {
@@ -353,11 +347,11 @@ export class LocalAgentManager {
       });
     } catch (error) {
       if (isLocalAgentError(error)) {
-        this.persistRunError(record, error, startedAt);
+        this.persistRunError(record, turnId, error, startedAt);
         return;
       }
-      const persisted = this.store.updateResult(record.id, {
-        status: "error",
+      const persisted = this.store.finishTurnResult(record.id, turnId, {
+        status: "failed",
         error: "Unexpected internal subagent failure.",
         errorCode: "AGENT_INTERNAL_ERROR",
         errorRetryable: false,
@@ -379,11 +373,12 @@ export class LocalAgentManager {
 
   private persistRunError(
     record: LocalAgentRecord,
+    turnId: number,
     error: LocalAgentError,
     startedAt: number,
   ): void {
-    const persisted = this.store.updateResult(record.id, {
-      status: "error",
+    const persisted = this.store.finishTurnResult(record.id, turnId, {
+      status: "failed",
       error: error.message,
       errorCode: error.code,
       errorRetryable: error.retryable,

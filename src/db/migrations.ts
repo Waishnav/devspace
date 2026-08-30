@@ -42,6 +42,11 @@ const migrations: Migration[] = [
     name: "workspace-recovery-state",
     up: migrateWorkspaceRecoveryState,
   },
+  {
+    version: 8,
+    name: "local-agent-turns",
+    up: migrateLocalAgentTurns,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -258,6 +263,30 @@ function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
   if (!workspaceStateExists) return;
 
   addColumnIfMissing(sqlite, "workspace_sessions", "recovery_kind", "text");
+}
+
+function migrateLocalAgentTurns(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists local_agent_turns (
+      id integer primary key autoincrement,
+      agent_id text not null,
+      prompt text not null,
+      status text not null,
+      response text,
+      error text,
+      error_code text,
+      error_retryable text,
+      created_at text not null,
+      completed_at text,
+      foreign key (agent_id) references local_agent_sessions(id) on delete cascade
+    );
+
+    create index if not exists local_agent_turns_agent_id_idx
+      on local_agent_turns(agent_id, id desc);
+
+    create index if not exists local_agent_turns_status_idx
+      on local_agent_turns(status);
+  `);
 }
 
 function addColumnIfMissing(
