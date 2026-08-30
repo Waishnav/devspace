@@ -54,7 +54,66 @@ try {
 assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
 assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
 assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "other") }), []);
-assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
+  assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
+
+  const begun = store.beginTurn(created.id, {
+    prompt: "Review the current changes.",
+    model: updated.model,
+    effort: updated.effort,
+  });
+  assert.equal(begun.agent.status, "running");
+  assert.equal(begun.turn.agentId, created.id);
+  assert.equal(begun.turn.prompt, "Review the current changes.");
+  assert.equal(begun.turn.status, "running");
+  assert.equal(begun.turn.completedAt, undefined);
+
+  const completed = store.finishTurn(created.id, begun.turn.id, {
+    status: "completed",
+    response: "No issues found.",
+    providerSessionId: "thread_456",
+  });
+  assert.equal(completed.status, "idle");
+  assert.equal(completed.latestResponse, "No issues found.");
+  assert.equal(completed.providerSessionId, "thread_456");
+  const completedTurn = store.getLatestTurn(created.id);
+  assert.equal(completedTurn?.id, begun.turn.id);
+  assert.equal(completedTurn?.status, "completed");
+  assert.equal(completedTurn?.response, "No issues found.");
+  assert.ok(completedTurn?.completedAt);
+
+  const failing = store.beginTurn(created.id, {
+    prompt: "Retry the review.",
+    model: completed.model,
+    effort: completed.effort,
+  });
+  store.finishTurn(created.id, failing.turn.id, {
+    status: "failed",
+    error: "Provider disconnected.",
+    errorCode: "PROVIDER_EXECUTION_ERROR",
+    errorRetryable: true,
+  });
+  assert.deepEqual(
+    store.listTurns(created.id).map((turn) => ({
+      prompt: turn.prompt,
+      status: turn.status,
+      response: turn.response,
+      errorCode: turn.errorCode,
+    })),
+    [
+      {
+        prompt: "Review the current changes.",
+        status: "completed",
+        response: "No issues found.",
+        errorCode: undefined,
+      },
+      {
+        prompt: "Retry the review.",
+        status: "failed",
+        response: undefined,
+        errorCode: "PROVIDER_EXECUTION_ERROR",
+      },
+    ],
+  );
 
   const otherStore = new LocalAgentStore(root);
   stores.push(otherStore);
@@ -69,6 +128,7 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
     store.list({ workspaceId: "ws_1" }).map((agent) => agent.id).sort(),
     [created.id, createdFromOtherStore.id].sort(),
   );
+  assert.equal(otherStore.listTurns(created.id).length, 2);
 
   const legacyStateDir = join(root, "legacy-state");
   mkdirSync(legacyStateDir, { recursive: true });
@@ -137,6 +197,12 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
   assert.equal(reloadedRecord?.error, "old error");
   assert.equal(reloadedRecord?.errorCode, "DAEMON_TIMEOUT");
   assert.equal(reloadedRecord?.errorRetryable, true);
+  const legacyTurn = upgradedStore.beginTurn("agt_legacy", {
+    prompt: "Continue after upgrade.",
+    model: reloadedRecord?.model,
+    effort: reloadedRecord?.effort,
+  });
+  assert.equal(legacyTurn.turn.status, "running");
 } finally {
   for (const store of stores) {
     store.close();
