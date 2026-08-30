@@ -40,6 +40,9 @@ class FakeManager implements LocalAgentDaemonManager {
   runtimeCount = 0;
   closed = false;
   lastInput?: StartLocalAgentInput;
+  blockWaitUntilAbort = false;
+  waitStarted = false;
+  waitAborted = false;
 
   async start(input: StartLocalAgentInput) {
     this.lastInput = input;
@@ -61,6 +64,21 @@ class FakeManager implements LocalAgentDaemonManager {
 
   list(_scope: { workspaceId: string; workspaceRoot: string }) {
     return Result.ok([record]);
+  }
+
+  async wait(agentIds: readonly string[], _scope: unknown, _timeoutMs?: number, signal?: AbortSignal) {
+    this.waitStarted = true;
+    if (this.blockWaitUntilAbort) {
+      await new Promise<void>((resolveAbort) => {
+        const onAbort = () => {
+          this.waitAborted = true;
+          resolveAbort();
+        };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    return Result.ok(agentIds.map((id) => ({ id, status: "running" as const })));
   }
 
   async evictIdle(): Promise<void> {}
@@ -135,6 +153,9 @@ try {
   const recordScope = { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot };
   assert.equal(unwrap(await client.get(record.id, recordScope)).id, record.id);
   assert.equal(unwrap(await client.list(recordScope))[0]?.id, record.id);
+  assert.deepEqual(unwrap(await client.wait([record.id], recordScope, 0)), [
+    { id: record.id, status: "running" },
+  ]);
   assert.equal(unwrap(await client.status()).state, "ready");
 
   unwrap(await client.stop());
@@ -247,7 +268,7 @@ const legacyServer = createNetServer((socket) => {
         ok: false,
         error: {
           code: "DAEMON_PROTOCOL_MISMATCH",
-          message: "Unsupported daemon protocol version 3; expected 1.",
+          message: `Unsupported daemon protocol version ${LOCAL_AGENT_DAEMON_PROTOCOL_VERSION}; expected 1.`,
           retryable: false,
         },
       }));
@@ -301,10 +322,17 @@ const upgradeClient = new LocalAgentClient({
   },
 });
 try {
-  assert.equal(unwrap(await upgradeClient.ensureReady()).protocolVersion, 3);
+  assert.equal(
+    unwrap(await upgradeClient.ensureReady()).protocolVersion,
+    LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  );
   assert.equal(replacementSpawns, 1);
   assert.equal(spawnedBeforeLegacyLockReleased, false);
-  assert.deepEqual(legacyMethods.slice(0, 3), ["hello:3", "hello:1", "daemon.stop:1"]);
+  assert.deepEqual(legacyMethods.slice(0, 3), [
+    `hello:${LOCAL_AGENT_DAEMON_PROTOCOL_VERSION}`,
+    "hello:1",
+    "daemon.stop:1",
+  ]);
 } finally {
   legacyLock.release();
   await replacementDaemon.close();
@@ -397,11 +425,11 @@ const timeoutServer = createNetServer((socket) => {
     if (request.method !== "hello") return;
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
-      protocolVersion: 3,
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       ok: true,
       result: {
         state: "ready",
-        protocolVersion: 3,
+        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
         pid: process.pid,
         endpoint: timeoutPaths.endpoint,
         startedAt: "now",
@@ -443,7 +471,7 @@ const invalidServer = createNetServer((socket) => {
     if (!buffer.includes("\n")) return;
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: "wrong_request_id",
-      protocolVersion: 3,
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       ok: true,
       result: {},
     }));
@@ -487,6 +515,27 @@ const socketDaemon = new LocalAgentDaemon({
 
 try {
   await socketDaemon.start();
+  socketManager.blockWaitUntilAbort = true;
+  const waitSocket = createConnection(socketDaemon.paths.endpoint);
+  await new Promise<void>((resolveConnect, rejectConnect) => {
+    waitSocket.once("error", rejectConnect);
+    waitSocket.once("connect", resolveConnect);
+  });
+  waitSocket.write(JSON.stringify({
+    requestId: "disconnect-wait",
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    authToken: ensureLocalAgentDaemonSecret(socketDaemon.paths),
+    method: "agent.wait",
+    params: {
+      ids: [record.id],
+      scope: { workspaceId: record.workspaceId, workspaceRoot: record.workspaceRoot },
+    },
+  }) + "\n");
+  await waitFor(() => socketManager.waitStarted);
+  waitSocket.destroy();
+  await waitFor(() => socketManager.waitAborted);
+  socketManager.blockWaitUntilAbort = false;
+
   const timedOutRequest = await sendRawRequest(socketDaemon.paths.endpoint);
   assert.equal(timedOutRequest.ok, false);
   if (!timedOutRequest.ok) {
@@ -497,7 +546,7 @@ try {
 
   const unauthorized = await sendRawRequest(socketDaemon.paths.endpoint, JSON.stringify({
     requestId: "unauthorized",
-    protocolVersion: 3,
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
     authToken: "wrong-secret",
     method: "hello",
     params: {},

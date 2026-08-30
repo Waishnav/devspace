@@ -303,6 +303,76 @@ const earlyFailure = unwrap(await manager.start({
 await waitFor(() => getRecord(earlyFailure.id).status === "error");
 assert.equal(getRecord(earlyFailure.id).providerSessionId, "thread_early");
 
+const waitingOne = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold wait one",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+const waitingTwo = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold wait two",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(waitingOne.id)?.inputs.length === 1);
+await waitFor(() => runtimes.get(waitingTwo.id)?.inputs.length === 1);
+let multiWaitSettled = false;
+const multiWait = manager.wait([waitingOne.id, waitingTwo.id, waitingOne.id], scope)
+  .then((result) => {
+    multiWaitSettled = true;
+    return result;
+  });
+runtimes.get(waitingOne.id)!.release();
+await waitFor(() => getRecord(waitingOne.id).status === "idle");
+assert.equal(multiWaitSettled, false, "multi-agent wait must remain pending until every turn finishes");
+runtimes.get(waitingTwo.id)!.release();
+assert.deepEqual(unwrap(await multiWait).map((result) => ({ id: result.id, status: result.status })), [
+  { id: waitingOne.id, status: "completed" },
+  { id: waitingTwo.id, status: "completed" },
+]);
+
+const timedWaitAgent = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold timed wait",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(timedWaitAgent.id)?.inputs.length === 1);
+assert.deepEqual(unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id], scope, 5)), [
+  {
+    id: earlyFailure.id,
+    status: "failed",
+    error: {
+      code: "PROVIDER_EXECUTION_ERROR",
+      message: "provider failed after session creation",
+      retryable: false,
+    },
+  },
+  { id: timedWaitAgent.id, status: "running", wait: "timeout" },
+]);
+runtimes.get(timedWaitAgent.id)!.release();
+await waitFor(() => getRecord(timedWaitAgent.id).status === "idle");
+
+const cancelledWaitAgent = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold cancelled wait",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(cancelledWaitAgent.id)?.inputs.length === 1);
+const waitAbort = new AbortController();
+const cancelledWait = manager.wait([cancelledWaitAgent.id], scope, undefined, waitAbort.signal);
+waitAbort.abort();
+assert.deepEqual(unwrap(await cancelledWait), [{ id: cancelledWaitAgent.id, status: "running" }]);
+assert.equal(getRecord(cancelledWaitAgent.id).status, "running", "cancelling a waiter must not stop its turn");
+runtimes.get(cancelledWaitAgent.id)!.release();
+await waitFor(() => getRecord(cancelledWaitAgent.id).status === "idle");
+
+const invalidWait = await manager.wait([waitingOne.id, "agt_missing"], scope, 5);
+assert.equal(invalidWait.isErr(), true);
+if (invalidWait.isErr()) assert.equal(invalidWait.error.code, "AGENT_NOT_FOUND");
+
 const wrongWorkspace = await manager.continue(
   first.id,
   "wrong workspace",

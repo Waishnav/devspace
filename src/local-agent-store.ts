@@ -393,11 +393,23 @@ export class LocalAgentStore {
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
   }
 
+  getTurnByIdResult(
+    turnId: number,
+  ): BetterResult<LocalAgentTurnRecord | undefined, AgentStoreError> {
+    return storeResult("get_turn", () => this.getTurnById(turnId));
+  }
+
   getLatestTurn(agentId: string): LocalAgentTurnRecord | undefined {
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id desc limit 1")
       .get(agentId) as LocalAgentTurnRow | undefined;
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
+  }
+
+  getLatestTurnResult(
+    agentId: string,
+  ): BetterResult<LocalAgentTurnRecord | undefined, AgentStoreError> {
+    return storeResult("get_latest_turn", () => this.getLatestTurn(agentId));
   }
 
   listTurns(agentId: string): LocalAgentTurnRecord[] {

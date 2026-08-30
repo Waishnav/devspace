@@ -22,6 +22,7 @@ import {
 import {
   decodeAgentRecord,
   decodeAgentRecordList,
+  decodeAgentWaitResults,
   decodeDaemonLogs,
   decodeDaemonStatus,
   decodeLocalAgentDaemonResponse,
@@ -45,6 +46,8 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentWaitError,
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -60,6 +63,7 @@ type RequestError<M extends LocalAgentDaemonRequest["method"]> =
     : M extends "agent.continue" ? AgentContinueError | AgentDaemonError
       : M extends "agent.get" ? AgentLookupError | AgentDaemonError
         : M extends "agent.list" ? AgentListError | AgentDaemonError
+          : M extends "agent.wait" ? AgentWaitError | AgentDaemonError
           : AgentDaemonError;
 
 export interface LocalAgentClientOptions {
@@ -132,6 +136,22 @@ export class LocalAgentClient {
   ): Promise<BetterResult<LocalAgentRecord[], AgentListError | AgentDaemonError>> {
     const result = await this.request("agent.list", scope);
     return decodeRequestResult(result, "agent.list", decodeAgentRecordList);
+  }
+
+  async wait(
+    agentIds: readonly string[],
+    scope: LocalAgentWorkspaceScope,
+    timeoutMs?: number,
+  ): Promise<BetterResult<LocalAgentWaitResult[], AgentWaitError | AgentDaemonError>> {
+    const transportTimeoutMs = timeoutMs === undefined
+      ? null
+      : Math.min(2_147_483_647, timeoutMs + this.requestTimeoutMs);
+    const result = await this.request("agent.wait", {
+      ids: [...agentIds],
+      scope,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    }, transportTimeoutMs);
+    return decodeRequestResult(result, "agent.wait", decodeAgentWaitResults);
   }
 
   async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
@@ -308,6 +328,7 @@ export class LocalAgentClient {
   private async request<M extends LocalAgentDaemonRequest["method"]>(
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
+    timeoutMs: number | null = this.requestTimeoutMs,
   ): Promise<BetterResult<unknown, RequestError<M>>> {
     const ready = await this.ensureReady();
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
@@ -319,7 +340,7 @@ export class LocalAgentClient {
       authToken: authToken.value,
       method,
       params,
-    } as LocalAgentDaemonRequest, this.requestTimeoutMs);
+    } as LocalAgentDaemonRequest, timeoutMs ?? undefined);
     if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
     if (!response.value.ok) {
       const error = decodeRemoteError(response.value.error, method);
@@ -459,20 +480,22 @@ export function resolveDaemonEntrypoint(): string {
 async function sendRequest(
   endpoint: string,
   request: LocalAgentDaemonRequest,
-  timeoutMs: number,
+  timeoutMs?: number,
 ): Promise<BetterResult<LocalAgentDaemonResponse, AgentDaemonError>> {
   return new Promise((resolve) => {
     const socket = createConnection(endpoint);
     let buffer = "";
     let settled = false;
-    const timer = setTimeout(() => {
-      finish(Result.err(new AgentDaemonTimeoutError({
-        code: "DAEMON_TIMEOUT",
-        operation: request.method,
-        retryable: true,
-        message: "Timed out waiting for the local agent daemon.",
-      })), true);
-    }, timeoutMs);
+    const timer = timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          finish(Result.err(new AgentDaemonTimeoutError({
+            code: "DAEMON_TIMEOUT",
+            operation: request.method,
+            retryable: true,
+            message: "Timed out waiting for the local agent daemon.",
+          })), true);
+        }, timeoutMs);
 
     const finish = (
       result: BetterResult<LocalAgentDaemonResponse, AgentDaemonError>,
@@ -480,7 +503,7 @@ async function sendRequest(
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (destroy) socket.destroy();
       resolve(result);
     };
@@ -599,6 +622,7 @@ function isRequestError(
         || category === "conflict"
         || category === "store";
     case "agent.get":
+    case "agent.wait":
       return category === "target" || category === "scope" || category === "store";
     case "agent.list":
       return category === "scope" || category === "store";

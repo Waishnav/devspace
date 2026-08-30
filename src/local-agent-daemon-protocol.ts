@@ -4,6 +4,7 @@ import type {
   LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import type {
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -16,6 +17,7 @@ export type LocalAgentDaemonMethod =
   | "agent.continue"
   | "agent.get"
   | "agent.list"
+  | "agent.wait"
   | "daemon.status"
   | "daemon.stop"
   | "daemon.logs";
@@ -26,6 +28,11 @@ export type LocalAgentDaemonRequest =
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
   | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.list", LocalAgentWorkspaceScope>
+  | AgentDaemonRequestBase<"agent.wait", {
+      ids: string[];
+      scope: LocalAgentWorkspaceScope;
+      timeoutMs?: number;
+    }>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.stop", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
@@ -133,6 +140,14 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         method,
         params: decodeListScope(params),
       } as LocalAgentDaemonRequest;
+    case "agent.wait":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeWaitParams(params),
+      } as LocalAgentDaemonRequest;
     case "daemon.logs":
       return {
         requestId,
@@ -200,6 +215,40 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
 export function decodeAgentRecordList(value: unknown): LocalAgentRecord[] {
   if (!Array.isArray(value)) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid agent list.");
   return value.map(decodeAgentRecord);
+}
+
+export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
+  if (!Array.isArray(value)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid agent wait results.");
+  }
+  return value.map((entry): LocalAgentWaitResult => {
+    const record = asRecord(entry);
+    const id = requiredString(record?.id, "id");
+    const status = requiredString(record?.status, "status");
+    switch (status) {
+      case "running": {
+        const wait = optionalString(record?.wait);
+        if (wait !== undefined && wait !== "timeout") {
+          throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
+        }
+        return { id, status, ...(wait ? { wait } : {}) };
+      }
+      case "completed": {
+        const response = optionalContentString(record?.response);
+        return { id, status, ...(response === undefined ? {} : { response }) };
+      }
+      case "failed":
+        return { id, status, error: decodeWaitError(record?.error) };
+      case "stopped":
+        return {
+          id,
+          status,
+          ...(record?.error === undefined ? {} : { error: decodeWaitError(record.error) }),
+        };
+      default:
+        throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
+    }
+  });
 }
 
 export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
@@ -280,6 +329,48 @@ function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
 
 function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
   return decodeWorkspaceScope(value);
+}
+
+function decodeWaitParams(value: unknown): {
+  ids: string[];
+  scope: LocalAgentWorkspaceScope;
+  timeoutMs?: number;
+} {
+  const record = asRecord(value);
+  if (!record) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Agent wait options must be an object.");
+  }
+  const ids = record?.ids;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "At least one subagent id is required.");
+  }
+  const timeoutMs = record.timeoutMs;
+  if (
+    timeoutMs !== undefined
+    && (typeof timeoutMs !== "number"
+      || !Number.isSafeInteger(timeoutMs)
+      || timeoutMs < 0
+      || timeoutMs > 2_147_483_647)
+  ) {
+    throw new LocalAgentDaemonProtocolError(
+      "INVALID_PARAMS",
+      "Wait timeout must be an integer between 0 and 2147483647 milliseconds.",
+    );
+  }
+  return {
+    ids: ids.map((id, index) => requiredString(id, `ids[${index}]`)),
+    scope: decodeWorkspaceScope(record.scope),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
+}
+
+function decodeWaitError(value: unknown): { code: string; message: string; retryable: boolean } {
+  const record = asRecord(value);
+  return {
+    code: requiredString(record?.code, "error.code"),
+    message: requiredContentString(record?.message, "error.message"),
+    retryable: optionalBoolean(record?.retryable) ?? false,
+  };
 }
 
 function decodeLogsParams(value: unknown): { lines?: number } {

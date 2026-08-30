@@ -459,6 +459,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     case "show":
       await runAgentWorkflowCommand(json, () => runAgentsShow(commandArgs, json));
       return;
+    case "wait":
+      await runAgentWorkflowCommand(json, () => runAgentsWait(commandArgs, json));
+      return;
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
       return;
@@ -558,20 +561,60 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const client = createLocalAgentClient(config);
   const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const initial = await client.get(id, scope);
-  let record = presentAgentWorkflowResult(initial, json);
+  const record = presentAgentWorkflowResult(initial, json);
   if (!record) return;
-
-  const deadline = Date.now() + 15_000;
-  while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
-    await sleep(500);
-    const refreshed = presentAgentWorkflowResult(await client.get(id, scope), json);
-    if (!refreshed) return;
-    record = refreshed;
-  }
 
   const observation = presentAgentObservation(record);
   if (json) printJson(observation);
   else printAgentXml(formatAgentObservation(observation));
+}
+
+async function runAgentsWait(args: string[], json: boolean): Promise<void> {
+  const { ids, timeoutMs } = parseAgentsWaitArgs(args);
+  const config = loadConfig();
+  const client = createLocalAgentClient(config);
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const results = presentAgentWorkflowResult(await client.wait(ids, scope, timeoutMs), json);
+  if (!results) return;
+  if (json) {
+    printJson(results);
+    return;
+  }
+  printAgentXml(results.map(formatAgentObservation).join("\n"));
+}
+
+function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: number } {
+  const ids: string[] = [];
+  let timeoutMs: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--timeout") {
+      timeoutMs = parseAgentWaitTimeout(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--timeout=")) {
+      timeoutMs = parseAgentWaitTimeout(argument.slice("--timeout=".length));
+      continue;
+    }
+    if (argument.startsWith("-")) throw new Error(`Unknown option: ${argument}.`);
+    ids.push(argument);
+  }
+  if (ids.length === 0) {
+    throw new Error("Usage: devspace agents wait <id>... [--timeout <seconds>] [--json]");
+  }
+  return { ids, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
+}
+
+function parseAgentWaitTimeout(value: string | undefined): number {
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error("Agent wait timeout must be a non-negative integer number of seconds.");
+  }
+  const timeoutMs = Number(value) * 1_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs > 2_147_483_647) {
+    throw new Error("Agent wait timeout is too large.");
+  }
+  return timeoutMs;
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
@@ -672,10 +715,6 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
-
 function printAgentsHelp(): void {
   console.log(
     [
@@ -686,6 +725,7 @@ function printAgentsHelp(): void {
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
+      "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents targets [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),
