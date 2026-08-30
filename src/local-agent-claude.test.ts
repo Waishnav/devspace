@@ -5,6 +5,8 @@ import {
   type ClaudeQueryLike,
   type ClaudeUserMessage,
 } from "./local-agent-claude.js";
+import { createLocalAgentDrivers } from "./local-agent-adapters.js";
+import { subagentsConfigSchema } from "./local-agent-config.js";
 import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
 class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
@@ -230,3 +232,39 @@ await assert.rejects(
   TypeError,
   "programmer defects must not be reclassified as provider failures",
 );
+
+let configuredOptions: Record<string, unknown> | undefined;
+const configuredDriver = createLocalAgentDrivers({
+  env: {
+    PATH: "/usr/bin",
+    CLAUDE_COMMAND: "/usr/bin/claude",
+    ANTHROPIC_API_KEY: "inherited",
+    INHERITED: "yes",
+  },
+  subagents: subagentsConfigSchema.parse({
+    enabled: true,
+    providers: [{
+      id: "claude",
+      enabled: true,
+      command: "/opt/bin/claude-wrapper",
+      env: { ANTHROPIC_API_KEY: "configured", EMPTY_VALUE: "" },
+    }],
+  }),
+  claudeQueryFactory: ({ prompt, options }) => {
+    configuredOptions = options;
+    return new FakeClaudeQuery(prompt);
+  },
+}).find((driver) => driver.provider === "claude");
+assert.ok(configuredDriver);
+const configuredRuntime = await configuredDriver.createRuntime(context);
+assert.equal(configuredRuntime.isOk(), true);
+if (configuredRuntime.isErr()) throw configuredRuntime.error;
+assert.equal(configuredOptions?.pathToClaudeCodeExecutable, "/opt/bin/claude-wrapper");
+assert.deepEqual(configuredOptions?.env, {
+  PATH: "/usr/bin",
+  CLAUDE_COMMAND: "/opt/bin/claude-wrapper",
+  ANTHROPIC_API_KEY: "configured",
+  INHERITED: "yes",
+  EMPTY_VALUE: "",
+});
+await configuredRuntime.value.close();

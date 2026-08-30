@@ -211,7 +211,10 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     }
 
     const currentSubagents = files.config.subagents;
-    const availability = getLocalAgentProviderAvailabilitySnapshot();
+    const availability = getLocalAgentProviderAvailabilitySnapshot(
+      process.env,
+      currentSubagents,
+    );
     const configuredProviders = currentSubagents.providers
       .filter((provider) => provider.enabled)
       .map((provider) => provider.id);
@@ -361,7 +364,7 @@ async function runDoctor(): Promise<void> {
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
     const providers = buildLocalAgentProviderStatuses(
       config.subagents,
-      getLocalAgentProviderAvailabilitySnapshot(),
+      getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
     );
     console.log(`Subagents: ${config.subagents.enabled ? "enabled" : "disabled"}`);
     console.log(`Subagent providers: ${formatLocalAgentProviderStatusSummary(providers)}`);
@@ -486,7 +489,7 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
   const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
   const providers = buildLocalAgentProviderStatuses(
     config.subagents,
-    getLocalAgentProviderAvailabilitySnapshot(),
+    getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
   const catalog = buildLocalAgentCatalog(config.subagents, profiles, providers);
   const output = presentAgentTargetCatalog(catalog);
