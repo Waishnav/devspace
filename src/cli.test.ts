@@ -150,7 +150,10 @@ try {
       },
     });
 
-    assert.equal(output.trim(), `${current.id} completed reviewer`);
+    assert.equal(
+      output.trim(),
+      `<agent id="${current.id}" status="completed" target="reviewer"/>`,
+    );
 
     const { stdout: jsonOutput } = await execFileAsync(
       "node",
@@ -217,6 +220,31 @@ try {
     assert.equal(payload.error.retryable, false);
     assert.equal(payload.error.target, "missing");
 
+    let xmlCommandFailure: unknown;
+    try {
+      await execFileAsync(
+        "node",
+        ["--import", "tsx", "src/cli.ts", "agents", "run", "missing", "inspect"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ...cliConfigEnv,
+            DEVSPACE_WORKSPACE_ID: "ws_current",
+            DEVSPACE_WORKSPACE_ROOT: projectRoot,
+          },
+        },
+      );
+    } catch (error) {
+      xmlCommandFailure = error;
+    }
+    assert.ok(xmlCommandFailure, "XML CLI errors should exit non-zero");
+    assert.equal(
+      (xmlCommandFailure as { stderr?: string }).stderr,
+      '<error code="UNKNOWN_TARGET" retryable="false">Unknown subagent profile or provider: missing.</error>\n',
+    );
+
     await assert.rejects(
       execFileAsync(
         "node",
@@ -243,7 +271,10 @@ try {
         },
       ),
       (error: unknown) => {
-        assert.match((error as { stderr?: string }).stderr ?? "", /Unknown option: --unknown/);
+        assert.equal(
+          (error as { stderr?: string }).stderr,
+          '<error code="AGENT_COMMAND_ERROR" retryable="false">Unknown option: --unknown. Use -- before prompt text that starts with a dash.</error>\n',
+        );
         return true;
       },
     );

@@ -38,6 +38,13 @@ export interface AgentFailureOutput {
   retryable: boolean;
 }
 
+export interface AgentCommandErrorOutput {
+  code: string;
+  message: string;
+  retryable?: boolean;
+  agentId?: string;
+}
+
 export type AgentObservationOutput =
   | { id: string; status: "running" }
   | { id: string; status: "completed"; response?: string }
@@ -98,37 +105,59 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
 }
 
 export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): string {
-  if (catalog.targets.length === 0) return "No usable subagent targets.";
   return catalog.targets.map((target) => {
-    const settings = [
-      target.model ? `model=${target.model}` : undefined,
-      target.effort ? `effort=${target.effort}` : undefined,
-    ].filter(Boolean).join(" ");
+    const settings = xmlAttributes({ model: target.model, effort: target.effort });
     if (target.kind === "provider") {
-      return `${target.name} [provider]${settings ? ` ${settings}` : ""}`;
+      return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
-    return `${target.name} [profile, ${target.provider}]${settings ? ` ${settings}` : ""} - ${target.description}`;
+    return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
   }).join("\n");
 }
 
 export function formatAgentReceipt(receipt: AgentReceiptOutput): string {
-  return `${receipt.id} ${receipt.status}`;
+  return `<agent id="${escapeXmlAttribute(receipt.id)}" status="${receipt.status}"/>`;
 }
 
 export function formatAgentSummary(summary: AgentSummaryOutput): string {
-  return `${formatAgentReceipt(summary)} ${summary.target}`;
+  return `<agent id="${escapeXmlAttribute(summary.id)}" status="${summary.status}" target="${escapeXmlAttribute(summary.target)}"/>`;
 }
 
 export function formatAgentObservation(observation: AgentObservationOutput): string {
-  const line = formatAgentReceipt(observation);
   if (observation.status === "completed" && observation.response !== undefined) {
-    return `${line}\n\n${observation.response}`;
+    return `<agent id="${escapeXmlAttribute(observation.id)}" status="completed">${escapeXmlText(observation.response)}</agent>`;
   }
   if ((observation.status === "failed" || observation.status === "stopped") && observation.error) {
-    const retryable = observation.error.retryable ? " [retryable]" : "";
-    return `${line} ${observation.error.code}: ${observation.error.message}${retryable}`;
+    return `<agent id="${escapeXmlAttribute(observation.id)}" status="${observation.status}" code="${escapeXmlAttribute(observation.error.code)}" retryable="${observation.error.retryable}">${escapeXmlText(observation.error.message)}</agent>`;
   }
-  return line;
+  return formatAgentReceipt(observation);
+}
+
+export function formatAgentCommandError(error: AgentCommandErrorOutput): string {
+  const agentId = error.agentId ? ` agent-id="${escapeXmlAttribute(error.agentId)}"` : "";
+  return `<error code="${escapeXmlAttribute(error.code)}" retryable="${error.retryable ?? false}"${agentId}>${escapeXmlText(error.message)}</error>`;
+}
+
+function xmlAttributes(values: Record<string, string | undefined>): string {
+  return Object.entries(values)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([name, value]) => ` ${name}="${escapeXmlAttribute(value)}"`)
+    .join("");
+}
+
+function escapeXmlAttribute(value: string): string {
+  return escapeXml(value).replaceAll('"', "&quot;").replaceAll("'", "&apos;");
+}
+
+function escapeXmlText(value: string): string {
+  return escapeXml(value);
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function presentAgentStatus(status: LocalAgentStatus): AgentCommandStatus {
