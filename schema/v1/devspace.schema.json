@@ -29,6 +29,12 @@
           "minimum": 1,
           "maximum": 65535
         },
+        "maxMcpSessions": {
+          "default": 256,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
         "publicBaseUrl": {
           "default": null,
           "anyOf": [

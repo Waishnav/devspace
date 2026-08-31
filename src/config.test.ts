@@ -15,6 +15,7 @@ try {
   const defaults = loadConfig(env);
   assert.equal(defaults.host, "127.0.0.1");
   assert.equal(defaults.port, 7676);
+  assert.equal(defaults.maxMcpSessions, 256);
   assert.equal(defaults.publicBaseUrl, "http://127.0.0.1:7676");
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
@@ -38,6 +39,7 @@ try {
     server: {
       host: "0.0.0.0",
       port: 8787,
+      maxMcpSessions: 32,
       publicBaseUrl: "https://devspace.example.com/",
       allowedHosts: ["example.internal"],
       trustProxy: true,
@@ -76,6 +78,7 @@ try {
   assert.equal(configured.configDir, configDir);
   assert.equal(configured.host, "0.0.0.0");
   assert.equal(configured.port, 8787);
+  assert.equal(configured.maxMcpSessions, 32);
   assert.equal(configured.publicBaseUrl, "https://devspace.example.com");
   assert.deepEqual(configured.allowedRoots, [resolve(homedir(), "work")]);
   assert.deepEqual(configured.allowedHosts, [

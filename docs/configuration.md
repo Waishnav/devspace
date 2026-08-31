@@ -25,6 +25,7 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
   "server": {
     "host": "127.0.0.1",
     "port": 7676,
+    "maxMcpSessions": 256,
     // Use the public origin only; do not append /mcp.
     "publicBaseUrl": "https://devspace.example.com",
     "allowedHosts": [],
@@ -76,6 +77,11 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
 Omitted sections and keys use the defaults shown above. An empty
 `workspaces.allowedRoots` uses the current working directory. Unknown keys are
 rejected so spelling mistakes cannot silently alter behavior.
+
+`server.maxMcpSessions` limits how many stateful MCP sessions DevSpace keeps in
+memory. When the limit is reached, DevSpace closes the least-recently-used idle
+session first. Active sessions are not evicted. If all retained sessions are
+active, new initialize requests return `503` until a slot is free.
 
 ## Tool modes and UI
 

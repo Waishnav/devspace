@@ -12,6 +12,7 @@ export interface ServerConfig {
   configDir: string;
   host: string;
   port: number;
+  maxMcpSessions: number;
   oauth: OAuthConfig;
   allowedRoots: string[];
   allowedHosts: string[];
@@ -31,6 +32,7 @@ export interface ServerConfig {
   logging: LoggingConfig;
 }
 
+/** Load and normalize the persisted DevSpace server configuration. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const stored = files.config;
@@ -52,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     configDir: files.dir,
     host,
     port,
+    maxMcpSessions: stored.server.maxMcpSessions,
     oauth: {
       ownerToken: parseRequiredSecret(
         env.DEVSPACE_OAUTH_OWNER_TOKEN ?? files.auth.ownerToken,

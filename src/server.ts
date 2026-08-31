@@ -37,6 +37,7 @@ import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import {
   McpSessionRegistry,
   type McpSessionCloseResult,
+  type McpSessionReservation,
 } from "./mcp-sessions.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
@@ -706,6 +707,26 @@ export interface CreateServerOptions {
   incomingArtifactAdapters?: readonly IncomingArtifactAdapter[];
 }
 
+/** Release a session's active-response reference when its HTTP response ends. */
+function releaseMcpSessionWhenResponseEnds(
+  res: Response,
+  transports: McpSessionRegistry<Transport>,
+  sessionId: string,
+): () => void {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    res.off("finish", release);
+    res.off("close", release);
+    transports.release(sessionId);
+  };
+  res.once("finish", release);
+  res.once("close", release);
+  return release;
+}
+
+/** Create the authenticated HTTP server and its shared MCP session registry. */
 export function createServer(
   config = loadConfig(),
   options: CreateServerOptions = {},
@@ -719,7 +740,9 @@ export function createServer(
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
-  const transports = new McpSessionRegistry<Transport>();
+  const transports = new McpSessionRegistry<Transport>({
+    maxSessions: config.maxMcpSessions,
+  });
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
@@ -862,23 +885,91 @@ export function createServer(
       isInitialize: initializeRequest,
     });
 
+    let pendingReservation: McpSessionReservation<Transport> | undefined;
+    let releaseActiveSession: (() => void) | undefined;
     try {
       let transport: Transport | undefined;
 
       if (sessionId) {
-        transport = transports.get(sessionId);
+        transport = transports.acquire(sessionId);
         if (!transport) {
           sendJsonRpcError(res, 404, -32000, "Unknown MCP session");
           return;
         }
+        releaseActiveSession = releaseMcpSessionWhenResponseEnds(
+          res,
+          transports,
+          sessionId,
+        );
       } else if (initializeRequest) {
+        const reservationResult = await transports.reserve();
+        if (!reservationResult.ok) {
+          const closeError = reservationResult.error;
+          logEvent(
+            config.logging,
+            reservationResult.reason === "close_failed" ? "error" : "warn",
+            reservationResult.reason === "close_failed"
+              ? "mcp_session_capacity_close_failed"
+              : "mcp_session_capacity_exhausted",
+            {
+              requestId,
+              sessionIdPrefix: sessionIdPrefix(reservationResult.sessionId),
+              sessionCount: transports.size,
+              activeSessions: transports.activeSessions,
+              capacity: transports.maxSessions,
+              ...(closeError
+                ? {
+                    error:
+                      closeError instanceof Error
+                        ? closeError.message
+                        : String(closeError),
+                  }
+                : {}),
+              ...requestLogFields(req, config),
+            },
+          );
+          res.setHeader("Retry-After", "5");
+          sendJsonRpcError(
+            res,
+            503,
+            -32000,
+            "MCP session limit reached; retry shortly.",
+          );
+          return;
+        }
+
+        pendingReservation = reservationResult.reservation;
+        if (pendingReservation.evictedSessionId) {
+          logEvent(config.logging, "info", "mcp_session_evicted", {
+            requestId,
+            reason: "capacity",
+            sessionIdPrefix: sessionIdPrefix(
+              pendingReservation.evictedSessionId,
+            ),
+            sessionCount: transports.size,
+            capacity: transports.maxSessions,
+          });
+        }
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (newSessionId) => {
-            if (transport) transports.register(newSessionId, transport);
+          onsessioninitialized: async (newSessionId) => {
+            if (!transport || !pendingReservation) return;
+            const reservation = pendingReservation;
+            pendingReservation = undefined;
+            const committed = await reservation.commit(newSessionId, transport, { active: true });
+            if (!committed) return;
+
+            releaseActiveSession = releaseMcpSessionWhenResponseEnds(
+              res,
+              transports,
+              newSessionId,
+            );
             logEvent(config.logging, "info", "mcp_session_created", {
               requestId,
               sessionIdPrefix: sessionIdPrefix(newSessionId),
+              sessionCount: transports.size,
+              activeSessions: transports.activeSessions,
+              capacity: transports.maxSessions,
               ...requestLogFields(req, config),
             });
           },
@@ -890,6 +981,8 @@ export function createServer(
             logEvent(config.logging, "info", "mcp_session_closed", {
               reason: "transport_close",
               sessionIdPrefix: sessionIdPrefix(closedSessionId),
+              sessionCount: transports.size,
+              capacity: transports.maxSessions,
             });
           }
         };
@@ -916,6 +1009,11 @@ export function createServer(
       });
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
+      }
+    } finally {
+      pendingReservation?.release();
+      if (releaseActiveSession && (res.writableEnded || res.destroyed)) {
+        releaseActiveSession();
       }
     }
   });

@@ -1,19 +1,24 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { Response as ExpressResponse } from "express";
 import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
+import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, createServer as createDevspaceServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -286,6 +291,189 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.ok(Array.isArray(structuredContent(otherSession).agentsFiles));
   assert.ok(Array.isArray(structuredContent(unscoped).agentsFiles));
 });
+
+test("HTTP returns 503 when all MCP sessions are active", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-http-capacity-test-"));
+  const configDir = join(root, ".config");
+  const stateDir = join(root, ".state");
+  const httpServer = createHttpServer();
+  httpServer.listen(0, "127.0.0.1");
+  await once(httpServer, "listening");
+  const address = httpServer.address();
+  assert.ok(address && typeof address !== "string");
+  const port = address.port;
+  const publicBaseUrl = `http://127.0.0.1:${port}`;
+  const config = loadConfig(writeTestDevspaceConfig(configDir, {
+    server: {
+      host: "127.0.0.1",
+      port,
+      publicBaseUrl,
+      maxMcpSessions: 2,
+    },
+    storage: { stateDir },
+    workspaces: { allowedRoots: [root] },
+    logging: { level: "silent", requests: false, toolCalls: false },
+  }));
+  let running: ReturnType<typeof createDevspaceServer> | undefined;
+  t.after(async () => {
+    await running?.close();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => error ? reject(error) : resolve());
+    });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const accessToken = await issueTestAccessToken(config);
+  running = createDevspaceServer(config, { incomingArtifactAdapters: [] });
+  httpServer.on("request", running.app);
+
+  const firstSession = await initializeHttpSession(publicBaseUrl, accessToken, 1);
+  const secondSession = await initializeHttpSession(publicBaseUrl, accessToken, 2);
+  const firstSse = await openSessionSse(publicBaseUrl, accessToken, firstSession);
+  const secondSse = await openSessionSse(publicBaseUrl, accessToken, secondSession);
+
+  try {
+    const blocked = await initializeHttpResponse(publicBaseUrl, accessToken, 3);
+    assert.equal(blocked.status, 503);
+    assert.equal(blocked.headers.get("retry-after"), "5");
+    const payload = await blocked.json() as {
+      error?: { message?: string };
+    };
+    assert.match(payload.error?.message ?? "", /session limit reached/);
+  } finally {
+    firstSse.abort();
+    secondSse.abort();
+  }
+});
+
+/** Issue an OAuth access token through the real provider used by the HTTP test. */
+async function issueTestAccessToken(config: ServerConfig): Promise<string> {
+  await mkdir(config.stateDir, { recursive: true });
+  const mcpUrl = new URL("/mcp", config.publicBaseUrl);
+  const provider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
+  const redirectUri = "http://127.0.0.1/callback";
+  assert.ok(provider.clientsStore.registerClient);
+  const client: OAuthClientInformationFull = await provider.clientsStore.registerClient({
+    redirect_uris: [redirectUri],
+    client_name: "HTTP capacity test",
+  });
+  let redirectLocation: string | undefined;
+  const response = {
+    req: {
+      method: "POST",
+      body: { owner_token: config.oauth.ownerToken },
+    },
+    redirect(status: number, location: string) {
+      assert.equal(status, 302);
+      redirectLocation = location;
+      return response;
+    },
+  } as unknown as ExpressResponse;
+
+  try {
+    await provider.authorize(client, {
+      codeChallenge: "http-capacity-test-challenge",
+      redirectUri,
+      resource: mcpUrl,
+      scopes: config.oauth.scopes,
+    }, response);
+    assert.ok(redirectLocation);
+    const code = new URL(redirectLocation).searchParams.get("code");
+    assert.ok(code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      redirectUri,
+      mcpUrl,
+    );
+    return tokens.access_token;
+  } finally {
+    provider.close();
+  }
+}
+
+/** Send one MCP initialize request to the HTTP endpoint. */
+async function initializeHttpResponse(
+  publicBaseUrl: string,
+  accessToken: string,
+  id: number,
+): Promise<Response> {
+  return fetch(`${publicBaseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json, text/event-stream",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "http-capacity-test", version: "1.0.0" },
+      },
+    }),
+  });
+}
+
+/** Initialize one MCP session and send its initialized notification. */
+async function initializeHttpSession(
+  publicBaseUrl: string,
+  accessToken: string,
+  id: number,
+): Promise<string> {
+  const response = await initializeHttpResponse(publicBaseUrl, accessToken, id);
+  assert.equal(response.status, 200);
+  const sessionId = response.headers.get("mcp-session-id");
+  assert.ok(sessionId);
+  await response.text();
+
+  const initialized = await fetch(`${publicBaseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json, text/event-stream",
+      "Content-Type": "application/json",
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": "2025-11-25",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    }),
+  });
+  assert.equal(initialized.status, 202);
+  await initialized.text();
+  return sessionId;
+}
+
+/** Open a live SSE response so the session remains protected from eviction. */
+async function openSessionSse(
+  publicBaseUrl: string,
+  accessToken: string,
+  sessionId: string,
+): Promise<{ response: Response; abort(): void }> {
+  const controller = new AbortController();
+  const response = await fetch(`${publicBaseUrl}/mcp`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "text/event-stream",
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": "2025-11-25",
+    },
+    signal: controller.signal,
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
+  return {
+    response,
+    abort: () => controller.abort(),
+  };
+}
 
 interface ServerFixture {
   client: Client;

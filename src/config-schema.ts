@@ -8,6 +8,7 @@ export const DEVSPACE_CONFIG_SCHEMA_URL =
 const serverConfigSchema = z.object({
   host: z.string().trim().min(1).default("127.0.0.1"),
   port: z.number().int().min(1).max(65_535).default(7676),
+  maxMcpSessions: z.number().int().positive().default(256),
   publicBaseUrl: z.string().url().nullable().default(null),
   allowedHosts: z.array(z.string().trim().min(1)).default([]),
   trustProxy: z.boolean().default(false),
