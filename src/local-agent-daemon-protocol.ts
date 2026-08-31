@@ -4,6 +4,7 @@ import type {
   LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import type {
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -21,19 +22,25 @@ export type LocalAgentDaemonMethod =
   | "agent.cancel"
   | "agent.get"
   | "agent.list"
+  | "agent.wait"
   | "daemon.status"
   | "daemon.stop"
   | "daemon.logs";
 
 export type LocalAgentDaemonRequest =
-  | AgentDaemonRequestBase<"hello", Record<string, never>>
+  | (AgentDaemonRequestBase<"hello", Record<string, never>> & { configRevision?: string })
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
   | AgentDaemonRequestBase<"agent.cancel", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.list", LocalAgentWorkspaceScope>
+  | AgentDaemonRequestBase<"agent.wait", {
+      ids: string[];
+      scope: LocalAgentWorkspaceScope;
+      timeoutMs?: number;
+    }>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
-  | AgentDaemonRequestBase<"daemon.stop", Record<string, never>>
+  | AgentDaemonRequestBase<"daemon.stop", { ifIdle?: boolean }>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
 
 interface AgentDaemonRequestBase<
@@ -56,6 +63,11 @@ export interface LocalAgentDaemonStatus {
   activeTurns: number;
   runtimeCount: number;
   clientConnections: number;
+}
+
+export interface LocalAgentDaemonHello {
+  status: LocalAgentDaemonStatus;
+  configMatches: boolean;
 }
 
 export interface LocalAgentDaemonErrorPayload {
@@ -101,9 +113,24 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
 
   switch (method) {
     case "hello":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeEmptyParams(params),
+        configRevision: optionalString(record?.configRevision),
+      };
     case "daemon.status":
-    case "daemon.stop":
       return { requestId, protocolVersion, authToken, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
+    case "daemon.stop":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeStopParams(params),
+      };
     case "agent.start":
       return {
         requestId,
@@ -139,6 +166,14 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         authToken,
         method,
         params: decodeListScope(params),
+      } as LocalAgentDaemonRequest;
+    case "agent.wait":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeWaitParams(params),
       } as LocalAgentDaemonRequest;
     case "daemon.logs":
       return {
@@ -265,6 +300,40 @@ export function decodeAgentRecordList(value: unknown): LocalAgentRecord[] {
   return value.map(decodeAgentRecord);
 }
 
+export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
+  if (!Array.isArray(value)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid agent wait results.");
+  }
+  return value.map((entry): LocalAgentWaitResult => {
+    const record = asRecord(entry);
+    const id = requiredString(record?.id, "id");
+    const status = requiredString(record?.status, "status");
+    switch (status) {
+      case "running": {
+        const wait = optionalString(record?.wait);
+        if (wait !== undefined && wait !== "timeout") {
+          throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
+        }
+        return { id, status, ...(wait ? { wait } : {}) };
+      }
+      case "completed": {
+        const response = optionalContentString(record?.response);
+        return { id, status, ...(response === undefined ? {} : { response }) };
+      }
+      case "failed":
+        return { id, status, error: decodeWaitError(record?.error) };
+      case "stopped":
+        return {
+          id,
+          status,
+          ...(record?.error === undefined ? {} : { error: decodeWaitError(record.error) }),
+        };
+      default:
+        throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
+    }
+  });
+}
+
 export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
   const record = asRecord(value);
   const state = requiredString(record?.state, "state");
@@ -280,6 +349,14 @@ export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
     activeTurns: requiredInteger(record?.activeTurns, "activeTurns"),
     runtimeCount: requiredInteger(record?.runtimeCount, "runtimeCount"),
     clientConnections: requiredInteger(record?.clientConnections, "clientConnections"),
+  };
+}
+
+export function decodeDaemonHello(value: unknown): LocalAgentDaemonHello {
+  const record = asRecord(value);
+  return {
+    status: decodeDaemonStatus(record?.status),
+    configMatches: requiredBoolean(record?.configMatches, "configMatches"),
   };
 }
 
@@ -345,6 +422,55 @@ function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
   return decodeWorkspaceScope(value);
 }
 
+function decodeStopParams(value: unknown): { ifIdle?: boolean } {
+  const record = asRecord(value);
+  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Daemon stop options must be an object.");
+  const ifIdle = optionalBoolean(record.ifIdle);
+  return ifIdle === undefined ? {} : { ifIdle };
+}
+
+function decodeWaitParams(value: unknown): {
+  ids: string[];
+  scope: LocalAgentWorkspaceScope;
+  timeoutMs?: number;
+} {
+  const record = asRecord(value);
+  if (!record) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Agent wait options must be an object.");
+  }
+  const ids = record?.ids;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "At least one subagent id is required.");
+  }
+  const timeoutMs = record.timeoutMs;
+  if (
+    timeoutMs !== undefined
+    && (typeof timeoutMs !== "number"
+      || !Number.isSafeInteger(timeoutMs)
+      || timeoutMs < 0
+      || timeoutMs > 2_147_483_647)
+  ) {
+    throw new LocalAgentDaemonProtocolError(
+      "INVALID_PARAMS",
+      "Wait timeout must be an integer between 0 and 2147483647 milliseconds.",
+    );
+  }
+  return {
+    ids: ids.map((id, index) => requiredString(id, `ids[${index}]`)),
+    scope: decodeWorkspaceScope(record.scope),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
+}
+
+function decodeWaitError(value: unknown): { code: string; message: string; retryable: boolean } {
+  const record = asRecord(value);
+  return {
+    code: requiredString(record?.code, "error.code"),
+    message: requiredContentString(record?.message, "error.message"),
+    retryable: optionalBoolean(record?.retryable) ?? false,
+  };
+}
+
 function decodeLogsParams(value: unknown): { lines?: number } {
   if (value === undefined) return {};
   const record = asRecord(value);
@@ -381,6 +507,13 @@ function requiredContentString(value: unknown, field: string): string {
 
 function requiredInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
+  }
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
     throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
   }
   return value;

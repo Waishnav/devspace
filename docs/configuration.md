@@ -115,6 +115,11 @@ Subagent providers are explicit. Omitted providers are disabled:
         "enabled": true,
         "model": "gpt-5.4",
         "effort": "high",
+        "command": "/opt/devspace/bin/codex-wrapper",
+        "env": {
+          "CODEX_HOME": "/home/alice/.codex-work",
+          "OPENAI_BASE_URL": "https://api.example.com/v1",
+        },
       },
       {
         "id": "claude",
@@ -130,10 +135,26 @@ Profiles are loaded from `~/.devspace/agents/*.md` and project
 `.devspace/agents/*.md`. `devspace agents targets` prints the configured targets
 available in the current workspace.
 
-Provider executable discovery remains process-scoped. The supported overrides
-are `CODEX_COMMAND`, `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`,
-`COPILOT_COMMAND`, `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. DevSpace does not
-persist provider credentials.
+`command` names one executable. DevSpace does not split shell arguments, so use
+a wrapper executable when startup needs fixed arguments. `env` maps environment
+variable names to literal string values and preserves empty strings. DevSpace
+does not expand `$NAME` references in these values.
+
+Codex, Claude, Cursor, Copilot, and Grok accept `command` and `env`. OpenCode and
+Pi are embedded, so their provider entries reject both fields. The daemon
+inherits its startup environment, then overlays the provider's `env`. An
+explicit `command` wins over both the inherited command override and a command
+override placed in `env`.
+
+Existing process-level overrides remain supported: `CODEX_COMMAND`,
+`CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
+`GROK_COMMAND`, and `GROK_AGENT_PROFILE`. Provider configuration takes
+precedence where the same value is set in both places.
+
+DevSpace writes `config.jsonc` with mode `0600`, but provider environment values
+are still plain text on disk. Keep the file out of version control. Leave
+credentials in the process environment if you do not want DevSpace to persist
+them.
 
 ## Native artifact download
 

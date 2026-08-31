@@ -39,36 +39,41 @@ const migrations: Migration[] = [
   },
   {
     version: 7,
+    name: "local-agent-turns",
+    up: migrateLocalAgentTurns,
+  },
+  {
+    version: 8,
     name: "workflow-journal",
     up: migrateWorkflowJournal,
   },
   {
-    version: 8,
+    version: 9,
     name: "workflow-replay-provenance",
     up: migrateWorkflowReplayProvenance,
   },
   {
-    version: 9,
+    version: 10,
     name: "workflow-exact-replay",
     up: migrateWorkflowExactReplay,
   },
   {
-    version: 10,
+    version: 11,
     name: "workflow-agent-profiles",
     up: migrateWorkflowAgentProfiles,
   },
   {
-    version: 11,
+    version: 12,
     name: "workflow-observability",
     up: migrateWorkflowObservability,
   },
   {
-    version: 12,
+    version: 13,
     name: "reconcile-workflow-stack-schema",
     up: reconcileWorkflowStackSchema,
   },
   {
-    version: 13,
+    version: 14,
     name: "local-agent-observability",
     up: migrateLocalAgentObservability,
   },
@@ -270,6 +275,30 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
+function migrateLocalAgentTurns(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists local_agent_turns (
+      id integer primary key autoincrement,
+      agent_id text not null,
+      prompt text not null,
+      status text not null,
+      response text,
+      error text,
+      error_code text,
+      error_retryable text,
+      created_at text not null,
+      completed_at text,
+      foreign key (agent_id) references local_agent_sessions(id) on delete cascade
+    );
+
+    create index if not exists local_agent_turns_agent_id_idx
+      on local_agent_turns(agent_id, id desc);
+
+    create index if not exists local_agent_turns_status_idx
+      on local_agent_turns(status);
+  `);
+}
+
 function migrateWorkflowJournal(sqlite: Database.Database): void {
   sqlite.exec(`
     create table if not exists workflow_runs (
@@ -417,6 +446,7 @@ function reconcileWorkflowStackSchema(sqlite: Database.Database): void {
   migrateWorkspaceConversationBindings(sqlite);
   migrateLocalAgentStructuredErrors(sqlite);
   migrateLocalAgentEffortRename(sqlite);
+  migrateLocalAgentTurns(sqlite);
   migrateWorkflowJournal(sqlite);
   migrateWorkflowReplayProvenance(sqlite);
   migrateWorkflowExactReplay(sqlite);

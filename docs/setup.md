@@ -67,7 +67,7 @@ npx skills add Waishnav/devspace --skill dynamic-workflows --global
 
 The Skills CLI asks which installed Coding Agents should receive each skill.
 The subagent skill uses `devspace agents targets`, `run`, `continue`, `show`,
-`stop`, and `ls`. The workflow skill adds the durable `devspace workflow`
+`wait`, `stop`, and `ls`. The workflow skill adds the durable `devspace workflow`
 runner and Navigator. These commands do not require `devspace serve`.
 
 ### Connect ChatGPT

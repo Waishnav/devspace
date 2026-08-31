@@ -38,6 +38,8 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentWaitError,
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -55,6 +57,12 @@ export interface LocalAgentDaemonManager {
   cancel(agentId: string, scope: LocalAgentWorkspaceScope): Promise<Result<LocalAgentRecord, AgentCancelError>>;
   get(agentId: string, scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord, AgentLookupError>;
   list(scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord[], AgentListError>;
+  wait(
+    agentIds: readonly string[],
+    scope: LocalAgentWorkspaceScope,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<Result<LocalAgentWaitResult[], AgentWaitError>>;
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
   readonly activeTurnCount: number;
@@ -64,6 +72,7 @@ export interface LocalAgentDaemonManager {
 export interface LocalAgentDaemonOptions {
   stateDir: string;
   manager: LocalAgentDaemonManager;
+  configRevision: string;
   idleShutdownMs?: number;
   idleCheckIntervalMs?: number;
   requestReadTimeoutMs?: number;
@@ -77,6 +86,7 @@ export interface LocalAgentDaemonOptions {
 export class LocalAgentDaemon {
   readonly paths: LocalAgentDaemonPaths;
   private readonly manager: LocalAgentDaemonManager;
+  private readonly configRevision: string;
   private readonly lock: LocalAgentDaemonLock;
   private readonly idleShutdownMs: number;
   private readonly idleCheckIntervalMs: number;
@@ -93,12 +103,14 @@ export class LocalAgentDaemon {
   private startedAt?: string;
   private accepting = false;
   private stopping = false;
+  private activeTurnRequests = 0;
   private authToken?: string;
   private ownsLock = false;
 
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
     this.manager = options.manager;
+    this.configRevision = options.configRevision;
     this.lock = new LocalAgentDaemonLock(this.paths);
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
     this.idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
@@ -212,6 +224,7 @@ export class LocalAgentDaemon {
 
   private handleConnection(socket: Socket): void {
     this.sockets.add(socket);
+    const disconnected = new AbortController();
     socket.setEncoding("utf8");
     let buffer = "";
     let handled = false;
@@ -245,14 +258,17 @@ export class LocalAgentDaemon {
       handled = true;
       clearTimeout(requestTimer);
       const line = buffer.slice(0, newline);
-      void this.handleLine(socket, line);
+      void this.handleLine(socket, line, disconnected.signal);
     });
     socket.on("error", () => undefined);
-    socket.on("close", () => this.sockets.delete(socket));
+    socket.on("close", () => {
+      disconnected.abort();
+      this.sockets.delete(socket);
+    });
     socket.on("error", () => clearTimeout(requestTimer));
   }
 
-  private async handleLine(socket: Socket, line: string): Promise<void> {
+  private async handleLine(socket: Socket, line: string, signal: AbortSignal): Promise<void> {
     let requestId = "";
     try {
       let parsed: unknown;
@@ -263,7 +279,7 @@ export class LocalAgentDaemon {
       }
       requestId = readRequestId(parsed);
       const request = decodeLocalAgentDaemonRequest(parsed);
-      const response = await this.dispatch(request);
+      const response = await this.dispatch(request, signal);
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
         protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -276,7 +292,7 @@ export class LocalAgentDaemon {
     }
   }
 
-  private async dispatch(request: LocalAgentDaemonRequest): Promise<unknown> {
+  private async dispatch(request: LocalAgentDaemonRequest, signal: AbortSignal): Promise<unknown> {
     if (request.protocolVersion !== LOCAL_AGENT_DAEMON_PROTOCOL_VERSION) {
       throw new LocalAgentDaemonProtocolError(
         "PROTOCOL_MISMATCH",
@@ -284,6 +300,12 @@ export class LocalAgentDaemon {
       );
     }
     this.assertAuthenticated(request.authToken);
+    if (request.method === "hello" && !request.configRevision) {
+      throw new LocalAgentDaemonProtocolError(
+        "INVALID_REQUEST",
+        "Daemon hello requires a provider configuration revision.",
+      );
+    }
     if (!this.accepting && request.method !== "hello" && request.method !== "daemon.status") {
       throw new AgentDaemonUnavailableError({
         code: "DAEMON_UNAVAILABLE",
@@ -295,11 +317,14 @@ export class LocalAgentDaemon {
 
     switch (request.method) {
       case "hello":
-        return this.status();
+        return {
+          status: this.status(),
+          configMatches: request.configRevision === this.configRevision,
+        };
       case "agent.start":
-        return unwrapManagerResult(await this.manager.start(request.params));
+        return this.runTurnRequest(() => this.manager.start(request.params));
       case "agent.continue":
-        return unwrapManagerResult(await this.manager.continue(
+        return this.runTurnRequest(() => this.manager.continue(
           request.params.id,
           request.params.prompt,
           request.params.overrides,
@@ -314,14 +339,44 @@ export class LocalAgentDaemon {
         return unwrapManagerResult(this.manager.get(request.params.id, request.params.scope));
       case "agent.list":
         return unwrapManagerResult(this.manager.list(request.params));
+      case "agent.wait":
+        return unwrapManagerResult(await this.manager.wait(
+          request.params.ids,
+          request.params.scope,
+          request.params.timeoutMs,
+          signal,
+        ));
       case "daemon.status":
         return this.status();
       case "daemon.stop":
+        if (request.params.ifIdle) {
+          this.accepting = false;
+          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0) {
+            this.accepting = true;
+            throw new AgentDaemonUnavailableError({
+              code: "DAEMON_UNAVAILABLE",
+              operation: "daemon.stop",
+              retryable: true,
+              message: "Local agent daemon became busy before it could be replaced.",
+            });
+          }
+        }
         this.stopping = true;
         this.accepting = false;
         return this.status();
       case "daemon.logs":
         return readLocalAgentDaemonLogs(this.paths, request.params.lines);
+    }
+  }
+
+  private async runTurnRequest<T>(
+    operation: () => Promise<Result<T, unknown>>,
+  ): Promise<T> {
+    this.activeTurnRequests += 1;
+    try {
+      return unwrapManagerResult(await operation());
+    } finally {
+      this.activeTurnRequests -= 1;
     }
   }
 

@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { loadConfig } from "./config.js";
-import { localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
+import {
+  LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  localAgentDaemonPaths,
+} from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -100,7 +103,7 @@ try {
       if (request.method === "agent.start") {
         socket.end(encodeLocalAgentDaemonResponse({
           requestId: request.requestId,
-          protocolVersion: 3,
+          protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
           ok: false,
           error: {
             code: "UNKNOWN_TARGET",
@@ -113,21 +116,31 @@ try {
       }
       const result = request.method === "agent.list"
         ? [current]
+        : request.method === "agent.get"
+          ? current
+          : request.method === "agent.wait"
+            ? [
+                { id: current.id, status: "completed", response: "Review complete." },
+                { id: other.id, status: "running", wait: "timeout" },
+              ]
         : request.method === "hello"
           ? {
-              state: "ready",
-              protocolVersion: 3,
-              pid: process.pid,
-              endpoint: daemonSocket,
-              startedAt: "now",
-              activeTurns: 0,
-              runtimeCount: 0,
-              clientConnections: 1,
+              status: {
+                state: "ready",
+                protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+                pid: process.pid,
+                endpoint: daemonSocket,
+                startedAt: "now",
+                activeTurns: 0,
+                runtimeCount: 0,
+                clientConnections: 1,
+              },
+              configMatches: true,
             }
           : null;
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
-        protocolVersion: 3,
+        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
         ok: true,
         result,
       }));
@@ -150,7 +163,10 @@ try {
       },
     });
 
-    assert.equal(output.trim(), `${current.id} completed reviewer`);
+    assert.equal(
+      output.trim(),
+      `<agent id="${current.id}" status="completed" target="reviewer"/>`,
+    );
 
     const { stdout: jsonOutput } = await execFileAsync(
       "node",
@@ -189,6 +205,69 @@ try {
     const directList = [...daemonRequests].reverse().find((request) => request.method === "agent.list");
     assert.deepEqual(directList?.params, { workspaceRoot: realpathSync.native(projectRoot) });
 
+    const { stdout: showOutput } = await execFileAsync(
+      "node",
+      ["--import", "tsx", "src/cli.ts", "agents", "show", current.id],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    );
+    assert.equal(
+      showOutput,
+      `<agent id="${current.id}" status="completed">Review complete.</agent>\n`,
+    );
+    assert.equal(
+      daemonRequests.filter((request) => request.method === "agent.get").length,
+      1,
+      "show must be an immediate snapshot",
+    );
+
+    const { stdout: waitOutput } = await execFileAsync(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli.ts",
+        "agents",
+        "wait",
+        current.id,
+        other.id,
+        "--timeout",
+        "0",
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    );
+    assert.equal(
+      waitOutput,
+      [
+        `<agent id="${current.id}" status="completed">Review complete.</agent>`,
+        `<agent id="${other.id}" status="running" wait="timeout"/>`,
+        "",
+      ].join("\n"),
+    );
+    const waitRequest = daemonRequests.find((request) => request.method === "agent.wait");
+    assert.deepEqual(waitRequest?.params, {
+      ids: [current.id, other.id],
+      scope: { workspaceId: "ws_current", workspaceRoot: realpathSync.native(projectRoot) },
+      timeoutMs: 0,
+    });
+
     let commandFailure: unknown;
     try {
       await execFileAsync(
@@ -217,6 +296,31 @@ try {
     assert.equal(payload.error.retryable, false);
     assert.equal(payload.error.target, "missing");
 
+    let xmlCommandFailure: unknown;
+    try {
+      await execFileAsync(
+        "node",
+        ["--import", "tsx", "src/cli.ts", "agents", "run", "missing", "inspect"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ...cliConfigEnv,
+            DEVSPACE_WORKSPACE_ID: "ws_current",
+            DEVSPACE_WORKSPACE_ROOT: projectRoot,
+          },
+        },
+      );
+    } catch (error) {
+      xmlCommandFailure = error;
+    }
+    assert.ok(xmlCommandFailure, "XML CLI errors should exit non-zero");
+    assert.equal(
+      (xmlCommandFailure as { stderr?: string }).stderr,
+      '<error code="UNKNOWN_TARGET" retryable="false">Unknown subagent profile or provider: missing.</error>\n',
+    );
+
     await assert.rejects(
       execFileAsync(
         "node",
@@ -243,7 +347,10 @@ try {
         },
       ),
       (error: unknown) => {
-        assert.match((error as { stderr?: string }).stderr ?? "", /Unknown option: --unknown/);
+        assert.equal(
+          (error as { stderr?: string }).stderr,
+          '<error code="AGENT_COMMAND_ERROR" retryable="false">Unknown option: --unknown. Use -- before prompt text that starts with a dash.</error>\n',
+        );
         return true;
       },
     );

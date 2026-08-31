@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { matchError, Result, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
+  AgentDaemonConfigChangedError,
   AgentDaemonInvalidRequestError,
   AgentDaemonInvalidResponseError,
   AgentDaemonProtocolMismatchError,
@@ -22,6 +23,8 @@ import {
 import {
   decodeAgentRecord,
   decodeAgentRecordList,
+  decodeAgentWaitResults,
+  decodeDaemonHello,
   decodeDaemonLogs,
   decodeDaemonStatus,
   decodeLocalAgentDaemonResponse,
@@ -32,6 +35,7 @@ import {
   type LocalAgentDaemonResponse,
   type LocalAgentDaemonStatus,
 } from "./local-agent-daemon-protocol.js";
+import { localAgentProviderConfigRevision } from "./local-agent-config.js";
 import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   ensureLocalAgentDaemonSecret,
@@ -46,6 +50,8 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentWaitError,
+  LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
@@ -62,10 +68,12 @@ type RequestError<M extends LocalAgentDaemonRequest["method"]> =
       : M extends "agent.cancel" ? AgentCancelError | AgentDaemonError
       : M extends "agent.get" ? AgentLookupError | AgentDaemonError
         : M extends "agent.list" ? AgentListError | AgentDaemonError
+          : M extends "agent.wait" ? AgentWaitError | AgentDaemonError
           : AgentDaemonError;
 
 export interface LocalAgentClientOptions {
   stateDir: string;
+  configRevision: string;
   configDir?: string;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -76,6 +84,7 @@ export interface LocalAgentClientOptions {
 export class LocalAgentClient {
   private readonly stateDir: string;
   private readonly paths: LocalAgentDaemonPaths;
+  private readonly configRevision: string;
   private readonly endpoint: string;
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
@@ -84,6 +93,7 @@ export class LocalAgentClient {
 
   constructor(options: LocalAgentClientOptions) {
     this.stateDir = options.stateDir;
+    this.configRevision = options.configRevision;
     this.paths = localAgentDaemonPaths(options.stateDir);
     this.endpoint = options.endpoint ?? this.paths.endpoint;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
@@ -142,6 +152,22 @@ export class LocalAgentClient {
   ): Promise<BetterResult<LocalAgentRecord[], AgentListError | AgentDaemonError>> {
     const result = await this.request("agent.list", scope);
     return decodeRequestResult(result, "agent.list", decodeAgentRecordList);
+  }
+
+  async wait(
+    agentIds: readonly string[],
+    scope: LocalAgentWorkspaceScope,
+    timeoutMs?: number,
+  ): Promise<BetterResult<LocalAgentWaitResult[], AgentWaitError | AgentDaemonError>> {
+    const transportTimeoutMs = timeoutMs === undefined
+      ? null
+      : Math.min(2_147_483_647, timeoutMs + this.requestTimeoutMs);
+    const result = await this.request("agent.wait", {
+      ids: [...agentIds],
+      scope,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    }, transportTimeoutMs);
+    return decodeRequestResult(result, "agent.wait", decodeAgentWaitResults);
   }
 
   async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
@@ -216,6 +242,7 @@ export class LocalAgentClient {
       authToken: authToken.value,
       method: "hello",
       params: {},
+      configRevision: this.configRevision,
     }, this.requestTimeoutMs);
     if (response.isErr()) {
       if (
@@ -243,8 +270,28 @@ export class LocalAgentClient {
       }
       return error.code === "DAEMON_UNAVAILABLE" ? Result.ok(undefined) : Result.err(error);
     }
-    const decoded = decodeValue(response.value.result, "hello", decodeDaemonStatus);
-    return decoded.map((status) => status.state === "ready" ? status : undefined);
+    const decoded = decodeValue(response.value.result, "hello", decodeDaemonHello);
+    if (decoded.isErr()) return decoded;
+    if (!decoded.value.configMatches) {
+      return this.replaceIdleChangedDaemon(authToken.value, decoded.value.status);
+    }
+    return Result.ok(decoded.value.status.state === "ready" ? decoded.value.status : undefined);
+  }
+
+  private async replaceIdleChangedDaemon(
+    authToken: string,
+    status: LocalAgentDaemonStatus,
+  ): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
+    const changed = new AgentDaemonConfigChangedError({
+      code: "DAEMON_CONFIG_CHANGED",
+      operation: "startup",
+      retryable: true,
+      message: status.activeTurns > 0
+        ? "The local agent daemon is running active turns with an older provider configuration. Retry after they finish."
+        : "The local agent daemon is using an older provider configuration.",
+    });
+    if (status.activeTurns > 0) return Result.err(changed);
+    return this.stopIdleDaemon(authToken, LOCAL_AGENT_DAEMON_PROTOCOL_VERSION, status, changed);
   }
 
   private async replaceIdleOlderDaemon(
@@ -258,6 +305,7 @@ export class LocalAgentClient {
       authToken,
       method: "hello",
       params: {},
+      configRevision: this.configRevision,
     }, this.requestTimeoutMs);
     if (statusResponse.isErr() || !statusResponse.value.ok) return Result.err(mismatch);
     const status = decodeValue(statusResponse.value.result, "hello", decodeDaemonStatus);
@@ -272,14 +320,27 @@ export class LocalAgentClient {
       }));
     }
 
+    return this.stopIdleDaemon(authToken, protocolVersion, status.value, mismatch);
+  }
+
+  private async stopIdleDaemon(
+    authToken: string,
+    protocolVersion: number,
+    status: LocalAgentDaemonStatus,
+    cause: AgentDaemonProtocolMismatchError | AgentDaemonConfigChangedError,
+  ): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
     const stopResponse = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion,
       authToken,
       method: "daemon.stop",
-      params: {},
+      // Older daemons do not support atomic idle replacement. Their existing
+      // best-effort upgrade path remains available through the legacy shape.
+      params: protocolVersion === LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
+        ? { ifIdle: true }
+        : {},
     }, this.requestTimeoutMs);
-    if (stopResponse.isErr() || !stopResponse.value.ok) return Result.err(mismatch);
+    if (stopResponse.isErr() || !stopResponse.value.ok) return Result.err(cause);
 
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
@@ -290,34 +351,40 @@ export class LocalAgentClient {
         authToken,
         method: "hello",
         params: {},
+        configRevision: this.configRevision,
       }, Math.min(this.requestTimeoutMs, 250));
       if (probe.isErr() && probe.error.code === "DAEMON_UNAVAILABLE") {
-        if (!existsSync(this.paths.lockPath) || !isProcessAlive(status.value.pid)) {
+        if (!existsSync(this.paths.lockPath) || !isProcessAlive(status.pid)) {
           return Result.ok(undefined);
         }
         continue;
       }
-      if (
-        probe.isOk()
-        && probe.value.protocolVersion >= LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
-      ) {
+      if (probe.isOk() && probe.value.protocolVersion > protocolVersion) {
         // Another client completed the replacement while this client was
         // waiting for the old endpoint to disappear.
         return this.tryHello();
+      }
+      if (probe.isOk() && probe.value.ok && protocolVersion === LOCAL_AGENT_DAEMON_PROTOCOL_VERSION) {
+        const hello = decodeValue(probe.value.result, "hello", decodeDaemonHello);
+        if (hello.isErr()) return hello;
+        if (hello.value.configMatches && hello.value.status.state === "ready") {
+          return Result.ok(hello.value.status);
+        }
       }
     }
     return Result.err(new AgentDaemonStartupError({
       code: "DAEMON_STARTUP_FAILURE",
       operation: "startup",
       retryable: true,
-      cause: mismatch,
-      message: "The older local agent daemon did not stop in time for the upgrade.",
+      cause,
+      message: "The local agent daemon did not stop in time for replacement.",
     }));
   }
 
   private async request<M extends LocalAgentDaemonRequest["method"]>(
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
+    timeoutMs: number | null = this.requestTimeoutMs,
   ): Promise<BetterResult<unknown, RequestError<M>>> {
     const ready = await this.ensureReady();
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
@@ -329,7 +396,7 @@ export class LocalAgentClient {
       authToken: authToken.value,
       method,
       params,
-    } as LocalAgentDaemonRequest, this.requestTimeoutMs);
+    } as LocalAgentDaemonRequest, timeoutMs ?? undefined);
     if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
     if (!response.value.ok) {
       const error = decodeRemoteError(response.value.error, method);
@@ -419,9 +486,13 @@ export class LocalAgentClient {
 }
 
 export function createLocalAgentClient(
-  config: Pick<ServerConfig, "configDir" | "stateDir">,
+  config: Pick<ServerConfig, "configDir" | "stateDir" | "subagents">,
 ): LocalAgentClient {
-  return new LocalAgentClient({ configDir: config.configDir, stateDir: config.stateDir });
+  return new LocalAgentClient({
+    configDir: config.configDir,
+    stateDir: config.stateDir,
+    configRevision: localAgentProviderConfigRevision(config.subagents),
+  });
 }
 
 export function spawnLocalAgentDaemon(
@@ -469,20 +540,22 @@ export function resolveDaemonEntrypoint(): string {
 async function sendRequest(
   endpoint: string,
   request: LocalAgentDaemonRequest,
-  timeoutMs: number,
+  timeoutMs?: number,
 ): Promise<BetterResult<LocalAgentDaemonResponse, AgentDaemonError>> {
   return new Promise((resolve) => {
     const socket = createConnection(endpoint);
     let buffer = "";
     let settled = false;
-    const timer = setTimeout(() => {
-      finish(Result.err(new AgentDaemonTimeoutError({
-        code: "DAEMON_TIMEOUT",
-        operation: request.method,
-        retryable: true,
-        message: "Timed out waiting for the local agent daemon.",
-      })), true);
-    }, timeoutMs);
+    const timer = timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          finish(Result.err(new AgentDaemonTimeoutError({
+            code: "DAEMON_TIMEOUT",
+            operation: request.method,
+            retryable: true,
+            message: "Timed out waiting for the local agent daemon.",
+          })), true);
+        }, timeoutMs);
 
     const finish = (
       result: BetterResult<LocalAgentDaemonResponse, AgentDaemonError>,
@@ -490,7 +563,7 @@ async function sendRequest(
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (destroy) socket.destroy();
       resolve(result);
     };
@@ -594,6 +667,7 @@ function isRequestError(
     AgentDaemonStartupError: () => "daemon" as const,
     AgentDaemonTimeoutError: () => "daemon" as const,
     AgentDaemonProtocolMismatchError: () => "daemon" as const,
+    AgentDaemonConfigChangedError: () => "daemon" as const,
     AgentDaemonUnauthorizedError: () => "daemon" as const,
     AgentDaemonInvalidRequestError: () => "daemon" as const,
     AgentDaemonInvalidResponseError: () => "daemon" as const,
@@ -610,6 +684,7 @@ function isRequestError(
         || category === "store";
     case "agent.get":
     case "agent.cancel":
+    case "agent.wait":
       return category === "target" || category === "scope" || category === "store";
     case "agent.list":
       return category === "scope" || category === "store";

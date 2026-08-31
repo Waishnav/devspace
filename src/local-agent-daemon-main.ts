@@ -10,6 +10,7 @@ import {
 import { LocalAgentManager } from "./local-agent-manager.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
+import { localAgentProviderConfigRevision } from "./local-agent-config.js";
 
 const config = loadConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -22,7 +23,7 @@ const log = (
 const store = new LocalAgentStore(paths.stateDir);
 const manager = new LocalAgentManager({
   store,
-  drivers: createLocalAgentDrivers(),
+  drivers: createLocalAgentDrivers({ subagents: config.subagents }),
   pool: new LocalAgentRuntimePool({ logger: log }),
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,
@@ -33,6 +34,7 @@ const manager = new LocalAgentManager({
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
+  configRevision: localAgentProviderConfigRevision(config.subagents),
   onLockAcquired: () => {
     const reconciled = manager.reconcileActiveRuns();
     if (reconciled.isErr()) throw reconciled.error;

@@ -122,6 +122,7 @@ try {
   const upgraded = openDatabase(stateDir);
   try {
     assert.equal(tableExists(upgraded.sqlite, "workspace_conversation_bindings"), true);
+    assert.equal(tableExists(upgraded.sqlite, "local_agent_turns"), true);
     assert.equal(tableExists(upgraded.sqlite, "workflow_agent_activity"), true);
     assert.equal(columnExists(upgraded.sqlite, "local_agent_sessions", "effort"), true);
     assert.equal(columnExists(upgraded.sqlite, "local_agent_sessions", "error_code"), true);
@@ -134,11 +135,14 @@ try {
     );
     assert.deepEqual(
       upgraded.sqlite
-        .prepare("select version, name from devspace_schema_migrations where version >= 12 order by version")
+        .prepare("select version, name from devspace_schema_migrations where version >= 10 order by version")
         .all(),
       [
-        { version: 12, name: "reconcile-workflow-stack-schema" },
-        { version: 13, name: "local-agent-observability" },
+        { version: 10, name: "workflow-exact-replay" },
+        { version: 11, name: "workflow-agent-profiles" },
+        { version: 12, name: "workflow-observability" },
+        { version: 13, name: "reconcile-workflow-stack-schema" },
+        { version: 14, name: "local-agent-observability" },
       ],
     );
   } finally {
