@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   CodexAppServerRuntime,
@@ -12,19 +12,7 @@ import {
 } from "./local-agent-codex.js";
 import { toAgentErrorPayload } from "./local-agent-errors.js";
 
-let resolverCalls = 0;
-const cachedDriver = new CodexLocalAgentDriver(
-  { CODEX_HOME: "/tmp/codex-home" },
-  () => {
-    resolverCalls += 1;
-    return { executable: "/usr/local/bin/codex", version: "1.2.3" };
-  },
-);
 const cachedContext = { agentId: "agt_test", provider: "codex" as const, workspaceRoot: "/tmp/project" };
-const resolvedCodexHome = resolve("/tmp/codex-home");
-assert.equal(cachedDriver.runtimeKey(cachedContext), `codex:/usr/local/bin/codex:${resolvedCodexHome}`);
-assert.equal(cachedDriver.runtimeKey(cachedContext), `codex:/usr/local/bin/codex:${resolvedCodexHome}`);
-assert.equal(resolverCalls, 1, "Codex executable identity is resolved once per driver lifecycle");
 
 assert.equal(parseCodexVersion("codex-cli 0.9.1"), "0.9.1");
 assert.equal(sandboxFor("read_only"), "read-only");

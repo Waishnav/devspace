@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  defaultDevspaceConfig,
   devspaceConfigJsonSchema,
   devspaceConfigSchema,
 } from "./config-schema.js";
-
-const defaults = defaultDevspaceConfig();
-assert.equal(defaults.configVersion, 1);
-assert.equal(defaults.tools.mode, "codex");
-assert.equal(defaults.ui.enabled, true);
 
 assert.throws(
   () => devspaceConfigSchema.parse({ configVersion: 1, typo: true }),

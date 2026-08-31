@@ -3,7 +3,6 @@ import {
   decodeAgentRecord,
   decodeLocalAgentDaemonRequest,
   decodeLocalAgentDaemonResponse,
-  encodeLocalAgentDaemonRequest,
   encodeLocalAgentDaemonResponse,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
@@ -24,7 +23,6 @@ const request = decodeLocalAgentDaemonRequest({
 assert.equal(request.method, "agent.start");
 if (request.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(request.params.writeMode, "read_only");
-assert.match(encodeLocalAgentDaemonRequest(request), /"method":"agent.start"/);
 
 const whitespaceRequest = decodeLocalAgentDaemonRequest({
   requestId: "req_whitespace",

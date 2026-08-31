@@ -18,7 +18,7 @@ export function getLocalAgentProviderAvailabilitySnapshot(
   return LOCAL_AGENT_PROVIDERS.map((provider) => checkLocalAgentProviderAvailability(provider, env));
 }
 
-export function checkLocalAgentProviderAvailability(
+function checkLocalAgentProviderAvailability(
   provider: LocalAgentProvider,
   env: NodeJS.ProcessEnv = process.env,
 ): LocalAgentProviderAvailability {

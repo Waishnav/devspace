@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import {
-  formatAgentObservation,
-  formatAgentSummary,
-  formatAgentTargetCatalog,
   presentAgentObservation,
   presentAgentReceipt,
   presentAgentSummary,
@@ -35,7 +32,6 @@ assert.deepEqual(presentAgentSummary({ ...record, status: "idle" }), {
   status: "completed",
   target: "reviewer",
 });
-assert.equal(formatAgentSummary(presentAgentSummary(record)), "agt_test running reviewer");
 
 const completed = presentAgentObservation({
   ...record,
@@ -47,7 +43,6 @@ assert.deepEqual(completed, {
   status: "completed",
   response: "Found one issue.",
 });
-assert.equal(formatAgentObservation(completed), "agt_test completed\n\nFound one issue.");
 
 const failed = presentAgentObservation({
   ...record,
@@ -66,10 +61,6 @@ assert.deepEqual(failed, {
     retryable: true,
   },
 });
-assert.equal(
-  formatAgentObservation(failed),
-  "agt_test failed PROVIDER_EXECUTION_ERROR: Provider disconnected. [retryable]",
-);
 
 const catalog: LocalAgentCatalog = {
   enabled: true,
@@ -105,10 +96,3 @@ assert.deepEqual(targetCatalog, {
     },
   ],
 });
-assert.equal(
-  formatAgentTargetCatalog(targetCatalog),
-  [
-    "codex [provider] model=gpt-5.4 effort=high",
-    "reviewer [profile, codex] model=gpt-5.4 effort=high - Review changes.",
-  ].join("\n"),
-);

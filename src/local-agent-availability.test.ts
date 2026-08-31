@@ -1,39 +1,12 @@
 import assert from "node:assert/strict";
-import {
-  checkLocalAgentProviderAvailability,
-  getLocalAgentProviderAvailabilitySnapshot,
-} from "./local-agent-availability.js";
+import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availability.js";
 
-{
-  const availability = checkLocalAgentProviderAvailability("codex");
-  assert.equal(availability.name, "codex");
-  assert.equal(typeof availability.available, "boolean");
-  if (availability.available) {
-    assert.equal(availability.note, "available");
-  }
-}
-
-{
-  const availability = checkLocalAgentProviderAvailability("codex", {
-    ...process.env,
-    CODEX_COMMAND: "/definitely/missing/devspace-codex",
-  });
-  assert.equal(availability.available, false);
-  assert.match(availability.reason ?? "", /executable not found/);
-}
-
-{
-  assert.equal(checkLocalAgentProviderAvailability("pi").available, true);
-}
-
-{
-  const snapshot = getLocalAgentProviderAvailabilitySnapshot({
-    ...process.env,
-    CODEX_COMMAND: "/definitely/missing/devspace-codex",
-  });
-  assert.deepEqual(
-    snapshot.map((provider) => provider.name),
-    ["codex", "claude", "opencode", "pi", "cursor", "copilot", "grok"],
-  );
-  assert.equal(snapshot.find((provider) => provider.name === "pi")?.available, true);
-}
+const snapshot = getLocalAgentProviderAvailabilitySnapshot({
+  ...process.env,
+  CODEX_COMMAND: "/definitely/missing/devspace-codex",
+});
+assert.deepEqual(snapshot.find((provider) => provider.name === "codex"), {
+  name: "codex",
+  available: false,
+  reason: "/definitely/missing/devspace-codex executable not found",
+});

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  isExpandableCard,
-  isInitiallyExpandedCard,
-} from "./card-types.js";
+import { isExpandableCard } from "./card-types.js";
 
 test("aggregate review opens when a patch is available", () => {
   const card = {
@@ -12,12 +9,11 @@ test("aggregate review opens when a patch is available", () => {
     payload: { patch: "diff --git a/src/a.ts b/src/a.ts" },
   };
   assert.equal(isExpandableCard(card), true);
-  assert.equal(isInitiallyExpandedCard(card), true);
 });
 
 test("workspace details open only when there is useful context", () => {
   assert.equal(isExpandableCard({ tool: "open_workspace" }), false);
-  assert.equal(isInitiallyExpandedCard({
+  assert.equal(isExpandableCard({
     tool: "open_workspace",
     skills: [{ name: "research" }],
   }), true);

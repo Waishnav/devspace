@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import {
   resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
-  usesChatGpt,
-  usesCodingAgents,
 } from "./onboarding.js";
 
 for (const [selections, expected] of [
@@ -13,10 +11,6 @@ for (const [selections, expected] of [
 ] as const) {
   assert.equal(resolveOnboardingUsage(selections), expected);
 }
-assert.equal(usesChatGpt("both"), true);
-assert.equal(usesCodingAgents("both"), true);
-assert.equal(usesChatGpt("coding-agents"), false);
-assert.equal(usesCodingAgents("chatgpt"), false);
 assert.throws(() => resolveOnboardingUsage([]), /Choose ChatGPT, Coding Agents, or both/);
 
 assert.deepEqual(

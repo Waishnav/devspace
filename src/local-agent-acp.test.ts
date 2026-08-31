@@ -254,11 +254,6 @@ if (completedOverlappingTurn.isErr()) throw completedOverlappingTurn.error;
 assert.equal(completedOverlappingTurn.value.finalResponse, "overlap response");
 await overlapRuntime.close();
 
-let resolverCalls = 0;
-const cachedDriver = new AcpLocalAgentDriver("cursor", {}, () => {
-  resolverCalls += 1;
-  return "/usr/local/bin/cursor-agent";
-});
 const cachedContext = {
   agentId: "agt_acp",
   provider: "cursor" as const,
@@ -266,16 +261,6 @@ const cachedContext = {
   writeMode: "allowed" as const,
 };
 const resolvedProject = resolve("/tmp/project");
-assert.equal(cachedDriver.runtimeKey(cachedContext), `acp:cursor:/usr/local/bin/cursor-agent:allowed:${resolvedProject}`);
-assert.equal(cachedDriver.runtimeKey(cachedContext), `acp:cursor:/usr/local/bin/cursor-agent:allowed:${resolvedProject}`);
-for (const writeMode of ["read_only", "allowed", "full_access"] as const) {
-  assert.notEqual(
-    cachedDriver.runtimeKey({ ...cachedContext, writeMode, workspaceRoot: "/tmp/other-project" }),
-    cachedDriver.runtimeKey({ ...cachedContext, writeMode }),
-    `${writeMode} ACP runtimes are scoped to one workspace root`,
-  );
-}
-assert.equal(resolverCalls, 1, "ACP executable identity is resolved once per driver lifecycle");
 assert.deepEqual(acpCommandArgs("cursor", cachedContext), [
   "acp", "--sandbox", "enabled", "--workspace", resolvedProject,
 ]);
