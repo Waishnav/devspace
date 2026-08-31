@@ -64,6 +64,8 @@ export interface WorkspaceContext {
   availableAgentsFiles: AvailableAgentsFile[];
   workspaceReused: boolean;
   includeBootstrapContext: boolean;
+  conversationScopeId?: string;
+  projectKey?: string;
 }
 
 export interface WorkspaceReadPath {
@@ -113,6 +115,8 @@ export class WorkspaceRegistry {
       const context = await this.openWorktreeWorkspace(workspaceInput.path, workspaceInput.baseRef);
       return {
         ...context,
+        conversationScopeId,
+        projectKey,
         // A new worktree always has its own workspace-specific context.
         includeBootstrapContext: true,
       };
@@ -134,6 +138,7 @@ export class WorkspaceRegistry {
       workspaceInput,
       conversationScopeId,
       targetKey,
+      projectKey,
     );
     this.pendingCheckoutOpens.set(operationKey, open);
 
@@ -160,6 +165,7 @@ export class WorkspaceRegistry {
     input: OpenWorkspaceInput,
     conversationScopeId: string,
     targetKey: string,
+    projectKey: string,
   ): Promise<WorkspaceContext> {
     const binding = this.store?.getConversationBinding(conversationScopeId, targetKey);
     if (binding) {
@@ -170,6 +176,8 @@ export class WorkspaceRegistry {
         this.store?.touchConversationBinding(conversationScopeId, targetKey);
         return {
           ...context,
+          conversationScopeId,
+          projectKey,
           includeBootstrapContext: false,
         };
       }
@@ -186,8 +194,23 @@ export class WorkspaceRegistry {
     });
     return {
       ...context,
+      conversationScopeId,
+      projectKey,
       includeBootstrapContext: true,
     };
+  }
+
+  claimConversationContexts(
+    context: WorkspaceContext,
+    contexts: Array<{ contextKey: string; fingerprint: string }>,
+  ): Set<string> {
+    if (!context.conversationScopeId || !this.store) {
+      return new Set(contexts.map(({ contextKey }) => contextKey));
+    }
+    return new Set(this.store.claimConversationContexts(
+      context.conversationScopeId,
+      contexts,
+    ));
   }
 
   private async findReusableCheckoutWorkspace(
@@ -229,6 +252,9 @@ export class WorkspaceRegistry {
   }
 
   private async reusedWorkspaceContext(workspace: Workspace): Promise<WorkspaceContext> {
+    const loadedSkills = this.loadSkillsForWorkspace(workspace.root);
+    workspace.skills = loadedSkills.skills;
+    workspace.skillDiagnostics = loadedSkills.skillDiagnostics;
     workspace.agentProfiles = await loadLocalAgentProfiles(this.config, workspace.root);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
     const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
