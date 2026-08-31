@@ -15,7 +15,7 @@ Discover usable targets instead of guessing names:
 devspace agents targets
 ```
 
-Each line is a `<provider/>` or `<profile>description</profile>` fragment. Prefer a matching profile. Use a provider target when no profile fits or the task needs a specific provider. Keep the configured model and effort unless the task requires a supported override.
+Each line is a `<provider name="..."/>` or `<profile name="..." provider="...">description</profile>` fragment. Pass the profile or provider `name` as `<profile-or-provider>`. Prefer a matching profile. Use a provider target when no profile fits or the task needs a specific provider. Keep the configured model and effort unless the task requires a supported override.
 
 ## Start work
 
