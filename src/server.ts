@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -361,25 +361,40 @@ function contextFingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function fileContentFingerprint(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+function normalizedContextText(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
 }
 
-function projectInstructionFingerprintInput(
+async function fileContentFingerprint(path: string): Promise<string> {
+  try {
+    const content = await readFile(path, "utf8");
+    return contextFingerprint(["readable", normalizedContextText(content)]);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : "unknown";
+    return contextFingerprint(["unreadable", code]);
+  }
+}
+
+async function projectInstructionFingerprintInput(
   instructions: WorkspaceContextSnapshots["instructions"]["project"],
   available: Array<{ path: string }>,
   workspaceRoot: string,
-): unknown {
+): Promise<unknown> {
   return {
-    loaded: instructions.loaded,
-    available: available.map((file) => ({
-      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
-      contentFingerprint: fileContentFingerprint(file.path),
+    loaded: instructions.loaded.map((file) => ({
+      ...file,
+      content: normalizedContextText(file.content),
     })),
+    available: await Promise.all(available.map(async (file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      contentFingerprint: await fileContentFingerprint(file.path),
+    }))),
   };
 }
 
-function skillFingerprintInputs(
+async function skillFingerprintInputs(
   skills: Array<{
     name: string;
     description: string;
@@ -387,17 +402,19 @@ function skillFingerprintInputs(
     filePath: string;
     scope: "global" | "project";
   }>,
-): { global: unknown; project: unknown } {
-  const summarize = (scope: "global" | "project") => skills
-    .filter((skill) => skill.scope === scope)
-    .map(({ scope: _scope, filePath, ...skill }) => ({
-      ...skill,
-      contentFingerprint: fileContentFingerprint(filePath),
-    }));
+): Promise<{ global: unknown; project: unknown }> {
+  const summarize = async (scope: "global" | "project") => Promise.all(
+    skills
+      .filter((skill) => skill.scope === scope)
+      .map(async ({ scope: _scope, filePath, ...skill }) => ({
+        ...skill,
+        contentFingerprint: await fileContentFingerprint(filePath),
+      })),
+  );
 
   return {
-    global: summarize("global"),
-    project: summarize("project"),
+    global: await summarize("global"),
+    project: await summarize("project"),
   };
 }
 
@@ -673,7 +690,14 @@ export function createMcpServer(
         workspace.root,
       );
       const skillSnapshots = scopedSkills(scopedSkillCatalog);
-      const skillFingerprints = skillFingerprintInputs(scopedSkillCatalog);
+      const [projectInstructionFingerprint, skillFingerprints] = await Promise.all([
+        projectInstructionFingerprintInput(
+          instructionSnapshots.project,
+          availableAgentsFiles,
+          workspace.root,
+        ),
+        skillFingerprintInputs(scopedSkillCatalog),
+      ]);
       const modelContext = conversationContextOutput(
         workspaces,
         workspaceContext,
@@ -683,11 +707,7 @@ export function createMcpServer(
           agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
         },
         {
-          projectInstructions: projectInstructionFingerprintInput(
-            instructionSnapshots.project,
-            availableAgentsFiles,
-            workspace.root,
-          ),
+          projectInstructions: projectInstructionFingerprint,
           globalSkills: skillFingerprints.global,
           projectSkills: skillFingerprints.project,
         },

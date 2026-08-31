@@ -134,7 +134,7 @@ Workspace session metadata is persisted. ChatGPT may provide optional
 conversation metadata that lets DevSpace resume the same checkout workspace for
 the same project in that conversation; repeated opens reuse the `workspaceId`
 and DevSpace avoids repeating unchanged global/project context already delivered
-in that conversation. Worktree mode still creates a new isolated workspace, but
+in that conversation. Worktree mode creates a new managed worktree and workspace session, but
 unchanged instructions, skills, agent profiles, and provider state can be
 omitted from its model-visible result. A scope that appears again is the complete
 replacement snapshot for that scope. Hosts without supported conversation

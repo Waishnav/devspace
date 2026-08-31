@@ -358,6 +358,7 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
 
 test("open_workspace reuses unchanged context when switching to worktree mode", async (t) => {
   const context = await fixture(t, { git: true });
+  await git(context.project, ["config", "core.autocrlf", "true"]);
   const checkout = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const worktree = structuredContent(
     await callOpen(context.client, context.project, "chat-1", "worktree"),
