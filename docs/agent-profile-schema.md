@@ -145,15 +145,39 @@ Recommended body content:
 
 ## Model-facing workflow
 
-The Subagent skill teaches only:
+The Subagent skill uses the default compact XML fragments:
 
 ```bash
-devspace agents ls --json
-devspace agents targets --json
-devspace agents run <profile-or-provider> "<prompt>" --json
-devspace agents continue <id> "<prompt>" --json
-devspace agents show <id> --json
+devspace agents targets
+devspace agents ls
+devspace agents run <profile-or-provider> "<prompt>"
+devspace agents continue <id> "<prompt>"
+devspace agents show <id>
+devspace agents wait <id>...
 ```
+
+The commands do not add a document-level wrapper. `targets`, `ls`, and `wait`
+print one fragment per item and print nothing for an empty list. This keeps the
+model-facing result small:
+
+```xml
+<provider name="codex" model="gpt-5.4" effort="high"/>
+<profile name="reviewer" provider="codex">Read-only code review.</profile>
+<agent id="agt_123" status="running"/>
+<agent id="agt_123" status="completed">Review complete.</agent>
+<agent id="agt_456" status="failed" code="PROVIDER_EXECUTION_ERROR" retryable="true">Provider disconnected.</agent>
+<error code="AGENT_NOT_FOUND" retryable="false" agent-id="agt_missing">Subagent not found.</error>
+```
+
+`show` returns an immediate snapshot. `wait` accepts one or more agent IDs and
+waits for all of their current work. It does not stream fragments as individual
+agents finish. With `--timeout <seconds>`, it returns each unique agent in
+first-seen order and marks unfinished work with `status="running"
+wait="timeout"`.
+
+`--json` remains available for scripts that need it, but the bundled skill does
+not request it. Internal turn records, prompts, provider session IDs, workspace
+paths, and timestamps are absent from both output formats.
 
 `open_workspace` exposes compact profile metadata:
 
