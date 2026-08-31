@@ -125,14 +125,17 @@ try {
               ]
         : request.method === "hello"
           ? {
-              state: "ready",
-              protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-              pid: process.pid,
-              endpoint: daemonSocket,
-              startedAt: "now",
-              activeTurns: 0,
-              runtimeCount: 0,
-              clientConnections: 1,
+              status: {
+                state: "ready",
+                protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+                pid: process.pid,
+                endpoint: daemonSocket,
+                startedAt: "now",
+                activeTurns: 0,
+                runtimeCount: 0,
+                clientConnections: 1,
+              },
+              configMatches: true,
             }
           : null;
       socket.end(encodeLocalAgentDaemonResponse({

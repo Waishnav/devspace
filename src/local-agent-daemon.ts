@@ -70,6 +70,7 @@ export interface LocalAgentDaemonManager {
 export interface LocalAgentDaemonOptions {
   stateDir: string;
   manager: LocalAgentDaemonManager;
+  configRevision: string;
   idleShutdownMs?: number;
   idleCheckIntervalMs?: number;
   requestReadTimeoutMs?: number;
@@ -83,6 +84,7 @@ export interface LocalAgentDaemonOptions {
 export class LocalAgentDaemon {
   readonly paths: LocalAgentDaemonPaths;
   private readonly manager: LocalAgentDaemonManager;
+  private readonly configRevision: string;
   private readonly lock: LocalAgentDaemonLock;
   private readonly idleShutdownMs: number;
   private readonly idleCheckIntervalMs: number;
@@ -99,12 +101,14 @@ export class LocalAgentDaemon {
   private startedAt?: string;
   private accepting = false;
   private stopping = false;
+  private activeTurnRequests = 0;
   private authToken?: string;
   private ownsLock = false;
 
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
     this.manager = options.manager;
+    this.configRevision = options.configRevision;
     this.lock = new LocalAgentDaemonLock(this.paths);
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
     this.idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
@@ -294,6 +298,12 @@ export class LocalAgentDaemon {
       );
     }
     this.assertAuthenticated(request.authToken);
+    if (request.method === "hello" && !request.configRevision) {
+      throw new LocalAgentDaemonProtocolError(
+        "INVALID_REQUEST",
+        "Daemon hello requires a provider configuration revision.",
+      );
+    }
     if (!this.accepting && request.method !== "hello" && request.method !== "daemon.status") {
       throw new AgentDaemonUnavailableError({
         code: "DAEMON_UNAVAILABLE",
@@ -305,11 +315,14 @@ export class LocalAgentDaemon {
 
     switch (request.method) {
       case "hello":
-        return this.status();
+        return {
+          status: this.status(),
+          configMatches: request.configRevision === this.configRevision,
+        };
       case "agent.start":
-        return unwrapManagerResult(await this.manager.start(request.params));
+        return this.runTurnRequest(() => this.manager.start(request.params));
       case "agent.continue":
-        return unwrapManagerResult(await this.manager.continue(
+        return this.runTurnRequest(() => this.manager.continue(
           request.params.id,
           request.params.prompt,
           request.params.overrides,
@@ -329,11 +342,34 @@ export class LocalAgentDaemon {
       case "daemon.status":
         return this.status();
       case "daemon.stop":
+        if (request.params.ifIdle) {
+          this.accepting = false;
+          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0) {
+            this.accepting = true;
+            throw new AgentDaemonUnavailableError({
+              code: "DAEMON_UNAVAILABLE",
+              operation: "daemon.stop",
+              retryable: true,
+              message: "Local agent daemon became busy before it could be replaced.",
+            });
+          }
+        }
         this.stopping = true;
         this.accepting = false;
         return this.status();
       case "daemon.logs":
         return readLocalAgentDaemonLogs(this.paths, request.params.lines);
+    }
+  }
+
+  private async runTurnRequest<T>(
+    operation: () => Promise<Result<T, unknown>>,
+  ): Promise<T> {
+    this.activeTurnRequests += 1;
+    try {
+      return unwrapManagerResult(await operation());
+    } finally {
+      this.activeTurnRequests -= 1;
     }
   }
 

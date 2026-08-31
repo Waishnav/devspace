@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   decodeAgentRecord,
   decodeAgentWaitResults,
+  decodeDaemonHello,
   decodeLocalAgentDaemonRequest,
   decodeLocalAgentDaemonResponse,
   encodeLocalAgentDaemonResponse,
@@ -54,6 +55,53 @@ const directRequest = decodeLocalAgentDaemonRequest({
 });
 if (directRequest.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(directRequest.params.workspaceId, undefined);
+
+const helloRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_hello",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "hello",
+  params: {},
+  configRevision: "provider-config-revision",
+});
+assert.equal(helloRequest.method, "hello");
+if (helloRequest.method !== "hello") throw new Error("expected hello request");
+assert.equal(helloRequest.configRevision, "provider-config-revision");
+const conditionalStop = decodeLocalAgentDaemonRequest({
+  requestId: "req_stop",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "daemon.stop",
+  params: { ifIdle: true },
+});
+assert.equal(conditionalStop.method, "daemon.stop");
+if (conditionalStop.method !== "daemon.stop") throw new Error("expected daemon.stop request");
+assert.equal(conditionalStop.params.ifIdle, true);
+assert.deepEqual(decodeDaemonHello({
+  status: {
+    state: "ready",
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    pid: 123,
+    endpoint: "/tmp/agentd.sock",
+    startedAt: "now",
+    activeTurns: 0,
+    runtimeCount: 0,
+    clientConnections: 1,
+  },
+  configMatches: false,
+}), {
+  status: {
+    state: "ready",
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    pid: 123,
+    endpoint: "/tmp/agentd.sock",
+    startedAt: "now",
+    activeTurns: 0,
+    runtimeCount: 0,
+    clientConnections: 1,
+  },
+  configMatches: false,
+});
 
 assert.throws(
   () => decodeLocalAgentDaemonRequest({

@@ -24,6 +24,7 @@ import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.j
 import type { LocalAgentRecord } from "./local-agent-store.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agentd-test-"));
+const CONFIG_REVISION = "test-provider-config";
 const record: LocalAgentRecord = {
   id: "agt_test",
   workspaceId: "ws_test",
@@ -41,12 +42,25 @@ class FakeManager implements LocalAgentDaemonManager {
   closed = false;
   lastInput?: StartLocalAgentInput;
   blockWaitUntilAbort = false;
+  blockStartUntilRelease = false;
+  startStarted = false;
   waitStarted = false;
   waitAborted = false;
+  private releaseStart?: () => void;
 
   async start(input: StartLocalAgentInput) {
     this.lastInput = input;
+    this.startStarted = true;
+    if (this.blockStartUntilRelease) {
+      await new Promise<void>((resolveStart) => { this.releaseStart = resolveStart; });
+      this.activeTurnCount = 1;
+    }
     return Result.ok(record);
+  }
+
+  releaseBlockedStart(): void {
+    this.releaseStart?.();
+    this.releaseStart = undefined;
   }
 
   async continue(
@@ -92,11 +106,13 @@ class FakeManager implements LocalAgentDaemonManager {
 const manager = new FakeManager();
 const daemon = new LocalAgentDaemon({
   stateDir: join(root, "state"),
+  configRevision: CONFIG_REVISION,
   manager,
   idleShutdownMs: 60_000,
 });
 const client = new LocalAgentClient({
   stateDir: join(root, "state"),
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 2_000,
   requestTimeoutMs: 2_000,
   spawnDaemon: () => { void daemon.start(); },
@@ -106,6 +122,7 @@ const missingDaemonStateDir = join(root, "missing-daemon-state");
 let diagnosticSpawnCount = 0;
 const missingDaemonClient = new LocalAgentClient({
   stateDir: missingDaemonStateDir,
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 50,
   requestTimeoutMs: 50,
   spawnDaemon: () => { diagnosticSpawnCount += 1; },
@@ -169,12 +186,14 @@ const idleManager = new FakeManager();
 idleManager.activeTurnCount = 0;
 const idleDaemon = new LocalAgentDaemon({
   stateDir: idleStateDir,
+  configRevision: CONFIG_REVISION,
   manager: idleManager,
   idleShutdownMs: 200,
   idleCheckIntervalMs: 10,
 });
 const idleClient = new LocalAgentClient({
   stateDir: idleStateDir,
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 2_000,
   requestTimeoutMs: 2_000,
   spawnDaemon: () => { void idleDaemon.start(); },
@@ -193,11 +212,13 @@ const ownerManager = new FakeManager();
 const competingManager = new FakeManager();
 const ownerDaemon = new LocalAgentDaemon({
   stateDir: ownershipStateDir,
+  configRevision: CONFIG_REVISION,
   manager: ownerManager,
   idleShutdownMs: 60_000,
 });
 const competingDaemon = new LocalAgentDaemon({
   stateDir: ownershipStateDir,
+  configRevision: CONFIG_REVISION,
   manager: competingManager,
   idleShutdownMs: 60_000,
 });
@@ -223,6 +244,7 @@ try {
   assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
   const ownerClient = new LocalAgentClient({
     stateDir: ownershipStateDir,
+    configRevision: CONFIG_REVISION,
     spawnDaemon: () => { throw new Error("the winning daemon should already be reachable"); },
   });
   assert.equal(unwrap(await ownerClient.status()).pid, process.pid);
@@ -233,6 +255,7 @@ try {
 
 const startupFailureClient = new LocalAgentClient({
   stateDir: join(root, "startup-failure-state"),
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 20,
   requestTimeoutMs: 10,
   spawnDaemon: () => { throw new Error("spawn failed"); },
@@ -240,6 +263,125 @@ const startupFailureClient = new LocalAgentClient({
 const startupFailure = await startupFailureClient.ensureReady();
 assert.equal(startupFailure.isErr(), true);
 if (startupFailure.isErr()) assert.equal(startupFailure.error.code, "DAEMON_STARTUP_FAILURE");
+
+// Keep Unix socket paths below macOS's short sockaddr_un path limit.
+const staleIdleStateDir = join(root, "si");
+const staleIdleManager = new FakeManager();
+staleIdleManager.activeTurnCount = 0;
+const staleIdleDaemon = new LocalAgentDaemon({
+  stateDir: staleIdleStateDir,
+  configRevision: "old-provider-config",
+  manager: staleIdleManager,
+  idleShutdownMs: 60_000,
+});
+const currentManager = new FakeManager();
+currentManager.activeTurnCount = 0;
+const currentDaemon = new LocalAgentDaemon({
+  stateDir: staleIdleStateDir,
+  configRevision: CONFIG_REVISION,
+  manager: currentManager,
+  idleShutdownMs: 60_000,
+});
+let currentDaemonSpawns = 0;
+const staleIdleClient = new LocalAgentClient({
+  stateDir: staleIdleStateDir,
+  configRevision: CONFIG_REVISION,
+  startupTimeoutMs: 2_000,
+  requestTimeoutMs: 500,
+  spawnDaemon: () => {
+    currentDaemonSpawns += 1;
+    void currentDaemon.start();
+  },
+});
+try {
+  await staleIdleDaemon.start();
+  assert.equal(unwrap(await staleIdleClient.ensureReady()).state, "ready");
+  assert.equal(staleIdleManager.closed, true);
+  assert.equal(currentDaemonSpawns, 1);
+} finally {
+  await staleIdleDaemon.close();
+  await currentDaemon.close();
+}
+
+const staleActiveStateDir = join(root, "sa");
+const staleActiveManager = new FakeManager();
+const staleActiveDaemon = new LocalAgentDaemon({
+  stateDir: staleActiveStateDir,
+  configRevision: "old-provider-config",
+  manager: staleActiveManager,
+  idleShutdownMs: 60_000,
+});
+let staleActiveSpawns = 0;
+const staleActiveClient = new LocalAgentClient({
+  stateDir: staleActiveStateDir,
+  configRevision: CONFIG_REVISION,
+  startupTimeoutMs: 500,
+  requestTimeoutMs: 500,
+  spawnDaemon: () => { staleActiveSpawns += 1; },
+});
+try {
+  await staleActiveDaemon.start();
+  const changed = await staleActiveClient.ensureReady();
+  assert.equal(changed.isErr(), true);
+  if (changed.isErr()) {
+    assert.equal(changed.error.code, "DAEMON_CONFIG_CHANGED");
+    assert.equal(changed.error.retryable, true);
+  }
+  assert.equal(staleActiveSpawns, 0);
+  assert.equal(staleActiveManager.closed, false);
+  assert.deepEqual(Object.keys(unwrap(await staleActiveClient.status())).sort(), [
+    "activeTurns",
+    "clientConnections",
+    "endpoint",
+    "pid",
+    "protocolVersion",
+    "runtimeCount",
+    "startedAt",
+    "state",
+  ]);
+} finally {
+  await staleActiveDaemon.close();
+}
+
+const configRaceStateDir = join(root, "sr");
+const configRaceManager = new FakeManager();
+configRaceManager.activeTurnCount = 0;
+configRaceManager.blockStartUntilRelease = true;
+const configRaceDaemon = new LocalAgentDaemon({
+  stateDir: configRaceStateDir,
+  configRevision: "old-provider-config",
+  manager: configRaceManager,
+  idleShutdownMs: 60_000,
+});
+const matchingRaceClient = new LocalAgentClient({
+  stateDir: configRaceStateDir,
+  configRevision: "old-provider-config",
+  spawnDaemon: () => { throw new Error("the existing daemon should be used"); },
+});
+const changedRaceClient = new LocalAgentClient({
+  stateDir: configRaceStateDir,
+  configRevision: CONFIG_REVISION,
+  spawnDaemon: () => { throw new Error("a busy daemon must not be replaced"); },
+});
+try {
+  await configRaceDaemon.start();
+  const starting = matchingRaceClient.run({
+    target: "reviewer",
+    prompt: "race with replacement",
+    workspaceId: record.workspaceId,
+    workspaceRoot: record.workspaceRoot,
+  });
+  await waitFor(() => configRaceManager.startStarted);
+  const changed = await changedRaceClient.ensureReady();
+  assert.equal(changed.isErr(), true);
+  if (changed.isErr()) assert.equal(changed.error.code, "DAEMON_CONFIG_CHANGED");
+  assert.equal(configRaceManager.closed, false);
+  configRaceManager.releaseBlockedStart();
+  unwrap(await starting);
+} finally {
+  configRaceManager.releaseBlockedStart();
+  await configRaceDaemon.close();
+}
 
 const upgradeStateDir = join(root, "upgrade-state");
 await mkdir(upgradeStateDir, { recursive: true });
@@ -306,6 +448,7 @@ const replacementManager = new FakeManager();
 replacementManager.activeTurnCount = 0;
 const replacementDaemon = new LocalAgentDaemon({
   stateDir: upgradeStateDir,
+  configRevision: CONFIG_REVISION,
   manager: replacementManager,
   idleShutdownMs: 60_000,
 });
@@ -313,6 +456,7 @@ let replacementSpawns = 0;
 let spawnedBeforeLegacyLockReleased = false;
 const upgradeClient = new LocalAgentClient({
   stateDir: upgradeStateDir,
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 2_000,
   requestTimeoutMs: 500,
   spawnDaemon: () => {
@@ -368,20 +512,24 @@ const replacementRaceServer = createNetServer((socket) => {
       }));
       return;
     }
+    const status = {
+      state: request.method === "daemon.stop" ? "stopping" as const : "ready" as const,
+      protocolVersion: replacementRaceProtocol,
+      pid: process.pid,
+      endpoint: replacementRacePaths.endpoint,
+      startedAt: "now",
+      activeTurns: 0,
+      runtimeCount: 0,
+      clientConnections: 1,
+    };
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
       protocolVersion: replacementRaceProtocol,
       ok: true,
-      result: {
-        state: request.method === "daemon.stop" ? "stopping" : "ready",
-        protocolVersion: replacementRaceProtocol,
-        pid: process.pid,
-        endpoint: replacementRacePaths.endpoint,
-        startedAt: "now",
-        activeTurns: 0,
-        runtimeCount: 0,
-        clientConnections: 1,
-      },
+      result: request.method === "hello"
+        && replacementRaceProtocol === LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
+        ? { status, configMatches: true }
+        : status,
     }), () => {
       if (request.method === "daemon.stop") {
         replacementRaceProtocol = LOCAL_AGENT_DAEMON_PROTOCOL_VERSION;
@@ -395,6 +543,7 @@ await new Promise<void>((resolveListen, rejectListen) => {
 });
 const replacementRaceClient = new LocalAgentClient({
   stateDir: replacementRaceStateDir,
+  configRevision: CONFIG_REVISION,
   startupTimeoutMs: 500,
   requestTimeoutMs: 100,
   spawnDaemon: () => {
@@ -447,6 +596,7 @@ await new Promise<void>((resolveListen, rejectListen) => {
 try {
   const timeoutClient = new LocalAgentClient({
     stateDir: timeoutStateDir,
+    configRevision: CONFIG_REVISION,
     endpoint: timeoutPaths.endpoint,
     requestTimeoutMs: 20,
     spawnDaemon: () => { throw new Error("existing daemon should be used"); },
@@ -484,6 +634,7 @@ await new Promise<void>((resolveListen, rejectListen) => {
 try {
   const invalidClient = new LocalAgentClient({
     stateDir: invalidStateDir,
+    configRevision: CONFIG_REVISION,
     endpoint: invalidPaths.endpoint,
     requestTimeoutMs: 50,
     spawnDaemon: () => { throw new Error("existing daemon should be used"); },
@@ -507,6 +658,7 @@ const socketManager = new FakeManager();
 socketManager.activeTurnCount = 0;
 const socketDaemon = new LocalAgentDaemon({
   stateDir: socketStateDir,
+  configRevision: CONFIG_REVISION,
   manager: socketManager,
   requestReadTimeoutMs: 30,
   shutdownTimeoutMs: 100,
@@ -550,6 +702,7 @@ try {
     authToken: "wrong-secret",
     method: "hello",
     params: {},
+    configRevision: CONFIG_REVISION,
   }) + "\n");
   assert.equal(unauthorized.ok, false);
   if (!unauthorized.ok) assert.equal(unauthorized.error.code, "DAEMON_UNAUTHORIZED");
