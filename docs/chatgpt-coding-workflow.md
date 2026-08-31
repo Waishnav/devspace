@@ -37,11 +37,15 @@ global or project scope is unchanged from an earlier open in the conversation,
 the new worktree result can omit it. If a branch or filesystem change alters a
 scope, `open_workspace` returns the complete replacement snapshot for that scope.
 
-Treat returned `instructions`, `skills`, and `agents` scopes as durable
+Treat returned `instructions`, `skills`, and `agents` scopes, plus instructions
+later read from nested instruction files or `SKILL.md` files, as durable
 operating context. Preserve them when summarizing or compacting conversation
 state. A later `open_workspace` result that omits a scope means the previously
 returned snapshot is still current; a scope that appears again replaces the
-retained snapshot for that scope.
+retained snapshot for that scope. When project instructions reappear, reread
+relevant nested instruction files before relying on an older read. When a
+skills scope reappears, reread a matching `SKILL.md` before relying on its
+previously read instructions.
 
 Do not call `open_workspace` again for the same checkout folder unless:
 

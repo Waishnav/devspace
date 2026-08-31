@@ -112,7 +112,7 @@ function serverInstructions(
     ? `When ${toolNames.openWorkspace} returns skills and a task matches one, use ${toolNames.read} to read that skill's path before proceeding. Project skill paths are relative to the current workspace root. Global skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
   const agents = `Follow loaded instructions returned under instructions.global and instructions.project.loaded. Before working under a path listed in instructions.project.available, use ${toolNames.read} to inspect that instruction file and follow it. Project instruction paths are relative to the current workspace root. `;
-  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected. Treat instructions, skills, agent profiles, and provider information returned by ${toolNames.openWorkspace} as durable operating context and preserve them when summarizing or compacting conversation state. Later ${toolNames.openWorkspace} results may omit unchanged global or project scopes; an omitted scope remains unchanged and must continue to be followed. When a scope is returned again, replace the retained snapshot for that scope with the new value.`;
+  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected. Treat instructions, skills, agent profiles, and provider information returned by ${toolNames.openWorkspace}, plus instructions later read from advertised nested instruction files or SKILL.md files, as durable operating context and preserve them when summarizing or compacting conversation state. Later ${toolNames.openWorkspace} results may omit unchanged global or project scopes; an omitted scope remains unchanged and must continue to be followed. When a scope is returned again, replace the retained snapshot for that scope with the new value. If project instructions are returned again, treat previously read nested instruction files from that scope as stale and reread them when relevant. If a skills scope is returned again, reread a matching SKILL.md before relying on instructions previously read from that skill.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
 }
@@ -215,6 +215,7 @@ function scopedSkills(
     name: string;
     description: string;
     path: string;
+    filePath?: string;
     scope: "global" | "project";
   }>,
 ): {
@@ -223,7 +224,7 @@ function scopedSkills(
 } {
   const summarize = (scope: "global" | "project") => skills
     .filter((skill) => skill.scope === scope)
-    .map(({ scope: _scope, ...skill }) => skill);
+    .map(({ scope: _scope, filePath: _filePath, ...skill }) => skill);
   const global = summarize("global");
   const project = summarize("project");
   return { global, project };
@@ -268,10 +269,17 @@ interface WorkspaceContextSnapshots {
   agents: ReturnType<typeof scopedAgentCatalog>;
 }
 
+interface WorkspaceContextFingerprintInputs {
+  projectInstructions: unknown;
+  globalSkills: unknown;
+  projectSkills: unknown;
+}
+
 function conversationContextOutput(
   workspaces: WorkspaceRegistry,
   context: WorkspaceContext,
   snapshots: WorkspaceContextSnapshots,
+  fingerprintInputs: WorkspaceContextFingerprintInputs,
 ): {
   instructions?: {
     global?: WorkspaceContextSnapshots["instructions"]["global"];
@@ -303,9 +311,9 @@ function conversationContextOutput(
   };
   const values = new Map<string, unknown>([
     [keys.globalInstructions, snapshots.instructions.global],
-    [keys.projectInstructions, snapshots.instructions.project],
-    [keys.globalSkills, snapshots.skills.global],
-    [keys.projectSkills, snapshots.skills.project],
+    [keys.projectInstructions, fingerprintInputs.projectInstructions],
+    [keys.globalSkills, fingerprintInputs.globalSkills],
+    [keys.projectSkills, fingerprintInputs.projectSkills],
     [keys.globalProfiles, snapshots.agents.profiles.global],
     [keys.projectProfiles, snapshots.agents.profiles.project],
     [keys.providers, snapshots.agents.providers],
@@ -351,6 +359,46 @@ function conversationContextOutput(
 
 function contextFingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function fileContentFingerprint(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function projectInstructionFingerprintInput(
+  instructions: WorkspaceContextSnapshots["instructions"]["project"],
+  available: Array<{ path: string }>,
+  workspaceRoot: string,
+): unknown {
+  return {
+    loaded: instructions.loaded,
+    available: available.map((file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      contentFingerprint: fileContentFingerprint(file.path),
+    })),
+  };
+}
+
+function skillFingerprintInputs(
+  skills: Array<{
+    name: string;
+    description: string;
+    path: string;
+    filePath: string;
+    scope: "global" | "project";
+  }>,
+): { global: unknown; project: unknown } {
+  const summarize = (scope: "global" | "project") => skills
+    .filter((skill) => skill.scope === scope)
+    .map(({ scope: _scope, filePath, ...skill }) => ({
+      ...skill,
+      contentFingerprint: fileContentFingerprint(filePath),
+    }));
+
+  return {
+    global: summarize("global"),
+    project: summarize("project"),
+  };
 }
 
 function sendJsonRpcError(
@@ -586,9 +634,10 @@ export function createMcpServer(
           name: skill.name,
           description: skill.description,
           path: formatWorkspaceResourcePath(skill.filePath, workspace.root),
+          filePath: skill.filePath,
           scope: isPathInsideRoot(skill.filePath, workspace.root) ? "project" as const : "global" as const,
         }));
-      const cardSkills = scopedSkillCatalog.map(({ scope: _scope, ...skill }) => skill);
+      const cardSkills = scopedSkillCatalog.map(({ scope: _scope, filePath: _filePath, ...skill }) => skill);
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
         workspace.agentProfiles,
@@ -616,19 +665,31 @@ export function createMcpServer(
         path: formatWorkspaceResourcePath(file.path, workspace.root),
       }));
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded project instructions. Before working under a path with an available nested instruction file, read that file. When a task matches an available skill, read its SKILL.md before proceeding."
+        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded project instructions. Before working under a path with an available nested instruction file, read that file.";
+      const instructionSnapshots = scopedInstructions(
+        agentsFiles,
+        availableAgentsFiles,
+        workspace.root,
+      );
+      const skillSnapshots = scopedSkills(scopedSkillCatalog);
+      const skillFingerprints = skillFingerprintInputs(scopedSkillCatalog);
       const modelContext = conversationContextOutput(
         workspaces,
         workspaceContext,
         {
-          instructions: scopedInstructions(
-            agentsFiles,
+          instructions: instructionSnapshots,
+          skills: skillSnapshots,
+          agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
+        },
+        {
+          projectInstructions: projectInstructionFingerprintInput(
+            instructionSnapshots.project,
             availableAgentsFiles,
             workspace.root,
           ),
-          skills: scopedSkills(scopedSkillCatalog),
-          agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
+          globalSkills: skillFingerprints.global,
+          projectSkills: skillFingerprints.project,
         },
       );
       const resultContent: ToolContent[] = [

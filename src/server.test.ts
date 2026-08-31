@@ -272,24 +272,31 @@ test("open_workspace uses workspace-relative paths for project context", async (
     "AGENTS.md",
   );
   const skills = opened.skills as Record<string, unknown>;
+  const projectSkill = (skills.project as Array<Record<string, unknown>>)
+    .find((skill) => skill.name === "project-skill");
   assert.equal(
-    (skills.project as Array<Record<string, unknown>>).find((skill) => skill.name === "project-skill")?.path,
+    projectSkill?.path,
     ".agents/skills/project-skill/SKILL.md",
   );
+  assert.equal(projectSkill?.filePath, undefined);
 });
 
 test("open_workspace re-emits changed project instructions without repeating global context", async (t) => {
   const context = await fixture(t);
+  const nestedDir = join(context.project, "src");
+  await mkdir(nestedDir, { recursive: true });
+  const nestedInstructions = join(nestedDir, "AGENTS.md");
+  await writeFile(nestedInstructions, "nested instructions v1\n");
   await callOpen(context.client, context.project, "chat-1");
-  await writeFile(join(context.project, "AGENTS.md"), "updated project instructions\n");
+  await writeFile(nestedInstructions, "nested instructions v2\n");
 
   const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const instructions = reopened.instructions as Record<string, unknown>;
   assert.equal(instructions.global, undefined);
   const project = instructions.project as Record<string, unknown>;
   assert.equal(
-    (project.loaded as Array<Record<string, unknown>>)[0]?.content,
-    "updated project instructions\n",
+    (project.available as Array<Record<string, unknown>>)[0]?.path,
+    "src/AGENTS.md",
   );
   assert.equal(reopened.skills, undefined);
   assert.equal(reopened.agents, undefined);
@@ -311,20 +318,25 @@ test("open_workspace re-emits changed global instructions without repeating proj
   assert.equal(reopened.agents, undefined);
 });
 
-test("open_workspace refreshes project skills before selective delivery", async (t) => {
+test("open_workspace re-emits a project skill when only its instructions change", async (t) => {
   const context = await fixture(t);
-  await callOpen(context.client, context.project, "chat-1");
   const skillDir = join(context.project, ".agents", "skills", "new-skill");
   await mkdir(skillDir, { recursive: true });
+  const skillFile = join(skillDir, "SKILL.md");
+  const skillHeader = [
+    "---",
+    "name: new-skill",
+    "description: Project workflow.",
+    "---",
+    "",
+  ];
+  await writeFile(skillFile, [...skillHeader, "# Version one"].join("\n"));
+  await callOpen(context.client, context.project, "chat-1");
   await writeFile(
-    join(skillDir, "SKILL.md"),
+    skillFile,
     [
-      "---",
-      "name: new-skill",
-      "description: Added after the workspace was opened.",
-      "---",
-      "",
-      "# New Skill",
+      ...skillHeader,
+      "# Version two",
     ].join("\n"),
   );
 
@@ -456,10 +468,45 @@ test("concurrent checkout opens deliver context once", async (t) => {
   );
 });
 
+test("conversation context fingerprints survive a server restart", async (t) => {
+  const context = await fixture(t);
+  const first = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  await context.close();
+
+  const restoredStore = new SqliteWorkspaceStore(context.stateDir);
+  const restoredServer = createMcpServer(
+    context.config,
+    new WorkspaceRegistry(context.config, restoredStore),
+    createReviewCheckpointManager(),
+    new ProcessSessionManager(),
+    () => [],
+    [],
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const restoredClient = new Client({ name: "devspace-restored-test-client", version: "1.0.0" });
+  await Promise.all([
+    restoredClient.connect(clientTransport),
+    restoredServer.connect(serverTransport),
+  ]);
+  t.after(async () => {
+    await restoredClient.close();
+    await restoredServer.close();
+    restoredStore.close();
+  });
+
+  const restored = structuredContent(await callOpen(restoredClient, context.project, "chat-1"));
+  assert.equal(restored.workspaceId, first.workspaceId);
+  assert.equal(restored.instructions, undefined);
+  assert.equal(restored.skills, undefined);
+  assert.equal(restored.agents, undefined);
+});
+
 interface ServerFixture {
   client: Client;
   project: string;
   config: ServerConfig;
+  stateDir: string;
+  close(): Promise<void>;
 }
 
 async function fixture(
@@ -564,7 +611,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project, config };
+  return { client, project, config, stateDir, close };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
