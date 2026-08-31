@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { logEvent, commandPreview } from "../logger.js";
 import type { ServerConfig } from "../config.js";
+import { formatAgentsPath, type LoadedAgentsFile } from "../workspaces.js";
 import {
   WORKSPACE_APP_URI,
   type DiffStats,
@@ -102,6 +103,15 @@ export function logFailedToolResponse(
 
 export function textBlock(text: string): ToolContent {
   return { type: "text", text };
+}
+
+export function instructionContent(
+  agentsFiles: LoadedAgentsFile[],
+  workspaceRoot: string,
+): ToolContent[] {
+  return agentsFiles.map((file) => textBlock(
+    `Loaded project instructions from ${formatAgentsPath(file.path, workspaceRoot)}:\n${file.content}`,
+  ));
 }
 
 export function countDiffStats(diff: string | undefined): DiffStats {

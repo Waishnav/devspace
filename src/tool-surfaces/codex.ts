@@ -1,15 +1,18 @@
 import * as z from "zod/v4";
 import { applyPatch } from "../apply-patch.js";
 import type { ProcessSnapshot } from "../process-sessions.js";
+import type { LoadedAgentsFile } from "../workspaces.js";
 import {
   EDIT_TOOL_ANNOTATIONS,
   SHELL_TOOL_ANNOTATIONS,
   toolNames,
   workspaceIdDescription,
+  type ToolContent,
   type ToolRegistrationContext,
 } from "./types.js";
 import {
   contentText,
+  instructionContent,
   resultOutputSchema,
   runLoggedToolOperation,
   textBlock,
@@ -56,13 +59,16 @@ function processOutputSchema(): z.ZodRawShape {
   });
 }
 
-function processToolResponse(snapshot: ProcessSnapshot) {
+function processToolResponse(
+  snapshot: ProcessSnapshot,
+  additionalContent: ToolContent[] = [],
+) {
   const result = processResult(snapshot);
-  const content = [textBlock(result)];
+  const content = [textBlock(result), ...additionalContent];
   return {
     content,
     structuredContent: {
-      result,
+      result: contentText(content),
       sessionId: snapshot.sessionId,
       running: snapshot.running,
       exitCode: snapshot.exitCode,
@@ -105,18 +111,27 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
     },
     async ({ workspaceId, patch }) => {
       const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
       const applied = await runLoggedToolOperation(
         config,
         { tool: "apply_patch", workspaceId },
         startedAt,
-        async () => {
-          const workspace = workspaces.getWorkspace(workspaceId);
-          return applyPatch(workspace.root, patch);
-        },
+        async () => applyPatch(workspace.root, patch),
       );
+      const agentsFiles: LoadedAgentsFile[] = [];
+      for (const file of applied.files) {
+        agentsFiles.push(...await workspaces.loadAgentsFilesForPath(
+          workspace,
+          workspaces.resolvePath(workspace, file.path),
+          "file",
+        ));
+      }
       const paths = applied.files.map((file) => file.path).join(", ");
       const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
-      const content = [textBlock(result)];
+      const content = [
+        textBlock(result),
+        ...instructionContent(agentsFiles, workspace.root),
+      ];
 
       return {
         content,
@@ -200,6 +215,13 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       maxOutputTokens,
     }) => {
       const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
+      const cwd = workspaces.resolveWorkingDirectory(workspace, workingDirectory);
+      const agentsFiles = await workspaces.loadAgentsFilesForPath(
+        workspace,
+        cwd,
+        "directory",
+      );
       const snapshot = await runLoggedToolOperation(
         config,
         {
@@ -210,13 +232,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           commandLength: cmd.length,
         },
         startedAt,
-        async () => {
-          const workspace = workspaces.getWorkspace(workspaceId);
-          const cwd = workspaces.resolveWorkingDirectory(
-            workspace,
-            workingDirectory,
-          );
-          return processSessions.start({
+        async () => processSessions.start({
             workspaceId,
             command: cmd,
             cwd,
@@ -226,11 +242,13 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             rows,
             yieldTimeMs,
             maxOutputTokens,
-          });
-        },
+          }),
       );
 
-      return processToolResponse(snapshot);
+      return processToolResponse(
+        snapshot,
+        instructionContent(agentsFiles, workspace.root),
+      );
     },
   );
 

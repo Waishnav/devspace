@@ -13,7 +13,7 @@ import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 
-test("a checkout exposes initial and nested instruction context while filtering outside symlinks", async (t) => {
+test("a checkout loads nested instruction context lazily while filtering outside symlinks", async (t) => {
   const context = await fixture(t);
   const opened = await context.registry.openWorkspace(context.root);
 
@@ -24,8 +24,22 @@ test("a checkout exposes initial and nested instruction context while filtering 
     ["global instructions\n", "root instructions\n"],
   );
   assert.deepEqual(
-    opened.availableAgentsFiles.map((file) => file.path),
-    [join(context.root, "nested", "AGENTS.md")],
+    opened.availableAgentsFiles,
+    [],
+  );
+  assert.deepEqual(
+    (await context.registry.loadAgentsFilesForPath(
+      opened.workspace,
+      join(context.root, "nested", "file.txt"),
+    )).map((file) => file.content),
+    ["nested instructions\n"],
+  );
+  assert.deepEqual(
+    await context.registry.loadAgentsFilesForPath(
+      opened.workspace,
+      join(context.root, "nested", "file.txt"),
+    ),
+    [],
   );
   assert.deepEqual(
     opened.workspace.agentProfiles.map((profile) => ({
@@ -64,6 +78,20 @@ test("a checkout exposes initial and nested instruction context while filtering 
     assert.deepEqual(
       unsafeWorkspace.agentsFiles.map((file) => file.content),
       ["root instructions\n"],
+    );
+
+    const unsafeNestedDir = join(context.root, "unsafe-nested");
+    await mkdir(unsafeNestedDir);
+    await symlink(
+      join(context.outsideRoot, "secret.txt"),
+      join(unsafeNestedDir, "AGENTS.md"),
+    );
+    assert.deepEqual(
+      await context.registry.loadAgentsFilesForPath(
+        opened.workspace,
+        join(unsafeNestedDir, "file.txt"),
+      ),
+      [],
     );
   }
 });

@@ -16,6 +16,7 @@ import {
 import {
   contentText,
   countDiffStats,
+  instructionContent,
   logFailedToolResponse,
   logToolCall,
   resultOutputSchema,
@@ -59,7 +60,12 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
     async ({ workspaceId, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      workspaces.resolvePath(workspace, input.path);
+      const path = workspaces.resolvePath(workspace, input.path);
+      const agentsFiles = await workspaces.loadAgentsFilesForPath(
+        workspace,
+        path,
+        "file",
+      );
       const response = await writeFileTool(input, {
         cwd: workspace.root,
         root: workspace.root,
@@ -89,8 +95,9 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
 
       return {
         ...response,
+        content: [...response.content, ...instructionContent(agentsFiles, workspace.root)],
         structuredContent: {
-          result: contentText(response.content),
+          result: contentText([...response.content, ...instructionContent(agentsFiles, workspace.root)]),
         },
       };
     },
@@ -127,7 +134,12 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
     async ({ workspaceId, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      workspaces.resolvePath(workspace, input.path);
+      const path = workspaces.resolvePath(workspace, input.path);
+      const agentsFiles = await workspaces.loadAgentsFilesForPath(
+        workspace,
+        path,
+        "file",
+      );
       const response = await editFileTool(input, {
         cwd: workspace.root,
         root: workspace.root,
@@ -151,7 +163,10 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
         response.details?.patch ?? response.details?.diff,
       );
       const editResultText = `Edited ${input.path} (+${stats.additions} -${stats.removals}).`;
-      const editContent = [textBlock(editResultText)];
+      const editContent = [
+        textBlock(editResultText),
+        ...instructionContent(agentsFiles, workspace.root),
+      ];
       logToolCall(config, {
         tool: toolNames.edit,
         workspaceId,
@@ -207,6 +222,11 @@ function registerShellTool(context: ToolRegistrationContext): void {
         workspace,
         workingDirectory,
       );
+      const agentsFiles = await workspaces.loadAgentsFilesForPath(
+        workspace,
+        cwd,
+        "directory",
+      );
       const response = await runShellTool(input, {
         cwd,
         root: workspace.root,
@@ -240,8 +260,9 @@ function registerShellTool(context: ToolRegistrationContext): void {
 
       return {
         ...response,
+        content: [...response.content, ...instructionContent(agentsFiles, workspace.root)],
         structuredContent: {
-          result: contentText(response.content),
+          result: contentText([...response.content, ...instructionContent(agentsFiles, workspace.root)]),
         },
       };
     },

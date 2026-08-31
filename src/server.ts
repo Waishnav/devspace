@@ -57,6 +57,7 @@ import {
 import { getToolSurface } from "./tool-surfaces/index.js";
 import {
   contentText,
+  instructionContent,
   logFailedToolResponse,
   logToolCall,
   resultOutputSchema,
@@ -106,7 +107,7 @@ function serverInstructions(
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
-  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
+  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. DevSpace returns newly encountered AGENTS.md or CLAUDE.md files when a later path-aware tool enters their directory; follow those instructions before continuing. `;
   const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
@@ -436,10 +437,12 @@ export function createMcpServer(
       const visibleAgentProviders = includeBootstrapContext ? cardAgentProviders : [];
       const visibleAgents = includeBootstrapContext ? cardAgents : [];
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
-      const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
+      const availableAgentsFileOutputs = includeBootstrapContext
+        ? cardAvailableAgentsFiles
+        : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. DevSpace returns newly encountered AGENTS.md or CLAUDE.md files when a later path-aware tool enters their directory. When a task matches an available skill in skills, read its path before proceeding."
+        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. DevSpace returns newly encountered AGENTS.md or CLAUDE.md files when a later path-aware tool enters their directory.";
       const instruction = workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
@@ -462,9 +465,6 @@ export function createMcpServer(
             `Mode: ${workspace.mode}`,
             loadedAgentsFiles.length > 0
               ? `Loaded project instructions: ${loadedAgentsFiles.map((file) => file.path).join(", ")}`
-              : undefined,
-            availableAgentsFileOutputs.length > 0
-              ? `Available nested instructions: ${availableAgentsFileOutputs.map((file) => file.path).join(", ")}`
               : undefined,
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
@@ -546,7 +546,7 @@ export function createMcpServer(
       description:
         [
           "Read a file in a workspace. Use this for file inspection instead of shell commands like cat or sed.",
-          "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_workspace before working in nested directories.",
+          "When this enters a directory with unreturned AGENTS.md or CLAUDE.md files, those instructions are returned with the file content; follow them before continuing.",
           config.skillsEnabled
             ? "If available skills were returned and a task matches one, read that skill's path before proceeding. Skill paths may be outside the workspace; only advertised SKILL.md files and files under already-loaded skill directories are readable."
             : "",
@@ -584,6 +584,11 @@ export function createMcpServer(
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
+      const agentsFiles = await workspaces.loadAgentsFilesForPath(
+        workspace,
+        readPath.absolutePath,
+        "file",
+      );
       const response = await readFileTool(
         { ...input, path: readPath.absolutePath },
         {
@@ -613,8 +618,9 @@ export function createMcpServer(
 
       return {
         ...response,
+        content: [...response.content, ...instructionContent(agentsFiles, workspace.root)],
         structuredContent: {
-          result: contentText(response.content),
+          result: contentText([...response.content, ...instructionContent(agentsFiles, workspace.root)]),
         },
       };
     },

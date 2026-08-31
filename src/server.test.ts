@@ -74,6 +74,32 @@ test("open_workspace reports aggregate review availability", async (t) => {
   assert.deepEqual(gitReview, { available: true });
 });
 
+test("nested instructions are returned once when read enters their directory", async (t) => {
+  const context = await fixture(t);
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "nested-instructions"),
+  ).workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  const firstRead = await context.client.callTool({
+    name: "read",
+    arguments: { workspaceId, path: "nested/file.txt" },
+  });
+  assert.match(
+    structuredContent(firstRead).result as string,
+    /Loaded project instructions from nested\/AGENTS.md:\nnested instructions/,
+  );
+
+  const secondRead = await context.client.callTool({
+    name: "read",
+    arguments: { workspaceId, path: "nested/file.txt" },
+  });
+  assert.doesNotMatch(
+    structuredContent(secondRead).result as string,
+    /nested instructions/,
+  );
+});
+
 test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
   const context = await fixture(t, { git: true, uiEnabled: false });
   const opened = structuredContent(
@@ -311,6 +337,9 @@ async function fixture(
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
   await writeFile(join(project, "AGENTS.md"), "project instructions\n");
+  await mkdir(join(project, "nested"));
+  await writeFile(join(project, "nested", "AGENTS.md"), "nested instructions\n");
+  await writeFile(join(project, "nested", "file.txt"), "nested file\n");
   await writeFile(join(project, ".devspace", "agents", "reviewer.md"), [
     "---",
     "name: reviewer",
