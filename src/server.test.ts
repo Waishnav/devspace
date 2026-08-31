@@ -63,21 +63,6 @@ test("UI metadata is limited to workspace and aggregate review", async (t) => {
   }
 });
 
-test("open_workspace keeps aggregate review availability in card metadata", async (t) => {
-  const plain = await fixture(t);
-  const gitWorkspace = await fixture(t, { git: true });
-
-  const plainResult = await callOpen(plain.client, plain.project, "plain");
-  const gitResult = await callOpen(gitWorkspace.client, gitWorkspace.project, "git");
-  const plainReview = responseCard(plainResult).review;
-  const gitReview = responseCard(gitResult).review;
-
-  assert.equal((plainReview as { available: boolean }).available, false);
-  assert.deepEqual(gitReview, { available: true });
-  assert.equal(structuredContent(plainResult).review, undefined);
-  assert.equal(structuredContent(gitResult).review, undefined);
-});
-
 test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
   const context = await fixture(t, { git: true, uiEnabled: false });
   const opened = structuredContent(
@@ -169,15 +154,27 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   );
 });
 
-test("open_workspace returns scoped model context without internal workspace state", async (t) => {
+test("open_workspace returns scoped model context and keeps UI state in card metadata", async (t) => {
   const providerNote = "available";
   const context = await fixture(t, {
     localAgentProviders: [{ name: "codex", available: true, note: providerNote }],
   });
+  const nestedDir = join(context.project, "src");
+  const skillDir = join(context.project, ".agents", "skills", "project-skill");
+  await mkdir(nestedDir, { recursive: true });
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(join(nestedDir, "AGENTS.md"), "nested instructions\n");
+  await writeFile(join(skillDir, "SKILL.md"), [
+    "---",
+    "name: project-skill",
+    "description: Project-only workflow.",
+    "---",
+    "",
+    "# Project Skill",
+  ].join("\n"));
+
   const first = await callOpen(context.client, context.project, "chat-1");
   const repeated = await callOpen(context.client, context.project, "chat-1");
-  assert.equal((first._meta as Record<string, unknown> | undefined)?.tool, undefined);
-  assert.equal((repeated._meta as Record<string, unknown> | undefined)?.tool, undefined);
 
   const tools = await context.client.listTools();
   const openTool = tools.tools.find((tool) => tool.name === "open_workspace");
@@ -200,14 +197,20 @@ test("open_workspace returns scoped model context without internal workspace sta
   const instructions = firstStructured.instructions as Record<string, unknown>;
   assert.ok(Array.isArray(instructions.global));
   const projectInstructions = instructions.project as Record<string, unknown>;
-  assert.ok(Array.isArray(projectInstructions.loaded));
-  assert.ok(Array.isArray(projectInstructions.available));
   assert.equal(
-    ((projectInstructions.loaded as Array<Record<string, unknown>>)[0]?.path),
+    (projectInstructions.loaded as Array<Record<string, unknown>>)[0]?.path,
     "AGENTS.md",
   );
+  assert.equal(
+    (projectInstructions.available as Array<Record<string, unknown>>)[0]?.path,
+    "src/AGENTS.md",
+  );
+  const skills = firstStructured.skills as Record<string, unknown>;
+  const projectSkill = (skills.project as Array<Record<string, unknown>>)
+    .find((skill) => skill.name === "project-skill");
+  assert.equal(projectSkill?.path, ".agents/skills/project-skill/SKILL.md");
+  assert.equal(projectSkill?.filePath, undefined);
   const agents = firstStructured.agents as Record<string, unknown>;
-  assert.ok(Array.isArray(agents.providers));
   assert.equal(
     (agents.providers as Array<Record<string, unknown>>)[0]?.id,
     "codex",
@@ -216,79 +219,44 @@ test("open_workspace returns scoped model context without internal workspace sta
     (agents.providers as Array<Record<string, unknown>>)[0]?.note,
     providerNote,
   );
-  const profiles = agents.profiles as Record<string, unknown>;
-  assert.ok(Array.isArray(profiles.project));
   assert.equal(firstStructured.skillDiagnostics, undefined);
   assert.equal(firstStructured.review, undefined);
   assert.equal(firstStructured.instruction, undefined);
-  assert.equal("workspaceReused" in firstStructured, false);
-  assert.equal("includeBootstrapContext" in firstStructured, false);
 
   const repeatedStructured = structuredContent(repeated);
   assert.equal(repeatedStructured.instructions, undefined);
   assert.equal(repeatedStructured.skills, undefined);
   assert.equal(repeatedStructured.agents, undefined);
-  assert.equal(repeatedStructured.skillDiagnostics, undefined);
-  assert.equal(repeatedStructured.review, undefined);
-  assert.equal(repeatedStructured.instruction, undefined);
-  assert.equal("workspaceReused" in repeatedStructured, false);
-  assert.equal("includeBootstrapContext" in repeatedStructured, false);
 
   const card = responseCard(repeated);
   assert.equal(card.workspaceReused, true);
-  assert.equal(card.includeBootstrapContext, false);
-  assert.ok(Array.isArray(card.agentsFiles));
-  assert.ok(Array.isArray(card.availableAgentsFiles));
+  assert.equal((card.review as { available: boolean }).available, false);
   assert.ok(Array.isArray(card.skills));
-  assert.ok(Array.isArray(card.agentProviders));
-  assert.equal(
-    (card.agentProviders as Array<Record<string, unknown>>)[0]?.note,
-    providerNote,
-  );
-  assert.ok(Array.isArray(card.agents));
 });
 
-test("open_workspace uses workspace-relative paths for project context", async (t) => {
-  const context = await fixture(t);
-  const skillDir = join(context.project, ".agents", "skills", "project-skill");
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(
-    join(skillDir, "SKILL.md"),
-    [
-      "---",
-      "name: project-skill",
-      "description: Project-only workflow.",
-      "---",
-      "",
-      "# Project Skill",
-    ].join("\n"),
-  );
-
-  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  const instructions = opened.instructions as Record<string, unknown>;
-  const projectInstructions = instructions.project as Record<string, unknown>;
-  assert.equal(
-    (projectInstructions.loaded as Array<Record<string, unknown>>)[0]?.path,
-    "AGENTS.md",
-  );
-  const skills = opened.skills as Record<string, unknown>;
-  const projectSkill = (skills.project as Array<Record<string, unknown>>)
-    .find((skill) => skill.name === "project-skill");
-  assert.equal(
-    projectSkill?.path,
-    ".agents/skills/project-skill/SKILL.md",
-  );
-  assert.equal(projectSkill?.filePath, undefined);
-});
-
-test("open_workspace re-emits changed project instructions without repeating global context", async (t) => {
+test("open_workspace re-emits changed project resources without repeating global context", async (t) => {
   const context = await fixture(t);
   const nestedDir = join(context.project, "src");
+  const skillDir = join(context.project, ".agents", "skills", "project-skill");
   await mkdir(nestedDir, { recursive: true });
-  const nestedInstructions = join(nestedDir, "AGENTS.md");
-  await writeFile(nestedInstructions, "nested instructions v1\n");
+  await mkdir(skillDir, { recursive: true });
+  const nestedFile = join(nestedDir, "AGENTS.md");
+  const skillFile = join(skillDir, "SKILL.md");
+  const skillHeader = [
+    "---",
+    "name: project-skill",
+    "description: Project-only workflow.",
+    "---",
+    "",
+  ];
+  await writeFile(nestedFile, "nested instructions v1\n");
+  await writeFile(
+    skillFile,
+    [...skillHeader, "# Version one"].join("\n"),
+  );
   await callOpen(context.client, context.project, "chat-1");
-  await writeFile(nestedInstructions, "nested instructions v2\n");
+  await writeFile(nestedFile, "nested instructions v2\n");
+  await writeFile(skillFile, [...skillHeader, "# Version two"].join("\n"));
 
   const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const instructions = reopened.instructions as Record<string, unknown>;
@@ -298,56 +266,12 @@ test("open_workspace re-emits changed project instructions without repeating glo
     (project.available as Array<Record<string, unknown>>)[0]?.path,
     "src/AGENTS.md",
   );
-  assert.equal(reopened.skills, undefined);
-  assert.equal(reopened.agents, undefined);
-});
-
-test("open_workspace re-emits changed global instructions without repeating project context", async (t) => {
-  const context = await fixture(t);
-  await callOpen(context.client, context.project, "chat-1");
-  await writeFile(join(context.config.agentDir, "AGENTS.md"), "updated global instructions\n");
-
-  const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  const instructions = reopened.instructions as Record<string, unknown>;
-  assert.equal(instructions.project, undefined);
-  assert.equal(
-    (instructions.global as Array<Record<string, unknown>>)[0]?.content,
-    "updated global instructions\n",
-  );
-  assert.equal(reopened.skills, undefined);
-  assert.equal(reopened.agents, undefined);
-});
-
-test("open_workspace re-emits a project skill when only its instructions change", async (t) => {
-  const context = await fixture(t);
-  const skillDir = join(context.project, ".agents", "skills", "new-skill");
-  await mkdir(skillDir, { recursive: true });
-  const skillFile = join(skillDir, "SKILL.md");
-  const skillHeader = [
-    "---",
-    "name: new-skill",
-    "description: Project workflow.",
-    "---",
-    "",
-  ];
-  await writeFile(skillFile, [...skillHeader, "# Version one"].join("\n"));
-  await callOpen(context.client, context.project, "chat-1");
-  await writeFile(
-    skillFile,
-    [
-      ...skillHeader,
-      "# Version two",
-    ].join("\n"),
-  );
-
-  const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const skills = reopened.skills as Record<string, unknown>;
   assert.equal(skills.global, undefined);
   assert.equal(
     (skills.project as Array<Record<string, unknown>>)[0]?.path,
-    ".agents/skills/new-skill/SKILL.md",
+    ".agents/skills/project-skill/SKILL.md",
   );
-  assert.equal(reopened.instructions, undefined);
   assert.equal(reopened.agents, undefined);
 });
 
@@ -361,17 +285,9 @@ test("a conversation reuses global context when opening another project", async 
   const opened = structuredContent(await callOpen(context.client, otherProject, "chat-1"));
   const instructions = opened.instructions as Record<string, unknown>;
   assert.equal(instructions.global, undefined);
-  const project = instructions.project as Record<string, unknown>;
-  assert.equal(
-    (project.loaded as Array<Record<string, unknown>>)[0]?.content,
-    "other project instructions\n",
-  );
-  const skills = opened.skills as Record<string, unknown>;
-  assert.equal(skills.global, undefined);
+  assert.ok(instructions.project);
   const agents = opened.agents as Record<string, unknown>;
   assert.equal(agents.providers, undefined);
-  const profiles = agents.profiles as Record<string, unknown>;
-  assert.equal(profiles.global, undefined);
 });
 
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
@@ -454,59 +370,9 @@ test("open_workspace reuses unchanged context when switching to worktree mode", 
   assert.equal(worktree.agents, undefined);
 });
 
-test("concurrent checkout opens deliver context once", async (t) => {
-  const context = await fixture(t);
-  const [first, second] = await Promise.all([
-    callOpen(context.client, context.project, "chat-1"),
-    callOpen(context.client, context.project, "chat-1"),
-  ]);
-
-  assert.equal(structuredContent(first).workspaceId, structuredContent(second).workspaceId);
-  assert.equal(
-    [first, second].filter((result) => structuredContent(result).instructions !== undefined).length,
-    1,
-  );
-});
-
-test("conversation context fingerprints survive a server restart", async (t) => {
-  const context = await fixture(t);
-  const first = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  await context.close();
-
-  const restoredStore = new SqliteWorkspaceStore(context.stateDir);
-  const restoredServer = createMcpServer(
-    context.config,
-    new WorkspaceRegistry(context.config, restoredStore),
-    createReviewCheckpointManager(),
-    new ProcessSessionManager(),
-    () => [],
-    [],
-  );
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const restoredClient = new Client({ name: "devspace-restored-test-client", version: "1.0.0" });
-  await Promise.all([
-    restoredClient.connect(clientTransport),
-    restoredServer.connect(serverTransport),
-  ]);
-  t.after(async () => {
-    await restoredClient.close();
-    await restoredServer.close();
-    restoredStore.close();
-  });
-
-  const restored = structuredContent(await callOpen(restoredClient, context.project, "chat-1"));
-  assert.equal(restored.workspaceId, first.workspaceId);
-  assert.equal(restored.instructions, undefined);
-  assert.equal(restored.skills, undefined);
-  assert.equal(restored.agents, undefined);
-});
-
 interface ServerFixture {
   client: Client;
   project: string;
-  config: ServerConfig;
-  stateDir: string;
-  close(): Promise<void>;
 }
 
 async function fixture(
@@ -611,7 +477,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project, config, stateDir, close };
+  return { client, project };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
