@@ -35,6 +35,8 @@ try {
     error: "Codex executable was not found.",
     errorCode: "PROVIDER_UNAVAILABLE",
     errorRetryable: false,
+    usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14, state: "final" },
+    activity: [{ kind: "command", status: "completed", label: "npm test" }],
   });
 
   assert.equal(updated.status, "error");
@@ -46,14 +48,25 @@ try {
   assert.equal(storedError?.error, "Codex executable was not found.");
   assert.equal(storedError?.errorCode, "PROVIDER_UNAVAILABLE");
   assert.equal(storedError?.errorRetryable, false);
+  assert.deepEqual(storedError?.usage, {
+    inputTokens: 10,
+    cachedInputTokens: undefined,
+    cacheCreationInputTokens: undefined,
+    outputTokens: 4,
+    totalTokens: 14,
+    state: "final",
+  });
+  assert.deepEqual(storedError?.activity, [
+    { kind: "command", status: "completed", label: "npm test" },
+  ]);
   assert.equal(store.update(created.id, { latestResponse: undefined }).latestResponse, undefined);
   assert.deepEqual(
     store.list({ workspaceRoot: join(root, "project") }).map((agent) => agent.latestResponse),
     [undefined],
   );
-assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
-assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
-assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "other") }), []);
+  assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
+  assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
+  assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "other") }), []);
   assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
 
   const begun = store.beginTurn(created.id, {
@@ -66,6 +79,8 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(begun.turn.prompt, "Review the current changes.");
   assert.equal(begun.turn.status, "running");
   assert.equal(begun.turn.completedAt, undefined);
+  assert.equal(begun.agent.usage, undefined);
+  assert.deepEqual(begun.agent.activity, []);
 
   const completed = store.finishTurn(created.id, begun.turn.id, {
     status: "completed",

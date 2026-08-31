@@ -56,6 +56,18 @@ const directRequest = decodeLocalAgentDaemonRequest({
 if (directRequest.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(directRequest.params.workspaceId, undefined);
 
+const cancelRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_cancel",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "agent.cancel",
+  params: {
+    id: "agt_1234",
+    scope: { workspaceId: "ws_test", workspaceRoot: "/tmp/project" },
+  },
+});
+assert.equal(cancelRequest.method, "agent.cancel");
+
 const helloRequest = decodeLocalAgentDaemonRequest({
   requestId: "req_hello",
   protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -122,11 +134,15 @@ const record = decodeAgentRecord({
   provider: "codex",
   status: "idle",
   latestResponse: "  response whitespace  \n",
+  usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10, state: "final" },
+  activity: [{ kind: "tool", status: "completed", label: "read" }],
   createdAt: "now",
   updatedAt: "now",
 });
 assert.equal(record.id, "agt_1234");
 assert.equal(record.latestResponse, "  response whitespace  \n");
+assert.equal(record.usage?.totalTokens, 10);
+assert.deepEqual(record.activity, [{ kind: "tool", status: "completed", label: "read" }]);
 
 const directRecord = decodeAgentRecord({ ...record, workspaceId: undefined });
 assert.equal(directRecord.workspaceId, undefined);

@@ -11,6 +11,7 @@ import {
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type {
   LocalAgentDriver,
+  LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
   LocalAgentRuntime,
@@ -54,7 +55,7 @@ class FakeRuntime implements LocalAgentRuntime {
 
   async run(
     input: LocalAgentRunInput,
-    callbacks?: { onSessionId?: (id: string) => void | Promise<void> },
+    callbacks?: LocalAgentRunCallbacks,
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.inputs.push(input);
     if (input.prompt.includes("early-fail")) {
@@ -64,8 +65,13 @@ class FakeRuntime implements LocalAgentRuntime {
     if (input.prompt.includes("defect")) throw new TypeError("internal defect");
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
     if (input.prompt.includes("hold")) {
-      await new Promise<void>((resolve) => { this.releaseHold = resolve; });
+      await new Promise<void>((resolve) => {
+        this.releaseHold = resolve;
+        input.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
     }
+    callbacks?.onUsage?.({ inputTokens: 8, outputTokens: 2, totalTokens: 10, state: "final" });
+    callbacks?.onActivity?.({ kind: "tool", status: "completed", label: "read" });
     return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_test",
@@ -247,6 +253,10 @@ runtimes.get(first.id)!.release();
 await waitFor(() => getRecord(first.id).status === "idle");
 assert.equal(getRecord(first.id).providerSessionId, "thread_test");
 assert.match(getRecord(first.id).latestResponse ?? "", /Task:\nhold/);
+assert.equal(getRecord(first.id).usage?.totalTokens, 10);
+assert.deepEqual(getRecord(first.id).activity, [
+  { kind: "tool", status: "completed", label: "read" },
+]);
 assert.deepEqual(
   store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
   [{ prompt: "hold", status: "completed" }],
@@ -277,6 +287,20 @@ const second = unwrap(await manager.start({
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
 assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
+
+const cancelled = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold for cancellation",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(cancelled.id)?.inputs.length === 1);
+const stoppedWait = manager.wait([cancelled.id], scope);
+const stopped = unwrap(await manager.cancel(cancelled.id, scope));
+assert.equal(stopped.status, "stopped");
+assert.equal(getRecord(cancelled.id).status, "stopped");
+assert.equal(store.getLatestTurn(cancelled.id)?.status, "stopped");
+assert.deepEqual(unwrap(await stoppedWait), [{ id: cancelled.id, status: "stopped" }]);
 
 const failed = unwrap(await manager.start({
   target: "reviewer",

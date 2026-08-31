@@ -46,6 +46,7 @@ import {
 } from "./local-agent-daemon-lifecycle.js";
 import type {
   AgentContinueError,
+  AgentCancelError,
   AgentListError,
   AgentLookupError,
   AgentStartError,
@@ -64,6 +65,7 @@ const RETRY_DELAY_MS = 40;
 type RequestError<M extends LocalAgentDaemonRequest["method"]> =
   M extends "agent.start" ? AgentStartError | AgentDaemonError
     : M extends "agent.continue" ? AgentContinueError | AgentDaemonError
+      : M extends "agent.cancel" ? AgentCancelError | AgentDaemonError
       : M extends "agent.get" ? AgentLookupError | AgentDaemonError
         : M extends "agent.list" ? AgentListError | AgentDaemonError
           : M extends "agent.wait" ? AgentWaitError | AgentDaemonError
@@ -135,6 +137,14 @@ export class LocalAgentClient {
   ): Promise<BetterResult<LocalAgentRecord, AgentLookupError | AgentDaemonError>> {
     const result = await this.request("agent.get", { id: agentId, scope });
     return decodeRequestResult(result, "agent.get", decodeAgentRecord);
+  }
+
+  async cancel(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentCancelError | AgentDaemonError>> {
+    const result = await this.request("agent.cancel", { id: agentId, scope });
+    return decodeRequestResult(result, "agent.cancel", decodeAgentRecord);
   }
 
   async list(
@@ -673,6 +683,7 @@ function isRequestError(
         || category === "conflict"
         || category === "store";
     case "agent.get":
+    case "agent.cancel":
     case "agent.wait":
       return category === "target" || category === "scope" || category === "store";
     case "agent.list":

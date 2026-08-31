@@ -19,6 +19,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+import { observeOpenCodeResult } from "./local-agent-observation.js";
 
 const OPENCODE_SESSION_POLL_INTERVAL_MS = 250;
 const OPENCODE_SESSION_POLL_TIMEOUT_MS = 5 * 60_000;
@@ -64,6 +65,12 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           const initialModel = input.model ? parseOpencodeModel(input.model, input.effort) : undefined;
           const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input, initialModel);
           await callbacks?.onSessionId?.(sessionId);
+          const onAbort = () => {
+            void this.client.v2.session.interrupt({ sessionID: sessionId }).catch(() => undefined);
+          };
+          input.signal?.addEventListener("abort", onAbort, { once: true });
+          if (input.signal?.aborted) onAbort();
+          try {
           await this.client.v2.session.switchAgent({
             sessionID: sessionId,
             agent: opencodeAgentFor(input.writeMode),
@@ -77,6 +84,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           await waitForOpencodeSession(this.client, sessionId, promptResult);
           const promptId = extractOpenCodePromptId(promptResult);
           const messages = await readOpencodeMessages(this.client, sessionId, promptId);
+          observeOpenCodeResult(messages, callbacks);
           const finalResponse = requireFinalResponse(
             extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
           );
@@ -86,6 +94,9 @@ export class OpencodeRuntime implements LocalAgentRuntime {
             finalResponse,
             items: [promptResult, messages],
           };
+          } finally {
+            input.signal?.removeEventListener("abort", onAbort);
+          }
         } catch (error) {
           if (isOpenCodeTransportFailure(error)) {
             this.alive = false;

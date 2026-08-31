@@ -9,6 +9,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
+import { observeCodexEvent } from "./local-agent-observation.js";
 import { terminateProcessTree } from "./process-platform.js";
 import type {
   LocalAgentDriver,
@@ -146,7 +147,12 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
-        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        const completed = await this.rpc.runTurn(
+          threadId,
+          turnParams(input, threadId),
+          callbacks,
+          input.signal,
+        );
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
@@ -320,6 +326,7 @@ interface CodexTurnAccumulator {
   turnId?: string;
   items: unknown[];
   completed?: CodexEvent;
+  callbacks?: LocalAgentRunCallbacks;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
 }
@@ -359,7 +366,12 @@ class CodexAppServerRpc {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  async runTurn(threadId: string, params: unknown): Promise<CodexTurnResult> {
+  async runTurn(
+    threadId: string,
+    params: unknown,
+    callbacks?: LocalAgentRunCallbacks,
+    signal?: AbortSignal,
+  ): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
@@ -371,16 +383,29 @@ class CodexAppServerRpc {
     const turn: CodexTurnAccumulator = {
       threadId,
       items: [],
+      callbacks,
       resolve: resolveTurn,
       reject: rejectTurn,
     };
     this.turns.set(threadId, turn);
+    let started = false;
+    const onAbort = () => {
+      if (!started) return;
+      if (turn.turnId) {
+        void this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
+      }
+      turn.reject(abortError("Codex turn interrupted."));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
+      started = true;
+      if (signal?.aborted) onAbort();
       if (turn.completed) return { event: turn.completed, items: turn.items };
       return await completion;
     } finally {
+      signal?.removeEventListener("abort", onAbort);
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
     }
   }
@@ -430,6 +455,7 @@ class CodexAppServerRpc {
     const turn = this.findTurn(event);
     if (!turn) return;
     const params = asRecord(event.params);
+    observeCodexEvent(event.method, event.params, turn.callbacks);
     if (params?.item !== undefined) {
       turn.items.push(params.item);
       if (turn.items.length > MAX_TURN_ITEMS) turn.items.shift();
@@ -449,6 +475,10 @@ class CodexAppServerRpc {
     if (!turnId) return undefined;
     return Array.from(this.turns.values()).find((turn) => turn.turnId === turnId);
   }
+}
+
+function abortError(message: string): Error {
+  return Object.assign(new Error(message), { name: "AbortError" });
 }
 
 function threadParams(input: LocalAgentRunInput): Record<string, unknown> {

@@ -7,6 +7,7 @@
   "engines": {
     "node": ">=22.19 <27"
   },
+  "packageManager": "pnpm@11.25.0",
   "bin": {
     "devspace": "bin/devspace.js",
     "devspace-agentd": "bin/devspace-agentd.js"
@@ -26,15 +27,16 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
+    "build": "pnpm clean && pnpm build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
-    "dev": "node scripts/dev-server.mjs",
+    "dev": "tsx watch --clear-screen=false src/cli.ts serve",
+    "dev:tui-fixture": "tsx scripts/workflow-tui-fixture.ts",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
-    "prepack": "npm run build",
+    "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
-    "test": "tsx src/user-config.test.ts && tsx src/config.test.ts && tsx src/onboarding.test.ts && tsx src/cli-workspace.test.ts && tsx src/request-meta.test.ts && tsx src/incoming-artifacts.test.ts && tsx src/artifact-download.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/tool-result.test.ts && tsx src/ui/patch-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-config.test.ts && tsx src/local-agent-catalog.test.ts && tsx src/local-agent-presentation.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-daemon-lifecycle.test.ts && tsx src/local-agent-daemon-protocol.test.ts && tsx src/local-agent-daemon.test.ts && tsx src/local-agent-codex.test.ts && tsx src/local-agent-opencode.test.ts && tsx src/local-agent-acp.test.ts && tsx src/local-agent-grok.test.ts && tsx src/local-agent-pi-sandbox.test.ts && tsx src/local-agent-pi.test.ts && tsx src/local-agent-claude.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/local-agent-manager.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/workspace-conversation.test.ts && tsx src/review-checkpoints.test.ts && tsx src/server.test.ts && tsx src/oauth-store.test.ts && tsx src/cli-show-changes.test.ts && tsx src/cli.test.ts",
-    "typecheck": "tsx src/config-schema.test.ts && tsc -p tsconfig.json --noEmit"
+    "test": "tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -49,6 +51,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.2.5",
+    "ajv": "^8.20.0",
     "better-result": "^2.10.0",
     "better-sqlite3": "^12.10.0",
     "cross-spawn": "^7.0.6",
@@ -56,6 +59,7 @@
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "jsonc-parser": "^3.3.1",
+    "json-schema-to-ts": "^3.1.1",
     "lucide": "^1.24.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

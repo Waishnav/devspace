@@ -48,6 +48,13 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 5, name: "local-agent-structured-errors" },
       { version: 6, name: "local-agent-effort-rename" },
       { version: 7, name: "local-agent-turns" },
+      { version: 8, name: "workflow-journal" },
+      { version: 9, name: "workflow-replay-provenance" },
+      { version: 10, name: "workflow-exact-replay" },
+      { version: 11, name: "workflow-agent-profiles" },
+      { version: 12, name: "workflow-observability" },
+      { version: 13, name: "reconcile-workflow-stack-schema" },
+      { version: 14, name: "local-agent-observability" },
     ]);
   } finally {
     database.close();

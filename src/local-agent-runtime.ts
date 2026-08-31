@@ -7,6 +7,7 @@ export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 export interface LocalAgentRunInput {
   prompt: string;
   workspaceRoot: string;
+  signal?: AbortSignal;
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
   model?: string;
@@ -22,6 +23,24 @@ export interface LocalAgentRunResult {
   items: unknown[];
 }
 
+export interface LocalAgentUsageSnapshot {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  outputTokens?: number;
+  totalTokens: number;
+  state: "partial" | "final";
+}
+
+export interface LocalAgentActivity {
+  kind: "tool" | "command" | "file" | "status";
+  status: "running" | "completed" | "failed";
+  label: string;
+  detail?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface LocalAgentRunCallbacks {
   /**
    * Called as soon as a provider creates or resolves a durable continuation
@@ -29,6 +48,8 @@ export interface LocalAgentRunCallbacks {
    * could otherwise fail and lose that identity.
    */
   onSessionId?: (providerSessionId: string) => void | Promise<void>;
+  onUsage?: (usage: LocalAgentUsageSnapshot) => void;
+  onActivity?: (activity: LocalAgentActivity) => void;
 }
 
 export interface LocalAgentRuntimeContext {

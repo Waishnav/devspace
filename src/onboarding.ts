@@ -5,7 +5,10 @@ import {
 } from "./local-agent-profiles.js";
 
 export const SUBAGENT_SKILL_INSTALL_COMMAND =
-  "npx skills add Waishnav/devspace --skill subagents --global";
+  [
+    "npx skills add Waishnav/devspace --skill subagents --global",
+    "npx skills add Waishnav/devspace --skill dynamic-workflows --global",
+  ].join("\n");
 
 export const ONBOARDING_DESTINATIONS = ["chatgpt", "coding-agents"] as const;
 export type OnboardingDestination = typeof ONBOARDING_DESTINATIONS[number];

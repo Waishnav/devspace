@@ -8,6 +8,11 @@ export interface CliWorkspaceContext {
   workspaceRoot: string;
 }
 
+export interface WorkspaceScopedRecord {
+  workspaceId?: string;
+  workspaceRoot: string;
+}
+
 /** Resolve the project context used by local agent commands. */
 export function resolveCliWorkspaceContext(
   allowedRoots: readonly string[],
@@ -26,6 +31,24 @@ export function resolveCliWorkspaceContext(
     workspaceId,
     workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
   };
+}
+
+export function isRecordInCliWorkspace(
+  record: WorkspaceScopedRecord,
+  context: CliWorkspaceContext,
+): boolean {
+  if (context.workspaceId) return record.workspaceId === context.workspaceId;
+  return canonicalizePath(record.workspaceRoot) === context.workspaceRoot;
+}
+
+export function assertRecordInCliWorkspace(
+  record: WorkspaceScopedRecord,
+  context: CliWorkspaceContext,
+  label: string,
+): void {
+  if (!isRecordInCliWorkspace(record, context)) {
+    throw new Error(`${label} does not belong to the current project.`);
+  }
 }
 
 function canonicalizePath(path: string): string {

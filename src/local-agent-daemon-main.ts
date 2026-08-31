@@ -27,7 +27,7 @@ const manager = new LocalAgentManager({
   pool: new LocalAgentRuntimePool({ logger: log }),
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,
-  allowedRoots: config.allowedRoots,
+  allowedRoots: [...config.allowedRoots, config.worktreeRoot],
   logger: log,
   subagents: config.subagents,
 });

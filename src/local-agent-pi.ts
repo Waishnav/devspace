@@ -14,6 +14,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+import { observePiEvent } from "./local-agent-observation.js";
 import {
   createPiSandboxExtension,
   createPiSandboxModeRef,
@@ -38,7 +39,7 @@ export type PiSessionLike = Pick<
   | "setModel"
   | "setThinkingLevel"
   | "dispose"
->;
+> & { abort?(): Promise<void> };
 
 export type PiSessionFactory = (
   context: LocalAgentRuntimeContext,
@@ -52,6 +53,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
   private closed = false;
   private collectingEvents = false;
   private events: unknown[] = [];
+  private callbacks?: LocalAgentRunCallbacks;
 
   constructor(
     private readonly session: PiSessionLike,
@@ -60,6 +62,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
       if (!this.collectingEvents) return;
       if (this.events.length >= MAX_PI_EVENTS) this.events.shift();
       this.events.push(event);
+      observePiEvent(event, this.callbacks);
     });
   }
 
@@ -80,12 +83,18 @@ export class PiSessionRuntime implements LocalAgentRuntime {
         await callbacks?.onSessionId?.(this.session.sessionId);
         await this.applyOverrides(input);
         this.events = [];
+        this.callbacks = callbacks;
         const messageStart = this.session.messages.length;
         this.collectingEvents = true;
+        const onAbort = () => { void this.session.abort?.().catch(() => undefined); };
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+        if (input.signal?.aborted) onAbort();
         try {
           await this.session.prompt(input.prompt);
         } finally {
+          input.signal?.removeEventListener("abort", onAbort);
           this.collectingEvents = false;
+          this.callbacks = undefined;
         }
         const currentMessages = this.session.messages.slice(messageStart);
         const finalResponse = extractPiFinalResponse({ messages: currentMessages });

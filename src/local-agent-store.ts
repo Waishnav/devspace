@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
+import type { LocalAgentActivity, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped";
@@ -21,6 +22,8 @@ export interface LocalAgentRecord {
   error?: string;
   errorCode?: string;
   errorRetryable?: boolean;
+  usage?: LocalAgentUsageSnapshot;
+  activity?: LocalAgentActivity[];
   createdAt: string;
   updatedAt: string;
 }
@@ -87,6 +90,8 @@ interface LocalAgentRow {
   error: string | null;
   error_code: string | null;
   error_retryable: string | null;
+  usage_json: string | null;
+  activity_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -248,6 +253,8 @@ export class LocalAgentStore {
           error = ?,
           error_code = ?,
           error_retryable = ?,
+          usage_json = ?,
+          activity_json = ?,
           updated_at = ?
          where id = ?`,
       )
@@ -264,6 +271,8 @@ export class LocalAgentStore {
         updated.error ?? null,
         updated.errorCode ?? null,
         updated.errorRetryable === undefined ? null : String(updated.errorRetryable),
+        updated.usage === undefined ? null : JSON.stringify(updated.usage),
+        updated.activity === undefined ? null : JSON.stringify(updated.activity),
         updated.updatedAt,
         updated.id,
       );
@@ -288,6 +297,8 @@ export class LocalAgentStore {
         error: undefined,
         errorCode: undefined,
         errorRetryable: undefined,
+        usage: undefined,
+        activity: [],
       });
       const result = this.database.sqlite
         .prepare(
@@ -467,9 +478,64 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     error: row.error ?? undefined,
     errorCode: row.error_code ?? undefined,
     errorRetryable: readOptionalBoolean(row.error_retryable),
+    usage: readUsage(row.usage_json),
+    activity: readActivity(row.activity_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readUsage(value: string | null): LocalAgentUsageSnapshot | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value) as unknown;
+  if (!isRecord(parsed)) return undefined;
+  const state = parsed.state;
+  const totalTokens = parsed.totalTokens;
+  if ((state !== "partial" && state !== "final") || !isNonNegativeInteger(totalTokens)) {
+    return undefined;
+  }
+  return {
+    inputTokens: optionalNonNegativeInteger(parsed.inputTokens),
+    cachedInputTokens: optionalNonNegativeInteger(parsed.cachedInputTokens),
+    cacheCreationInputTokens: optionalNonNegativeInteger(parsed.cacheCreationInputTokens),
+    outputTokens: optionalNonNegativeInteger(parsed.outputTokens),
+    totalTokens,
+    state,
+  };
+}
+
+function readActivity(value: string | null): LocalAgentActivity[] | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) return undefined;
+  return parsed.flatMap((item): LocalAgentActivity[] => {
+    if (!isRecord(item)) return [];
+    if (
+      item.kind !== "tool" && item.kind !== "command" && item.kind !== "file" && item.kind !== "status"
+    ) return [];
+    if (item.status !== "running" && item.status !== "completed" && item.status !== "failed") return [];
+    if (typeof item.label !== "string" || !item.label) return [];
+    return [{
+      kind: item.kind,
+      status: item.status,
+      label: item.label,
+      ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
+      ...(typeof item.startedAt === "string" ? { startedAt: item.startedAt } : {}),
+      ...(typeof item.completedAt === "string" ? { completedAt: item.completedAt } : {}),
+    }];
+  });
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return isNonNegativeInteger(value) ? value : undefined;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function rowToLocalAgentTurnRecord(row: LocalAgentTurnRow): LocalAgentTurnRecord {

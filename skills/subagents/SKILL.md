@@ -58,6 +58,15 @@ devspace agents continue <id> "<follow-up brief>"
 devspace agents wait <id>
 ```
 
+Cancel only the active turn when its result is no longer needed:
+
+```bash
+devspace agents stop <id>
+```
+
+`stop` waits until the daemon has persisted the terminal `stopped` state. The
+same agent can still receive a later `continue` turn.
+
 ## Good uses
 
 - Review a change for correctness, security, or missing tests.

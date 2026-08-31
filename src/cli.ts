@@ -53,6 +53,11 @@ import {
 import { expandHomePath } from "./roots.js";
 import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
+import { runWorkflowCommand } from "./workflow-cli.js";
+import {
+  isWorkflowOperationError,
+  workflowCliExitCode,
+} from "./workflow-errors.js";
 
 type Command =
   | "serve"
@@ -60,6 +65,7 @@ type Command =
   | "doctor"
   | "config"
   | "agents"
+  | "workflow"
   | "show-changes"
   | "help"
   | "version";
@@ -89,6 +95,9 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "workflow":
+      await runWorkflowCommand(args, loadConfig());
+      return;
     case "show-changes":
       await runShowChanges(args);
       return;
@@ -108,6 +117,7 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "doctor"
     || command === "config"
     || command === "agents"
+    || command === "workflow"
     || command === "show-changes"
   ) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
@@ -278,9 +288,9 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         [
           SUBAGENT_SKILL_INSTALL_COMMAND,
           "",
-          "The Skills CLI will let you choose which Coding Agents receive it.",
+          "The Skills CLI will let you choose which Coding Agents receive them.",
         ].join("\n"),
-        "Install the Subagents skill",
+        "Install the agent skills",
       );
     }
     const nextSteps = [
@@ -418,9 +428,11 @@ function printHelp(): void {
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
+      "  devspace agents stop <id>",
       "  devspace agents show <id>",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents daemon <status|stop|logs>",
+      "  devspace workflow run|status|cancel|ls|calls|call|tui",
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
@@ -466,6 +478,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       return;
     case "wait":
       await runAgentWorkflowCommand(json, () => runAgentsWait(commandArgs, json));
+      return;
+    case "stop":
+      await runAgentWorkflowCommand(json, () => runAgentsStop(commandArgs, json));
       return;
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
@@ -622,6 +637,20 @@ function parseAgentWaitTimeout(value: string | undefined): number {
   return timeoutMs;
 }
 
+async function runAgentsStop(args: string[], json: boolean): Promise<void> {
+  const [id, ...extra] = args;
+  if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
+
+  const config = loadConfig();
+  const client = createLocalAgentClient(config);
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const record = presentAgentWorkflowResult(await client.cancel(id, scope), json);
+  if (!record) return;
+  const receipt = presentAgentReceipt(record);
+  if (json) printJson(receipt);
+  else printAgentXml(formatAgentReceipt(receipt));
+}
+
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand, ...extra] = args;
   if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
@@ -730,6 +759,7 @@ function printAgentsHelp(): void {
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
+      "  devspace agents stop <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents targets [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
@@ -849,5 +879,5 @@ function checkBashShell(): string {
 
 main(process.argv.slice(2)).catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = isWorkflowOperationError(error) ? workflowCliExitCode(error) : 1;
 });

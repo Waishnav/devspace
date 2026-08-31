@@ -10,6 +10,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { terminateProcessTree } from "./process-platform.js";
+import { observeAcpUpdate } from "./local-agent-observation.js";
 import {
   GrokPromptCompletionRegistry,
   GROK_DEFAULT_MODEL,
@@ -49,6 +50,7 @@ const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
 interface AcpConnectionLike {
   agent: {
     request(method: string, params?: unknown): Promise<unknown>;
+    cancel?(params: { sessionId: string }): Promise<void>;
   };
   close(error?: unknown): void;
   closed: Promise<void>;
@@ -75,6 +77,7 @@ export interface AcpRuntimeOptions {
   liveSessions?: Set<string>;
   sessionWriteModes?: Map<string, LocalAgentWriteMode>;
   sessionMetadata?: Map<string, unknown>;
+  sessionCallbacks?: Map<string, LocalAgentRunCallbacks>;
   grokCompletionRegistry?: GrokPromptCompletionRegistry;
   promptCompletionTimeoutMs?: number;
 }
@@ -88,6 +91,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private readonly liveSessions: Set<string>;
   private readonly sessionWriteModes: Map<string, LocalAgentWriteMode>;
   private readonly sessionMetadata: Map<string, unknown>;
+  private readonly sessionCallbacks: Map<string, LocalAgentRunCallbacks>;
   private readonly grokCompletionRegistry?: GrokPromptCompletionRegistry;
   private readonly promptCompletionTimeoutMs: number;
   private readonly activeSessions = new Set<string>();
@@ -104,6 +108,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.liveSessions = options.liveSessions ?? new Set();
     this.sessionWriteModes = options.sessionWriteModes ?? new Map();
     this.sessionMetadata = options.sessionMetadata ?? new Map();
+    this.sessionCallbacks = options.sessionCallbacks ?? new Map();
     this.grokCompletionRegistry = options.grokCompletionRegistry;
     this.promptCompletionTimeoutMs = options.promptCompletionTimeoutMs ?? ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS;
     void this.connection.closed.then(() => {
@@ -161,6 +166,13 @@ export class AcpRuntime implements LocalAgentRuntime {
           : undefined;
         try {
           queue.values.length = 0;
+          if (callbacks) this.sessionCallbacks.set(sessionId, callbacks);
+          const onAbort = () => {
+            void this.connection.agent.cancel?.({ sessionId }).catch(() => undefined);
+          };
+          input.signal?.addEventListener("abort", onAbort, { once: true });
+          if (input.signal?.aborted) onAbort();
+          try {
           const standardResponse = this.connection.agent.request("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: input.prompt }],
@@ -192,7 +204,11 @@ export class AcpRuntime implements LocalAgentRuntime {
             finalResponse,
             items: updates,
           };
+          } finally {
+            input.signal?.removeEventListener("abort", onAbort);
+          }
         } finally {
+          this.sessionCallbacks.delete(sessionId);
           if (promptId) this.grokCompletionRegistry?.remove(sessionId, promptId);
           this.activeSessions.delete(sessionId);
         }
@@ -221,6 +237,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.liveSessions.clear();
     this.sessionWriteModes.clear();
     this.sessionMetadata.clear();
+    this.sessionCallbacks.clear();
     this.activeSessions.clear();
     this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP runtime closed.`));
     this.connection.close(new Error(`${this.provider} ACP runtime closed.`));
@@ -488,6 +505,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         try {
           const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
           const queues = new Map<string, AcpSessionQueue>();
+          const sessionCallbacks = new Map<string, LocalAgentRunCallbacks>();
           const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
           const grokCompletionRegistry = this.provider === "grok"
             ? new GrokPromptCompletionRegistry()
@@ -503,7 +521,10 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             .onNotification(methods.client.session.update, (context) => {
               const sessionId = context.params.sessionId;
               const queue = queues.get(sessionId);
-              if (queue) appendAcpQueueValue(queue, context.params);
+              if (queue) {
+                appendAcpQueueValue(queue, context.params);
+                observeAcpUpdate(context.params, sessionCallbacks.get(sessionId));
+              }
             });
           if (grokCompletionRegistry) {
             for (const method of [
@@ -542,6 +563,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             child,
             capabilities,
             queues,
+            sessionCallbacks,
             sessionWriteModes,
             grokCompletionRegistry,
           }, connection);

@@ -23,13 +23,16 @@ export interface SkillReadResolution {
 
 const SUBAGENTS_SKILL_NAME = "subagents";
 const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
+const DYNAMIC_WORKFLOWS_SKILL_NAME = "dynamic-workflows";
+const DYNAMIC_WORKFLOWS_SKILL = join(DYNAMIC_WORKFLOWS_SKILL_NAME, "SKILL.md");
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function hasSubagentsSkill(skillDir: string): boolean {
-  return existsSync(join(skillDir, SUBAGENTS_SKILL));
+function hasBundledAgentSkills(skillDir: string): boolean {
+  return existsSync(join(skillDir, SUBAGENTS_SKILL))
+    && existsSync(join(skillDir, DYNAMIC_WORKFLOWS_SKILL));
 }
 
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
@@ -39,7 +42,7 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents.enabled && !hasSubagentsSkill(config.devspaceSkillsDir)
+    config.subagents.enabled && !hasBundledAgentSkills(config.devspaceSkillsDir)
       ? bundledSkills
       : undefined,
   ];
@@ -74,10 +77,19 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   if (config.subagents.enabled) return result;
 
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENTS_SKILL_NAME),
+    skills: result.skills.filter((skill) => (
+      skill.name !== SUBAGENTS_SKILL_NAME
+      && skill.name !== DYNAMIC_WORKFLOWS_SKILL_NAME
+    )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
-      return !(collision?.resourceType === "skill" && collision.name === SUBAGENTS_SKILL_NAME);
+      return !(
+        collision?.resourceType === "skill"
+        && (
+          collision.name === SUBAGENTS_SKILL_NAME
+          || collision.name === DYNAMIC_WORKFLOWS_SKILL_NAME
+        )
+      );
     }),
   };
 }

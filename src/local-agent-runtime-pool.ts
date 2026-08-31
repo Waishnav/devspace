@@ -129,6 +129,8 @@ export class LocalAgentRuntimePool {
         if (reservationError) throw reservationError;
         await inputCallbacks?.onSessionId?.(providerSessionId);
       },
+      onUsage: (usage) => inputCallbacks?.onUsage?.(usage),
+      onActivity: (activity) => inputCallbacks?.onActivity?.(activity),
     };
     const startedAt = this.now();
     try {

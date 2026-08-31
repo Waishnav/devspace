@@ -229,6 +229,7 @@ For a Coding Agent, run the installation command printed by
 
 ```bash
 npx skills add Waishnav/devspace --skill subagents --global
+npx skills add Waishnav/devspace --skill dynamic-workflows --global
 ```
 
 The Skills CLI handles agent discovery and installation. DevSpace setup does

@@ -42,6 +42,41 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 8,
+    name: "workflow-journal",
+    up: migrateWorkflowJournal,
+  },
+  {
+    version: 9,
+    name: "workflow-replay-provenance",
+    up: migrateWorkflowReplayProvenance,
+  },
+  {
+    version: 10,
+    name: "workflow-exact-replay",
+    up: migrateWorkflowExactReplay,
+  },
+  {
+    version: 11,
+    name: "workflow-agent-profiles",
+    up: migrateWorkflowAgentProfiles,
+  },
+  {
+    version: 12,
+    name: "workflow-observability",
+    up: migrateWorkflowObservability,
+  },
+  {
+    version: 13,
+    name: "reconcile-workflow-stack-schema",
+    up: reconcileWorkflowStackSchema,
+  },
+  {
+    version: 14,
+    name: "local-agent-observability",
+    up: migrateLocalAgentObservability,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -264,9 +299,173 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
   `);
 }
 
+function migrateWorkflowJournal(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workflow_runs (
+      id text primary key,
+      name text not null,
+      source text not null,
+      script_path text not null,
+      script_hash text not null,
+      workspace_root text not null,
+      workspace_id text,
+      args_json text not null default 'null',
+      status text not null,
+      error text,
+      error_kind text,
+      result_json text,
+      pid integer,
+      heartbeat_at text,
+      cancel_requested text not null default 'false',
+      resumed_from_run_id text,
+      base_sha text,
+      created_at text not null,
+      started_at text,
+      completed_at text,
+      updated_at text not null
+    );
+
+    create index if not exists workflow_runs_status_updated_idx
+      on workflow_runs(status, updated_at desc);
+    create index if not exists workflow_runs_workspace_updated_idx
+      on workflow_runs(workspace_root, updated_at desc);
+    create index if not exists workflow_runs_heartbeat_idx
+      on workflow_runs(status, heartbeat_at);
+    create index if not exists workflow_runs_resumed_from_idx
+      on workflow_runs(resumed_from_run_id);
+
+    create table if not exists workflow_events (
+      run_id text not null,
+      seq integer not null,
+      type text not null,
+      phase text,
+      label text,
+      data_json text not null default '{}',
+      created_at text not null,
+      primary key (run_id, seq),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_events_run_seq_idx
+      on workflow_events(run_id, seq);
+
+    create table if not exists workflow_agent_calls (
+      run_id text not null,
+      call_index integer not null,
+      cache_key text not null,
+      provider text not null,
+      model text,
+      effort text,
+      profile_name text,
+      profile_fingerprint text,
+      label text,
+      phase text,
+      status text not null,
+      from_cache text not null default 'false',
+      provider_session_id text,
+      response_text text,
+      structured_json text,
+      return_value_json text,
+      error text,
+      isolation text not null default 'shared',
+      worktree_path text,
+      dirty text,
+      created_at text not null,
+      started_at text,
+      completed_at text,
+      updated_at text not null,
+      primary key (run_id, call_index),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_agent_calls_cache_key_idx
+      on workflow_agent_calls(run_id, cache_key);
+  `);
+}
+
+function migrateWorkflowReplayProvenance(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "prompt", "text not null default ''");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "schema_json", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "error_kind", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "replay_match", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "replayed_from_run_id", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "replayed_from_call_index", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "replay_reason", "text");
+  sqlite.exec(`
+    create index if not exists workflow_agent_calls_replay_source_idx
+      on workflow_agent_calls(replayed_from_run_id, replayed_from_call_index);
+  `);
+}
+
+function migrateWorkflowExactReplay(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "return_value_json", "text");
+}
+
+function migrateWorkflowAgentProfiles(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "profile_name", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "profile_fingerprint", "text");
+}
+
+function migrateWorkflowObservability(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workflow_runs", "phases_json", "text not null default '[]'");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_cached_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_cache_creation_input_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_output_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_total_tokens", "integer");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_state", "text");
+  addColumnIfMissing(sqlite, "workflow_agent_calls", "usage_updated_at", "text");
+
+  sqlite.exec(`
+    create table if not exists workflow_agent_activity (
+      run_id text not null,
+      call_index integer not null,
+      seq integer not null,
+      kind text not null,
+      status text not null,
+      label text not null,
+      detail text,
+      started_at text,
+      completed_at text,
+      created_at text not null,
+      primary key (run_id, call_index, seq),
+      foreign key (run_id) references workflow_runs(id) on delete cascade
+    );
+
+    create index if not exists workflow_agent_activity_call_seq_idx
+      on workflow_agent_activity(run_id, call_index, seq);
+  `);
+}
+
+/**
+ * Old workflow-stack checkouts used migration versions 4 through 9 for a
+ * different sequence than current main. Reapplying every affected migration
+ * idempotently lets both histories converge without rewriting migration rows.
+ */
+function reconcileWorkflowStackSchema(sqlite: Database.Database): void {
+  migrateWorkspaceConversationBindings(sqlite);
+  migrateLocalAgentStructuredErrors(sqlite);
+  migrateLocalAgentEffortRename(sqlite);
+  migrateLocalAgentTurns(sqlite);
+  migrateWorkflowJournal(sqlite);
+  migrateWorkflowReplayProvenance(sqlite);
+  migrateWorkflowExactReplay(sqlite);
+  migrateWorkflowAgentProfiles(sqlite);
+  migrateWorkflowObservability(sqlite);
+}
+
+function migrateLocalAgentObservability(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "usage_json", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "activity_json", "text");
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions",
+  table:
+    | "workspace_sessions"
+    | "local_agent_sessions"
+    | "workflow_runs"
+    | "workflow_agent_calls",
   column: string,
   definition: string,
 ): void {

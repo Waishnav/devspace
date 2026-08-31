@@ -72,6 +72,13 @@ class FakeManager implements LocalAgentDaemonManager {
     return Result.ok({ ...record, status: "running" } as LocalAgentRecord);
   }
 
+  async cancel(
+    _agentId: string,
+    _scope: { workspaceId?: string; workspaceRoot: string },
+  ) {
+    return Result.ok({ ...record, status: "stopped" } as LocalAgentRecord);
+  }
+
   get(_id: string, _scope: { workspaceId: string; workspaceRoot: string }) {
     return Result.ok(record);
   }

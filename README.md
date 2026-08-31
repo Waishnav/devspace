@@ -184,6 +184,7 @@ devspace doctor
 
 - [Setup Guide](https://github.com/Waishnav/devspace/blob/main/docs/setup.md)
 - [ChatGPT Coding Workflow](https://github.com/Waishnav/devspace/blob/main/docs/chatgpt-coding-workflow.md)
+- [Subagents and Dynamic Workflows](https://github.com/Waishnav/devspace/blob/main/docs/dynamic-workflows.md)
 - [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
 - [Native File Download](https://github.com/Waishnav/devspace/blob/main/docs/artifact-exchange.md)
 - [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
@@ -246,11 +247,14 @@ This year, I began my journey to build a one-person, multi-agent company capable
 
 For working on DevSpace itself:
 
+Install pnpm 11.25.0, the version pinned in `package.json`, with
+`npm install --global pnpm@11.25.0`, then:
+
 ```bash
-npm install --include=dev
-npm run dev
-npm run typecheck
-npm test
-npm run build
-npm run start
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm start
 ```

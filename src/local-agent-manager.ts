@@ -71,6 +71,7 @@ export interface LocalAgentManagerOptions {
 export type AgentStartError = AgentTargetError | AgentScopeError | AgentConflictError | AgentStoreError;
 export type AgentContinueError = AgentStartError;
 export type AgentLookupError = AgentTargetError | AgentScopeError | AgentStoreError;
+export type AgentCancelError = AgentLookupError;
 export type AgentListError = AgentScopeError | AgentStoreError;
 export type AgentWaitError = AgentLookupError;
 
@@ -83,6 +84,7 @@ export type LocalAgentWaitResult =
 interface ActiveLocalAgentTurn {
   turnId: number;
   completion: Promise<void>;
+  controller: AbortController;
 }
 
 /**
@@ -91,6 +93,7 @@ interface ActiveLocalAgentTurn {
  * persists the result.
  */
 export class LocalAgentManager {
+  private static readonly activityLimit = 500;
   private readonly store: LocalAgentStore;
   private readonly drivers = new Map<LocalAgentProvider, LocalAgentDriver>();
   private readonly pool: LocalAgentRuntimePool;
@@ -212,6 +215,26 @@ export class LocalAgentManager {
     ));
   }
 
+  async cancel(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentCancelError>> {
+    const lookup = this.store.getByIdResult(agentId);
+    if (lookup.isErr()) return lookup;
+    const record = lookup.value;
+    if (!record) return Result.err(agentNotFound(agentId));
+    const scoped = this.agentWorkspaceResult(record, scope, "cancel");
+    if (scoped.isErr()) return scoped;
+
+    const active = this.activeTurns.get(agentId);
+    if (!active) return Result.ok(record);
+    active.controller.abort();
+    await active.completion;
+    const updated = this.store.getByIdResult(agentId);
+    if (updated.isErr()) return updated;
+    return updated.value ? Result.ok(updated.value) : Result.err(agentNotFound(agentId));
+  }
+
   async wait(
     agentIds: readonly string[],
     scope: LocalAgentWorkspaceScope,
@@ -314,10 +337,22 @@ export class LocalAgentManager {
     if (begun.isErr()) return begun;
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
+    const controller = new AbortController();
     const turn = Promise.resolve().then(() => (
-      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId)
+      this.runTurn(
+        begun.value.agent,
+        begun.value.turn.id,
+        prompt,
+        overrides,
+        workspaceId,
+        controller.signal,
+      )
     ));
-    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn });
+    this.activeTurns.set(record.id, {
+      turnId: begun.value.turn.id,
+      completion: turn,
+      controller,
+    });
     void turn.catch(() => undefined);
     return Result.ok(begun.value.agent);
   }
@@ -328,6 +363,7 @@ export class LocalAgentManager {
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -355,7 +391,13 @@ export class LocalAgentManager {
         this.persistRunError(record, turnId, profile.error, startedAt);
         return;
       }
-      const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides);
+      const input = this.buildRunInputResult(
+        authorizedRecord,
+        profile.value,
+        prompt,
+        overrides,
+        signal,
+      );
       if (input.isErr()) {
         this.persistRunError(record, turnId, input.error, startedAt);
         return;
@@ -383,8 +425,25 @@ export class LocalAgentManager {
           const updated = this.store.updateResult(record.id, { providerSessionId });
           if (updated.isErr()) throw updated.error;
         },
+        onUsage: (usage) => {
+          const updated = this.store.updateResult(record.id, { usage });
+          if (updated.isErr()) throw updated.error;
+        },
+        onActivity: (activity) => {
+          const current = this.store.getByIdResult(record.id);
+          if (current.isErr()) throw current.error;
+          if (!current.value) return;
+          const next = [...(current.value.activity ?? []), activity]
+            .slice(-LocalAgentManager.activityLimit);
+          const updated = this.store.updateResult(record.id, { activity: next });
+          if (updated.isErr()) throw updated.error;
+        },
       };
       const result = await this.pool.run(driver.value, context, input.value, callbacks);
+      if (signal?.aborted) {
+        this.persistStopped(record, turnId);
+        return;
+      }
       if (result.isErr()) {
         this.persistRunError(record, turnId, result.error, startedAt);
         return;
@@ -406,6 +465,10 @@ export class LocalAgentManager {
         durationMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
+      if (signal?.aborted) {
+        this.persistStopped(record, turnId);
+        return;
+      }
       if (isLocalAgentError(error)) {
         this.persistRunError(record, turnId, error, startedAt);
         return;
@@ -455,11 +518,24 @@ export class LocalAgentManager {
     });
   }
 
+  private persistStopped(record: LocalAgentRecord, turnId: number): void {
+    const persisted = this.store.finishTurnResult(record.id, turnId, {
+      status: "stopped",
+    });
+    if (persisted.isErr()) throw persisted.error;
+    this.log("info", "agent_run_stopped", {
+      provider: record.provider,
+      agentId: record.id,
+      providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
+    });
+  }
+
   private buildRunInputResult(
     record: LocalAgentRecord,
     profile: LocalAgentProfile | undefined,
     prompt: string,
     overrides: RunOverrides,
+    signal?: AbortSignal,
   ): BetterResult<LocalAgentRunInput, AgentTargetError> {
     const isRawProvider = record.profileName === record.provider;
     if (!profile && !isRawProvider) {
@@ -476,6 +552,7 @@ export class LocalAgentManager {
     return Result.ok({
       prompt: fullPrompt,
       workspaceRoot: record.workspaceRoot,
+      signal,
       providerSessionId: record.providerSessionId,
       writeMode: overrides.writeMode ?? "allowed",
       model: record.model ?? profile?.model,

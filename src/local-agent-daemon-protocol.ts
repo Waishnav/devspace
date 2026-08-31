@@ -8,13 +8,18 @@ import type {
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
-import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
+import type {
+  LocalAgentActivity,
+  LocalAgentUsageSnapshot,
+  LocalAgentWriteMode,
+} from "./local-agent-runtime.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
 
 export type LocalAgentDaemonMethod =
   | "hello"
   | "agent.start"
   | "agent.continue"
+  | "agent.cancel"
   | "agent.get"
   | "agent.list"
   | "agent.wait"
@@ -26,6 +31,7 @@ export type LocalAgentDaemonRequest =
   | (AgentDaemonRequestBase<"hello", Record<string, never>> & { configRevision?: string })
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
+  | AgentDaemonRequestBase<"agent.cancel", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.list", LocalAgentWorkspaceScope>
   | AgentDaemonRequestBase<"agent.wait", {
@@ -142,6 +148,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         params: decodeContinueInput(params),
       } as LocalAgentDaemonRequest;
     case "agent.get":
+    case "agent.cancel":
       return {
         requestId,
         protocolVersion,
@@ -227,9 +234,65 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     error: optionalContentString(record?.error),
     errorCode: optionalString(record?.errorCode),
     errorRetryable: optionalBoolean(record?.errorRetryable),
+    usage: decodeOptionalUsage(record?.usage),
+    activity: decodeOptionalActivity(record?.activity),
     createdAt: requiredString(record?.createdAt, "createdAt"),
     updatedAt: requiredString(record?.updatedAt, "updatedAt"),
   };
+}
+
+function decodeOptionalUsage(value: unknown): LocalAgentUsageSnapshot | undefined {
+  if (value === undefined) return undefined;
+  const record = asRecord(value);
+  const state = record?.state;
+  const totalTokens = optionalNonNegativeInteger(record?.totalTokens);
+  if (!record || (state !== "partial" && state !== "final") || totalTokens === undefined) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent token usage.");
+  }
+  return {
+    inputTokens: optionalNonNegativeInteger(record.inputTokens),
+    cachedInputTokens: optionalNonNegativeInteger(record.cachedInputTokens),
+    cacheCreationInputTokens: optionalNonNegativeInteger(record.cacheCreationInputTokens),
+    outputTokens: optionalNonNegativeInteger(record.outputTokens),
+    totalTokens,
+    state,
+  };
+}
+
+function decodeOptionalActivity(value: unknown): LocalAgentActivity[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent activity.");
+  }
+  return value.map((item): LocalAgentActivity => {
+    const record = asRecord(item);
+    if (!record) {
+      throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent activity item.");
+    }
+    const kind = record?.kind;
+    const status = record?.status;
+    if (kind !== "tool" && kind !== "command" && kind !== "file" && kind !== "status") {
+      throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent activity kind.");
+    }
+    if (status !== "running" && status !== "completed" && status !== "failed") {
+      throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent activity status.");
+    }
+    const detail = optionalContentString(record.detail);
+    const startedAt = optionalString(record.startedAt);
+    const completedAt = optionalString(record.completedAt);
+    return {
+      kind,
+      status,
+      label: requiredString(record.label, "activity.label"),
+      ...(detail === undefined ? {} : { detail }),
+      ...(startedAt === undefined ? {} : { startedAt }),
+      ...(completedAt === undefined ? {} : { completedAt }),
+    };
+  });
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 export function decodeAgentRecordList(value: unknown): LocalAgentRecord[] {
