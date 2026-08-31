@@ -3,13 +3,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
-import {
-  buildLocalAgentProfilePrompt,
-  fingerprintLocalAgentProfile,
-  loadLocalAgentProfiles,
-  summarizeLocalAgentProfile,
-} from "./local-agent-profiles.js";
-import type { ServerConfig } from "./config.js";
+import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
 
@@ -63,12 +58,10 @@ try {
     ].join("\n"),
   );
 
-  const enabledConfig = loadConfig({
-    DEVSPACE_CONFIG_DIR: configDir,
-    DEVSPACE_ALLOWED_ROOTS: workspaceRoot,
-    DEVSPACE_SUBAGENTS: "1",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  });
+  const enabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
+    workspaces: { allowedRoots: [workspaceRoot] },
+    subagents: { enabled: true, providers: [] },
+  }));
   const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
 
   assert.equal(profiles.length, 1);
@@ -78,23 +71,6 @@ try {
   assert.equal(profiles[0]?.model, "sonnet");
   assert.equal(profiles[0]?.effort, "high");
   assert.equal(profiles[0]?.body, "Project body.");
-  assert.equal(
-    buildLocalAgentProfilePrompt(profiles[0]!, "Review auth"),
-    "Project body.\n\nTask:\nReview auth",
-  );
-  assert.equal(fingerprintLocalAgentProfile(profiles[0]!).length, 64);
-  assert.notEqual(
-    fingerprintLocalAgentProfile(profiles[0]!),
-    fingerprintLocalAgentProfile({ ...profiles[0]!, body: "Changed body." }),
-  );
-  assert.deepEqual(summarizeLocalAgentProfile(profiles[0]!), {
-    name: "reviewer",
-    description: "Project reviewer #1.",
-    provider: "claude",
-    model: "sonnet",
-    effort: "high",
-  });
-
   await writeFile(
     join(workspaceRoot, ".devspace", "agents", "custom.md"),
     [
@@ -111,46 +87,11 @@ try {
   const profilesWithInvalid = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
   assert.deepEqual(profilesWithInvalid.map((profile) => profile.name), ["reviewer"]);
 
-  const disabledConfig = loadConfig({
-    DEVSPACE_CONFIG_DIR: configDir,
-    DEVSPACE_ALLOWED_ROOTS: workspaceRoot,
-    DEVSPACE_SUBAGENTS: "0",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  });
+  const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
+    workspaces: { allowedRoots: [workspaceRoot] },
+    subagents: { enabled: false, providers: [] },
+  }));
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
 } finally {
   await rm(root, { recursive: true, force: true });
-}
-
-// legacy thinking: maps to effort
-{
-  const legacyRoot = await mkdtemp(join(tmpdir(), "devspace-profile-legacy-"));
-  try {
-    const dir = join(legacyRoot, "agents");
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, "legacy.md"),
-      [
-        "---",
-        "name: legacy",
-        "description: Legacy thinking key.",
-        "provider: codex",
-        "thinking: medium",
-        "---",
-        "",
-        "Body.",
-        "",
-      ].join("\n"),
-    );
-    const profiles = await loadLocalAgentProfiles(
-      {
-        subagents: true,
-        devspaceAgentsDir: dir,
-      } as ServerConfig,
-      legacyRoot,
-    );
-    assert.equal(profiles[0]?.effort, "medium");
-  } finally {
-    await rm(legacyRoot, { recursive: true, force: true });
-  }
 }

@@ -24,33 +24,53 @@ const migrations: Migration[] = [
   },
   {
     version: 4,
+    name: "workspace-conversation-bindings",
+    up: migrateWorkspaceConversationBindings,
+  },
+  {
+    version: 5,
+    name: "local-agent-structured-errors",
+    up: migrateLocalAgentStructuredErrors,
+  },
+  {
+    version: 6,
     name: "local-agent-effort-rename",
     up: migrateLocalAgentEffortRename,
   },
   {
-    version: 5,
+    version: 7,
     name: "workflow-journal",
     up: migrateWorkflowJournal,
   },
   {
-    version: 6,
+    version: 8,
     name: "workflow-replay-provenance",
     up: migrateWorkflowReplayProvenance,
   },
   {
-    version: 7,
+    version: 9,
     name: "workflow-exact-replay",
     up: migrateWorkflowExactReplay,
   },
   {
-    version: 8,
+    version: 10,
     name: "workflow-agent-profiles",
     up: migrateWorkflowAgentProfiles,
   },
   {
-    version: 9,
+    version: 11,
     name: "workflow-observability",
     up: migrateWorkflowObservability,
+  },
+  {
+    version: 12,
+    name: "reconcile-workflow-stack-schema",
+    up: reconcileWorkflowStackSchema,
+  },
+  {
+    version: 13,
+    name: "local-agent-observability",
+    up: migrateLocalAgentObservability,
   },
 ];
 
@@ -182,7 +202,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
       profile_name text not null,
       provider text not null,
       model text,
-      thinking text,
+      effort text,
       provider_session_id text,
       status text not null,
       latest_response text,
@@ -201,16 +221,48 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
       on local_agent_sessions(provider_session_id);
   `);
 
-  addColumnIfMissing(sqlite, "local_agent_sessions", "thinking", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
 }
 
-/** Rename thinking → effort on local_agent_sessions (SQLite 3.25+). */
+function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workspace_conversation_bindings (
+      conversation_scope_id text not null,
+      target_key text not null,
+      workspace_session_id text not null,
+      created_at text not null,
+      last_used_at text not null,
+      primary key (conversation_scope_id, target_key),
+      foreign key (workspace_session_id)
+        references workspace_sessions(id)
+        on delete cascade
+    );
+
+    create index if not exists workspace_conversation_bindings_workspace_idx
+      on workspace_conversation_bindings(workspace_session_id);
+  `);
+}
+
+function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_code", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_retryable", "text");
+}
+
 function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
   }>;
   const names = new Set(columns.map((column) => column.name));
-  if (names.has("effort")) return;
+  if (names.has("effort")) {
+    if (names.has("thinking")) {
+      sqlite.exec(`
+        update local_agent_sessions
+        set effort = thinking
+        where effort is null and thinking is not null
+      `);
+    }
+    return;
+  }
   if (!names.has("thinking")) {
     addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
     return;
@@ -246,13 +298,10 @@ function migrateWorkflowJournal(sqlite: Database.Database): void {
 
     create index if not exists workflow_runs_status_updated_idx
       on workflow_runs(status, updated_at desc);
-
     create index if not exists workflow_runs_workspace_updated_idx
       on workflow_runs(workspace_root, updated_at desc);
-
     create index if not exists workflow_runs_heartbeat_idx
       on workflow_runs(status, heartbeat_at);
-
     create index if not exists workflow_runs_resumed_from_idx
       on workflow_runs(resumed_from_run_id);
 
@@ -313,7 +362,6 @@ function migrateWorkflowReplayProvenance(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workflow_agent_calls", "replayed_from_run_id", "text");
   addColumnIfMissing(sqlite, "workflow_agent_calls", "replayed_from_call_index", "integer");
   addColumnIfMissing(sqlite, "workflow_agent_calls", "replay_reason", "text");
-
   sqlite.exec(`
     create index if not exists workflow_agent_calls_replay_source_idx
       on workflow_agent_calls(replayed_from_run_id, replayed_from_call_index);
@@ -360,9 +408,34 @@ function migrateWorkflowObservability(sqlite: Database.Database): void {
   `);
 }
 
+/**
+ * Old workflow-stack checkouts used migration versions 4 through 9 for a
+ * different sequence than current main. Reapplying every affected migration
+ * idempotently lets both histories converge without rewriting migration rows.
+ */
+function reconcileWorkflowStackSchema(sqlite: Database.Database): void {
+  migrateWorkspaceConversationBindings(sqlite);
+  migrateLocalAgentStructuredErrors(sqlite);
+  migrateLocalAgentEffortRename(sqlite);
+  migrateWorkflowJournal(sqlite);
+  migrateWorkflowReplayProvenance(sqlite);
+  migrateWorkflowExactReplay(sqlite);
+  migrateWorkflowAgentProfiles(sqlite);
+  migrateWorkflowObservability(sqlite);
+}
+
+function migrateLocalAgentObservability(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "usage_json", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "activity_json", "text");
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions" | "workflow_runs" | "workflow_agent_calls",
+  table:
+    | "workspace_sessions"
+    | "local_agent_sessions"
+    | "workflow_runs"
+    | "workflow_agent_calls",
   column: string,
   definition: string,
 ): void {

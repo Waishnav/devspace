@@ -1,47 +1,7 @@
-import type { LocalAgentCatalog } from "./local-agent-catalog.js";
-import type { LocalAgentRecord } from "./local-agent-store.js";
 import type {
   WorkflowAgentCallRecord,
   WorkflowRunRecord,
 } from "./workflow-types.js";
-
-export function localAgentTargetsOutput(catalog: LocalAgentCatalog): Record<string, unknown> {
-  return {
-    profiles: catalog.profiles.map((profile) => ({
-      name: profile.name,
-      description: profile.description,
-      provider: profile.provider,
-      model: profile.model,
-      effort: profile.effort,
-    })),
-    providers: catalog.providers.map((provider) => ({
-      name: provider.name,
-      overrides: [
-        ...(provider.model.supported ? ["model"] : []),
-        ...(provider.effort.supported ? ["effort"] : []),
-      ],
-    })),
-  };
-}
-
-export function localAgentOutput(
-  agent: LocalAgentRecord,
-  options: { includeResult?: boolean } = {},
-): Record<string, unknown> {
-  return {
-    id: agent.id,
-    status: agent.status,
-    target: agent.profileName,
-    provider: agent.provider,
-    model: agent.model,
-    effort: agent.effort,
-    ...(options.includeResult
-      ? { response: agent.latestResponse, error: agent.error }
-      : {}),
-    createdAt: agent.createdAt,
-    updatedAt: agent.updatedAt,
-  };
-}
 
 export function workflowRunOutput(
   run: WorkflowRunRecord,

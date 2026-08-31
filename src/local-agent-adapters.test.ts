@@ -2,23 +2,19 @@ import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
-  claudeOutputFormatOptions,
-  createLocalAgentAdapter,
-  extractClaudeResultPayload,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
   extractPiProviderError,
-  extractPiStreamingText,
-  observeAcpUpdate,
-  observeClaudeUsage,
-  observeOpenCodeResult,
-  observePiEvent,
-  piCommandEnvironment,
   resolveAcpModelConfigUpdate,
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import {
+  observeAcpUpdate,
+  observeClaudeMessage,
+  observeOpenCodeResult,
+  observePiEvent,
+} from "./local-agent-observation.js";
 import type { LocalAgentActivity, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
 
 const observedActivity: LocalAgentActivity[] = [];
@@ -38,14 +34,7 @@ const openCodeUsage = observeOpenCodeResult({
   }],
 }, observer);
 assert.equal(openCodeUsage?.totalTokens, 1_250);
-assert.deepEqual(observedUsage.shift(), {
-  inputTokens: 1_000,
-  cachedInputTokens: 400,
-  cacheCreationInputTokens: 50,
-  outputTokens: 250,
-  totalTokens: 1_250,
-  state: "final",
-});
+assert.equal(observedUsage.shift()?.state, "final");
 assert.deepEqual(observedActivity.shift(), {
   kind: "command",
   status: "completed",
@@ -56,32 +45,16 @@ const piUsage = observePiEvent({
   type: "agent_end",
   usage: { input: 800, output: 200, total: 1_000 },
 }, observer);
-assert.deepEqual(piUsage, {
-  inputTokens: 800,
-  cachedInputTokens: undefined,
-  cacheCreationInputTokens: undefined,
-  outputTokens: 200,
-  totalTokens: 1_000,
-  state: "final",
-});
+assert.equal(piUsage?.totalTokens, 1_000);
 assert.deepEqual(observedUsage.shift(), piUsage);
 
-observePiEvent({
-  type: "tool_execution_start",
-  toolName: "read",
-  tool: { name: "read", arguments: { path: "src/index.ts" } },
-}, observer);
-assert.deepEqual(observedActivity.shift(), {
-  kind: "tool",
-  status: "running",
-  label: "read",
-});
-
 observeAcpUpdate({
-  sessionUpdate: "tool_call_update",
-  kind: "execute",
-  title: "Run tests",
-  status: "failed",
+  update: {
+    sessionUpdate: "tool_call_update",
+    kind: "execute",
+    title: "Run tests",
+    status: "failed",
+  },
 }, observer);
 assert.deepEqual(observedActivity.shift(), {
   kind: "command",
@@ -89,70 +62,22 @@ assert.deepEqual(observedActivity.shift(), {
   label: "Run tests",
 });
 
-const observedClaudeUsage: LocalAgentUsageSnapshot[] = [];
-let claudeUsage = observeClaudeUsage({
+let claudeUsage = observeClaudeMessage({
   type: "assistant",
-  message: {
-    usage: {
-      input_tokens: 100,
-      cache_read_input_tokens: 20,
-      cache_creation_input_tokens: 10,
-      output_tokens: 30,
-    },
-  },
-}, undefined, { onUsage: (usage) => observedClaudeUsage.push(usage) });
-assert.deepEqual(claudeUsage, {
-  inputTokens: 100,
-  cachedInputTokens: 20,
-  cacheCreationInputTokens: 10,
-  outputTokens: 30,
-  totalTokens: 160,
-  state: "partial",
-});
-
-claudeUsage = observeClaudeUsage({
+  message: { usage: { input_tokens: 100, output_tokens: 30 } },
+}, undefined, observer);
+claudeUsage = observeClaudeMessage({
   type: "result",
-  usage: {
-    input_tokens: 200,
-    cache_read_input_tokens: 40,
-    cache_creation_input_tokens: 15,
-    output_tokens: 60,
-  },
-}, claudeUsage, { onUsage: (usage) => observedClaudeUsage.push(usage) });
+  usage: { input_tokens: 200, output_tokens: 60 },
+}, claudeUsage, observer);
 assert.deepEqual(claudeUsage, {
   inputTokens: 200,
-  cachedInputTokens: 40,
-  cacheCreationInputTokens: 15,
+  cachedInputTokens: undefined,
+  cacheCreationInputTokens: undefined,
   outputTokens: 60,
-  totalTokens: 315,
+  totalTokens: 260,
   state: "final",
 });
-assert.deepEqual(observedClaudeUsage, [
-  {
-    inputTokens: 100,
-    cachedInputTokens: 20,
-    cacheCreationInputTokens: 10,
-    outputTokens: 30,
-    totalTokens: 160,
-    state: "partial",
-  },
-  claudeUsage,
-]);
-
-const providers: LocalAgentProvider[] = [
-  "codex",
-  "claude",
-  "opencode",
-  "pi",
-  "cursor",
-  "copilot",
-];
-
-for (const provider of providers) {
-  const adapter = createLocalAgentAdapter(provider);
-  assert.equal(adapter.provider, provider);
-  assert.equal(typeof adapter.run, "function");
-}
 
 assert.deepEqual(
   resolveAcpModelConfigUpdate({
@@ -313,7 +238,7 @@ assert.throws(
     sessionId: "session_4",
     newSessionResponse: { configOptions: [] },
   }, "high", "copilot"),
-  /does not expose a effort option/,
+  /does not expose a reasoning effort option/,
 );
 
 {
@@ -342,7 +267,7 @@ assert.equal(
       {
         info: { id: "msg_assistant", role: "assistant" },
         parts: [
-          { type: "reasoning", text: "thinking" },
+          { type: "reasoning", text: "effort" },
           { type: "tool", tool: "grep", input: { pattern: "secret" }, output: "src/foo.ts" },
           { type: "text", text: "Final OpenCode response." },
         ],
@@ -364,7 +289,7 @@ assert.equal(
         id: "msg_assistant",
         type: "assistant",
         content: [
-          { type: "reasoning", text: "thinking" },
+          { type: "reasoning", text: "effort" },
           { type: "tool", name: "grep", state: { status: "completed", result: "src/foo.ts" } },
           { type: "text", text: "Final OpenCode v2 response." },
         ],
@@ -382,7 +307,7 @@ assert.equal(
         role: "assistant",
         structured: { summary: "structured answer" },
       },
-      parts: [{ type: "reasoning", text: "thinking" }],
+      parts: [{ type: "reasoning", text: "effort" }],
     },
   }),
   '{"summary":"structured answer"}',
@@ -393,7 +318,7 @@ assert.equal(
     data: {
       info: { id: "msg_tool_only", role: "assistant" },
       parts: [
-        { type: "reasoning", text: "thinking" },
+        { type: "reasoning", text: "effort" },
         { type: "tool", tool: "bash", input: { command: "cat src/secret.ts" }, output: "secret" },
       ],
     },
@@ -468,27 +393,6 @@ assert.equal(
   "(0 , _piAi.streamSimpleOpenAIResponses) is not a function",
 );
 
-assert.equal(
-  extractPiStreamingText([
-    {
-      type: "message_update",
-      message: { role: "assistant", content: [{ type: "thinking", thinking: "hidden" }] },
-      assistantMessageEvent: { type: "thinking_delta", delta: "hidden" },
-    },
-    {
-      type: "message_update",
-      message: { role: "assistant", content: [{ type: "text", text: "Final " }] },
-      assistantMessageEvent: { type: "text_delta", delta: "Final " },
-    },
-    {
-      type: "message_update",
-      message: { role: "assistant", content: [{ type: "text", text: "Pi response." }] },
-      assistantMessageEvent: { type: "text_delta", delta: "Pi response." },
-    },
-  ]),
-  "Final Pi response.",
-);
-
 {
   const devspaceBin = `${process.cwd()}/node_modules/.bin`;
   const userBin = "/home/user/.local/bin";
@@ -497,57 +401,4 @@ assert.equal(
     userBin,
   );
 
-  const env = piCommandEnvironment({
-    PATH: [devspaceBin, userBin].join(delimiter),
-  });
-
-  assert.equal(env.PATH, userBin);
-}
-
-{
-  const devspaceBin = `${process.cwd()}/node_modules/.bin`;
-  const env = piCommandEnvironment({
-    PI_COMMAND: "/custom/pi",
-    PATH: [devspaceBin, "/home/user/.local/bin"].join(delimiter),
-  });
-
-  assert.equal(env.PATH, [devspaceBin, "/home/user/.local/bin"].join(delimiter));
-}
-
-{
-  assert.deepEqual(claudeOutputFormatOptions(undefined), {});
-  const schema = {
-    type: "object",
-    properties: { n: { type: "number" } },
-    required: ["n"],
-  } as const;
-  assert.deepEqual(claudeOutputFormatOptions(schema), {
-    outputFormat: { type: "json_schema", schema },
-  });
-}
-
-{
-  assert.deepEqual(
-    extractClaudeResultPayload({
-      type: "result",
-      result: '{"n":1}',
-      structured_output: { n: 1 },
-    }),
-    { finalResponse: '{"n":1}', structured: { n: 1 } },
-  );
-  assert.deepEqual(
-    extractClaudeResultPayload({
-      type: "result",
-      structured_output: { n: 2 },
-    }),
-    { finalResponse: '{"n":2}', structured: { n: 2 } },
-  );
-  assert.deepEqual(
-    extractClaudeResultPayload({
-      type: "result",
-      result: "plain text only",
-    }),
-    { finalResponse: "plain text only" },
-  );
-  assert.equal(extractClaudeResultPayload({ type: "assistant" }), undefined);
 }

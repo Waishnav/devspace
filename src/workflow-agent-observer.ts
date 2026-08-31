@@ -1,5 +1,30 @@
-import type { LocalAgentObserver, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
 import type { WorkflowStore } from "./workflow-store.js";
+import type {
+  WorkflowAgentActivityKind,
+  WorkflowAgentActivityStatus,
+} from "./workflow-types.js";
+
+export interface WorkflowAgentUsageSnapshot {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  outputTokens?: number;
+  totalTokens: number;
+  state: "partial" | "final";
+}
+
+export interface WorkflowAgentObserver {
+  onSession?(providerSessionId: string): void;
+  onActivity?(activity: {
+    kind: WorkflowAgentActivityKind;
+    status: WorkflowAgentActivityStatus;
+    label: string;
+    detail?: string;
+    startedAt?: string;
+    completedAt?: string;
+  }): void;
+  onUsage?(usage: WorkflowAgentUsageSnapshot): void;
+}
 
 const USAGE_WRITE_INTERVAL_MS = 5_000;
 
@@ -8,13 +33,13 @@ export function createWorkflowAgentObserver(
   runId: string,
   callIndex: number,
   intervalMs = USAGE_WRITE_INTERVAL_MS,
-): LocalAgentObserver & { close(): void } {
+): WorkflowAgentObserver & { close(): void } {
   const baseline = store.getAgentCall(runId, callIndex)?.usage;
   let lastUsageWrite = 0;
-  let pendingUsage: LocalAgentUsageSnapshot | undefined;
+  let pendingUsage: WorkflowAgentUsageSnapshot | undefined;
   let timer: NodeJS.Timeout | undefined;
 
-  const persistUsage = (usage: LocalAgentUsageSnapshot): void => {
+  const persistUsage = (usage: WorkflowAgentUsageSnapshot): void => {
     pendingUsage = undefined;
     if (timer) clearTimeout(timer);
     timer = undefined;

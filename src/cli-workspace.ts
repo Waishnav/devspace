@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { assertAllowedPath } from "./roots.js";
 
 export interface CliWorkspaceContext {
   workspaceId?: string;
@@ -13,18 +13,23 @@ export interface WorkspaceScopedRecord {
   workspaceRoot: string;
 }
 
-/** Resolve a stable project scope for CLI commands launched inside or outside DevSpace. */
+/** Resolve the project context used by local agent commands. */
 export function resolveCliWorkspaceContext(
+  allowedRoots: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
 ): CliWorkspaceContext {
-  const injectedRoot = env.DEVSPACE_WORKSPACE_ROOT?.trim();
-  const gitRoot = injectedRoot ? undefined : findGitRoot(cwd);
+  const workspaceId = env.DEVSPACE_WORKSPACE_ID?.trim() || undefined;
+  const injectedRoot = workspaceId ? env.DEVSPACE_WORKSPACE_ROOT?.trim() : undefined;
+  const candidate = canonicalizePath(
+    injectedRoot ? resolve(injectedRoot) : findGitRoot(cwd) ?? resolve(cwd),
+  );
+
+  if (!workspaceId) return { workspaceId, workspaceRoot: candidate };
+
   return {
-    workspaceId: env.DEVSPACE_WORKSPACE_ID?.trim() || undefined,
-    workspaceRoot: injectedRoot
-      ? resolve(injectedRoot)
-      : findDevspaceProjectRoot(cwd, env, gitRoot) ?? gitRoot ?? resolve(cwd),
+    workspaceId,
+    workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
   };
 }
 
@@ -33,7 +38,7 @@ export function isRecordInCliWorkspace(
   context: CliWorkspaceContext,
 ): boolean {
   if (context.workspaceId) return record.workspaceId === context.workspaceId;
-  return resolve(record.workspaceRoot) === context.workspaceRoot;
+  return canonicalizePath(record.workspaceRoot) === context.workspaceRoot;
 }
 
 export function assertRecordInCliWorkspace(
@@ -46,26 +51,11 @@ export function assertRecordInCliWorkspace(
   }
 }
 
-function findDevspaceProjectRoot(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  gitRoot?: string,
-): string | undefined {
-  const configDir = resolve(env.DEVSPACE_CONFIG_DIR ?? resolve(homedir(), ".devspace"));
-  let current = resolve(cwd);
-  for (;;) {
-    const marker = resolve(current, ".devspace");
-    if (
-      marker !== configDir &&
-      existsSync(marker) &&
-      statSync(marker).isDirectory()
-    ) {
-      return current;
-    }
-    if (gitRoot && current === gitRoot) return undefined;
-    const parent = dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
+function canonicalizePath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
   }
 }
 
@@ -74,6 +64,7 @@ function findGitRoot(cwd: string): string | undefined {
     cwd: resolve(cwd),
     encoding: "utf8",
     windowsHide: true,
+    stdio: ["ignore", "pipe", "ignore"],
   });
   if (result.status !== 0) return undefined;
   const root = result.stdout.trim();

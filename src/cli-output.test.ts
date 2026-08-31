@@ -1,61 +1,11 @@
 import assert from "node:assert/strict";
 import {
-  localAgentOutput,
-  localAgentTargetsOutput,
   workflowCallOutput,
   workflowRunOutput,
 } from "./cli-output.js";
-import type { LocalAgentCatalog } from "./local-agent-catalog.js";
-import type { LocalAgentRecord } from "./local-agent-store.js";
 import type { WorkflowAgentCallRecord, WorkflowRunRecord } from "./workflow-types.js";
 
 const now = "2026-08-08T00:00:00.000Z";
-const agent: LocalAgentRecord = {
-  id: "agt_123",
-  workspaceId: "ws_private",
-  workspaceRoot: "/private/project",
-  profileName: "reviewer",
-  provider: "codex",
-  providerSessionId: "provider-secret",
-  status: "idle",
-  latestResponse: "done",
-  createdAt: now,
-  updatedAt: now,
-};
-const agentJson = localAgentOutput(agent, { includeResult: true });
-assert.equal(agentJson.response, "done");
-assert.equal("providerSessionId" in agentJson, false);
-assert.equal("workspaceRoot" in agentJson, false);
-
-const catalog: LocalAgentCatalog = {
-  profiles: [{
-    name: "reviewer",
-    description: "Review changes.",
-    provider: "codex",
-    model: "gpt",
-    effort: "high",
-  }],
-  providers: [{
-    name: "codex",
-    model: { supported: true, discovery: "model_dependent" },
-    effort: {
-      supported: true,
-      semantics: "reasoning_effort",
-      discovery: "model_dependent",
-    },
-  }],
-};
-assert.deepEqual(localAgentTargetsOutput(catalog), {
-  profiles: [{
-    name: "reviewer",
-    description: "Review changes.",
-    provider: "codex",
-    model: "gpt",
-    effort: "high",
-  }],
-  providers: [{ name: "codex", overrides: ["model", "effort"] }],
-});
-
 const run: WorkflowRunRecord = {
   id: "wfr_123",
   name: "review",

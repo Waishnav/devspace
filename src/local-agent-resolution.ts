@@ -1,10 +1,9 @@
 import {
-  buildLocalAgentProfilePrompt,
-  fingerprintLocalAgentProfile,
   isLocalAgentProvider,
   type LocalAgentProfile,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import { createHash } from "node:crypto";
 
 export type LocalAgentResolutionErrorKind =
   | "target_not_found"
@@ -108,11 +107,28 @@ function resolveProfile(
     provider: profile.provider,
     model: input.model ?? profile.model,
     effort: input.effort ?? profile.effort,
-    prompt: buildLocalAgentProfilePrompt(profile, input.prompt),
+    prompt: buildProfilePrompt(profile, input.prompt),
     profile,
     profileName: profile.name,
-    profileFingerprint: fingerprintLocalAgentProfile(profile),
+    profileFingerprint: fingerprintProfile(profile),
   };
+}
+
+function buildProfilePrompt(profile: LocalAgentProfile, prompt: string): string {
+  const instructions = profile.body.trim();
+  return instructions ? `${instructions}\n\nTask:\n${prompt}` : prompt;
+}
+
+function fingerprintProfile(profile: LocalAgentProfile): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      name: profile.name,
+      provider: profile.provider,
+      model: profile.model,
+      effort: profile.effort,
+      body: profile.body,
+    }))
+    .digest("hex");
 }
 
 function resolveProvider(

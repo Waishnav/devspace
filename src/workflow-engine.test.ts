@@ -480,7 +480,7 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
 }
 
 // ---------------------------------------------------------------------------
-// schema retry: native schema only on first attempt + provider session reuse
+// schema retry: prompt contract on each attempt + provider session reuse
 // ---------------------------------------------------------------------------
 {
   const dir = await mkdtemp(join(tmpdir(), "wf-schema-retry-"));
@@ -523,9 +523,11 @@ import type { LocalAgentProfile } from "./local-agent-profiles.js";
     },
   });
   assert.deepEqual(out, { n: 2 });
-  assert.ok(calls[0]?.schema);
+  assert.equal(calls[0]?.schema, undefined);
+  assert.match(calls[0]?.prompt ?? "", /ONLY a JSON/);
   assert.equal(calls[0]?.providerSessionId, undefined);
   assert.equal(calls[1]?.schema, undefined);
+  assert.match(calls[1]?.prompt ?? "", /ONLY a JSON/);
   assert.equal(calls[1]?.providerSessionId, "sess-1");
   assert.equal(store.getAgentCall(run.id, 0)?.returnValueJson, JSON.stringify({ n: 2 }));
 

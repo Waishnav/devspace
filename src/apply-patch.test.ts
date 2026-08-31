@@ -191,13 +191,16 @@ assert.throws(
 
 const overwriteRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-overwrite-"));
 await writeFile(join(overwriteRoot, "duplicate.txt"), "old content\n");
-await applyPatch(
+const overwriteResult = await applyPatch(
   overwriteRoot,
   `*** Begin Patch
 *** Add File: duplicate.txt
 +new content
 *** End Patch`,
 );
+assert.deepEqual(overwriteResult.files, [
+  { path: "duplicate.txt", operation: "update" },
+]);
 assert.equal(await readFile(join(overwriteRoot, "duplicate.txt"), "utf8"), "new content\n");
 
 await writeFile(join(overwriteRoot, "source.txt"), "from\n");

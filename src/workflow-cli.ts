@@ -41,13 +41,6 @@ export async function runWorkflowCommand(
   config: ServerConfig,
 ): Promise<void> {
   const [subcommand, ...rest] = args;
-  if (!config.workflows) {
-    throw new InvalidWorkflowInputError({
-      code: "invalid_argument",
-      message:
-        "Dynamic Workflows are disabled. Run `devspace init --force` or set DEVSPACE_WORKFLOWS=1.",
-    });
-  }
   switch (subcommand) {
     case "run":
       await runWorkflowRun(rest, config);
@@ -142,7 +135,7 @@ async function runWorkflowRun(args: string[], config: ServerConfig): Promise<voi
   const source = buildCliLaunchSource({ file, name, resumeFrom });
   const store = createWorkflowStore(config);
   try {
-    const workspace = resolveCliWorkspaceContext();
+    const workspace = resolveCliWorkspaceContext(config.allowedRoots);
     const workspaceRoot = workspace.workspaceRoot;
     if (resumeFrom) {
       const prior = store.getRun(resumeFrom);
@@ -216,7 +209,7 @@ async function runWorkflowStatus(args: string[], config: ServerConfig): Promise<
   const store = createWorkflowStore(config);
   try {
     reapStaleWorkflows(store);
-    const workspace = resolveCliWorkspaceContext();
+    const workspace = resolveCliWorkspaceContext(config.allowedRoots);
     const runResult = store.getRunResult(runId);
     if (runResult.isErr()) throw runResult.error;
     const run = runResult.value;
@@ -260,7 +253,7 @@ async function runWorkflowCancel(args: string[], config: ServerConfig): Promise<
     reapStaleWorkflows(store);
     const run = store.getRun(runId);
     if (!run) throw new WorkflowNotFoundError(runId);
-    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext());
+    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext(config.allowedRoots));
     const cancelled = await cancelWorkflowRun(store, runId);
     if (json) printJson({ workflow: workflowRunOutput(cancelled) });
     else console.log(formatRunLine(cancelled));
@@ -274,7 +267,7 @@ async function runWorkflowList(args: string[], config: ServerConfig): Promise<vo
   const store = createWorkflowStore(config);
   try {
     reapStaleWorkflows(store);
-    const runs = store.listRunsForScope(resolveCliWorkspaceContext(), {
+    const runs = store.listRunsForScope(resolveCliWorkspaceContext(config.allowedRoots), {
       limit: 50,
     });
     if (json) {
@@ -310,7 +303,7 @@ async function runWorkflowCalls(args: string[], config: ServerConfig): Promise<v
   try {
     const run = store.getRun(runId);
     if (!run) throw new WorkflowNotFoundError(runId);
-    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext());
+    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext(config.allowedRoots));
     const calls = store.listAgentCalls(runId);
     if (json) {
       printJson({
@@ -349,7 +342,7 @@ async function runWorkflowCall(args: string[], config: ServerConfig): Promise<vo
   try {
     const run = store.getRun(runId);
     if (!run) throw new WorkflowNotFoundError(runId);
-    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext());
+    assertWorkflowInCurrentProject(run, resolveCliWorkspaceContext(config.allowedRoots));
     const call = store.getAgentCall(runId, callIndex);
     if (!call) {
       throw new InvalidWorkflowInputError({

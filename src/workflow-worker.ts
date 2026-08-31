@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import type { ServerConfig } from "./config.js";
 import { parseJsonText, type JsonValue } from "./json-types.js";
-import { runLocalAgentProviderResult } from "./local-agent-adapters.js";
+import { createLocalAgentClient, type LocalAgentClient } from "./local-agent-client.js";
 import { createWorkflowAgentObserver } from "./workflow-agent-observer.js";
+import { agentErrorFromPayload } from "./local-agent-errors.js";
 import {
   isLocalAgentProvider,
   loadLocalAgentProfiles,
@@ -25,6 +26,8 @@ import {
 import { WorkflowStoredDataError } from "./workflow-errors.js";
 import { createWorkflowWorktreeFactory } from "./workflow-worktrees.js";
 import { resolveWorkflowLiveProviders } from "./workflow-providers.js";
+import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import type { LocalAgentActivity, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
 
 /** Detached worker entry: claim run, heartbeat, execute, complete/fail. */
 export async function runWorkflowWorker(
@@ -78,6 +81,8 @@ export async function runWorkflowWorker(
       worktreeRoot: config.worktreeRoot,
       allowedRoots: config.allowedRoots,
     });
+    const agentClient = createLocalAgentClient(config);
+    const workflowAgentsBySession = new Map<string, string>();
 
     const { result, callCount } = await executeWorkflow({
       parsed,
@@ -100,31 +105,74 @@ export async function runWorkflowWorker(
           throw Object.assign(new Error("Workflow cancelled"), { name: "AbortError" });
         }
         const observer = createWorkflowAgentObserver(store, runId, input.callIndex);
-        let providerRun;
+        const scope: LocalAgentWorkspaceScope = {
+          workspaceId: claimed.workspaceId,
+          workspaceRoot: input.workspace,
+        };
+        const startedAt = new Date().toISOString();
+        observer.onActivity?.({
+          kind: "status",
+          status: "running",
+          label: `${input.provider} subagent turn`,
+          startedAt,
+        });
         try {
-          providerRun = await runLocalAgentProviderResult(
-            input.provider,
-            {
-              prompt: input.prompt,
-              workspace: input.workspace,
-              providerSessionId: input.providerSessionId,
-              model: input.model,
-              effort: input.effort,
-              writeMode: "allowed",
-              schema: input.schema,
+          const existingAgentId = input.providerSessionId
+            ? workflowAgentsBySession.get(input.providerSessionId)
+            : undefined;
+          const started = existingAgentId
+            ? await agentClient.continue(existingAgentId, input.prompt, {
+                model: input.model,
+                effort: input.effort,
+                writeMode: "allowed",
+              }, scope)
+            : await agentClient.start({
+                target: input.provider,
+                prompt: input.prompt,
+                workspaceRoot: input.workspace,
+                workspaceId: claimed.workspaceId,
+                model: input.model,
+                effort: input.effort,
+                writeMode: "allowed",
+              });
+          if (started.isErr()) throw started.error;
+
+          const completed = await waitForWorkflowAgent({
+            client: agentClient,
+            initial: started.value,
+            scope,
+            signal: abort.signal,
+            isCancelled: () => store.isCancelRequested(runId),
+            onSession: (providerSessionId) => {
+              workflowAgentsBySession.set(providerSessionId, started.value.id);
+              observer.onSession?.(providerSessionId);
             },
-            observer,
-          );
+            onUsage: (usage) => observer.onUsage?.(usage),
+            onActivity: (activity) => observer.onActivity?.(activity),
+          });
+          observer.onActivity?.({
+            kind: "status",
+            status: "completed",
+            label: `${input.provider} subagent turn`,
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          return {
+            finalResponse: completed.latestResponse ?? "",
+            providerSessionId: completed.providerSessionId,
+          };
+        } catch (error) {
+          observer.onActivity?.({
+            kind: "status",
+            status: "failed",
+            label: `${input.provider} subagent turn`,
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          throw error;
         } finally {
           observer.close();
         }
-        if (providerRun.isErr()) throw providerRun.error;
-        const providerResult = providerRun.value;
-        return {
-          finalResponse: providerResult.finalResponse,
-          providerSessionId: providerResult.providerSessionId ?? undefined,
-          structured: providerResult.structured,
-        };
       },
       resolveNestedSource: async (ref) => {
         if (typeof ref === "string") {
@@ -206,3 +254,69 @@ export function spawnWorkflowWorker(runId: string, cliEntry: string): Promise<vo
 
 /** @deprecated Use spawnWorkflowWorker */
 export const spawnWorkflowWorkerFromCli = spawnWorkflowWorker;
+
+async function waitForWorkflowAgent(input: {
+  client: LocalAgentClient;
+  initial: LocalAgentRecord;
+  scope: LocalAgentWorkspaceScope;
+  signal: AbortSignal;
+  isCancelled: () => boolean;
+  onSession: (providerSessionId: string) => void;
+  onUsage: (usage: LocalAgentUsageSnapshot) => void;
+  onActivity: (activity: LocalAgentActivity) => void;
+}): Promise<LocalAgentRecord> {
+  let record = input.initial;
+  let activityCursor = 0;
+  let usageKey: string | undefined;
+  for (;;) {
+    if (activityCursor > (record.activity?.length ?? 0)) activityCursor = 0;
+    for (const activity of record.activity?.slice(activityCursor) ?? []) {
+      input.onActivity(activity);
+    }
+    activityCursor = record.activity?.length ?? 0;
+    if (record.usage) {
+      const nextUsageKey = JSON.stringify(record.usage);
+      if (nextUsageKey !== usageKey) {
+        input.onUsage(record.usage);
+        usageKey = nextUsageKey;
+      }
+    }
+    if (record.providerSessionId) input.onSession(record.providerSessionId);
+    if (record.status === "idle") {
+      if (record.latestResponse === undefined) {
+        throw new Error(`Subagent ${record.id} completed without a response.`);
+      }
+      return record;
+    }
+    if (record.status === "error") throw agentRecordError(record);
+    if (record.status === "stopped") {
+      throw Object.assign(new Error(`Subagent ${record.id} was stopped.`), { name: "AbortError" });
+    }
+    if (input.signal.aborted || input.isCancelled()) {
+      await input.client.cancel(record.id, input.scope);
+      throw Object.assign(new Error("Workflow cancelled"), { name: "AbortError" });
+    }
+    await delay(250);
+    const refreshed = await input.client.get(record.id, input.scope);
+    if (refreshed.isErr()) throw refreshed.error;
+    record = refreshed.value;
+  }
+}
+
+function agentRecordError(record: LocalAgentRecord): Error {
+  const typed = record.errorCode
+    ? agentErrorFromPayload({
+        code: record.errorCode,
+        message: record.error ?? `Subagent ${record.id} failed.`,
+        retryable: record.errorRetryable,
+        provider: record.provider,
+        agentId: record.id,
+        operation: "workflow.agent",
+      })
+    : undefined;
+  return typed ?? new Error(record.error ?? `Subagent ${record.id} failed.`);
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}

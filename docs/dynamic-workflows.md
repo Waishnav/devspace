@@ -8,15 +8,16 @@ There are no dedicated subagent or workflow-execution MCP tools.
 ## Setup
 
 Run `devspace init` and enable agent tooling. Setup probes the supported
-providers, asks which ones DevSpace may use, and installs two skills in
-`~/.devspace/skills`:
+providers, asks which ones DevSpace may use, and prints installation commands
+for two Coding Agent skills:
 
 - `subagents` for one bounded delegation and later follow-ups
 - `dynamic-workflows` for programmed multi-agent orchestration
 
-Provider selection is stored as `agentProviders` in
-`~/.devspace/config.json`. Runtime availability is checked again before a
-provider is shown or used.
+Provider selection is stored as provider objects under `subagents` in
+`~/.devspace/config.jsonc`. Runtime availability is checked again before a
+provider is shown or used. MCP workspaces load the bundled copies when
+subagents are enabled.
 
 ## Project Scope
 
@@ -32,7 +33,8 @@ scope.
 devspace agents targets --json
 devspace agents run <profile-or-provider> "<brief>" --json
 devspace agents show <id> --json
-devspace agents run <id> "<follow-up>" --json
+devspace agents continue <id> "<follow-up>" --json
+devspace agents stop <id> --json
 devspace agents ls --json
 ```
 
@@ -83,28 +85,11 @@ Failed and cancelled workflows are terminal. `workflow run --resume <run-id>`
 creates a new run, reuses the unchanged successful prefix when safe, and
 continues live from the first failed or changed call.
 
-## MCP Workspace Summary
+## MCP Boundary
 
-When agent tooling is enabled, `open_workspace` stays deliberately small:
-
-```json
-{
-  "agentProviders": ["codex", "claude"],
-  "agents": [
-    { "name": "reviewer", "description": "Review changes and test gaps." }
-  ],
-  "activeWorkflows": [
-    {
-      "id": "wfr_123",
-      "name": "review-auth",
-      "status": "running",
-      "calls": { "running": 2, "completed": 3, "failed": 0 }
-    }
-  ]
-}
-```
-
-Provider capability metadata, models, effort semantics, session identifiers,
-workflow phases, and internal counters are intentionally absent. Models obtain
-execution details only when needed through `devspace agents targets --json` or
-the workflow inspection commands.
+`open_workspace` exposes the current compact subagent profile and provider
+catalog from the core agent system. It does not include active workflow runs,
+workflow phases, session identifiers, or internal counters. Hosts inspect
+those only when needed through `devspace workflow` commands. This keeps the
+host as the orchestrator without adding a second workflow-specific MCP or
+dashboard surface.

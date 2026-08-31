@@ -3,10 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  classifyAgentProviderError,
-  ProviderCancelledError,
-  ProviderExecutionError,
-  ProviderSchemaUnsupportedError,
+  AgentProviderCancelledError,
+  AgentProviderExecutionError,
+  providerErrorFromCause,
 } from "./local-agent-errors.js";
 import {
   parseWorkflowArgFlagsResult,
@@ -57,30 +56,33 @@ import { createWorkflowWorktreeResult } from "./workflow-worktrees.js";
 
 {
   const cancelled = Object.assign(new Error("cancel"), { name: "AbortError" });
-  assert.ok(ProviderCancelledError.is(classifyAgentProviderError("codex", cancelled)));
+  assert.ok(AgentProviderCancelledError.is(providerErrorFromCause({
+    provider: "codex",
+    operation: "workflow.agent",
+    cause: cancelled,
+  })));
   assert.ok(
-    ProviderSchemaUnsupportedError.is(
-      classifyAgentProviderError(
-        "claude",
-        new Error("structured output format is not supported"),
-      ),
-    ),
-  );
-  assert.ok(
-    ProviderExecutionError.is(
-      classifyAgentProviderError("opencode", new Error("authentication failed")),
+    AgentProviderExecutionError.is(
+      providerErrorFromCause({
+        provider: "opencode",
+        operation: "workflow.agent",
+        cause: new Error("authentication failed"),
+      }),
     ),
   );
 
-  const unavailable = new ProviderSchemaUnsupportedError(
-    "codex",
-    new Error("output schema unsupported"),
-  );
-  assert.equal(workflowCliExitCode(unavailable), 5);
-  assert.deepEqual(serializeWorkflowError(unavailable), {
-    code: "ProviderSchemaUnsupportedError",
-    message: unavailable.message,
-    kind: "schema",
+  const execution = new AgentProviderExecutionError({
+    code: "PROVIDER_EXECUTION_ERROR",
+    provider: "codex",
+    operation: "workflow.agent",
+    retryable: false,
+    message: "Codex workflow agent failed.",
+  });
+  assert.equal(workflowCliExitCode(execution), 1);
+  assert.deepEqual(serializeWorkflowError(execution), {
+    code: "AgentProviderExecutionError",
+    message: execution.message,
+    kind: "provider",
     retryable: false,
   });
 }

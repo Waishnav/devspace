@@ -36,7 +36,7 @@ export type WorkflowTuiState =
 
 export async function runWorkflowTui(args: string[], config: ServerConfig): Promise<void> {
   const requestedRunId = args.find((arg) => !arg.startsWith("-"));
-  const workspaceRoot = resolveWorkflowTuiWorkspaceRoot();
+  const workspaceRoot = resolveWorkflowTuiWorkspaceRoot(process.cwd(), config.allowedRoots);
   const store = createWorkflowStore(config);
   const load = (includeTerminal = false): WorkflowProjectView =>
     loadWorkflowProjectView(store, workspaceRoot, {
@@ -129,8 +129,11 @@ export async function runWorkflowTui(args: string[], config: ServerConfig): Prom
   });
 }
 
-export function resolveWorkflowTuiWorkspaceRoot(cwd = process.cwd()): string {
-  return resolveCliWorkspaceContext(process.env, cwd).workspaceRoot;
+export function resolveWorkflowTuiWorkspaceRoot(
+  cwd = process.cwd(),
+  allowedRoots: readonly string[] = [],
+): string {
+  return resolveCliWorkspaceContext(allowedRoots, process.env, cwd).workspaceRoot;
 }
 
 export function createWorkflowTuiState(

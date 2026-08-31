@@ -21,6 +21,7 @@
 DevSpace is a self-hosted MCP server that lets ChatGPT read, edit, search, and run code in your real local projects — your files, your tools, your terminal — without uploading anything to a third party. You run it on your machine, expose it through a tunnel you control, and approve the connection with a password only you have.
 
 ## Sponsors and Special Thanks
+<!-- 
 
 <table>
   <thead>
@@ -49,7 +50,7 @@ DevSpace is a self-hosted MCP server that lets ChatGPT read, edit, search, and r
     </tr>
   </tbody>
 </table>
-
+-->
 <p>
   DevSpace is open to new sponsors.
   <a href="https://x.com/wshxnv">Get in touch to become one.</a>
@@ -79,23 +80,24 @@ npx @waishnav/devspace init
 
 During setup, DevSpace asks for:
 
-- the local project folders DevSpace is allowed to open
-- the local port, usually `7676`
-- whether ChatGPT or Claude will connect remotely; only remote MCP users need a public HTTPS URL
-- whether to enable subagents and Dynamic Workflows, and which available providers may run
+- where you will use it: ChatGPT, Coding Agents, or both
+- which Coding Agents DevSpace may use
 
-Setup installs the `subagents` and `dynamic-workflows` skills in
-`~/.devspace/skills` when agent tooling is enabled. Coding harnesses can use the
-DevSpace CLI directly; MCP users invoke the same CLI through DevSpace's shell or
-process tools.
+If you select ChatGPT, setup also asks which local project folders it may open
+and for your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy,
+Tailscale Funnel, or another reverse proxy. A Coding Agents-only setup asks
+neither question: local commands use the current Git project, or the current
+directory outside a repository.
 
-For remote MCP use, enter the public origin without `/mcp` during setup:
+Use the public origin without `/mcp` during setup:
 
 ```text
 https://your-tunnel-host.example.com
 ```
 
-Then configure your MCP client with the public `/mcp` URL after setup.
+You will configure your MCP client with the public `/mcp` URL after setup.
+Run `devspace serve` when using ChatGPT. For Coding Agents, setup prints a
+`skills` command and lets the Skills CLI handle installation.
 
 When the client connects, DevSpace opens an Owner password approval page. Enter
 the Owner password printed by `devspace init`. It is also stored in:
@@ -142,7 +144,6 @@ DevSpace gives ChatGPT tools to:
 - use isolated Git worktrees for parallel coding sessions
 - follow project instructions from `AGENTS.md` and `CLAUDE.md`
 - discover local agent skills from your skill folders
-- delegate bounded work and run programmable multi-agent workflows through the DevSpace CLI
 - show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
 
 ## Mental Model
@@ -183,8 +184,9 @@ devspace doctor
 
 - [Setup Guide](https://github.com/Waishnav/devspace/blob/main/docs/setup.md)
 - [ChatGPT Coding Workflow](https://github.com/Waishnav/devspace/blob/main/docs/chatgpt-coding-workflow.md)
-- [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
 - [Subagents and Dynamic Workflows](https://github.com/Waishnav/devspace/blob/main/docs/dynamic-workflows.md)
+- [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
+- [Native File Download](https://github.com/Waishnav/devspace/blob/main/docs/artifact-exchange.md)
 - [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
 - [Troubleshooting Gotchas](https://github.com/Waishnav/devspace/blob/main/docs/gotchas.md)
 
@@ -205,10 +207,10 @@ explicit, inspectable tools.
 
 ## Built by Waishnav
 
-I'm Waishnav, I like building opinionated products and tools, and DevSpace is one example of that.
-This year, I started my journey to build a single-person and multiple-agents company doing multiple millions in
-revenue. If you want to watch the failures, wins, lessons, and everything in
-between, come hang out with me on [X](https://x.com/wshxnv).
+I'm Waishnav. I like building opinionated products and tools, and Artifacts is one example.
+
+This year, I began my journey to build a one-person, multi-agent company capable of generating millions in revenue. If you want to follow the failures, wins, lessons, and everything in between, come hang out with me on [X](https://x.com/wshxnv).
+
 
 ## More from me
 

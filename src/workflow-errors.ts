@@ -1,8 +1,6 @@
 import { TaggedError } from "better-result";
 import {
   isAgentProviderError,
-  ProviderExecutionError,
-  ProviderUnavailableError,
   type AgentProviderError,
 } from "./local-agent-errors.js";
 import type {
@@ -323,13 +321,13 @@ export function workflowErrorKind(error: WorkflowOperationError): WorkflowErrorK
     case "AgentSchemaValidationError":
     case "SchemaConfigurationError":
     case "SchemaRetriesExhaustedError":
-    case "ProviderSchemaUnsupportedError":
       return "schema";
-    case "ProviderCancelledError":
+    case "AgentProviderCancelledError":
       return "cancelled";
-    case "ProviderUnavailableError":
+    case "AgentProviderUnavailableError":
       return "provider_unavailable";
-    case "ProviderExecutionError":
+    case "AgentProviderProtocolError":
+    case "AgentProviderExecutionError":
       return "provider";
   }
 }
@@ -342,15 +340,14 @@ export function workflowCliExitCode(error: WorkflowOperationError): number {
     case "NamedWorkflowNotFoundError":
     case "WorkflowNotFoundError":
       return 3;
-    case "ProviderUnavailableError":
+    case "AgentProviderUnavailableError":
       return 4;
-    case "ProviderCancelledError":
+    case "AgentProviderCancelledError":
       return 130;
     case "InvalidAgentJsonError":
     case "AgentSchemaValidationError":
     case "SchemaConfigurationError":
     case "SchemaRetriesExhaustedError":
-    case "ProviderSchemaUnsupportedError":
       return 5;
     case "WorkflowFileReadError":
     case "WorkflowFileWriteError":
@@ -358,7 +355,8 @@ export function workflowCliExitCode(error: WorkflowOperationError): number {
     case "WorkflowStoreError":
     case "WorkflowStoredDataError":
     case "WorktreeOperationError":
-    case "ProviderExecutionError":
+    case "AgentProviderProtocolError":
+    case "AgentProviderExecutionError":
       return 1;
   }
 }
@@ -373,8 +371,7 @@ export function serializeWorkflowError(error: WorkflowOperationError): {
     code: error._tag,
     message: error.message,
     kind: workflowErrorKind(error),
-    retryable:
-      ProviderExecutionError.is(error) ? error.retryable : ProviderUnavailableError.is(error),
+    retryable: isAgentProviderError(error) ? error.retryable : false,
   };
 }
 

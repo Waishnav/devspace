@@ -1,226 +1,127 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig } from "./config.js";
-import { resolveSubagentsFlag } from "./user-config.js";
+import { writeDevspaceAuth, writeDevspaceConfig } from "./user-config.js";
 
-const emptyConfigDir = mkdtempSync(join(tmpdir(), "devspace-empty-config-test-"));
-const baseEnv = {
-  DEVSPACE_CONFIG_DIR: emptyConfigDir,
-  DEVSPACE_ALLOWED_ROOTS: process.cwd(),
+const configDir = mkdtempSync(join(tmpdir(), "devspace-config-test-"));
+const env = {
+  DEVSPACE_CONFIG_DIR: configDir,
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
-assert.equal(loadConfig(baseEnv).toolMode, "minimal");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "minimal" }).toolMode, "minimal");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "full" }).toolMode, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "codex" }).toolMode, "codex");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "0" }).toolMode, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "minimal");
-assert.equal(loadConfig(baseEnv).skillsEnabled, true);
-assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
-assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
-assert.equal(loadConfig(baseEnv).subagents, false);
-assert.equal(loadConfig(baseEnv).workflows, false);
-assert.deepEqual(loadConfig(baseEnv).agentProviders, [
-  "codex",
-  "claude",
-  "opencode",
-  "pi",
-  "cursor",
-  "copilot",
-]);
-assert.deepEqual(
-  loadConfig({ ...baseEnv, DEVSPACE_AGENT_PROVIDERS: "codex,pi,codex" }).agentProviders,
-  ["codex", "pi"],
-);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents,
-  true,
-);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).workflows,
-  true,
-);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1", DEVSPACE_WORKFLOWS: "0" }).workflows,
-  false,
-);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_WORKFLOWS: "1" }).workflows,
-  true,
-);
-assert.equal(resolveSubagentsFlag({}, {}), undefined);
-assert.equal(resolveSubagentsFlag({ subagents: true }, {}), true);
-assert.equal(resolveSubagentsFlag({ subagents: true }, { DEVSPACE_SUBAGENTS: "0" }), false);
-assert.equal(resolveSubagentsFlag({}, { DEVSPACE_SUBAGENTS: "1" }), true);
+try {
+  const defaults = loadConfig(env);
+  assert.equal(defaults.host, "127.0.0.1");
+  assert.equal(defaults.port, 7676);
+  assert.equal(defaults.publicBaseUrl, "http://127.0.0.1:7676");
+  assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
+  assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
+  assert.equal(defaults.toolMode, "codex");
+  assert.equal(defaults.uiEnabled, true);
+  assert.equal(defaults.skillsEnabled, true);
+  assert.equal(defaults.artifactsEnabled, false);
+  assert.deepEqual(defaults.subagents, { enabled: false, providers: [] });
+  assert.deepEqual(defaults.logging, {
+    level: "info",
+    format: "json",
+    requests: true,
+    assets: false,
+    toolCalls: true,
+    shellCommands: false,
+    trustProxy: false,
+  });
 
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "invalid" }),
-  /Invalid DEVSPACE_WIDGETS: invalid/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "minimal" }),
-  /Invalid DEVSPACE_WIDGETS: minimal/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "write-only" }),
-  /Invalid DEVSPACE_WIDGETS: write-only/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_TOOL_MODE: "invalid" }),
-  /Invalid DEVSPACE_TOOL_MODE: invalid/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_AGENT_PROVIDERS: "codex,unknown" }),
-  /Invalid agent provider: unknown/,
-);
+  writeDevspaceConfig({
+    configVersion: 1,
+    server: {
+      host: "0.0.0.0",
+      port: 8787,
+      publicBaseUrl: "https://devspace.example.com/",
+      allowedHosts: ["example.internal"],
+      trustProxy: true,
+    },
+    workspaces: {
+      allowedRoots: ["~/work"],
+      worktreeRoot: "~/trees",
+    },
+    storage: { stateDir: "~/state" },
+    tools: { mode: "claude" },
+    ui: { enabled: false },
+    artifacts: { enabled: true, maxFileBytes: 321 },
+    skills: { enabled: false, paths: ["~/skills"], agentDir: "~/agent" },
+    subagents: {
+      enabled: true,
+      providers: [{ id: "codex", enabled: true }],
+    },
+    logging: {
+      level: "debug",
+      format: "pretty",
+      requests: false,
+      assets: true,
+      toolCalls: false,
+      shellCommands: true,
+    },
+    oauth: {
+      accessTokenTtlSeconds: 120,
+      refreshTokenTtlSeconds: 240,
+      scopes: ["devspace", "admin"],
+      allowedRedirectHosts: ["chatgpt.com", "example.com"],
+    },
+  }, env);
+  writeDevspaceAuth({ ownerToken: "persisted-owner-token-long-enough" }, env);
 
-assert.deepEqual(loadConfig(baseEnv).logging, {
-  level: "info",
-  format: "json",
-  requests: true,
-  assets: false,
-  toolCalls: true,
-  shellCommands: false,
-  trustProxy: false,
-});
+  const configured = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
+  assert.equal(configured.configDir, configDir);
+  assert.equal(configured.host, "0.0.0.0");
+  assert.equal(configured.port, 8787);
+  assert.equal(configured.publicBaseUrl, "https://devspace.example.com");
+  assert.deepEqual(configured.allowedRoots, [resolve("~/work".replace("~", process.env.HOME!))]);
+  assert.deepEqual(configured.allowedHosts, [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "devspace.example.com",
+    "example.internal",
+  ]);
+  assert.equal(configured.toolMode, "claude");
+  assert.equal(configured.uiEnabled, false);
+  assert.equal(configured.stateDir, resolve(process.env.HOME!, "state"));
+  assert.equal(configured.worktreeRoot, resolve(process.env.HOME!, "trees"));
+  assert.equal(configured.artifactsEnabled, true);
+  assert.equal(configured.artifactMaxFileBytes, 321);
+  assert.equal(configured.skillsEnabled, false);
+  assert.deepEqual(configured.skillPaths, ["~/skills"]);
+  assert.equal(configured.agentDir, resolve(process.env.HOME!, "agent"));
+  assert.equal(configured.subagents.enabled, true);
+  assert.equal(configured.oauth.ownerToken, "persisted-owner-token-long-enough");
+  assert.equal(configured.oauth.accessTokenTtlSeconds, 120);
+  assert.deepEqual(configured.oauth.scopes, ["devspace", "admin"]);
+  assert.deepEqual(configured.logging, {
+    level: "debug",
+    format: "pretty",
+    requests: false,
+    assets: true,
+    toolCalls: false,
+    shellCommands: true,
+    trustProxy: true,
+  });
 
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "silent" }).logging.level, "silent");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "error" }).logging.level, "error");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "warn" }).logging.level, "warn");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "info" }).logging.level, "info");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "debug" }).logging.level, "debug");
+  assert.equal(loadConfig(env).oauth.ownerToken, env.DEVSPACE_OAUTH_OWNER_TOKEN);
+} finally {
+  rmSync(configDir, { recursive: true, force: true });
+}
 
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_FORMAT: "json" }).logging.format, "json");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_FORMAT: "pretty" }).logging.format, "pretty");
+const missingAuthDir = mkdtempSync(join(tmpdir(), "devspace-config-no-auth-test-"));
+try {
+  assert.throws(
+    () => loadConfig({ DEVSPACE_CONFIG_DIR: missingAuthDir }),
+    /OAuth owner token is required/,
+  );
+} finally {
+  rmSync(missingAuthDir, { recursive: true, force: true });
+}
 
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_REQUESTS: "0" }).logging.requests, false);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_ASSETS: "1" }).logging.assets, true);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_TOOL_CALLS: "0" }).logging.toolCalls, false);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_LOG_SHELL_COMMANDS: "1" }).logging.shellCommands, true);
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_TRUST_PROXY: "1" }).logging.trustProxy, true);
-
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_LOG_LEVEL: "trace" }),
-  /Invalid DEVSPACE_LOG_LEVEL: trace/,
-);
-
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_LOG_FORMAT: "color" }),
-  /Invalid DEVSPACE_LOG_FORMAT: color/,
-);
-
-assert.equal(loadConfig(baseEnv).oauth.ownerToken, "test-owner-token-that-is-long-enough");
-assert.deepEqual(loadConfig(baseEnv).oauth.scopes, ["devspace"]);
-assert.deepEqual(loadConfig(baseEnv).oauth.allowedRedirectHosts, [
-  "chatgpt.com",
-  "localhost",
-  "127.0.0.1",
-]);
-assert.equal(loadConfig(baseEnv).oauth.accessTokenTtlSeconds, 3600);
-assert.equal(loadConfig(baseEnv).oauth.refreshTokenTtlSeconds, 2592000);
-
-assert.deepEqual(
-  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_SCOPES: "devspace,admin" }).oauth.scopes,
-  ["devspace", "admin"],
-);
-assert.deepEqual(
-  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS: "chatgpt.com,example.com" }).oauth
-    .allowedRedirectHosts,
-  ["chatgpt.com", "example.com"],
-);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "120" }).oauth
-    .accessTokenTtlSeconds,
-  120,
-);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS: "240" }).oauth
-    .refreshTokenTtlSeconds,
-  240,
-);
-
-assert.throws(
-  () => loadConfig({ DEVSPACE_CONFIG_DIR: emptyConfigDir, DEVSPACE_ALLOWED_ROOTS: process.cwd() }),
-  /DEVSPACE_OAUTH_OWNER_TOKEN is required/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_OAUTH_OWNER_TOKEN: "too-short" }),
-  /DEVSPACE_OAUTH_OWNER_TOKEN must be at least 16 characters long/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "0" }),
-  /Invalid DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS: 0/,
-);
-
-assert.equal(loadConfig(baseEnv).publicBaseUrl, "http://127.0.0.1:7676");
-assert.deepEqual(loadConfig(baseEnv).allowedHosts, ["localhost", "127.0.0.1", "::1"]);
-
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_PUBLIC_BASE_URL: "https://abc.trycloudflare.com/" }).publicBaseUrl,
-  "https://abc.trycloudflare.com",
-);
-assert.deepEqual(
-  loadConfig({ ...baseEnv, DEVSPACE_PUBLIC_BASE_URL: "https://abc.trycloudflare.com/" }).allowedHosts,
-  ["localhost", "127.0.0.1", "::1", "abc.trycloudflare.com"],
-);
-assert.deepEqual(
-  loadConfig({ ...baseEnv, DEVSPACE_ALLOWED_HOSTS: "*" }).allowedHosts,
-  ["*"],
-);
-
-const configDir = mkdtempSync(join(tmpdir(), "devspace-config-test-"));
-writeFileSync(
-  join(configDir, "config.json"),
-  JSON.stringify({
-    port: 8787,
-    allowedRoots: [process.cwd()],
-    publicBaseUrl: "https://devspace.example.com",
-    subagents: true,
-    agentProviders: ["claude"],
-  }),
-);
-writeFileSync(
-  join(configDir, "auth.json"),
-  JSON.stringify({
-    ownerToken: "persisted-owner-token-long-enough",
-  }),
-);
-
-const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
-assert.equal(fileConfig.port, 8787);
-assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
-assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
-assert.equal(fileConfig.subagents, true);
-assert.deepEqual(fileConfig.agentProviders, ["claude"]);
-assert.deepEqual(fileConfig.allowedHosts, [
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "devspace.example.com",
-]);
-
-const disabledAgentConfigDir = mkdtempSync(join(tmpdir(), "devspace-disabled-agent-config-test-"));
-writeFileSync(
-  join(disabledAgentConfigDir, "config.json"),
-  JSON.stringify({
-    allowedRoots: [process.cwd()],
-    subagents: false,
-  }),
-);
-writeFileSync(
-  join(disabledAgentConfigDir, "auth.json"),
-  JSON.stringify({ ownerToken: "persisted-owner-token-long-enough" }),
-);
-assert.deepEqual(loadConfig({
-  DEVSPACE_CONFIG_DIR: disabledAgentConfigDir,
-  DEVSPACE_SUBAGENTS: "1",
-}).agentProviders, ["codex", "claude", "opencode", "pi", "cursor", "copilot"]);
+console.log("config tests passed");

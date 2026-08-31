@@ -1,0 +1,301 @@
+{
+  "$id": "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json",
+  "title": "DevSpace configuration",
+  "description": "Versioned configuration for a local DevSpace MCP server.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "default": "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json",
+      "type": "string",
+      "format": "uri"
+    },
+    "configVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "server": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "host": {
+          "default": "127.0.0.1",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "default": 7676,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "publicBaseUrl": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uri"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedHosts": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "trustProxy": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaces": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "allowedRoots": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "worktreeRoot": {
+          "default": "~/.devspace/worktrees",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "stateDir": {
+          "default": "~/.local/share/devspace",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "mode": {
+          "default": "codex",
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ui": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "maxFileBytes": {
+          "default": 104857600,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "paths": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "agentDir": {
+          "default": "~/.codex",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "subagents": {
+      "default": {
+        "enabled": false,
+        "providers": []
+      },
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "opencode",
+                  "pi",
+                  "cursor",
+                  "copilot",
+                  "grok"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "enabled"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "providers"
+      ],
+      "additionalProperties": false
+    },
+    "logging": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "level": {
+          "default": "info",
+          "type": "string",
+          "enum": [
+            "silent",
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ]
+        },
+        "format": {
+          "default": "json",
+          "type": "string",
+          "enum": [
+            "json",
+            "pretty"
+          ]
+        },
+        "requests": {
+          "default": true,
+          "type": "boolean"
+        },
+        "assets": {
+          "default": false,
+          "type": "boolean"
+        },
+        "toolCalls": {
+          "default": true,
+          "type": "boolean"
+        },
+        "shellCommands": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "oauth": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "accessTokenTtlSeconds": {
+          "default": 3600,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "refreshTokenTtlSeconds": {
+          "default": 2592000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "scopes": {
+          "default": [
+            "devspace"
+          ],
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allowedRedirectHosts": {
+          "default": [
+            "chatgpt.com",
+            "localhost",
+            "127.0.0.1"
+          ],
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "configVersion"
+  ],
+  "additionalProperties": false
+}

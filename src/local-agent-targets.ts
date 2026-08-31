@@ -1,80 +1,126 @@
 import {
+  isLocalAgentProvider,
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProfile,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
-import {
-  resolveLocalAgentExecution,
-  type ResolvedLocalAgentExecution,
-} from "./local-agent-resolution.js";
+import type { SubagentProviderConfig } from "./local-agent-config.js";
 
 export interface ParsedLocalAgentRunArgs {
   target: string;
   prompt: string;
   model?: string;
   effort?: string;
-  json: boolean;
 }
 
-export type LocalAgentTarget = ResolvedLocalAgentExecution;
+export interface ParsedLocalAgentContinueArgs {
+  agentId: string;
+  prompt: string;
+  model?: string;
+  effort?: string;
+}
 
-const USAGE =
-  'Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] [--effort <level>] "<prompt>" [--json]';
+export type LocalAgentTarget =
+  | {
+      kind: "profile";
+      name: string;
+      provider: LocalAgentProvider;
+      model?: string;
+      effort?: string;
+      profile: LocalAgentProfile;
+    }
+  | {
+      kind: "provider";
+      name: LocalAgentProvider;
+      provider: LocalAgentProvider;
+      model?: string;
+      effort?: string;
+    };
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
-  const json = args.at(-1) === "--json";
-  const [target, ...rest] = json ? args.slice(0, -1) : args;
+  const parsed = parseAgentPromptArgs(
+    args,
+    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] "<prompt>"',
+  );
+  return parsed;
+}
+
+export function parseLocalAgentContinueArgs(args: string[]): ParsedLocalAgentContinueArgs {
+  const parsed = parseAgentPromptArgs(
+    args,
+    'Usage: devspace agents continue <id> [--model <model>] [--effort <level>] "<prompt>"',
+  );
+  return { agentId: parsed.target, prompt: parsed.prompt, model: parsed.model, effort: parsed.effort };
+}
+
+function parseAgentPromptArgs(
+  args: string[],
+  usage: string,
+): ParsedLocalAgentRunArgs {
+  const [target, ...rest] = args;
   if (!target) {
-    throw new Error(USAGE);
+    throw new Error(usage);
   }
 
   let model: string | undefined;
   let effort: string | undefined;
   const promptParts: string[] = [];
+  let optionsEnded = false;
   for (let index = 0; index < rest.length; index += 1) {
     const part = rest[index];
+    if (!optionsEnded && part === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (optionsEnded) {
+      promptParts.push(part ?? "");
+      continue;
+    }
     if (part === "--model") {
-      const value = rest[index + 1]?.trim();
-      if (!value) throw new Error("Missing value for --model.");
+      const value = parseOptionValue(rest[index + 1], "--model");
       model = value;
       index += 1;
       continue;
     }
     if (part?.startsWith("--model=")) {
-      const value = part.slice("--model=".length).trim();
-      if (!value) throw new Error("Missing value for --model.");
+      const value = parseOptionValue(part.slice("--model=".length), "--model");
       model = value;
       continue;
     }
-    if (part === "--effort" || part === "--thinking") {
-      const flag = part;
-      const value = rest[index + 1]?.trim();
-      if (!value) throw new Error(`Missing value for ${flag}.`);
+    if (part === "--effort") {
+      const value = parseOptionValue(rest[index + 1], "--effort");
       effort = value;
       index += 1;
       continue;
     }
     if (part?.startsWith("--effort=")) {
-      const value = part.slice("--effort=".length).trim();
-      if (!value) throw new Error("Missing value for --effort.");
+      const value = parseOptionValue(part.slice("--effort=".length), "--effort");
       effort = value;
       continue;
     }
-    if (part?.startsWith("--thinking=")) {
-      const value = part.slice("--thinking=".length).trim();
-      if (!value) throw new Error("Missing value for --thinking.");
-      effort = value;
-      continue;
+    if (part?.startsWith("-")) {
+      throw unknownOptionError(part);
     }
     promptParts.push(part ?? "");
   }
 
   const prompt = promptParts.join(" ").trim();
   if (!prompt) {
-    throw new Error(USAGE);
+    throw new Error(usage);
   }
 
-  return { target, prompt, model, effort, json };
+  return { target, prompt, model, effort };
+}
+
+function parseOptionValue(value: string | undefined, option: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) throw new Error(`Missing value for ${option}.`);
+  if (trimmed.startsWith("-")) throw unknownOptionError(trimmed);
+  return trimmed;
+}
+
+function unknownOptionError(option: string): Error {
+  return new Error(`Unknown option: ${option}. Use -- before prompt text that starts with a dash.`);
 }
 
 export function resolveLocalAgentTarget(
@@ -82,31 +128,31 @@ export function resolveLocalAgentTarget(
   profiles: LocalAgentProfile[],
   modelOverride?: string,
   effortOverride?: string,
-  availableProviders: LocalAgentProvider[] = [...LOCAL_AGENT_PROVIDERS],
+  providerConfigs: readonly SubagentProviderConfig[] = [],
 ): LocalAgentTarget | undefined {
-  try {
-    return resolveLocalAgentExecution({
-      target,
-      prompt: "",
-      profiles,
-      availableProviders,
-      model: modelOverride,
-      effort: effortOverride,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "LocalAgentResolutionError") return undefined;
-    throw error;
+  const profile = profiles.find((candidate) => candidate.name === target);
+  if (profile) {
+    const providerConfig = providerConfigs.find((entry) => entry.id === profile.provider);
+    return {
+      kind: "profile",
+      name: profile.name,
+      provider: profile.provider,
+      model: modelOverride ?? profile.model ?? providerConfig?.model,
+      effort: effortOverride ?? profile.effort ?? providerConfig?.effort,
+      profile,
+    };
   }
-}
 
-export function formatAvailableLocalAgentTargets(
-  profiles: LocalAgentProfile[],
-  providers: LocalAgentProvider[] = [...LOCAL_AGENT_PROVIDERS],
-): string {
-  const profileNames = profiles.map((profile) => profile.name);
-  const parts = [
-    profileNames.length > 0 ? `profiles: ${profileNames.join(", ")}` : undefined,
-    providers.length > 0 ? `providers: ${providers.join(", ")}` : "providers: none",
-  ].filter(Boolean);
-  return parts.join("; ");
+  if (isLocalAgentProvider(target)) {
+    const providerConfig = providerConfigs.find((entry) => entry.id === target);
+    return {
+      kind: "provider",
+      name: target,
+      provider: target,
+      model: modelOverride ?? providerConfig?.model,
+      effort: effortOverride ?? providerConfig?.effort,
+    };
+  }
+
+  return undefined;
 }

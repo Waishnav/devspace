@@ -1,48 +1,28 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
-  isEditTool,
   isExpandableCard,
-  isPatchTool,
-  isShellTool,
-  isToolName,
+  isInitiallyExpandedCard,
 } from "./card-types.js";
 
-for (const tool of [
-  "apply_patch",
-  "exec_command",
-  "write_stdin",
-]) {
-  assert.equal(isToolName(tool), true, `${tool} should be a recognized card tool`);
-}
+test("aggregate review opens when a patch is available", () => {
+  const card = {
+    tool: "show_changes" as const,
+    files: [{ path: "src/a.ts", type: "change" as const }],
+    payload: { patch: "diff --git a/src/a.ts b/src/a.ts" },
+  };
+  assert.equal(isExpandableCard(card), true);
+  assert.equal(isInitiallyExpandedCard(card), true);
+});
 
-assert.equal(isPatchTool("apply_patch"), true);
-assert.equal(isEditTool("apply_patch"), false);
-assert.equal(isShellTool("exec_command"), true);
-assert.equal(isShellTool("write_stdin"), true);
-assert.equal(isEditTool("exec_command"), false);
-assert.equal(isShellTool("apply_patch"), false);
-
-assert.equal(
-  isExpandableCard({ tool: "apply_patch", payload: { patch: "diff --git a/a b/a" } }),
-  true,
-);
-
-assert.equal(isExpandableCard({ tool: "apply_patch" }), false);
-assert.equal(
-  isExpandableCard({
+test("workspace details open only when there is useful context", () => {
+  assert.equal(isExpandableCard({ tool: "open_workspace" }), false);
+  assert.equal(isInitiallyExpandedCard({
     tool: "open_workspace",
-    activeWorkflows: [
-      {
-        id: "wfr_1",
-        name: "Review",
-        status: "running",
-        calls: {
-          running: 1,
-          completed: 0,
-          failed: 0,
-        },
-      },
-    ],
-  }),
-  true,
-);
+    skills: [{ name: "research" }],
+  }), true);
+  assert.equal(isExpandableCard({
+    tool: "open_workspace",
+    review: { available: false, reason: "Not a Git repository." },
+  }), true);
+});

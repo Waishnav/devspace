@@ -11,16 +11,9 @@ import {
   jsonSchemaSchema,
   jsonValueSchema,
 } from "./json-types.js";
-import {
-  LOCAL_AGENT_PROVIDER_CAPABILITIES,
-} from "./local-agent-capabilities.js";
 import { LOCAL_AGENT_PROVIDERS } from "./local-agent-profiles.js";
 
 assert.deepEqual(localAgentProviderSchema.options, LOCAL_AGENT_PROVIDERS);
-assert.deepEqual(
-  Object.keys(LOCAL_AGENT_PROVIDER_CAPABILITIES).sort(),
-  [...LOCAL_AGENT_PROVIDERS].sort(),
-);
 
 assert.deepEqual(
   workflowMetaSchema.parse({

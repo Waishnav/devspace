@@ -21,22 +21,30 @@ export interface SkillReadResolution {
   isSkillFile: boolean;
 }
 
-const SUBAGENTS_NAME = "subagents";
-const LEGACY_SUBAGENT_DELEGATION_NAME = "subagent-delegation";
-const DYNAMIC_WORKFLOWS_NAME = "dynamic-workflows";
+const SUBAGENTS_SKILL_NAME = "subagents";
+const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
+const DYNAMIC_WORKFLOWS_SKILL_NAME = "dynamic-workflows";
+const DYNAMIC_WORKFLOWS_SKILL = join(DYNAMIC_WORKFLOWS_SKILL_NAME, "SKILL.md");
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-/** Package skills are defaults; user/project copies win by path order. */
+function hasBundledAgentSkills(skillDir: string): boolean {
+  return existsSync(join(skillDir, SUBAGENTS_SKILL))
+    && existsSync(join(skillDir, DYNAMIC_WORKFLOWS_SKILL));
+}
+
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
+  const bundledSkills = bundledSkillsDir();
   const defaultPathCandidates = [
     join(homedir(), ".agents", "skills"),
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents || config.workflows ? bundledSkillsDir() : undefined,
+    config.subagents.enabled && !hasBundledAgentSkills(config.devspaceSkillsDir)
+      ? bundledSkills
+      : undefined,
   ];
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
@@ -66,16 +74,21 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  const gated = new Set<string>([LEGACY_SUBAGENT_DELEGATION_NAME]);
-  if (!config.subagents) gated.add(SUBAGENTS_NAME);
-  if (!config.workflows) gated.add(DYNAMIC_WORKFLOWS_NAME);
+  if (config.subagents.enabled) return result;
+
   return {
-    skills: result.skills.filter((skill) => !gated.has(skill.name)),
+    skills: result.skills.filter((skill) => (
+      skill.name !== SUBAGENTS_SKILL_NAME
+      && skill.name !== DYNAMIC_WORKFLOWS_SKILL_NAME
+    )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
       return !(
-        collision?.resourceType === "skill" &&
-        gated.has(collision.name)
+        collision?.resourceType === "skill"
+        && (
+          collision.name === SUBAGENTS_SKILL_NAME
+          || collision.name === DYNAMIC_WORKFLOWS_SKILL_NAME
+        )
       );
     }),
   };

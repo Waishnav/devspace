@@ -1,6 +1,6 @@
 {
   "name": "@waishnav/devspace",
-  "version": "1.0.4",
+  "version": "1.0.8",
   "description": "Expose a secure local coding workspace through an MCP server.",
   "type": "module",
   "main": "dist/server.js",
@@ -8,12 +8,15 @@
     "node": ">=22.19 <27"
   },
   "bin": {
-    "devspace": "dist/cli.js"
+    "devspace": "bin/devspace.js",
+    "devspace-agentd": "bin/devspace-agentd.js"
   },
   "files": [
+    "bin",
     "dist",
     "docs",
     "examples",
+    "schema",
     "scripts",
     "skills",
     "README.md"
@@ -28,29 +31,33 @@
     "dev": "node scripts/dev-server.mjs",
     "dev:tui-fixture": "tsx scripts/workflow-tui-fixture.ts",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
+    "prepack": "npm run build",
+    "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
-    "test": "tsx src/config.test.ts && tsx src/cli-workspace.test.ts && tsx src/cli-output.test.ts && tsx src/open-workspace-capabilities.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/patch-display.test.ts && tsx src/ui/tool-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-capabilities.test.ts && tsx src/local-agent-catalog.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-resolution.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/roots.test.ts && tsx src/skill-install.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/review-checkpoints.test.ts && tsx src/oauth-store.test.ts && tsx src/cli.test.ts && tsx src/workflow-contracts.test.ts && tsx src/workflow-errors.test.ts && tsx src/workflow-types.test.ts && tsx src/workflow-store.test.ts && tsx src/workflow-lifecycle.test.ts && tsx src/workflow-view.test.ts && tsx src/workflow-summary.test.ts && tsx src/workflow-tui.test.ts && tsx src/workflow-script.test.ts && tsx src/workflow-sandbox.test.ts && tsx src/workflow-engine.test.ts && tsx src/workflow-files.test.ts && tsx src/workflow-launch.test.ts && tsx src/workflow-replay.test.ts && tsx src/workflow-schema.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "tsx src/user-config.test.ts && tsx src/config.test.ts && tsx src/db/migrations.test.ts && tsx src/onboarding.test.ts && tsx src/cli-workspace.test.ts && tsx src/cli-output.test.ts && tsx src/request-meta.test.ts && tsx src/incoming-artifacts.test.ts && tsx src/artifact-download.test.ts && tsx src/ui/card-types.test.ts && tsx src/ui/tool-result.test.ts && tsx src/ui/patch-display.test.ts && tsx src/apply-patch.test.ts && tsx src/process-platform.test.ts && tsx src/process-sessions.test.ts && tsx src/mcp-sessions.test.ts && tsx src/server-shutdown.test.ts && tsx src/local-agent-config.test.ts && tsx src/local-agent-catalog.test.ts && tsx src/local-agent-presentation.test.ts && tsx src/local-agent-runtime.test.ts && tsx src/local-agent-daemon-lifecycle.test.ts && tsx src/local-agent-daemon-protocol.test.ts && tsx src/local-agent-daemon.test.ts && tsx src/local-agent-codex.test.ts && tsx src/local-agent-opencode.test.ts && tsx src/local-agent-acp.test.ts && tsx src/local-agent-grok.test.ts && tsx src/local-agent-pi-sandbox.test.ts && tsx src/local-agent-pi.test.ts && tsx src/local-agent-claude.test.ts && tsx src/local-agent-adapters.test.ts && tsx src/local-agent-availability.test.ts && tsx src/local-agent-profiles.test.ts && tsx src/local-agent-resolution.test.ts && tsx src/local-agent-targets.test.ts && tsx src/local-agent-store.test.ts && tsx src/local-agent-manager.test.ts && tsx src/roots.test.ts && tsx src/skills.test.ts && tsx src/workspaces.test.ts && tsx src/workspace-conversation.test.ts && tsx src/review-checkpoints.test.ts && tsx src/server.test.ts && tsx src/oauth-store.test.ts && tsx src/cli-show-changes.test.ts && tsx src/cli.test.ts && tsx src/workflow-contracts.test.ts && tsx src/workflow-errors.test.ts && tsx src/workflow-types.test.ts && tsx src/workflow-store.test.ts && tsx src/workflow-lifecycle.test.ts && tsx src/workflow-view.test.ts && tsx src/workflow-summary.test.ts && tsx src/workflow-tui.test.ts && tsx src/workflow-script.test.ts && tsx src/workflow-sandbox.test.ts && tsx src/workflow-engine.test.ts && tsx src/workflow-files.test.ts && tsx src/workflow-launch.test.ts && tsx src/workflow-replay.test.ts && tsx src/workflow-schema.test.ts",
+    "typecheck": "tsx src/config-schema.test.ts && tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.1.0",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.200",
+    "@anthropic-ai/claude-agent-sdk": "0.3.200",
+    "@anthropic-ai/sandbox-runtime": "0.0.71",
     "@clack/prompts": "^1.5.1",
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@openai/codex-sdk": "^0.142.5",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.2.5",
     "ajv": "^8.20.0",
     "better-result": "^2.10.0",
     "better-sqlite3": "^12.10.0",
+    "cross-spawn": "^7.0.6",
     "diff": "^8.0.3",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "jsonc-parser": "^3.3.1",
     "json-schema-to-ts": "^3.1.1",
     "lucide": "^1.24.0",
     "react": "^19.2.6",

@@ -4,8 +4,7 @@ import { WORKFLOW_MAX_SCHEMA_RETRIES } from "./workflow-types.js";
 import { tryExtractJson, WorkflowEngineError } from "./workflow-api.js";
 import type { WorkflowProviderRunResult } from "./workflow-api.js";
 import {
-  classifyAgentProviderError,
-  isProviderSchemaUnsupportedError,
+  providerErrorFromCause,
   type AgentProviderError,
 } from "./local-agent-errors.js";
 import { supportsNativeStructuredOutput } from "./local-agent-capabilities.js";
@@ -131,21 +130,9 @@ export async function enforceAgentSchemaResult(
 
     const runResult = await Result.tryPromise({
       try: () => input.run(prompt, { mode, providerSessionId }),
-      catch: (cause) => classifyAgentProviderError(input.provider, cause),
+      catch: (cause) => classifyWorkflowProviderError(input.provider, cause),
     });
     if (runResult.isErr()) {
-      if (
-        mode === "native" &&
-        isProviderSchemaUnsupportedError(runResult.error) &&
-        attempt < maxRetries
-      ) {
-        input.onRetry?.({
-          attempt: attempt + 1,
-          errors: runResult.error.message,
-          mode,
-        });
-        continue;
-      }
       return Result.err(runResult.error);
     }
     const result = runResult.value;
@@ -198,6 +185,19 @@ export async function enforceAgentSchemaResult(
         }),
     ),
   );
+}
+
+function classifyWorkflowProviderError(
+  provider: LocalAgentProvider,
+  cause: unknown,
+): AgentProviderError {
+  const classified = providerErrorFromCause({
+    provider,
+    operation: "workflow.agent",
+    cause,
+  });
+  if (classified) return classified;
+  throw cause;
 }
 
 export function augmentPromptForSchema(prompt: string, schema: JsonSchema): string {

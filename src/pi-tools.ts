@@ -1,17 +1,11 @@
 import {
   createBashTool,
   createEditTool,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
   createReadTool,
   createWriteTool,
   type BashToolInput,
   type EditToolInput,
   type EditToolDetails,
-  type FindToolInput,
-  type GrepToolInput,
-  type LsToolInput,
   type ReadToolInput,
   type WriteToolInput,
   type AgentToolResult,
@@ -95,27 +89,6 @@ export async function editFileTool(input: EditToolInput, context: ToolContext): 
     path,
     edits: input.edits,
   }, context);
-}
-
-export async function grepFilesTool(input: GrepToolInput, context: ToolContext): Promise<ToolResponse> {
-  if (input.path) resolveAllowedPath(input.path, context.cwd, [context.root]);
-  const tool = createGrepTool(context.cwd);
-
-  return runTool((params) => tool.execute("grep_files", params), input, context);
-}
-
-export async function findFilesTool(input: FindToolInput, context: ToolContext): Promise<ToolResponse> {
-  if (input.path) resolveAllowedPath(input.path, context.cwd, [context.root]);
-  const tool = createFindTool(context.cwd);
-
-  return runTool((params) => tool.execute("find_files", params), input, context);
-}
-
-export async function listDirectoryTool(input: LsToolInput, context: ToolContext): Promise<ToolResponse> {
-  if (input.path) resolveAllowedPath(input.path, context.cwd, [context.root]);
-  const tool = createLsTool(context.cwd);
-
-  return runTool((params) => tool.execute("list_directory", params), input, context);
 }
 
 export async function runShellTool(input: BashToolInput, context: ToolContext): Promise<ToolResponse> {

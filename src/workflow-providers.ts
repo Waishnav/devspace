@@ -7,12 +7,13 @@ import type { ServerConfig } from "./config.js";
 
 /** Live providers in stable product order for workflow agent() resolution. */
 export function resolveWorkflowLiveProviders(
-  config: Pick<ServerConfig, "agentProviders">,
+  config: Pick<ServerConfig, "subagents">,
 ): LocalAgentProvider[] {
-  const snapshot = getLocalAgentProviderAvailabilitySnapshot(
-    process.env,
-    config.agentProviders,
-  );
+  if (!config.subagents.enabled) return [];
+  const enabled = config.subagents.providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => provider.id);
+  const snapshot = getLocalAgentProviderAvailabilitySnapshot(process.env);
   const live = new Set(snapshot.filter((row) => row.available).map((row) => row.name));
-  return LOCAL_AGENT_PROVIDERS.filter((id) => config.agentProviders.includes(id) && live.has(id));
+  return LOCAL_AGENT_PROVIDERS.filter((id) => enabled.includes(id) && live.has(id));
 }

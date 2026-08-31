@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  formatAvailableLocalAgentTargets,
   parseLocalAgentRunArgs,
   resolveLocalAgentTarget,
 } from "./local-agent-targets.js";
@@ -33,7 +32,6 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "hello", "world"]), {
   prompt: "hello world",
   model: undefined,
   effort: undefined,
-  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model", "gpt-5.1", "hello"]), {
@@ -41,7 +39,6 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model", "gpt-5.1", "hello"]
   prompt: "hello",
   model: "gpt-5.1",
   effort: undefined,
-  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model=gpt-5.1", "hello"]), {
@@ -49,7 +46,6 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model=gpt-5.1", "hello"]), 
   prompt: "hello",
   model: "gpt-5.1",
   effort: undefined,
-  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort", "high", "hello"]), {
@@ -57,7 +53,6 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort", "high", "hello"]),
   prompt: "hello",
   model: undefined,
   effort: "high",
-  json: false,
 });
 
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort=high", "hello"]), {
@@ -65,32 +60,6 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort=high", "hello"]), {
   prompt: "hello",
   model: undefined,
   effort: "high",
-  json: false,
-});
-
-// Legacy --thinking alias maps to effort.
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--thinking", "high", "hello"]), {
-  target: "codex",
-  prompt: "hello",
-  model: undefined,
-  effort: "high",
-  json: false,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "explain", "--json", "output"]), {
-  target: "codex",
-  prompt: "explain --json output",
-  model: undefined,
-  effort: undefined,
-  json: false,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "review changes", "--json"]), {
-  target: "codex",
-  prompt: "review changes",
-  model: undefined,
-  effort: undefined,
-  json: true,
 });
 
 assert.throws(
@@ -104,9 +73,21 @@ assert.throws(
 );
 
 assert.throws(
-  () => parseLocalAgentRunArgs([]),
-  /"<prompt>" \[--json\]$/,
+  () => parseLocalAgentRunArgs(["codex", "--unknown", "hello"]),
+  /Unknown option: --unknown/,
 );
+
+assert.throws(
+  () => parseLocalAgentRunArgs(["codex", "--model", "--unknown", "hello"]),
+  /Unknown option: --unknown/,
+);
+
+assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
+  target: "codex",
+  prompt: "--json literal",
+  model: undefined,
+  effort: undefined,
+});
 
 {
   const target = resolveLocalAgentTarget("reviewer", profiles);
@@ -141,11 +122,27 @@ assert.throws(
 }
 
 {
+  const providerDefaults = [{
+    id: "codex",
+    enabled: true,
+    model: "gpt-default",
+    effort: "medium",
+  }] as const;
+  const raw = resolveLocalAgentTarget("codex", profiles, undefined, undefined, providerDefaults);
+  assert.equal(raw?.model, "gpt-default");
+  assert.equal(raw?.effort, "medium");
+  const profiled = resolveLocalAgentTarget("reviewer", profiles, undefined, undefined, providerDefaults);
+  assert.equal(profiled?.model, "gpt-5-codex");
+  assert.equal(profiled?.effort, "high");
+  const overridden = resolveLocalAgentTarget("reviewer", profiles, "gpt-run", "xhigh", providerDefaults);
+  assert.equal(overridden?.model, "gpt-run");
+  assert.equal(overridden?.effort, "xhigh");
+}
+
+{
   const target = resolveLocalAgentTarget("claude", profiles);
   assert.equal(target?.kind, "profile");
   assert.equal(target?.provider, "opencode");
 }
 
 assert.equal(resolveLocalAgentTarget("missing", profiles), undefined);
-assert.match(formatAvailableLocalAgentTargets(profiles), /profiles: reviewer, claude/);
-assert.match(formatAvailableLocalAgentTargets([]), /providers: codex, claude, opencode, pi, cursor, copilot/);

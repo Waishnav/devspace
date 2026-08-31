@@ -6,10 +6,15 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -19,9 +24,7 @@ jobs:
           - windows-latest
 
     env:
-      DEVSPACE_ALLOWED_ROOTS: ${{ github.workspace }}
       DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
-      DEVSPACE_PUBLIC_BASE_URL: http://127.0.0.1:7676
 
     steps:
       - name: Checkout
@@ -36,10 +39,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Pi sandbox dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep bubblewrap socat
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Typecheck
         run: npm run typecheck
 
       - name: Test
+        env:
+          DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: npm test
 
       - name: Build

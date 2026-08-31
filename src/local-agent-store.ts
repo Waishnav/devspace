@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import type { ServerConfig } from "./config.js";
+import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
+import type { LocalAgentActivity, LocalAgentUsageSnapshot } from "./local-agent-runtime.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 
@@ -17,6 +19,10 @@ export interface LocalAgentRecord {
   status: LocalAgentStatus;
   latestResponse?: string;
   error?: string;
+  errorCode?: string;
+  errorRetryable?: boolean;
+  usage?: LocalAgentUsageSnapshot;
+  activity?: LocalAgentActivity[];
   createdAt: string;
   updatedAt: string;
 }
@@ -28,6 +34,11 @@ export interface CreateLocalAgentRecordInput {
   provider: string;
   model?: string;
   effort?: string;
+}
+
+export interface LocalAgentWorkspaceScope {
+  workspaceId?: string;
+  workspaceRoot: string;
 }
 
 export interface LocalAgentListScope {
@@ -47,6 +58,10 @@ interface LocalAgentRow {
   status: string;
   latest_response: string | null;
   error: string | null;
+  error_code: string | null;
+  error_retryable: string | null;
+  usage_json: string | null;
+  activity_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,7 +75,15 @@ export class LocalAgentStore {
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
     let rows: LocalAgentRow[];
-    if (scope.workspaceId) {
+    if (scope.workspaceId && scope.workspaceRoot) {
+      rows = this.database.sqlite
+        .prepare(
+          `select * from local_agent_sessions
+           where workspace_id = ? and workspace_root = ?
+           order by updated_at desc`,
+        )
+        .all(scope.workspaceId, resolve(scope.workspaceRoot)) as LocalAgentRow[];
+    } else if (scope.workspaceId) {
       rows = this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
@@ -83,6 +106,10 @@ export class LocalAgentStore {
     }
 
     return rows.map(rowToLocalAgentRecord);
+  }
+
+  listResult(scope: LocalAgentListScope = {}): BetterResult<LocalAgentRecord[], AgentStoreError> {
+    return storeResult("list", () => this.list(scope));
   }
 
   create(input: CreateLocalAgentRecordInput): LocalAgentRecord {
@@ -131,25 +158,31 @@ export class LocalAgentStore {
     return record;
   }
 
-  get(idOrPrefix: string): LocalAgentRecord | undefined {
+  createResult(input: CreateLocalAgentRecordInput): BetterResult<LocalAgentRecord, AgentStoreError> {
+    return storeResult("create", () => this.create(input));
+  }
+
+  getById(id: string): LocalAgentRecord | undefined {
     const exact = this.database.sqlite
       .prepare(
         `select * from local_agent_sessions
-         where id = ? or provider_session_id = ?
+         where id = ?
          limit 1`,
       )
-      .get(idOrPrefix, idOrPrefix) as LocalAgentRow | undefined;
-    if (exact) return rowToLocalAgentRecord(exact);
+      .get(id) as LocalAgentRow | undefined;
+    return exact ? rowToLocalAgentRecord(exact) : undefined;
+  }
 
-    const matches = this.database.sqlite
-      .prepare(
-        `select * from local_agent_sessions
-         where id like ? escape '\\' or provider_session_id like ? escape '\\'
-         order by updated_at desc`,
-      )
-      .all(`${escapeLike(idOrPrefix)}%`, `${escapeLike(idOrPrefix)}%`) as LocalAgentRow[];
+  getByIdResult(id: string): BetterResult<LocalAgentRecord | undefined, AgentStoreError> {
+    return storeResult("get", () => this.getById(id));
+  }
 
-    return matches.length === 1 ? rowToLocalAgentRecord(matches[0]!) : undefined;
+  /**
+   * Compatibility alias for callers that already use the store directly.
+   * Identity lookup is exact and never falls back to provider session IDs.
+   */
+  get(id: string): LocalAgentRecord | undefined {
+    return this.getById(id);
   }
 
   update(id: string, patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>): LocalAgentRecord {
@@ -175,6 +208,10 @@ export class LocalAgentStore {
           status = ?,
           latest_response = ?,
           error = ?,
+          error_code = ?,
+          error_retryable = ?,
+          usage_json = ?,
+          activity_json = ?,
           updated_at = ?
          where id = ?`,
       )
@@ -189,6 +226,10 @@ export class LocalAgentStore {
         updated.status,
         updated.latestResponse ?? null,
         updated.error ?? null,
+        updated.errorCode ?? null,
+        updated.errorRetryable === undefined ? null : String(updated.errorRetryable),
+        updated.usage === undefined ? null : JSON.stringify(updated.usage),
+        updated.activity === undefined ? null : JSON.stringify(updated.activity),
         updated.updatedAt,
         updated.id,
       );
@@ -196,20 +237,39 @@ export class LocalAgentStore {
     return updated;
   }
 
+  updateResult(
+    id: string,
+    patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>,
+  ): BetterResult<LocalAgentRecord, AgentStoreError> {
+    return storeResult("update", () => this.update(id, patch));
+  }
+
+  reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
+    const now = new Date().toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update local_agent_sessions
+         set status = 'error', error = ?, error_code = 'DAEMON_UNAVAILABLE', error_retryable = 'true', updated_at = ?
+         where status in ('starting', 'running')`,
+      )
+      .run(message, now);
+    return Number(result.changes);
+  }
+
+  reconcileActiveRunsResult(
+    message = "DevSpace restarted while this agent turn was running.",
+  ): BetterResult<number, AgentStoreError> {
+    return storeResult("reconcile_active_runs", () => this.reconcileActiveRuns(message));
+  }
+
   close(): void {
     this.database.close();
   }
 
-  private getById(id: string): LocalAgentRecord | undefined {
-    const row = this.database.sqlite
-      .prepare("select * from local_agent_sessions where id = ?")
-      .get(id) as LocalAgentRow | undefined;
-    return row ? rowToLocalAgentRecord(row) : undefined;
-  }
 }
 
-export function createLocalAgentStore(config: ServerConfig): LocalAgentStore {
-  return new LocalAgentStore(config.stateDir);
+export function createLocalAgentStore(stateDir: string): LocalAgentStore {
+  return new LocalAgentStore(stateDir);
 }
 
 function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
@@ -225,9 +285,81 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     status: readStatus(row.status),
     latestResponse: row.latest_response ?? undefined,
     error: row.error ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    errorRetryable: readOptionalBoolean(row.error_retryable),
+    usage: readUsage(row.usage_json),
+    activity: readActivity(row.activity_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readUsage(value: string | null): LocalAgentUsageSnapshot | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value) as unknown;
+  if (!isRecord(parsed)) return undefined;
+  const state = parsed.state;
+  const totalTokens = parsed.totalTokens;
+  if ((state !== "partial" && state !== "final") || !isNonNegativeInteger(totalTokens)) {
+    return undefined;
+  }
+  return {
+    inputTokens: optionalNonNegativeInteger(parsed.inputTokens),
+    cachedInputTokens: optionalNonNegativeInteger(parsed.cachedInputTokens),
+    cacheCreationInputTokens: optionalNonNegativeInteger(parsed.cacheCreationInputTokens),
+    outputTokens: optionalNonNegativeInteger(parsed.outputTokens),
+    totalTokens,
+    state,
+  };
+}
+
+function readActivity(value: string | null): LocalAgentActivity[] | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) return undefined;
+  return parsed.flatMap((item): LocalAgentActivity[] => {
+    if (!isRecord(item)) return [];
+    if (
+      item.kind !== "tool" && item.kind !== "command" && item.kind !== "file" && item.kind !== "status"
+    ) return [];
+    if (item.status !== "running" && item.status !== "completed" && item.status !== "failed") return [];
+    if (typeof item.label !== "string" || !item.label) return [];
+    return [{
+      kind: item.kind,
+      status: item.status,
+      label: item.label,
+      ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
+      ...(typeof item.startedAt === "string" ? { startedAt: item.startedAt } : {}),
+      ...(typeof item.completedAt === "string" ? { completedAt: item.completedAt } : {}),
+    }];
+  });
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return isNonNegativeInteger(value) ? value : undefined;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readOptionalBoolean(value: string | null): boolean | undefined {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
+function storeResult<T>(operation: string, run: () => T): BetterResult<T, AgentStoreError> {
+  try {
+    return Result.ok(run());
+  } catch (cause) {
+    if (isProgrammerDefect(cause)) throw cause;
+    return Result.err(new AgentStoreError(operation, cause));
+  }
 }
 
 function readStatus(status: string): LocalAgentStatus {
@@ -241,8 +373,4 @@ function readStatus(status: string): LocalAgentStatus {
     return status;
   }
   return "error";
-}
-
-function escapeLike(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }

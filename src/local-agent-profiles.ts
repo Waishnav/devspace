@@ -1,20 +1,20 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
 
-export const LOCAL_AGENT_PROVIDERS = [
+export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot" | "grok";
+
+export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
   "codex",
   "claude",
   "opencode",
   "pi",
   "cursor",
   "copilot",
-] as const;
-
-export type LocalAgentProvider = (typeof LOCAL_AGENT_PROVIDERS)[number];
+  "grok",
+];
 
 export interface LocalAgentProfile {
   name: string;
@@ -46,8 +46,9 @@ const PROVIDERS = new Set<LocalAgentProvider>(LOCAL_AGENT_PROVIDERS);
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
   workspaceRoot: string,
+  options: { includeDisabled?: boolean } = {},
 ): Promise<LocalAgentProfile[]> {
-  if (!config.subagents && !config.workflows) return [];
+  if (!config.subagents.enabled) return [];
 
   const profileDirs = [
     config.devspaceAgentsDir,
@@ -62,43 +63,8 @@ export async function loadLocalAgentProfiles(
   }
 
   return Array.from(profilesByName.values())
-    .filter((profile) => !profile.disabled)
+    .filter((profile) => options.includeDisabled || !profile.disabled)
     .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export function summarizeLocalAgentProfile(
-  profile: LocalAgentProfile,
-): LocalAgentProfileSummary {
-  return {
-    name: profile.name,
-    description: profile.description,
-    provider: profile.provider,
-    model: profile.model,
-    effort: profile.effort,
-  };
-}
-
-export function fingerprintLocalAgentProfile(profile: LocalAgentProfile): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        name: profile.name,
-        description: profile.description,
-        provider: profile.provider,
-        model: profile.model ?? null,
-        effort: profile.effort ?? null,
-        body: profile.body,
-      }),
-    )
-    .digest("hex");
-}
-
-export function buildLocalAgentProfilePrompt(
-  profile: Pick<LocalAgentProfile, "body">,
-  task: string,
-): string {
-  const body = profile.body.trim();
-  return body ? `${body}\n\nTask:\n${task}` : task;
 }
 
 async function loadProfilesFromDirectory(directory: string): Promise<LocalAgentProfile[]> {
@@ -181,8 +147,7 @@ function profileFromFrontmatter(
     description,
     provider,
     model: readString(frontmatter, "model"),
-    // Prefer effort; accept legacy thinking for one release.
-    effort: readString(frontmatter, "effort") ?? readString(frontmatter, "thinking"),
+    effort: readString(frontmatter, "effort"),
     filePath,
     body,
     disabled: frontmatter.disabled === true,
@@ -196,7 +161,7 @@ function readProvider(frontmatter: Record<string, unknown>, filePath: string): L
   }
   if (!PROVIDERS.has(provider as LocalAgentProvider)) {
     throw new Error(
-      `Subagent profile provider must be codex, claude, opencode, pi, cursor, or copilot: ${filePath}`,
+      `Subagent profile provider must be codex, claude, opencode, pi, cursor, copilot, or grok: ${filePath}`,
     );
   }
   return provider as LocalAgentProvider;
