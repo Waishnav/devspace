@@ -66,6 +66,15 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(begun.turn.prompt, "Review the current changes.");
   assert.equal(begun.turn.status, "running");
   assert.equal(begun.turn.completedAt, undefined);
+  assert.throws(
+    () => store.beginTurn(created.id, {
+      prompt: "Start overlapping work.",
+      model: begun.agent.model,
+      effort: begun.agent.effort,
+    }),
+    /already has a running turn/,
+  );
+  assert.equal(store.listTurns(created.id).length, 1);
 
   const completed = store.finishTurn(created.id, begun.turn.id, {
     status: "completed",
