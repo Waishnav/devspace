@@ -142,6 +142,25 @@ test("workspace paths outside the allowed roots are rejected", async (t) => {
   );
 });
 
+test("workspace paths cannot escape allowed roots through symlinks", async (t) => {
+  const context = await fixture(t);
+  const outsideLink = join(context.root, "outside-link");
+  await symlink(
+    context.outsideRoot,
+    outsideLink,
+    platform() === "win32" ? "junction" : "dir",
+  );
+
+  await assert.rejects(
+    () => context.registry.openWorkspace(outsideLink),
+    /outside allowed roots/,
+  );
+  await assert.rejects(
+    () => context.registry.openWorkspace({ path: outsideLink, mode: "worktree" }),
+    /outside allowed roots/,
+  );
+});
+
 test("a symlinked allowed root preserves checkout and worktree path behavior", { skip: platform() === "win32" }, async (t) => {
   const context = await fixture(t);
   const aliasRoot = join(context.root, "alias-root");

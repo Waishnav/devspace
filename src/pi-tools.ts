@@ -10,7 +10,7 @@ import {
   type WriteToolInput,
   type AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
-import { resolveAllowedPath } from "./roots.js";
+import { resolveCanonicalAllowedPath } from "./roots.js";
 
 type McpContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 export type ToolResponse<TDetails = unknown> = {
@@ -61,7 +61,11 @@ async function runTool<TInput, TDetails = unknown>(
 }
 
 export async function readFileTool(input: ReadToolInput, context: ToolContext): Promise<ToolResponse> {
-  const path = resolveAllowedPath(input.path, context.cwd, context.readRoots ?? [context.root]);
+  const path = await resolveCanonicalAllowedPath(
+    input.path,
+    context.cwd,
+    context.readRoots ?? [context.root],
+  );
   const tool = createReadTool(context.cwd);
 
   return runTool((params) => tool.execute("read_file", params), {
@@ -72,7 +76,7 @@ export async function readFileTool(input: ReadToolInput, context: ToolContext): 
 }
 
 export async function writeFileTool(input: WriteToolInput, context: ToolContext): Promise<ToolResponse> {
-  const path = resolveAllowedPath(input.path, context.cwd, [context.root]);
+  const path = await resolveCanonicalAllowedPath(input.path, context.cwd, [context.root]);
   const tool = createWriteTool(context.cwd);
 
   return runTool((params) => tool.execute("write_file", params), {
@@ -82,7 +86,7 @@ export async function writeFileTool(input: WriteToolInput, context: ToolContext)
 }
 
 export async function editFileTool(input: EditToolInput, context: ToolContext): Promise<ToolResponse<EditToolDetails>> {
-  const path = resolveAllowedPath(input.path, context.cwd, [context.root]);
+  const path = await resolveCanonicalAllowedPath(input.path, context.cwd, [context.root]);
   const tool = createEditTool(context.cwd);
 
   return runTool((params) => tool.execute("edit_file", params), {

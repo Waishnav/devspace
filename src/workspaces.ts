@@ -13,6 +13,7 @@ import { createManagedWorktree } from "./git-worktrees.js";
 import {
   AccessDeniedError,
   assertAllowedPath,
+  assertCanonicalAllowedPath,
   isPathInsideRoot,
   resolveAllowedPath,
 } from "./roots.js";
@@ -201,6 +202,7 @@ export class WorkspaceRegistry {
     let root: string;
     try {
       root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+      await assertCanonicalAllowedPath(root, this.config.allowedRoots);
       const rootStats = await stat(root);
       if (!rootStats.isDirectory()) return undefined;
     } catch (error) {
@@ -221,6 +223,7 @@ export class WorkspaceRegistry {
 
   private async conversationProjectKey(input: OpenWorkspaceInput): Promise<string> {
     const path = assertAllowedPath(input.path, this.config.allowedRoots);
+    await assertCanonicalAllowedPath(path, this.config.allowedRoots);
     return canonicalPath(path);
   }
 
@@ -327,6 +330,7 @@ export class WorkspaceRegistry {
 
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
     const root = assertAllowedPath(path, this.config.allowedRoots);
+    await assertCanonicalAllowedPath(root, this.config.allowedRoots);
     const rootStats = await ensureCheckoutWorkspaceRoot(root);
     if (!rootStats.isDirectory()) {
       throw new Error(`Workspace root must be a directory: ${path}`);
