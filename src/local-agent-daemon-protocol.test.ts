@@ -147,6 +147,8 @@ assert.equal(waitRequest.params.timeoutMs, 5_000);
 
 assert.deepEqual(decodeAgentWaitResults([
   { id: "agt_one", status: "completed", response: "Done." },
+  { id: "agt_empty", status: "completed", response: "" },
+  { id: "agt_whitespace", status: "completed", response: "  \n" },
   { id: "agt_two", status: "running", wait: "timeout" },
   {
     id: "agt_three",
@@ -155,6 +157,8 @@ assert.deepEqual(decodeAgentWaitResults([
   },
 ]), [
   { id: "agt_one", status: "completed", response: "Done." },
+  { id: "agt_empty", status: "completed", response: "" },
+  { id: "agt_whitespace", status: "completed", response: "  \n" },
   { id: "agt_two", status: "running", wait: "timeout" },
   {
     id: "agt_three",
