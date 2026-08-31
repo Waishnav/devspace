@@ -43,6 +43,7 @@ import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { openAiConversationScopeId } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
+import { isPathInsideRoot } from "./roots.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
@@ -112,31 +113,6 @@ function serverInstructions(
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
 }
 
-function formatVisibleAgent(agent: {
-  name: string;
-  provider: string;
-  model?: string;
-  effort?: string;
-}): string {
-  const model = agent.model ? `, model ${agent.model}` : "";
-  const effort = agent.effort ? `, effort ${agent.effort}` : "";
-  return `${agent.name} (${agent.provider}${model}${effort})`;
-}
-
-function formatAvailableAgentProvider(provider: {
-  id: string;
-  model?: string;
-  effort?: string;
-  note?: string;
-}): string {
-  const details = [
-    provider.model ? `model ${provider.model}` : undefined,
-    provider.effort ? `effort ${provider.effort}` : undefined,
-    provider.note,
-  ].filter(Boolean).join(", ");
-  return `${provider.id}${details ? ` (${details})` : ""}`;
-}
-
 const workspaceSkillOutputSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -166,6 +142,135 @@ const workspaceLocalAgentProviderOutputSchema = z.object({
 const workspaceAvailableAgentsFileOutputSchema = z.object({
   path: z.string(),
 });
+
+const workspaceInstructionsOutputSchema = z.object({
+  global: z.array(workspaceAgentsFileOutputSchema).optional(),
+  project: z.object({
+    loaded: z.array(workspaceAgentsFileOutputSchema),
+    available: z.array(workspaceAvailableAgentsFileOutputSchema),
+  }).optional(),
+});
+
+const workspaceSkillsOutputSchema = z.object({
+  global: z.array(workspaceSkillOutputSchema).optional(),
+  project: z.array(workspaceSkillOutputSchema).optional(),
+});
+
+const workspaceAgentsOutputSchema = z.object({
+  profiles: z.object({
+    global: z.array(workspaceLocalAgentOutputSchema).optional(),
+    project: z.array(workspaceLocalAgentOutputSchema).optional(),
+  }).optional(),
+  providers: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
+});
+
+function formatWorkspaceResourcePath(path: string, workspaceRoot: string): string {
+  return isPathInsideRoot(path, workspaceRoot)
+    ? formatAgentsPath(path, workspaceRoot)
+    : formatPathForPrompt(path);
+}
+
+function scopedInstructions(
+  loaded: Array<{ path: string; content: string }>,
+  available: Array<{ path: string }>,
+  workspaceRoot: string,
+): {
+  global?: Array<{ path: string; content: string }>;
+  project?: {
+    loaded: Array<{ path: string; content: string }>;
+    available: Array<{ path: string }>;
+  };
+} {
+  const global = loaded
+    .filter((file) => !isPathInsideRoot(file.path, workspaceRoot))
+    .map((file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      content: file.content,
+    }));
+  const projectLoaded = loaded
+    .filter((file) => isPathInsideRoot(file.path, workspaceRoot))
+    .map((file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      content: file.content,
+    }));
+  const projectAvailable = available.map((file) => ({
+    path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+  }));
+
+  return {
+    ...(global.length > 0 ? { global } : {}),
+    ...(projectLoaded.length > 0 || projectAvailable.length > 0
+      ? {
+          project: {
+            loaded: projectLoaded,
+            available: projectAvailable,
+          },
+        }
+      : {}),
+  };
+}
+
+function scopedSkills(
+  skills: Array<{
+    name: string;
+    description: string;
+    path: string;
+    scope: "global" | "project";
+  }>,
+): {
+  global?: Array<{ name: string; description: string; path: string }>;
+  project?: Array<{ name: string; description: string; path: string }>;
+} {
+  const summarize = (scope: "global" | "project") => skills
+    .filter((skill) => skill.scope === scope)
+    .map(({ scope: _scope, ...skill }) => skill);
+  const global = summarize("global");
+  const project = summarize("project");
+  return {
+    ...(global.length > 0 ? { global } : {}),
+    ...(project.length > 0 ? { project } : {}),
+  };
+}
+
+function scopedAgentCatalog(
+  profiles: Array<{
+    name: string;
+    description: string;
+    provider: string;
+    scope: "global" | "project";
+    model?: string;
+    effort?: string;
+  }>,
+  providers: Array<{
+    id: string;
+    model?: string;
+    effort?: string;
+    note?: string;
+  }>,
+): {
+  profiles?: {
+    global?: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+    project?: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+  };
+  providers?: Array<{ id: string; model?: string; effort?: string; note?: string }>;
+} {
+  const summarize = (scope: "global" | "project") => profiles
+    .filter((profile) => profile.scope === scope)
+    .map(({ scope: _scope, ...profile }) => profile);
+  const global = summarize("global");
+  const project = summarize("project");
+  return {
+    ...(global.length > 0 || project.length > 0
+      ? {
+          profiles: {
+            ...(global.length > 0 ? { global } : {}),
+            ...(project.length > 0 ? { project } : {}),
+          },
+        }
+      : {}),
+    ...(providers.length > 0 ? { providers } : {}),
+  };
+}
 
 function sendJsonRpcError(
   res: Response,
@@ -370,20 +475,9 @@ export function createMcpServer(
             managed: z.boolean(),
           })
           .optional(),
-        agentsFiles: z.array(workspaceAgentsFileOutputSchema).optional(),
-        availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
-        skills: z.array(workspaceSkillOutputSchema).optional(),
-        agentProviders: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
-        agents: z.array(workspaceLocalAgentOutputSchema).optional(),
-        skillDiagnostics: z.array(z.unknown()).optional(),
-        review: z.discriminatedUnion("available", [
-          z.object({ available: z.literal(true) }),
-          z.object({
-            available: z.literal(false),
-            reason: z.string(),
-          }),
-        ]),
-        instruction: z.string(),
+        instructions: workspaceInstructionsOutputSchema.optional(),
+        skills: workspaceSkillsOutputSchema.optional(),
+        agents: workspaceAgentsOutputSchema.optional(),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
@@ -404,13 +498,15 @@ export function createMcpServer(
         workspaceId: workspace.id,
         root: workspace.root,
       });
-      const cardSkills = workspace.skills
+      const scopedSkillCatalog = workspace.skills
         .filter((skill) => !skill.disableModelInvocation)
         .map((skill) => ({
           name: skill.name,
           description: skill.description,
-          path: formatPathForPrompt(skill.filePath),
+          path: formatWorkspaceResourcePath(skill.filePath, workspace.root),
+          scope: isPathInsideRoot(skill.filePath, workspace.root) ? "project" as const : "global" as const,
         }));
+      const cardSkills = scopedSkillCatalog.map(({ scope: _scope, ...skill }) => skill);
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
         workspace.agentProfiles,
@@ -424,31 +520,22 @@ export function createMcpServer(
           effort: provider.effort,
           note: provider.note,
         }));
-      const cardAgents = agentCatalog.profiles;
+      const profileScopes = new Map(workspace.agentProfiles.map((profile) => [profile.name, profile.scope]));
+      const scopedAgents = agentCatalog.profiles.map((profile) => ({
+        ...profile,
+        scope: profileScopes.get(profile.name) ?? "global" as const,
+      }));
+      const cardAgents = scopedAgents.map(({ scope: _scope, ...profile }) => profile);
       const cardAgentsFiles = agentsFiles.map((file) => ({
-        path: formatAgentsPath(file.path, workspace.root),
+        path: formatWorkspaceResourcePath(file.path, workspace.root),
         content: file.content,
       }));
       const cardAvailableAgentsFiles = availableAgentsFiles.map((file) => ({
-        path: formatAgentsPath(file.path, workspace.root),
+        path: formatWorkspaceResourcePath(file.path, workspace.root),
       }));
-      const visibleSkills = includeBootstrapContext ? cardSkills : [];
-      const visibleAgentProviders = includeBootstrapContext ? cardAgentProviders : [];
-      const visibleAgents = includeBootstrapContext ? cardAgents : [];
-      const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
-      const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
         ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
         : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
-      const instruction = workspaceReused
-        ? [
-            `Workspace already open as ${workspace.id}.`,
-            "Continue with this workspaceId.",
-            "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
-          ].join("\n\n")
-        : workspace.mode === "worktree"
-          ? "Use this workspaceId for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
-          : cardInstruction;
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -460,22 +547,9 @@ export function createMcpServer(
                 : `Opened workspace ${workspace.id}.`,
             `Root: ${workspace.root}`,
             `Mode: ${workspace.mode}`,
-            loadedAgentsFiles.length > 0
-              ? `Loaded project instructions: ${loadedAgentsFiles.map((file) => file.path).join(", ")}`
-              : undefined,
-            availableAgentsFileOutputs.length > 0
-              ? `Available nested instructions: ${availableAgentsFileOutputs.map((file) => file.path).join(", ")}`
-              : undefined,
-            visibleSkills.length > 0
-              ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
-              : undefined,
-            visibleAgentProviders.length > 0
-              ? `Available subagent providers: ${visibleAgentProviders.map(formatAvailableAgentProvider).join(", ")}`
-              : undefined,
-            visibleAgents.length > 0
-              ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
-              : undefined,
-            instruction,
+            workspaceReused
+              ? "Continue using this workspaceId for work in this workspace."
+              : "Use this workspaceId for work in this workspace.",
           ].filter(Boolean).join("\n"),
         },
       ];
@@ -522,18 +596,17 @@ export function createMcpServer(
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
           worktree: workspace.worktree,
-          review,
           ...(includeBootstrapContext
             ? {
-                agentsFiles: loadedAgentsFiles,
-                availableAgentsFiles: availableAgentsFileOutputs,
-                skills: visibleSkills,
-                agentProviders: visibleAgentProviders,
-                agents: visibleAgents,
-                skillDiagnostics: workspace.skillDiagnostics,
+                instructions: scopedInstructions(
+                  agentsFiles,
+                  availableAgentsFiles,
+                  workspace.root,
+                ),
+                skills: scopedSkills(scopedSkillCatalog),
+                agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
               }
             : {}),
-          instruction,
         },
       };
     },

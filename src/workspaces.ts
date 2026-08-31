@@ -293,24 +293,27 @@ export class WorkspaceRegistry {
   }
 
   resolveReadPath(workspace: Workspace, inputPath: string): WorkspaceReadPath {
+    const skillRead = resolveSkillReadPath(
+      workspace.skills,
+      workspace.activatedSkillDirs,
+      inputPath,
+      workspace.root,
+    );
+    if (skillRead) {
+      return {
+        absolutePath: skillRead.absolutePath,
+        readRoots: [workspace.root, skillRead.skill.baseDir],
+        skillRead,
+      };
+    }
+
     try {
       return {
         absolutePath: this.resolvePath(workspace, inputPath),
         readRoots: [workspace.root],
       };
     } catch (workspaceError) {
-      const skillRead = resolveSkillReadPath(
-        workspace.skills,
-        workspace.activatedSkillDirs,
-        inputPath,
-      );
-      if (!skillRead) throw workspaceError;
-
-      return {
-        absolutePath: skillRead.absolutePath,
-        readRoots: [workspace.root, skillRead.skill.baseDir],
-        skillRead,
-      };
+      throw workspaceError;
     }
   }
 

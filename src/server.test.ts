@@ -63,15 +63,19 @@ test("UI metadata is limited to workspace and aggregate review", async (t) => {
   }
 });
 
-test("open_workspace reports aggregate review availability", async (t) => {
+test("open_workspace keeps aggregate review availability in card metadata", async (t) => {
   const plain = await fixture(t);
   const gitWorkspace = await fixture(t, { git: true });
 
-  const plainReview = structuredContent(await callOpen(plain.client, plain.project, "plain")).review;
-  const gitReview = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git")).review;
+  const plainResult = await callOpen(plain.client, plain.project, "plain");
+  const gitResult = await callOpen(gitWorkspace.client, gitWorkspace.project, "git");
+  const plainReview = responseCard(plainResult).review;
+  const gitReview = responseCard(gitResult).review;
 
   assert.equal((plainReview as { available: boolean }).available, false);
   assert.deepEqual(gitReview, { available: true });
+  assert.equal(structuredContent(plainResult).review, undefined);
+  assert.equal(structuredContent(gitResult).review, undefined);
 });
 
 test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
@@ -165,7 +169,7 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   );
 });
 
-test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
+test("open_workspace returns scoped model context without internal workspace state", async (t) => {
   const providerNote = "available";
   const context = await fixture(t, {
     localAgentProviders: [{ name: "codex", available: true, note: providerNote }],
@@ -180,37 +184,53 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   const outputProperties = (openTool?.outputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
   assert.equal(outputProperties && "workspaceReused" in outputProperties, false);
   assert.equal(outputProperties && "includeBootstrapContext" in outputProperties, false);
-  const providerSchema = outputProperties?.agentProviders as {
+  assert.equal(outputProperties && "skillDiagnostics" in outputProperties, false);
+  assert.equal(outputProperties && "review" in outputProperties, false);
+  assert.equal(outputProperties && "instruction" in outputProperties, false);
+  const agentsSchema = outputProperties?.agents as {
+    properties?: Record<string, unknown>;
+  } | undefined;
+  const providerSchema = agentsSchema?.properties?.providers as {
     items?: { properties?: Record<string, unknown> };
   } | undefined;
   assert.ok(providerSchema?.items?.properties?.note);
 
   const firstStructured = structuredContent(first);
   assert.equal(firstStructured.workspaceId, structuredContent(repeated).workspaceId);
-  assert.ok(Array.isArray(firstStructured.agentsFiles));
-  assert.ok(Array.isArray(firstStructured.availableAgentsFiles));
-  assert.ok(Array.isArray(firstStructured.skills));
-  assert.ok(Array.isArray(firstStructured.agentProviders));
+  const instructions = firstStructured.instructions as Record<string, unknown>;
+  assert.ok(Array.isArray(instructions.global));
+  const projectInstructions = instructions.project as Record<string, unknown>;
+  assert.ok(Array.isArray(projectInstructions.loaded));
+  assert.ok(Array.isArray(projectInstructions.available));
   assert.equal(
-    (firstStructured.agentProviders as Array<Record<string, unknown>>)[0]?.id,
+    ((projectInstructions.loaded as Array<Record<string, unknown>>)[0]?.path),
+    "AGENTS.md",
+  );
+  const agents = firstStructured.agents as Record<string, unknown>;
+  assert.ok(Array.isArray(agents.providers));
+  assert.equal(
+    (agents.providers as Array<Record<string, unknown>>)[0]?.id,
     "codex",
   );
   assert.equal(
-    (firstStructured.agentProviders as Array<Record<string, unknown>>)[0]?.note,
+    (agents.providers as Array<Record<string, unknown>>)[0]?.note,
     providerNote,
   );
-  assert.ok(Array.isArray(firstStructured.agents));
-  assert.ok(Array.isArray(firstStructured.skillDiagnostics));
+  const profiles = agents.profiles as Record<string, unknown>;
+  assert.ok(Array.isArray(profiles.project));
+  assert.equal(firstStructured.skillDiagnostics, undefined);
+  assert.equal(firstStructured.review, undefined);
+  assert.equal(firstStructured.instruction, undefined);
   assert.equal("workspaceReused" in firstStructured, false);
   assert.equal("includeBootstrapContext" in firstStructured, false);
 
   const repeatedStructured = structuredContent(repeated);
-  assert.equal(repeatedStructured.agentsFiles, undefined);
-  assert.equal(repeatedStructured.availableAgentsFiles, undefined);
+  assert.equal(repeatedStructured.instructions, undefined);
   assert.equal(repeatedStructured.skills, undefined);
-  assert.equal(repeatedStructured.agentProviders, undefined);
   assert.equal(repeatedStructured.agents, undefined);
   assert.equal(repeatedStructured.skillDiagnostics, undefined);
+  assert.equal(repeatedStructured.review, undefined);
+  assert.equal(repeatedStructured.instruction, undefined);
   assert.equal("workspaceReused" in repeatedStructured, false);
   assert.equal("includeBootstrapContext" in repeatedStructured, false);
 
@@ -228,6 +248,36 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.agents));
 });
 
+test("open_workspace uses workspace-relative paths for project context", async (t) => {
+  const context = await fixture(t);
+  const skillDir = join(context.project, ".agents", "skills", "project-skill");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: project-skill",
+      "description: Project-only workflow.",
+      "---",
+      "",
+      "# Project Skill",
+    ].join("\n"),
+  );
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const instructions = opened.instructions as Record<string, unknown>;
+  const projectInstructions = instructions.project as Record<string, unknown>;
+  assert.equal(
+    (projectInstructions.loaded as Array<Record<string, unknown>>)[0]?.path,
+    "AGENTS.md",
+  );
+  const skills = opened.skills as Record<string, unknown>;
+  assert.equal(
+    (skills.project as Array<Record<string, unknown>>).find((skill) => skill.name === "project-skill")?.path,
+    ".agents/skills/project-skill/SKILL.md",
+  );
+});
+
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
   const context = await fixture(t, {
@@ -235,17 +285,18 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   });
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  assert.deepEqual(unavailable.agentProviders, []);
-  assert.deepEqual(unavailable.agents, []);
+  assert.deepEqual(unavailable.agents, {});
 
   available = true;
   const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
+  const usableAgents = usable.agents as Record<string, unknown>;
   assert.equal(
-    (usable.agentProviders as Array<Record<string, unknown>>)[0]?.id,
+    (usableAgents.providers as Array<Record<string, unknown>>)[0]?.id,
     "codex",
   );
+  const usableProfiles = usableAgents.profiles as Record<string, unknown>;
   assert.equal(
-    (usable.agents as Array<Record<string, unknown>>)[0]?.name,
+    (usableProfiles.project as Array<Record<string, unknown>>)[0]?.name,
     "reviewer",
   );
 });
@@ -266,8 +317,9 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
   });
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const agents = opened.agents as Record<string, unknown>;
   assert.deepEqual(
-    (opened.agentProviders as Array<Record<string, unknown>>).map((provider) => provider.id),
+    (agents.providers as Array<Record<string, unknown>>).map((provider) => provider.id),
     ["codex"],
   );
 });
@@ -280,11 +332,11 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   const unscoped = await callOpen(context.client, context.project);
 
   assert.equal(structuredContent(repeated).workspaceId, structuredContent(first).workspaceId);
-  assert.equal(structuredContent(repeated).agentsFiles, undefined);
+  assert.equal(structuredContent(repeated).instructions, undefined);
   assert.notEqual(structuredContent(otherSession).workspaceId, structuredContent(first).workspaceId);
   assert.notEqual(structuredContent(unscoped).workspaceId, structuredContent(first).workspaceId);
-  assert.ok(Array.isArray(structuredContent(otherSession).agentsFiles));
-  assert.ok(Array.isArray(structuredContent(unscoped).agentsFiles));
+  assert.ok(structuredContent(otherSession).instructions);
+  assert.ok(structuredContent(unscoped).instructions);
 });
 
 interface ServerFixture {
