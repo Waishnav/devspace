@@ -280,6 +280,11 @@ export class LocalAgentStore {
 
   beginTurn(agentId: string, input: BeginLocalAgentTurnInput): BegunLocalAgentTurn {
     return this.database.sqlite.transaction(() => {
+      const current = this.getById(agentId);
+      if (!current) throw new Error(`Unknown subagent id: ${agentId}`);
+      if (current.status === "running") {
+        throw new Error(`Subagent ${agentId} already has a running turn.`);
+      }
       const agent = this.update(agentId, {
         status: "running",
         model: input.model,
