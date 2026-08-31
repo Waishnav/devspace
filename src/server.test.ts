@@ -278,6 +278,90 @@ test("open_workspace uses workspace-relative paths for project context", async (
   );
 });
 
+test("open_workspace re-emits changed project instructions without repeating global context", async (t) => {
+  const context = await fixture(t);
+  await callOpen(context.client, context.project, "chat-1");
+  await writeFile(join(context.project, "AGENTS.md"), "updated project instructions\n");
+
+  const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const instructions = reopened.instructions as Record<string, unknown>;
+  assert.equal(instructions.global, undefined);
+  const project = instructions.project as Record<string, unknown>;
+  assert.equal(
+    (project.loaded as Array<Record<string, unknown>>)[0]?.content,
+    "updated project instructions\n",
+  );
+  assert.equal(reopened.skills, undefined);
+  assert.equal(reopened.agents, undefined);
+});
+
+test("open_workspace re-emits changed global instructions without repeating project context", async (t) => {
+  const context = await fixture(t);
+  await callOpen(context.client, context.project, "chat-1");
+  await writeFile(join(context.config.agentDir, "AGENTS.md"), "updated global instructions\n");
+
+  const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const instructions = reopened.instructions as Record<string, unknown>;
+  assert.equal(instructions.project, undefined);
+  assert.equal(
+    (instructions.global as Array<Record<string, unknown>>)[0]?.content,
+    "updated global instructions\n",
+  );
+  assert.equal(reopened.skills, undefined);
+  assert.equal(reopened.agents, undefined);
+});
+
+test("open_workspace refreshes project skills before selective delivery", async (t) => {
+  const context = await fixture(t);
+  await callOpen(context.client, context.project, "chat-1");
+  const skillDir = join(context.project, ".agents", "skills", "new-skill");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: new-skill",
+      "description: Added after the workspace was opened.",
+      "---",
+      "",
+      "# New Skill",
+    ].join("\n"),
+  );
+
+  const reopened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const skills = reopened.skills as Record<string, unknown>;
+  assert.equal(skills.global, undefined);
+  assert.equal(
+    (skills.project as Array<Record<string, unknown>>)[0]?.path,
+    ".agents/skills/new-skill/SKILL.md",
+  );
+  assert.equal(reopened.instructions, undefined);
+  assert.equal(reopened.agents, undefined);
+});
+
+test("a conversation reuses global context when opening another project", async (t) => {
+  const context = await fixture(t);
+  const otherProject = join(context.project, "..", "other-project");
+  await mkdir(otherProject, { recursive: true });
+  await writeFile(join(otherProject, "AGENTS.md"), "other project instructions\n");
+
+  await callOpen(context.client, context.project, "chat-1");
+  const opened = structuredContent(await callOpen(context.client, otherProject, "chat-1"));
+  const instructions = opened.instructions as Record<string, unknown>;
+  assert.equal(instructions.global, undefined);
+  const project = instructions.project as Record<string, unknown>;
+  assert.equal(
+    (project.loaded as Array<Record<string, unknown>>)[0]?.content,
+    "other project instructions\n",
+  );
+  const skills = opened.skills as Record<string, unknown>;
+  assert.equal(skills.global, undefined);
+  const agents = opened.agents as Record<string, unknown>;
+  assert.equal(agents.providers, undefined);
+  const profiles = agents.profiles as Record<string, unknown>;
+  assert.equal(profiles.global, undefined);
+});
+
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
   const context = await fixture(t, {
@@ -285,11 +369,16 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   });
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  assert.deepEqual(unavailable.agents, {});
+  const unavailableAgents = unavailable.agents as Record<string, unknown>;
+  assert.deepEqual(unavailableAgents.providers, []);
+  const unavailableProfiles = unavailableAgents.profiles as Record<string, unknown>;
+  assert.deepEqual(unavailableProfiles.project, []);
 
   available = true;
-  const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
+  const usable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const usableAgents = usable.agents as Record<string, unknown>;
+  assert.equal(usable.instructions, undefined);
+  assert.equal(usable.skills, undefined);
   assert.equal(
     (usableAgents.providers as Array<Record<string, unknown>>)[0]?.id,
     "codex",
@@ -339,9 +428,38 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.ok(structuredContent(unscoped).instructions);
 });
 
+test("open_workspace reuses unchanged context when switching to worktree mode", async (t) => {
+  const context = await fixture(t, { git: true });
+  const checkout = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const worktree = structuredContent(
+    await callOpen(context.client, context.project, "chat-1", "worktree"),
+  );
+
+  assert.notEqual(worktree.workspaceId, checkout.workspaceId);
+  assert.equal(worktree.mode, "worktree");
+  assert.equal(worktree.instructions, undefined);
+  assert.equal(worktree.skills, undefined);
+  assert.equal(worktree.agents, undefined);
+});
+
+test("concurrent checkout opens deliver context once", async (t) => {
+  const context = await fixture(t);
+  const [first, second] = await Promise.all([
+    callOpen(context.client, context.project, "chat-1"),
+    callOpen(context.client, context.project, "chat-1"),
+  ]);
+
+  assert.equal(structuredContent(first).workspaceId, structuredContent(second).workspaceId);
+  assert.equal(
+    [first, second].filter((result) => structuredContent(result).instructions !== undefined).length,
+    1,
+  );
+});
+
 interface ServerFixture {
   client: Client;
   project: string;
+  config: ServerConfig;
 }
 
 async function fixture(
@@ -446,7 +564,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project };
+  return { client, project, config };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
@@ -457,10 +575,14 @@ async function callOpen(
   client: Client,
   path: string,
   conversationScopeId?: string,
+  mode?: "checkout" | "worktree",
 ): Promise<Awaited<ReturnType<Client["callTool"]>>> {
   const params = {
     name: "open_workspace",
-    arguments: { path },
+    arguments: {
+      path,
+      ...(mode ? { mode } : {}),
+    },
     ...(conversationScopeId
       ? { _meta: { "openai/session": conversationScopeId } }
       : {}),

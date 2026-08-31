@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -45,7 +45,11 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
 import { isPathInsideRoot } from "./roots.js";
 import { createWorkspaceStore } from "./workspace-store.js";
-import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import {
+  formatAgentsPath,
+  WorkspaceRegistry,
+  type WorkspaceContext,
+} from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -175,8 +179,8 @@ function scopedInstructions(
   available: Array<{ path: string }>,
   workspaceRoot: string,
 ): {
-  global?: Array<{ path: string; content: string }>;
-  project?: {
+  global: Array<{ path: string; content: string }>;
+  project: {
     loaded: Array<{ path: string; content: string }>;
     available: Array<{ path: string }>;
   };
@@ -198,15 +202,11 @@ function scopedInstructions(
   }));
 
   return {
-    ...(global.length > 0 ? { global } : {}),
-    ...(projectLoaded.length > 0 || projectAvailable.length > 0
-      ? {
-          project: {
-            loaded: projectLoaded,
-            available: projectAvailable,
-          },
-        }
-      : {}),
+    global,
+    project: {
+      loaded: projectLoaded,
+      available: projectAvailable,
+    },
   };
 }
 
@@ -218,18 +218,15 @@ function scopedSkills(
     scope: "global" | "project";
   }>,
 ): {
-  global?: Array<{ name: string; description: string; path: string }>;
-  project?: Array<{ name: string; description: string; path: string }>;
+  global: Array<{ name: string; description: string; path: string }>;
+  project: Array<{ name: string; description: string; path: string }>;
 } {
   const summarize = (scope: "global" | "project") => skills
     .filter((skill) => skill.scope === scope)
     .map(({ scope: _scope, ...skill }) => skill);
   const global = summarize("global");
   const project = summarize("project");
-  return {
-    ...(global.length > 0 ? { global } : {}),
-    ...(project.length > 0 ? { project } : {}),
-  };
+  return { global, project };
 }
 
 function scopedAgentCatalog(
@@ -248,11 +245,11 @@ function scopedAgentCatalog(
     note?: string;
   }>,
 ): {
-  profiles?: {
-    global?: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
-    project?: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+  profiles: {
+    global: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+    project: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
   };
-  providers?: Array<{ id: string; model?: string; effort?: string; note?: string }>;
+  providers: Array<{ id: string; model?: string; effort?: string; note?: string }>;
 } {
   const summarize = (scope: "global" | "project") => profiles
     .filter((profile) => profile.scope === scope)
@@ -260,16 +257,100 @@ function scopedAgentCatalog(
   const global = summarize("global");
   const project = summarize("project");
   return {
-    ...(global.length > 0 || project.length > 0
-      ? {
-          profiles: {
-            ...(global.length > 0 ? { global } : {}),
-            ...(project.length > 0 ? { project } : {}),
-          },
-        }
-      : {}),
-    ...(providers.length > 0 ? { providers } : {}),
+    profiles: { global, project },
+    providers,
   };
+}
+
+interface WorkspaceContextSnapshots {
+  instructions: ReturnType<typeof scopedInstructions>;
+  skills: ReturnType<typeof scopedSkills>;
+  agents: ReturnType<typeof scopedAgentCatalog>;
+}
+
+function conversationContextOutput(
+  workspaces: WorkspaceRegistry,
+  context: WorkspaceContext,
+  snapshots: WorkspaceContextSnapshots,
+): {
+  instructions?: {
+    global?: WorkspaceContextSnapshots["instructions"]["global"];
+    project?: WorkspaceContextSnapshots["instructions"]["project"];
+  };
+  skills?: {
+    global?: WorkspaceContextSnapshots["skills"]["global"];
+    project?: WorkspaceContextSnapshots["skills"]["project"];
+  };
+  agents?: {
+    profiles?: {
+      global?: WorkspaceContextSnapshots["agents"]["profiles"]["global"];
+      project?: WorkspaceContextSnapshots["agents"]["profiles"]["project"];
+    };
+    providers?: WorkspaceContextSnapshots["agents"]["providers"];
+  };
+} {
+  const projectKey = context.projectKey
+    ?? context.workspace.sourceRoot
+    ?? context.workspace.root;
+  const keys = {
+    globalInstructions: JSON.stringify(["global", "instructions"]),
+    projectInstructions: JSON.stringify(["project", projectKey, "instructions"]),
+    globalSkills: JSON.stringify(["global", "skills"]),
+    projectSkills: JSON.stringify(["project", projectKey, "skills"]),
+    globalProfiles: JSON.stringify(["global", "agent-profiles"]),
+    projectProfiles: JSON.stringify(["project", projectKey, "agent-profiles"]),
+    providers: JSON.stringify(["global", "agent-providers"]),
+  };
+  const values = new Map<string, unknown>([
+    [keys.globalInstructions, snapshots.instructions.global],
+    [keys.projectInstructions, snapshots.instructions.project],
+    [keys.globalSkills, snapshots.skills.global],
+    [keys.projectSkills, snapshots.skills.project],
+    [keys.globalProfiles, snapshots.agents.profiles.global],
+    [keys.projectProfiles, snapshots.agents.profiles.project],
+    [keys.providers, snapshots.agents.providers],
+  ]);
+  const changed = workspaces.claimConversationContexts(
+    context,
+    Array.from(values, ([contextKey, value]) => ({
+      contextKey,
+      fingerprint: contextFingerprint(value),
+    })),
+  );
+  const instructions = {
+    ...(changed.has(keys.globalInstructions)
+      ? { global: snapshots.instructions.global }
+      : {}),
+    ...(changed.has(keys.projectInstructions)
+      ? { project: snapshots.instructions.project }
+      : {}),
+  };
+  const skills = {
+    ...(changed.has(keys.globalSkills) ? { global: snapshots.skills.global } : {}),
+    ...(changed.has(keys.projectSkills) ? { project: snapshots.skills.project } : {}),
+  };
+  const profiles = {
+    ...(changed.has(keys.globalProfiles)
+      ? { global: snapshots.agents.profiles.global }
+      : {}),
+    ...(changed.has(keys.projectProfiles)
+      ? { project: snapshots.agents.profiles.project }
+      : {}),
+  };
+  const agents = {
+    ...(Object.keys(profiles).length > 0 ? { profiles } : {}),
+    ...(changed.has(keys.providers) ? { providers: snapshots.agents.providers } : {}),
+  };
+
+  return {
+    ...(Object.keys(instructions).length > 0 ? { instructions } : {}),
+    ...(Object.keys(skills).length > 0 ? { skills } : {}),
+    ...(Object.keys(agents).length > 0 ? { agents } : {}),
+  };
+}
+
+function contextFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function sendJsonRpcError(
@@ -484,16 +565,17 @@ export function createMcpServer(
     },
     async ({ path, mode, baseRef }, { _meta }) => {
       const startedAt = performance.now();
+      const workspaceContext = await workspaces.openWorkspace(
+        { path, mode, baseRef },
+        { conversationScopeId: openAiConversationScopeId(_meta) },
+      );
       const {
         workspace,
         agentsFiles,
         availableAgentsFiles,
         workspaceReused,
         includeBootstrapContext,
-      } = await workspaces.openWorkspace(
-        { path, mode, baseRef },
-        { conversationScopeId: openAiConversationScopeId(_meta) },
-      );
+      } = workspaceContext;
       const review = await reviewCheckpoints.initializeWorkspace({
         workspaceId: workspace.id,
         root: workspace.root,
@@ -536,6 +618,19 @@ export function createMcpServer(
       const cardInstruction = config.skillsEnabled
         ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
         : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+      const modelContext = conversationContextOutput(
+        workspaces,
+        workspaceContext,
+        {
+          instructions: scopedInstructions(
+            agentsFiles,
+            availableAgentsFiles,
+            workspace.root,
+          ),
+          skills: scopedSkills(scopedSkillCatalog),
+          agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
+        },
+      );
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -596,17 +691,7 @@ export function createMcpServer(
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
           worktree: workspace.worktree,
-          ...(includeBootstrapContext
-            ? {
-                instructions: scopedInstructions(
-                  agentsFiles,
-                  availableAgentsFiles,
-                  workspace.root,
-                ),
-                skills: scopedSkills(scopedSkillCatalog),
-                agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
-              }
-            : {}),
+          ...modelContext,
         },
       };
     },
