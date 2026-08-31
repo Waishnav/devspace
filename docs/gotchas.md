@@ -133,11 +133,15 @@ project.
 Workspace session metadata is persisted. ChatGPT may provide optional
 conversation metadata that lets DevSpace resume the same checkout workspace for
 the same project in that conversation; repeated opens reuse the `workspaceId`
-and do not repeat context already provided for that reused checkout. Worktree
-mode always creates a new isolated workspace with its own complete context.
-Hosts without supported conversation metadata receive a normal new workspace.
-In all cases, continue passing the `workspaceId` returned by `open_workspace` to
-later tools. Other MCP hosts use this explicit workspace workflow as well.
+and DevSpace avoids repeating unchanged global/project context already delivered
+in that conversation. Worktree mode still creates a new isolated workspace, but
+unchanged instructions, skills, agent profiles, and provider state can be
+omitted from its model-visible result. A scope that appears again is the complete
+replacement snapshot for that scope. Hosts without supported conversation
+metadata receive a normal new workspace and complete context on each open. In
+all cases, continue passing the `workspaceId` returned by `open_workspace` to
+later tools and retain previously supplied context scopes when later results omit
+them.
 
 To review work, call `show_changes` once after the final related file change. It
 shows the combined changes and advances the review point automatically.
@@ -145,8 +149,9 @@ shows the combined changes and advances the review point automatically.
 ## Data Retention
 
 DevSpace does not currently prune workspace sessions, conversation bindings,
-or review refs. A future product retention policy will define safe cleanup for
-these records; no automatic deletion is performed today.
+conversation context fingerprints, or review refs. A future product retention
+policy will define safe cleanup for these records; no automatic deletion is
+performed today.
 
 ## MCP Workspace Path Rejected
 
@@ -241,6 +246,8 @@ Legacy project paths such as `.pi/skills` can be added to `skills.paths` when ne
 
 If a skill appears in `open_workspace`, the model must read that skill's
 `SKILL.md` before reading other files inside the skill directory.
+Project skill paths are relative to the active workspace root; global skill paths
+may be home-shortened or absolute.
 
 ## Review Card Does Not Appear
 
@@ -254,5 +261,7 @@ in `~/.devspace/config.jsonc` and reconnect the MCP server.
 
 Historical `show_changes` cards use the `reviewRef` in their structured result
 to recover the exact Git-backed review when a host reloads the app without its
-original result metadata. `open_workspace` can rebuild its card directly from
-its structured result.
+original result metadata. `open_workspace` can rebuild its card from the scoped
+workspace context present in its structured result; hidden result metadata is
+used when available to preserve the complete card for selectively suppressed
+scopes.
