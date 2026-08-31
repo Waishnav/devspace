@@ -13,11 +13,23 @@ assert.deepEqual(snapshot.find((provider) => provider.name === "codex"), {
   available: false,
   reason: "/definitely/missing/devspace-codex executable not found",
 });
+assert.equal(
+  getLocalAgentProviderAvailabilitySnapshot({ ...process.env, CODEX_COMMAND: "" })
+    .find((provider) => provider.name === "codex")?.available,
+  false,
+);
 
 {
   const directory = mkdtempSync(join(tmpdir(), "devspace-provider-command-"));
   const executable = join(directory, "codex-wrapper");
   try {
+    assert.equal(
+      getLocalAgentProviderAvailabilitySnapshot({
+        ...process.env,
+        CODEX_COMMAND: directory,
+      }).find((provider) => provider.name === "codex")?.available,
+      false,
+    );
     writeFileSync(executable, "#!/bin/sh\nexit 0\n");
     chmodSync(executable, 0o700);
     const availability = getLocalAgentProviderAvailabilitySnapshot(

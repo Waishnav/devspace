@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import {
   LOCAL_AGENT_PROVIDERS,
@@ -103,6 +103,7 @@ function commandAvailability(
 }
 
 function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (!command) return undefined;
   if (command.includes("/") || command.includes("\\")) {
     return executableExists(command) ? command : undefined;
   }
@@ -125,7 +126,7 @@ function executableExists(command: string): boolean {
   const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
   try {
     accessSync(command, mode);
-    return true;
+    return statSync(command).isFile();
   } catch {
     return false;
   }
