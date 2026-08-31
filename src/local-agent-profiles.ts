@@ -20,6 +20,7 @@ export interface LocalAgentProfile {
   name: string;
   description: string;
   provider: LocalAgentProvider;
+  scope: "global" | "project";
   model?: string;
   effort?: string;
   filePath: string;
@@ -51,14 +52,14 @@ export async function loadLocalAgentProfiles(
   if (!config.subagents.enabled) return [];
 
   const profileDirs = [
-    config.devspaceAgentsDir,
-    join(workspaceRoot, ".devspace", "agents"),
+    { path: config.devspaceAgentsDir, scope: "global" as const },
+    { path: join(workspaceRoot, ".devspace", "agents"), scope: "project" as const },
   ];
   const profilesByName = new Map<string, LocalAgentProfile>();
 
   for (const directory of profileDirs) {
-    for (const profile of await loadProfilesFromDirectory(directory)) {
-      profilesByName.set(profile.name, profile);
+    for (const profile of await loadProfilesFromDirectory(directory.path)) {
+      profilesByName.set(profile.name, { ...profile, scope: directory.scope });
     }
   }
 
@@ -146,6 +147,7 @@ function profileFromFrontmatter(
     name,
     description,
     provider,
+    scope: "global",
     model: readString(frontmatter, "model"),
     effort: readString(frontmatter, "effort"),
     filePath,

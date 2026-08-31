@@ -21,25 +21,31 @@ ChatGPT may support automatic checkout recovery through optional host
 conversation metadata. This is an OpenAI-host adapter detail, not a standard MCP
 conversation field. When that optional context is available, opening the same
 checkout project again in the same conversation can continue in the existing
-workspace, and the context already provided for that reused checkout is not
-repeated. The portable workflow remains the same: keep using the `workspaceId`
-returned by `open_workspace` for later operations. Hosts without supported
-conversation context receive a normal new workspace and continue with that
-explicit `workspaceId` workflow.
+workspace. DevSpace also remembers which global and project context snapshots
+have already been delivered in that conversation, so unchanged instructions,
+skills, agent profiles, and provider information are not repeated across
+checkout/worktree switches or project changes. The portable workflow remains
+the same: keep using the `workspaceId` returned by `open_workspace` for later
+operations. Hosts without supported conversation context receive a normal new
+workspace and complete context on each open.
 The model receives actionable workspace instructions; automatic-reuse
 bookkeeping is not a model-facing choice.
 
-Worktree mode is deliberately different: every call creates a new managed
-worktree and a new workspace session with complete context, even for the same
-path and base ref.
+Worktree mode still creates a new managed worktree and workspace session on
+every call. Model context is independent from that workspace lifecycle: if a
+global or project scope is unchanged from an earlier open in the conversation,
+the new worktree result can omit it. If a branch or filesystem change alters a
+scope, `open_workspace` returns the complete replacement snapshot for that scope.
 
-The first successful open of a checkout provides complete instructions and
-coding context. A repeated open that reuses the same checkout workspace does
-not repeat the model-visible context, but the workspace UI continues to show the
-complete details. Every new worktree establishes and returns its own complete
-context, even when the same project was already opened in checkout or another
-worktree. Opening checkout after a worktree therefore provides the checkout's
-own context.
+Treat returned `instructions`, `skills`, and `agents` scopes, plus instructions
+later read from nested instruction files or `SKILL.md` files, as durable
+operating context. Preserve them when summarizing or compacting conversation
+state. A later `open_workspace` result that omits a scope means the previously
+returned snapshot is still current; a scope that appears again replaces the
+retained snapshot for that scope. When project instructions reappear, reread
+relevant nested instruction files before relying on an older read. When a
+skills scope reappears, reread a matching `SKILL.md` before relying on its
+previously read instructions.
 
 Do not call `open_workspace` again for the same checkout folder unless:
 
@@ -98,8 +104,12 @@ When a workspace opens, DevSpace loads root-level instruction files:
 - `CLAUDE.md`
 - `CLAUDE.MD`
 
-Nested instruction files are returned as `availableAgentsFiles`. The model
-should read the relevant nested file before working under that directory.
+`open_workspace` groups instructions by scope. Global loaded instructions are
+returned under `instructions.global`; project root instructions are under
+`instructions.project.loaded`; nested project instruction files are advertised
+under `instructions.project.available`. Project instruction paths are relative
+to the current workspace root. The model should read the relevant nested file
+before working under that directory.
 
 This keeps instructions explicit and inspectable instead of silently injecting
 new context during later tool calls.
@@ -135,7 +145,10 @@ Legacy project paths such as `.pi/skills` can be added to `skills.paths` when ne
 When `open_workspace` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
 
-Skill paths may be outside the workspace. DevSpace only permits reading:
+Project skill paths are workspace-relative, so the same retained project skill
+catalog remains valid when moving between a checkout and managed worktree.
+Global skill paths use home-shortened or absolute paths and may be outside the
+workspace. DevSpace only permits reading:
 
 - advertised `SKILL.md` files
 - files under a skill directory after that skill's `SKILL.md` has been read

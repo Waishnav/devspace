@@ -86,8 +86,9 @@ export function resolveSkillReadPath(
   skills: Skill[],
   activatedSkillDirs: Set<string>,
   inputPath: string,
+  cwd?: string,
 ): SkillReadResolution | undefined {
-  const absolutePath = resolve(expandHomePath(inputPath));
+  const absolutePath = resolve(cwd ?? process.cwd(), expandHomePath(inputPath));
 
   for (const skill of skills) {
     const skillFilePath = resolve(skill.filePath);

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -43,8 +43,13 @@ import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { openAiConversationScopeId } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
+import { isPathInsideRoot } from "./roots.js";
 import { createWorkspaceStore } from "./workspace-store.js";
-import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import {
+  formatAgentsPath,
+  WorkspaceRegistry,
+  type WorkspaceContext,
+} from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -104,37 +109,12 @@ function serverInstructions(
   const showChangesInstruction =
     " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change.";
   const skills = config.skillsEnabled
-    ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
+    ? `When ${toolNames.openWorkspace} returns skills and a task matches one, use ${toolNames.read} to read that skill's path before proceeding. Project skill paths are relative to the current workspace root. Global skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
-  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
-  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected.`;
+  const agents = `Follow loaded instructions returned under instructions.global and instructions.project.loaded. Before working under a path listed in instructions.project.available, use ${toolNames.read} to inspect that instruction file and follow it. Project instruction paths are relative to the current workspace root. `;
+  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected. Treat instructions, skills, agent profiles, and provider information returned by ${toolNames.openWorkspace}, plus instructions later read from advertised nested instruction files or SKILL.md files, as durable operating context and preserve them when summarizing or compacting conversation state. Later ${toolNames.openWorkspace} results may omit unchanged global or project scopes; an omitted scope remains unchanged and must continue to be followed. When a scope is returned again, replace the retained snapshot for that scope with the new value. If project instructions are returned again, treat previously read nested instruction files from that scope as stale and reread them when relevant. If a skills scope is returned again, reread a matching SKILL.md before relying on instructions previously read from that skill.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
-}
-
-function formatVisibleAgent(agent: {
-  name: string;
-  provider: string;
-  model?: string;
-  effort?: string;
-}): string {
-  const model = agent.model ? `, model ${agent.model}` : "";
-  const effort = agent.effort ? `, effort ${agent.effort}` : "";
-  return `${agent.name} (${agent.provider}${model}${effort})`;
-}
-
-function formatAvailableAgentProvider(provider: {
-  id: string;
-  model?: string;
-  effort?: string;
-  note?: string;
-}): string {
-  const details = [
-    provider.model ? `model ${provider.model}` : undefined,
-    provider.effort ? `effort ${provider.effort}` : undefined,
-    provider.note,
-  ].filter(Boolean).join(", ");
-  return `${provider.id}${details ? ` (${details})` : ""}`;
 }
 
 const workspaceSkillOutputSchema = z.object({
@@ -166,6 +146,277 @@ const workspaceLocalAgentProviderOutputSchema = z.object({
 const workspaceAvailableAgentsFileOutputSchema = z.object({
   path: z.string(),
 });
+
+const workspaceInstructionsOutputSchema = z.object({
+  global: z.array(workspaceAgentsFileOutputSchema).optional(),
+  project: z.object({
+    loaded: z.array(workspaceAgentsFileOutputSchema),
+    available: z.array(workspaceAvailableAgentsFileOutputSchema),
+  }).optional(),
+});
+
+const workspaceSkillsOutputSchema = z.object({
+  global: z.array(workspaceSkillOutputSchema).optional(),
+  project: z.array(workspaceSkillOutputSchema).optional(),
+});
+
+const workspaceAgentsOutputSchema = z.object({
+  profiles: z.object({
+    global: z.array(workspaceLocalAgentOutputSchema).optional(),
+    project: z.array(workspaceLocalAgentOutputSchema).optional(),
+  }).optional(),
+  providers: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
+});
+
+function formatWorkspaceResourcePath(path: string, workspaceRoot: string): string {
+  return isPathInsideRoot(path, workspaceRoot)
+    ? formatAgentsPath(path, workspaceRoot)
+    : formatPathForPrompt(path);
+}
+
+function scopedInstructions(
+  loaded: Array<{ path: string; content: string }>,
+  available: Array<{ path: string }>,
+  workspaceRoot: string,
+): {
+  global: Array<{ path: string; content: string }>;
+  project: {
+    loaded: Array<{ path: string; content: string }>;
+    available: Array<{ path: string }>;
+  };
+} {
+  const global = loaded
+    .filter((file) => !isPathInsideRoot(file.path, workspaceRoot))
+    .map((file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      content: file.content,
+    }));
+  const projectLoaded = loaded
+    .filter((file) => isPathInsideRoot(file.path, workspaceRoot))
+    .map((file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      content: file.content,
+    }));
+  const projectAvailable = available.map((file) => ({
+    path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+  }));
+
+  return {
+    global,
+    project: {
+      loaded: projectLoaded,
+      available: projectAvailable,
+    },
+  };
+}
+
+function scopedSkills(
+  skills: Array<{
+    name: string;
+    description: string;
+    path: string;
+    filePath?: string;
+    scope: "global" | "project";
+  }>,
+): {
+  global: Array<{ name: string; description: string; path: string }>;
+  project: Array<{ name: string; description: string; path: string }>;
+} {
+  const summarize = (scope: "global" | "project") => skills
+    .filter((skill) => skill.scope === scope)
+    .map(({ scope: _scope, filePath: _filePath, ...skill }) => skill);
+  const global = summarize("global");
+  const project = summarize("project");
+  return { global, project };
+}
+
+function scopedAgentCatalog(
+  profiles: Array<{
+    name: string;
+    description: string;
+    provider: string;
+    scope: "global" | "project";
+    model?: string;
+    effort?: string;
+  }>,
+  providers: Array<{
+    id: string;
+    model?: string;
+    effort?: string;
+    note?: string;
+  }>,
+): {
+  profiles: {
+    global: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+    project: Array<{ name: string; description: string; provider: string; model?: string; effort?: string }>;
+  };
+  providers: Array<{ id: string; model?: string; effort?: string; note?: string }>;
+} {
+  const summarize = (scope: "global" | "project") => profiles
+    .filter((profile) => profile.scope === scope)
+    .map(({ scope: _scope, ...profile }) => profile);
+  const global = summarize("global");
+  const project = summarize("project");
+  return {
+    profiles: { global, project },
+    providers,
+  };
+}
+
+interface WorkspaceContextSnapshots {
+  instructions: ReturnType<typeof scopedInstructions>;
+  skills: ReturnType<typeof scopedSkills>;
+  agents: ReturnType<typeof scopedAgentCatalog>;
+}
+
+interface WorkspaceContextFingerprintInputs {
+  projectInstructions: unknown;
+  globalSkills: unknown;
+  projectSkills: unknown;
+}
+
+function conversationContextOutput(
+  workspaces: WorkspaceRegistry,
+  context: WorkspaceContext,
+  snapshots: WorkspaceContextSnapshots,
+  fingerprintInputs: WorkspaceContextFingerprintInputs,
+): {
+  instructions?: {
+    global?: WorkspaceContextSnapshots["instructions"]["global"];
+    project?: WorkspaceContextSnapshots["instructions"]["project"];
+  };
+  skills?: {
+    global?: WorkspaceContextSnapshots["skills"]["global"];
+    project?: WorkspaceContextSnapshots["skills"]["project"];
+  };
+  agents?: {
+    profiles?: {
+      global?: WorkspaceContextSnapshots["agents"]["profiles"]["global"];
+      project?: WorkspaceContextSnapshots["agents"]["profiles"]["project"];
+    };
+    providers?: WorkspaceContextSnapshots["agents"]["providers"];
+  };
+} {
+  const projectKey = context.projectKey
+    ?? context.workspace.sourceRoot
+    ?? context.workspace.root;
+  const keys = {
+    globalInstructions: JSON.stringify(["global", "instructions"]),
+    projectInstructions: JSON.stringify(["project", projectKey, "instructions"]),
+    globalSkills: JSON.stringify(["global", "skills"]),
+    projectSkills: JSON.stringify(["project", projectKey, "skills"]),
+    globalProfiles: JSON.stringify(["global", "agent-profiles"]),
+    projectProfiles: JSON.stringify(["project", projectKey, "agent-profiles"]),
+    providers: JSON.stringify(["global", "agent-providers"]),
+  };
+  const values = new Map<string, unknown>([
+    [keys.globalInstructions, snapshots.instructions.global],
+    [keys.projectInstructions, fingerprintInputs.projectInstructions],
+    [keys.globalSkills, fingerprintInputs.globalSkills],
+    [keys.projectSkills, fingerprintInputs.projectSkills],
+    [keys.globalProfiles, snapshots.agents.profiles.global],
+    [keys.projectProfiles, snapshots.agents.profiles.project],
+    [keys.providers, snapshots.agents.providers],
+  ]);
+  const changed = workspaces.claimConversationContexts(
+    context,
+    Array.from(values, ([contextKey, value]) => ({
+      contextKey,
+      fingerprint: contextFingerprint(value),
+    })),
+  );
+  const instructions = {
+    ...(changed.has(keys.globalInstructions)
+      ? { global: snapshots.instructions.global }
+      : {}),
+    ...(changed.has(keys.projectInstructions)
+      ? { project: snapshots.instructions.project }
+      : {}),
+  };
+  const skills = {
+    ...(changed.has(keys.globalSkills) ? { global: snapshots.skills.global } : {}),
+    ...(changed.has(keys.projectSkills) ? { project: snapshots.skills.project } : {}),
+  };
+  const profiles = {
+    ...(changed.has(keys.globalProfiles)
+      ? { global: snapshots.agents.profiles.global }
+      : {}),
+    ...(changed.has(keys.projectProfiles)
+      ? { project: snapshots.agents.profiles.project }
+      : {}),
+  };
+  const agents = {
+    ...(Object.keys(profiles).length > 0 ? { profiles } : {}),
+    ...(changed.has(keys.providers) ? { providers: snapshots.agents.providers } : {}),
+  };
+
+  return {
+    ...(Object.keys(instructions).length > 0 ? { instructions } : {}),
+    ...(Object.keys(skills).length > 0 ? { skills } : {}),
+    ...(Object.keys(agents).length > 0 ? { agents } : {}),
+  };
+}
+
+function contextFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function normalizedContextText(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
+}
+
+async function fileContentFingerprint(path: string): Promise<string> {
+  try {
+    const content = await readFile(path, "utf8");
+    return contextFingerprint(["readable", normalizedContextText(content)]);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : "unknown";
+    return contextFingerprint(["unreadable", code]);
+  }
+}
+
+async function projectInstructionFingerprintInput(
+  instructions: WorkspaceContextSnapshots["instructions"]["project"],
+  available: Array<{ path: string }>,
+  workspaceRoot: string,
+): Promise<unknown> {
+  return {
+    loaded: instructions.loaded.map((file) => ({
+      ...file,
+      content: normalizedContextText(file.content),
+    })),
+    available: await Promise.all(available.map(async (file) => ({
+      path: formatWorkspaceResourcePath(file.path, workspaceRoot),
+      contentFingerprint: await fileContentFingerprint(file.path),
+    }))),
+  };
+}
+
+async function skillFingerprintInputs(
+  skills: Array<{
+    name: string;
+    description: string;
+    path: string;
+    filePath: string;
+    scope: "global" | "project";
+  }>,
+): Promise<{ global: unknown; project: unknown }> {
+  const summarize = async (scope: "global" | "project") => Promise.all(
+    skills
+      .filter((skill) => skill.scope === scope)
+      .map(async ({ scope: _scope, filePath, ...skill }) => ({
+        ...skill,
+        contentFingerprint: await fileContentFingerprint(filePath),
+      })),
+  );
+
+  return {
+    global: await summarize("global"),
+    project: await summarize("project"),
+  };
+}
 
 function sendJsonRpcError(
   res: Response,
@@ -370,47 +621,40 @@ export function createMcpServer(
             managed: z.boolean(),
           })
           .optional(),
-        agentsFiles: z.array(workspaceAgentsFileOutputSchema).optional(),
-        availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
-        skills: z.array(workspaceSkillOutputSchema).optional(),
-        agentProviders: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
-        agents: z.array(workspaceLocalAgentOutputSchema).optional(),
-        skillDiagnostics: z.array(z.unknown()).optional(),
-        review: z.discriminatedUnion("available", [
-          z.object({ available: z.literal(true) }),
-          z.object({
-            available: z.literal(false),
-            reason: z.string(),
-          }),
-        ]),
-        instruction: z.string(),
+        instructions: workspaceInstructionsOutputSchema.optional(),
+        skills: workspaceSkillsOutputSchema.optional(),
+        agents: workspaceAgentsOutputSchema.optional(),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
     async ({ path, mode, baseRef }, { _meta }) => {
       const startedAt = performance.now();
+      const workspaceContext = await workspaces.openWorkspace(
+        { path, mode, baseRef },
+        { conversationScopeId: openAiConversationScopeId(_meta) },
+      );
       const {
         workspace,
         agentsFiles,
         availableAgentsFiles,
         workspaceReused,
         includeBootstrapContext,
-      } = await workspaces.openWorkspace(
-        { path, mode, baseRef },
-        { conversationScopeId: openAiConversationScopeId(_meta) },
-      );
+      } = workspaceContext;
       const review = await reviewCheckpoints.initializeWorkspace({
         workspaceId: workspace.id,
         root: workspace.root,
       });
-      const cardSkills = workspace.skills
+      const scopedSkillCatalog = workspace.skills
         .filter((skill) => !skill.disableModelInvocation)
         .map((skill) => ({
           name: skill.name,
           description: skill.description,
-          path: formatPathForPrompt(skill.filePath),
+          path: formatWorkspaceResourcePath(skill.filePath, workspace.root),
+          filePath: skill.filePath,
+          scope: isPathInsideRoot(skill.filePath, workspace.root) ? "project" as const : "global" as const,
         }));
+      const cardSkills = scopedSkillCatalog.map(({ scope: _scope, filePath: _filePath, ...skill }) => skill);
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
         workspace.agentProfiles,
@@ -424,31 +668,50 @@ export function createMcpServer(
           effort: provider.effort,
           note: provider.note,
         }));
-      const cardAgents = agentCatalog.profiles;
+      const profileScopes = new Map(workspace.agentProfiles.map((profile) => [profile.name, profile.scope]));
+      const scopedAgents = agentCatalog.profiles.map((profile) => ({
+        ...profile,
+        scope: profileScopes.get(profile.name) ?? "global" as const,
+      }));
+      const cardAgents = scopedAgents.map(({ scope: _scope, ...profile }) => profile);
       const cardAgentsFiles = agentsFiles.map((file) => ({
-        path: formatAgentsPath(file.path, workspace.root),
+        path: formatWorkspaceResourcePath(file.path, workspace.root),
         content: file.content,
       }));
       const cardAvailableAgentsFiles = availableAgentsFiles.map((file) => ({
-        path: formatAgentsPath(file.path, workspace.root),
+        path: formatWorkspaceResourcePath(file.path, workspace.root),
       }));
-      const visibleSkills = includeBootstrapContext ? cardSkills : [];
-      const visibleAgentProviders = includeBootstrapContext ? cardAgentProviders : [];
-      const visibleAgents = includeBootstrapContext ? cardAgents : [];
-      const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
-      const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
-      const instruction = workspaceReused
-        ? [
-            `Workspace already open as ${workspace.id}.`,
-            "Continue with this workspaceId.",
-            "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
-          ].join("\n\n")
-        : workspace.mode === "worktree"
-          ? "Use this workspaceId for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
-          : cardInstruction;
+        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded project instructions. Before working under a path with an available nested instruction file, read that file. When a task matches an available skill, read its SKILL.md before proceeding."
+        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded project instructions. Before working under a path with an available nested instruction file, read that file.";
+      const instructionSnapshots = scopedInstructions(
+        agentsFiles,
+        availableAgentsFiles,
+        workspace.root,
+      );
+      const skillSnapshots = scopedSkills(scopedSkillCatalog);
+      const [projectInstructionFingerprint, skillFingerprints] = await Promise.all([
+        projectInstructionFingerprintInput(
+          instructionSnapshots.project,
+          availableAgentsFiles,
+          workspace.root,
+        ),
+        skillFingerprintInputs(scopedSkillCatalog),
+      ]);
+      const modelContext = conversationContextOutput(
+        workspaces,
+        workspaceContext,
+        {
+          instructions: instructionSnapshots,
+          skills: skillSnapshots,
+          agents: scopedAgentCatalog(scopedAgents, cardAgentProviders),
+        },
+        {
+          projectInstructions: projectInstructionFingerprint,
+          globalSkills: skillFingerprints.global,
+          projectSkills: skillFingerprints.project,
+        },
+      );
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -460,22 +723,9 @@ export function createMcpServer(
                 : `Opened workspace ${workspace.id}.`,
             `Root: ${workspace.root}`,
             `Mode: ${workspace.mode}`,
-            loadedAgentsFiles.length > 0
-              ? `Loaded project instructions: ${loadedAgentsFiles.map((file) => file.path).join(", ")}`
-              : undefined,
-            availableAgentsFileOutputs.length > 0
-              ? `Available nested instructions: ${availableAgentsFileOutputs.map((file) => file.path).join(", ")}`
-              : undefined,
-            visibleSkills.length > 0
-              ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
-              : undefined,
-            visibleAgentProviders.length > 0
-              ? `Available subagent providers: ${visibleAgentProviders.map(formatAvailableAgentProvider).join(", ")}`
-              : undefined,
-            visibleAgents.length > 0
-              ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
-              : undefined,
-            instruction,
+            workspaceReused
+              ? "Continue using this workspaceId for work in this workspace."
+              : "Use this workspaceId for work in this workspace.",
           ].filter(Boolean).join("\n"),
         },
       ];
@@ -522,18 +772,7 @@ export function createMcpServer(
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
           worktree: workspace.worktree,
-          review,
-          ...(includeBootstrapContext
-            ? {
-                agentsFiles: loadedAgentsFiles,
-                availableAgentsFiles: availableAgentsFileOutputs,
-                skills: visibleSkills,
-                agentProviders: visibleAgentProviders,
-                agents: visibleAgents,
-                skillDiagnostics: workspace.skillDiagnostics,
-              }
-            : {}),
-          instruction,
+          ...modelContext,
         },
       };
     },

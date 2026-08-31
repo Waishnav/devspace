@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import {
   workspaceConversationBindings,
+  workspaceConversationContexts,
   workspaceSessions,
   type WorkspaceConversationBindingRow,
   type WorkspaceSessionRow,
@@ -53,6 +54,10 @@ export interface WorkspaceStore {
   }): WorkspaceConversationBinding;
   touchConversationBinding(conversationScopeId: string, targetKey: string): void;
   deleteConversationBinding(conversationScopeId: string, targetKey: string): void;
+  claimConversationContexts(
+    conversationScopeId: string,
+    contexts: Array<{ contextKey: string; fingerprint: string }>,
+  ): string[];
   close?(): void;
 }
 
@@ -199,6 +204,59 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
         ),
       )
       .run();
+  }
+
+  claimConversationContexts(
+    conversationScopeId: string,
+    contexts: Array<{ contextKey: string; fingerprint: string }>,
+  ): string[] {
+    const claim = this.database.sqlite.transaction(() => {
+      const select = this.database.sqlite.prepare(`
+          select fingerprint
+          from workspace_conversation_contexts
+          where conversation_scope_id = ? and context_key = ?
+        `);
+      const changed: string[] = [];
+
+      for (const { contextKey, fingerprint } of contexts) {
+        const existing = select.get(conversationScopeId, contextKey) as { fingerprint: string } | undefined;
+        const now = new Date().toISOString();
+
+        if (!existing) {
+          this.database.db
+            .insert(workspaceConversationContexts)
+            .values({
+              conversationScopeId,
+              contextKey,
+              fingerprint,
+              createdAt: now,
+              lastUsedAt: now,
+            })
+            .run();
+          changed.push(contextKey);
+          continue;
+        }
+
+        this.database.db
+          .update(workspaceConversationContexts)
+          .set({
+            ...(existing.fingerprint === fingerprint ? {} : { fingerprint }),
+            lastUsedAt: now,
+          })
+          .where(
+            and(
+              eq(workspaceConversationContexts.conversationScopeId, conversationScopeId),
+              eq(workspaceConversationContexts.contextKey, contextKey),
+            ),
+          )
+          .run();
+        if (existing.fingerprint !== fingerprint) changed.push(contextKey);
+      }
+
+      return changed;
+    });
+
+    return claim.immediate();
   }
 
   close(): void {
