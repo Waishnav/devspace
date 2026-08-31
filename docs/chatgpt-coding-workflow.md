@@ -150,7 +150,8 @@ the managed `subagents` skill for a separate read only when the model decides
 delegation would help. Set it to `preload` to include those instructions in the
 initial `open_workspace` result instead. The skill teaches the minimal
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
-`devspace agents continue`, and `devspace agents show` workflow. The catalog
+`devspace agents continue`, `devspace agents show`, and `devspace agents wait`
+workflow. The catalog
 comes from `open_workspace`; `devspace agents ls` lists existing subagent
 sessions for that workspace.
 
