@@ -137,9 +137,12 @@ Git, Bash, public URL, allowed hosts, and SQLite native dependency status.
 
 If you are developing DevSpace itself instead of using the published package:
 
+Local checkout development additionally requires pnpm 11.25.0, the version
+pinned in `package.json`. Install it with `npm install --global pnpm@11.25.0`.
+
 ```bash
-npm install --include=dev
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 The same setup rules apply.

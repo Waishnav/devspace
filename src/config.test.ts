@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadConfig } from "./config.js";
 import { writeDevspaceAuth, writeDevspaceConfig } from "./user-config.js";
@@ -77,7 +77,7 @@ try {
   assert.equal(configured.host, "0.0.0.0");
   assert.equal(configured.port, 8787);
   assert.equal(configured.publicBaseUrl, "https://devspace.example.com");
-  assert.deepEqual(configured.allowedRoots, [resolve("~/work".replace("~", process.env.HOME!))]);
+  assert.deepEqual(configured.allowedRoots, [resolve(homedir(), "work")]);
   assert.deepEqual(configured.allowedHosts, [
     "localhost",
     "127.0.0.1",
@@ -88,13 +88,13 @@ try {
   ]);
   assert.equal(configured.toolMode, "claude");
   assert.equal(configured.uiEnabled, false);
-  assert.equal(configured.stateDir, resolve(process.env.HOME!, "state"));
-  assert.equal(configured.worktreeRoot, resolve(process.env.HOME!, "trees"));
+  assert.equal(configured.stateDir, resolve(homedir(), "state"));
+  assert.equal(configured.worktreeRoot, resolve(homedir(), "trees"));
   assert.equal(configured.artifactsEnabled, true);
   assert.equal(configured.artifactMaxFileBytes, 321);
   assert.equal(configured.skillsEnabled, false);
   assert.deepEqual(configured.skillPaths, ["~/skills"]);
-  assert.equal(configured.agentDir, resolve(process.env.HOME!, "agent"));
+  assert.equal(configured.agentDir, resolve(homedir(), "agent"));
   assert.equal(configured.subagents.enabled, true);
   assert.equal(configured.oauth.ownerToken, "persisted-owner-token-long-enough");
   assert.equal(configured.oauth.accessTokenTtlSeconds, 120);
