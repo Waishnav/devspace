@@ -103,6 +103,10 @@ export class AgentDaemonProtocolMismatchError extends TaggedError(
   "AgentDaemonProtocolMismatchError",
 )<AgentDaemonErrorFields & { code: "DAEMON_PROTOCOL_MISMATCH" }>() {}
 
+export class AgentDaemonConfigChangedError extends TaggedError(
+  "AgentDaemonConfigChangedError",
+)<AgentDaemonErrorFields & { code: "DAEMON_CONFIG_CHANGED" }>() {}
+
 export class AgentDaemonUnauthorizedError extends TaggedError(
   "AgentDaemonUnauthorizedError",
 )<AgentDaemonErrorFields & { code: "DAEMON_UNAUTHORIZED" }>() {}
@@ -124,6 +128,7 @@ export type AgentDaemonError =
   | AgentDaemonStartupError
   | AgentDaemonTimeoutError
   | AgentDaemonProtocolMismatchError
+  | AgentDaemonConfigChangedError
   | AgentDaemonUnauthorizedError
   | AgentDaemonInvalidRequestError
   | AgentDaemonInvalidResponseError
@@ -179,6 +184,7 @@ export function isAgentDaemonError(error: unknown): error is AgentDaemonError {
     || AgentDaemonStartupError.is(error)
     || AgentDaemonTimeoutError.is(error)
     || AgentDaemonProtocolMismatchError.is(error)
+    || AgentDaemonConfigChangedError.is(error)
     || AgentDaemonUnauthorizedError.is(error)
     || AgentDaemonInvalidRequestError.is(error)
     || AgentDaemonInvalidResponseError.is(error)
@@ -207,6 +213,7 @@ export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
     AgentDaemonStartupError: daemonErrorPayload,
     AgentDaemonTimeoutError: daemonErrorPayload,
     AgentDaemonProtocolMismatchError: daemonErrorPayload,
+    AgentDaemonConfigChangedError: daemonErrorPayload,
     AgentDaemonUnauthorizedError: daemonErrorPayload,
     AgentDaemonInvalidRequestError: daemonErrorPayload,
     AgentDaemonInvalidResponseError: daemonErrorPayload,
@@ -310,6 +317,13 @@ export function agentErrorFromPayload(payload: {
       });
     case "DAEMON_PROTOCOL_MISMATCH":
       return new AgentDaemonProtocolMismatchError({
+        code: payload.code,
+        operation: payload.operation ?? "hello",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_CONFIG_CHANGED":
+      return new AgentDaemonConfigChangedError({
         code: payload.code,
         operation: payload.operation ?? "hello",
         retryable,

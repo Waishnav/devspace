@@ -23,7 +23,7 @@ export type LocalAgentDaemonMethod =
   | "daemon.logs";
 
 export type LocalAgentDaemonRequest =
-  | AgentDaemonRequestBase<"hello", Record<string, never>>
+  | (AgentDaemonRequestBase<"hello", Record<string, never>> & { configRevision?: string })
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
   | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
@@ -34,7 +34,7 @@ export type LocalAgentDaemonRequest =
       timeoutMs?: number;
     }>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
-  | AgentDaemonRequestBase<"daemon.stop", Record<string, never>>
+  | AgentDaemonRequestBase<"daemon.stop", { ifIdle?: boolean }>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
 
 interface AgentDaemonRequestBase<
@@ -57,6 +57,11 @@ export interface LocalAgentDaemonStatus {
   activeTurns: number;
   runtimeCount: number;
   clientConnections: number;
+}
+
+export interface LocalAgentDaemonHello {
+  status: LocalAgentDaemonStatus;
+  configMatches: boolean;
 }
 
 export interface LocalAgentDaemonErrorPayload {
@@ -102,9 +107,24 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
 
   switch (method) {
     case "hello":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeEmptyParams(params),
+        configRevision: optionalString(record?.configRevision),
+      };
     case "daemon.status":
-    case "daemon.stop":
       return { requestId, protocolVersion, authToken, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
+    case "daemon.stop":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeStopParams(params),
+      };
     case "agent.start":
       return {
         requestId,
@@ -269,6 +289,14 @@ export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
   };
 }
 
+export function decodeDaemonHello(value: unknown): LocalAgentDaemonHello {
+  const record = asRecord(value);
+  return {
+    status: decodeDaemonStatus(record?.status),
+    configMatches: requiredBoolean(record?.configMatches, "configMatches"),
+  };
+}
+
 export function decodeDaemonLogs(value: unknown): string {
   if (typeof value !== "string") throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid logs.");
   return value;
@@ -329,6 +357,13 @@ function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
 
 function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
   return decodeWorkspaceScope(value);
+}
+
+function decodeStopParams(value: unknown): { ifIdle?: boolean } {
+  const record = asRecord(value);
+  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Daemon stop options must be an object.");
+  const ifIdle = optionalBoolean(record.ifIdle);
+  return ifIdle === undefined ? {} : { ifIdle };
 }
 
 function decodeWaitParams(value: unknown): {
@@ -409,6 +444,13 @@ function requiredContentString(value: unknown, field: string): string {
 
 function requiredInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
+  }
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
     throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
   }
   return value;
