@@ -234,7 +234,7 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
         return { id, status, ...(wait ? { wait } : {}) };
       }
       case "completed": {
-        const response = optionalContentString(record?.response);
+        const response = typeof record?.response === "string" ? record.response : undefined;
         return { id, status, ...(response === undefined ? {} : { response }) };
       }
       case "failed":
