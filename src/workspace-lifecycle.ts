@@ -38,6 +38,12 @@ type TerminalWorkspaceSession = WorkspaceSession & {
 
 const reconciliationStates = new WeakMap<WorkspaceRegistry, ReconciliationState>();
 
+function isTerminalWorkspaceSession(
+  session: WorkspaceSession,
+): session is TerminalWorkspaceSession {
+  return session.status === "released" || session.status === "missing";
+}
+
 export function releaseWorkspaceLease(
   workspaces: Pick<WorkspaceRegistry, "releaseWorkspace">,
   processSessions: Pick<ProcessSessionManager, "hasRunningForWorkspace">,
@@ -54,7 +60,7 @@ export function releaseWorkspaceLease(
   }
 
   const session = workspaces.releaseWorkspace(workspaceId);
-  if (session.status !== "released" && session.status !== "missing") {
+  if (!isTerminalWorkspaceSession(session)) {
     throw new Error(
       `Workspace ${workspaceId} did not reach an explicit terminal lifecycle state.`,
     );
