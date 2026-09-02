@@ -6,15 +6,30 @@ import type { ProcessSessionManager } from "./process-sessions.js";
 import type { WorkspaceSession } from "./workspace-store.js";
 import { logToolCall, textBlock } from "./tool-surfaces/shared.js";
 import { workspaceIdDescription } from "./tool-surfaces/types.js";
-import type { WorkspaceRegistry } from "./workspaces.js";
+import type {
+  ManagedWorkspaceReconciliationResult,
+  WorkspaceRegistry,
+} from "./workspaces.js";
 
 const RECONCILIATION_BATCH_SIZE = 128;
 const RECONCILIATION_RESCAN_MS = 6 * 60 * 60 * 1_000;
 
 interface ReconciliationState {
-  cursor?: string;
   running: boolean;
   lastFullSweepAt?: number;
+}
+
+interface ManagedWorkspaceReconciler {
+  reconcileManagedWorktreeSessions(input: {
+    cursor?: string;
+    limit?: number;
+  }): Promise<ManagedWorkspaceReconciliationResult>;
+}
+
+export interface ManagedWorkspaceReconciliationSweepResult {
+  batches: number;
+  checked: number;
+  reconciled: number;
 }
 
 type TerminalWorkspaceSession = WorkspaceSession & {
@@ -117,6 +132,41 @@ export function registerWorkspaceLifecycleTool(
   );
 }
 
+export async function runManagedWorkspaceReconciliationSweep(
+  workspaces: ManagedWorkspaceReconciler,
+): Promise<ManagedWorkspaceReconciliationSweepResult> {
+  let cursor: string | undefined;
+  let batches = 0;
+  let checked = 0;
+  let reconciled = 0;
+
+  do {
+    const previousCursor = cursor;
+    const result = await workspaces.reconcileManagedWorktreeSessions({
+      cursor,
+      limit: RECONCILIATION_BATCH_SIZE,
+    });
+    batches += 1;
+    checked += result.checked;
+    reconciled += result.reconciled;
+    cursor = result.nextCursor;
+
+    if (cursor !== undefined && cursor === previousCursor) {
+      throw new Error(
+        `Managed workspace reconciliation did not advance past cursor ${cursor}.`,
+      );
+    }
+
+    if (cursor !== undefined) {
+      // Each page is strictly bounded. Yield before the next page so thousands
+      // of stale rows cannot monopolize the event loop during startup/recovery.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  } while (cursor !== undefined);
+
+  return { batches, checked, reconciled };
+}
+
 export function requestManagedWorkspaceReconciliation(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
@@ -128,7 +178,6 @@ export function requestManagedWorkspaceReconciliation(
 
   if (state.running) return;
   if (
-    state.cursor === undefined &&
     state.lastFullSweepAt !== undefined &&
     Date.now() - state.lastFullSweepAt < RECONCILIATION_RESCAN_MS
   ) {
@@ -136,20 +185,14 @@ export function requestManagedWorkspaceReconciliation(
   }
 
   state.running = true;
-  void workspaces
-    .reconcileManagedWorktreeSessions({
-      cursor: state.cursor,
-      limit: RECONCILIATION_BATCH_SIZE,
-    })
+  void runManagedWorkspaceReconciliationSweep(workspaces)
     .then((result) => {
-      state.cursor = result.nextCursor;
-      if (result.nextCursor === undefined) {
-        state.lastFullSweepAt = Date.now();
-      }
+      state.lastFullSweepAt = Date.now();
       if (result.reconciled > 0) {
         logEvent(config.logging, "info", "workspace_sessions_reconciled", {
           checked: result.checked,
           reconciled: result.reconciled,
+          batches: result.batches,
           batchSize: RECONCILIATION_BATCH_SIZE,
         });
       }
