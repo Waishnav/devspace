@@ -241,12 +241,26 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
 }
 
 function migrateWorkspaceTerminalLifecycle(sqlite: Database.Database): void {
+  // Legacy/interrupted test and recovery databases can claim migration 1 while
+  // lacking the workspace table entirely. Do not make unrelated stores fail to
+  // open in that state; a WorkspaceStore on such a database already has no
+  // usable workspace state and will fail closed independently.
+  if (!tableExists(sqlite, "workspace_sessions")) return;
+
   addColumnIfMissing(sqlite, "workspace_sessions", "terminal_at", "text");
   addColumnIfMissing(sqlite, "workspace_sessions", "terminal_reason", "text");
   sqlite.exec(`
     create index if not exists workspace_sessions_lifecycle_idx
       on workspace_sessions(status, mode, managed, id);
   `);
+}
+
+function tableExists(sqlite: Database.Database, table: string): boolean {
+  return Boolean(
+    sqlite
+      .prepare("select 1 from sqlite_master where type = 'table' and name = ? limit 1")
+      .get(table),
+  );
 }
 
 function addColumnIfMissing(
