@@ -241,11 +241,12 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
 }
 
 function migrateWorkspaceTerminalLifecycle(sqlite: Database.Database): void {
-  // Legacy/interrupted test and recovery databases can claim migration 1 while
-  // lacking the workspace table entirely. Do not make unrelated stores fail to
-  // open in that state; a WorkspaceStore on such a database already has no
-  // usable workspace state and will fail closed independently.
-  if (!tableExists(sqlite, "workspace_sessions")) return;
+  // Interrupted legacy upgrades can have migration 1 recorded while the
+  // workspace tables are absent. Repair the baseline instead of recording v7
+  // against a database that still cannot persist workspace lifecycle state.
+  if (!tableExists(sqlite, "workspace_sessions")) {
+    migrateWorkspaceState(sqlite);
+  }
 
   addColumnIfMissing(sqlite, "workspace_sessions", "terminal_at", "text");
   addColumnIfMissing(sqlite, "workspace_sessions", "terminal_reason", "text");
