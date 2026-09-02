@@ -17,13 +17,17 @@ interface ReconciliationState {
   lastFullSweepAt?: number;
 }
 
+type TerminalWorkspaceSession = WorkspaceSession & {
+  status: "released" | "missing";
+};
+
 const reconciliationStates = new WeakMap<WorkspaceRegistry, ReconciliationState>();
 
 export function releaseWorkspaceLease(
   workspaces: Pick<WorkspaceRegistry, "releaseWorkspace">,
   processSessions: Pick<ProcessSessionManager, "hasRunningForWorkspace">,
   workspaceId: string,
-): WorkspaceSession {
+): TerminalWorkspaceSession {
   // Keep the running-process check and lifecycle transition synchronous with
   // respect to the Node event loop: no await may appear between these calls.
   // ProcessSessionManager.start() records its session before its first yield,
@@ -34,7 +38,11 @@ export function releaseWorkspaceLease(
     );
   }
 
-  return workspaces.releaseWorkspace(workspaceId);
+  const session = workspaces.releaseWorkspace(workspaceId);
+  if (session.status === "active") {
+    throw new Error(`Workspace ${workspaceId} could not be released safely.`);
+  }
+  return session as TerminalWorkspaceSession;
 }
 
 export function registerWorkspaceLifecycleTool(
