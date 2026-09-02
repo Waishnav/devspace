@@ -17,7 +17,7 @@ import {
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
 
-const CODEX_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
+const CODEX_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope. When work in a workspace is genuinely terminal and no DevSpace command is still running for it, call ${toolNames.closeWorkspace} once to release its workspace lease. Do not release a workspace merely because a response, transport, or conversational turn is ending; paused or resumable work must remain active.`;
 
 export function codexInstructions(): string {
   return CODEX_INSTRUCTIONS;
@@ -218,9 +218,9 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           );
           return processSessions.start({
             workspaceId,
+            workspaceRoot: workspace.root,
             command: cmd,
             cwd,
-            workspaceRoot: workspace.root,
             tty,
             columns,
             rows,
@@ -229,7 +229,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           });
         },
       );
-
       return processToolResponse(snapshot);
     },
   );
@@ -239,50 +238,15 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Write to process",
       description:
-        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
+        "Write characters to a running process session or poll it for new output. Use this for interactive processes and commands that outlive the initial yield window.",
       inputSchema: {
-        workspaceId: z
-          .string()
-          .describe("Workspace identifier used to start the process."),
-        sessionId: z
-          .number()
-          .describe("Process session identifier returned by exec_command."),
-        chars: z
-          .string()
-          .optional()
-          .describe(
-            "Characters to write. Omit or pass an empty string to poll.",
-          ),
-        columns: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Resize a PTY to this width."),
-        rows: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Resize a PTY to this height."),
-        yieldTimeMs: z
-          .number()
-          .int()
-          .min(0)
-          .max(30_000)
-          .optional()
-          .describe(
-            "Milliseconds to wait for process output or completion. Defaults to 10000.",
-          ),
-        maxOutputTokens: z
-          .number()
-          .int()
-          .positive()
-          .max(100_000)
-          .optional()
-          .describe("Approximate output token budget. Defaults to 10000."),
+        workspaceId: z.string().describe(workspaceIdDescription),
+        sessionId: z.number().int().positive(),
+        chars: z.string().optional(),
+        columns: z.number().int().min(1).max(1_000).optional(),
+        rows: z.number().int().min(1).max(1_000).optional(),
+        yieldTimeMs: z.number().int().min(0).max(110_000).optional(),
+        maxOutputTokens: z.number().int().positive().max(100_000).optional(),
       },
       outputSchema: processOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
@@ -301,9 +265,8 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         config,
         { tool: "write_stdin", workspaceId },
         startedAt,
-        async () => {
-          workspaces.getWorkspace(workspaceId);
-          return processSessions.write({
+        () =>
+          processSessions.write({
             workspaceId,
             sessionId,
             chars,
@@ -311,10 +274,8 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             rows,
             yieldTimeMs,
             maxOutputTokens,
-          });
-        },
+          }),
       );
-
       return processToolResponse(snapshot);
     },
   );
