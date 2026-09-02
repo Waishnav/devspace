@@ -7,7 +7,10 @@ import { loadConfig, type ServerConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
-import { releaseWorkspaceLease } from "./workspace-lifecycle.js";
+import {
+  releaseWorkspaceLease,
+  runManagedWorkspaceReconciliationSweep,
+} from "./workspace-lifecycle.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 
@@ -212,6 +215,37 @@ test("managed session reconciliation is bounded and only terminalizes missing ro
   assert.equal(second.nextCursor, undefined);
   assert.equal(store.getSession("ws_003_missing")?.status, "missing");
   assert.equal((await stat(activeRoot)).isDirectory(), true);
+});
+
+test("managed reconciliation sweep continues through every bounded page", async () => {
+  const calls: Array<{ cursor?: string; limit?: number }> = [];
+  const result = await runManagedWorkspaceReconciliationSweep({
+    async reconcileManagedWorktreeSessions(input) {
+      calls.push({ ...input });
+      assert.equal(input.limit, 128);
+      if (input.cursor === undefined) {
+        return { checked: 128, reconciled: 3, nextCursor: "ws_128" };
+      }
+      if (input.cursor === "ws_128") {
+        return { checked: 128, reconciled: 2, nextCursor: "ws_256" };
+      }
+      if (input.cursor === "ws_256") {
+        return { checked: 7, reconciled: 1 };
+      }
+      throw new Error(`Unexpected reconciliation cursor: ${input.cursor}`);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { cursor: undefined, limit: 128 },
+    { cursor: "ws_128", limit: 128 },
+    { cursor: "ws_256", limit: 128 },
+  ]);
+  assert.deepEqual(result, {
+    batches: 3,
+    checked: 263,
+    reconciled: 6,
+  });
 });
 
 test("release fails closed when a DevSpace process owns the workspace", async () => {
