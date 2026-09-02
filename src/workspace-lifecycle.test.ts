@@ -267,6 +267,28 @@ test("release fails closed when a DevSpace process owns the workspace", async ()
   assert.equal(releaseCalls, 0);
 });
 
+test("release rejects a nonterminal lifecycle result", () => {
+  const workspaces = {
+    releaseWorkspace: () => ({
+      id: "ws_unknown",
+      root: "/tmp/devspace-unknown",
+      status: "unknown" as const,
+      mode: "worktree" as const,
+      managed: true,
+      createdAt: "2026-09-02T00:00:00.000Z",
+      lastUsedAt: "2026-09-02T00:00:00.000Z",
+    }),
+  };
+  const processSessions = {
+    hasRunningForWorkspace: () => false,
+  };
+
+  assert.throws(
+    () => releaseWorkspaceLease(workspaces, processSessions, "ws_unknown"),
+    /did not reach an explicit terminal lifecycle state/,
+  );
+});
+
 test("a process start publishes its workspace lease before the first async yield", async () => {
   const manager = new ProcessSessionManager({ completedSessionTtlMs: 100 });
   const node = process.platform === "win32"
