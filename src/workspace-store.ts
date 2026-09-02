@@ -142,11 +142,13 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
   }
 
   releaseSession(id: string, reason = "explicit_release"): WorkspaceSession | undefined {
-    return this.transitionSession(id, "released", reason);
+    const session = this.transitionSession(id, "released", reason);
+    return isExplicitTerminalSession(session) ? session : undefined;
   }
 
   markSessionMissing(id: string, reason = "managed_worktree_missing"): WorkspaceSession | undefined {
-    return this.transitionSession(id, "missing", reason);
+    const session = this.transitionSession(id, "missing", reason);
+    return isExplicitTerminalSession(session) ? session : undefined;
   }
 
   listActiveManagedSessions(
@@ -319,6 +321,12 @@ function workspaceSessionStatus(status: string): WorkspaceSessionStatus {
   // Legacy or unexpected states are never treated as an active reusable lease,
   // but they also do not constitute explicit release authority for GC.
   return "unknown";
+}
+
+function isExplicitTerminalSession(
+  session: WorkspaceSession | undefined,
+): session is WorkspaceSession & { status: TerminalWorkspaceSessionStatus } {
+  return session?.status === "released" || session?.status === "missing";
 }
 
 function rowToWorkspaceConversationBinding(
