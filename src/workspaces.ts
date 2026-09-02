@@ -3,6 +3,7 @@ import type { Stats } from "node:fs";
 import type {
   WorkspaceConversationBinding,
   WorkspaceMode,
+  WorkspaceSession,
   WorkspaceStore,
 } from "./workspace-store.js";
 import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
@@ -80,6 +81,12 @@ export interface OpenWorkspaceInput {
 
 export interface OpenWorkspaceOptions {
   conversationScopeId?: string;
+}
+
+export interface ManagedWorkspaceReconciliationResult {
+  checked: number;
+  reconciled: number;
+  nextCursor?: string;
 }
 
 type PathStats = Stats;
@@ -255,6 +262,11 @@ export class WorkspaceRegistry {
         `Unknown workspaceId: ${workspaceId}. Open the target project or worktree again and continue with the new workspaceId.`,
       );
     }
+    if (session.status !== "active") {
+      throw new Error(
+        `Workspace ${workspaceId} is ${session.status} and cannot be reused. Open the target project or worktree again and continue with the new workspaceId.`,
+      );
+    }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
     const restoredWorkspace: Workspace = {
@@ -281,6 +293,72 @@ export class WorkspaceRegistry {
     this.workspaces.set(restoredWorkspace.id, restoredWorkspace);
 
     return restoredWorkspace;
+  }
+
+  releaseWorkspace(workspaceId: string, reason = "explicit_release"): WorkspaceSession {
+    if (!this.store) {
+      throw new Error("Workspace lifecycle persistence is unavailable.");
+    }
+
+    const session = this.store.releaseSession(workspaceId, reason);
+    if (!session) {
+      throw new Error(`Unknown workspaceId: ${workspaceId}.`);
+    }
+    if (session.status === "active") {
+      throw new Error(`Workspace ${workspaceId} could not be released safely.`);
+    }
+
+    this.workspaces.delete(workspaceId);
+    this.store.deleteConversationBindingsForWorkspace(workspaceId);
+    return session;
+  }
+
+  async reconcileManagedWorktreeSessions(input: {
+    cursor?: string;
+    limit?: number;
+  } = {}): Promise<ManagedWorkspaceReconciliationResult> {
+    if (!this.store) return { checked: 0, reconciled: 0 };
+
+    const limit = input.limit ?? 128;
+    const sessions = this.store.listActiveManagedSessions({
+      afterId: input.cursor,
+      limit,
+    });
+    let reconciled = 0;
+
+    for (const session of sessions) {
+      let missing = false;
+      try {
+        const rootStats = await stat(session.root);
+        missing = !rootStats.isDirectory();
+      } catch (error) {
+        if (isErrnoException(error) && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+          missing = true;
+        } else {
+          continue;
+        }
+      }
+
+      if (!missing) continue;
+      const transitioned = this.store.markSessionMissing(
+        session.id,
+        "managed_worktree_root_missing",
+      );
+      if (transitioned?.status === "missing") {
+        this.workspaces.delete(session.id);
+        this.store.deleteConversationBindingsForWorkspace(session.id);
+        reconciled += 1;
+      }
+    }
+
+    return {
+      checked: sessions.length,
+      reconciled,
+      nextCursor:
+        sessions.length === limit
+          ? sessions[sessions.length - 1]?.id
+          : undefined,
+    };
   }
 
   resolvePath(workspace: Workspace, inputPath: string): string {
