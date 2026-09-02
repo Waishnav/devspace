@@ -89,6 +89,21 @@ Uncommitted source checkout changes are not copied into the managed worktree.
 DevSpace reports when the source checkout was dirty so the model can decide how
 to proceed with the user.
 
+## Release A Terminal Workspace
+
+Call `close_workspace` once only when work in that workspace is genuinely
+terminal and no DevSpace process session is still running for it. Closing the
+workspace releases its durable DevSpace lease and makes that `workspaceId`
+non-reusable.
+
+`close_workspace` does not delete a managed worktree, branch, commit, or project
+file. Worktree removal remains a separate repository-policy operation that can
+apply Git cleanliness, integration, process, lock, and other safety checks.
+
+Do not infer terminal state from a response ending, MCP transport closure,
+server restart, workspace age, or filesystem mtime. Paused or resumable work
+must keep its lease active.
+
 ## Project Instructions
 
 When a workspace opens, DevSpace loads root-level instruction files:
@@ -153,6 +168,7 @@ sessions for that workspace.
 The Claude surface exposes these tool names:
 
 - `open_workspace`
+- `close_workspace`
 - `read`
 - `write`
 - `edit`
@@ -162,6 +178,7 @@ The Claude surface exposes these tool names:
 DevSpace uses the Codex-style surface by default. It exposes:
 
 - `open_workspace`
+- `close_workspace`
 - `read`
 - `apply_patch`
 - `exec_command`
