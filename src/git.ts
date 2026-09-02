@@ -12,7 +12,8 @@ export interface GitCommandResult {
 export interface GitEligibility {
   ok: boolean;
   gitRoot?: string;
-  reason?: "not_git" | "no_head";
+  hasHead?: boolean;
+  reason?: "not_git";
   message?: string;
 }
 
@@ -46,14 +47,13 @@ export async function getGitEligibility(cwd: string): Promise<GitEligibility> {
     await git(gitRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
   } catch {
     return {
-      ok: false,
+      ok: true,
       gitRoot,
-      reason: "no_head",
-      message: "repository has no HEAD commit",
+      hasHead: false,
     };
   }
 
-  return { ok: true, gitRoot };
+  return { ok: true, gitRoot, hasHead: true };
 }
 
 export function safeWorkspaceRefSegment(workspaceId: string): string {
