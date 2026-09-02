@@ -218,9 +218,9 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           );
           return processSessions.start({
             workspaceId,
-            workspaceRoot: workspace.root,
             command: cmd,
             cwd,
+            workspaceRoot: workspace.root,
             tty,
             columns,
             rows,
@@ -229,6 +229,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           });
         },
       );
+
       return processToolResponse(snapshot);
     },
   );
@@ -238,15 +239,50 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Write to process",
       description:
-        "Write characters to a running process session or poll it for new output. Use this for interactive processes and commands that outlive the initial yield window.",
+        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
-        sessionId: z.number().int().positive(),
-        chars: z.string().optional(),
-        columns: z.number().int().min(1).max(1_000).optional(),
-        rows: z.number().int().min(1).max(1_000).optional(),
-        yieldTimeMs: z.number().int().min(0).max(110_000).optional(),
-        maxOutputTokens: z.number().int().positive().max(100_000).optional(),
+        workspaceId: z
+          .string()
+          .describe("Workspace identifier used to start the process."),
+        sessionId: z
+          .number()
+          .describe("Process session identifier returned by exec_command."),
+        chars: z
+          .string()
+          .optional()
+          .describe(
+            "Characters to write. Omit or pass an empty string to poll.",
+          ),
+        columns: z
+          .number()
+          .int()
+          .min(1)
+          .max(1_000)
+          .optional()
+          .describe("Resize a PTY to this width."),
+        rows: z
+          .number()
+          .int()
+          .min(1)
+          .max(1_000)
+          .optional()
+          .describe("Resize a PTY to this height."),
+        yieldTimeMs: z
+          .number()
+          .int()
+          .min(0)
+          .max(30_000)
+          .optional()
+          .describe(
+            "Milliseconds to wait for process output or completion. Defaults to 10000.",
+          ),
+        maxOutputTokens: z
+          .number()
+          .int()
+          .positive()
+          .max(100_000)
+          .optional()
+          .describe("Approximate output token budget. Defaults to 10000."),
       },
       outputSchema: processOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
@@ -265,8 +301,9 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         config,
         { tool: "write_stdin", workspaceId },
         startedAt,
-        () =>
-          processSessions.write({
+        async () => {
+          workspaces.getWorkspace(workspaceId);
+          return processSessions.write({
             workspaceId,
             sessionId,
             chars,
@@ -274,8 +311,10 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             rows,
             yieldTimeMs,
             maxOutputTokens,
-          }),
+          });
+        },
       );
+
       return processToolResponse(snapshot);
     },
   );
