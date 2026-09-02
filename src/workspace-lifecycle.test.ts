@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { loadConfig, type ServerConfig } from "./config.js";
+import { openDatabase } from "./db/client.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import { releaseWorkspaceLease } from "./workspace-lifecycle.js";
@@ -84,6 +85,79 @@ test("explicit release persists across restart and retains the managed worktree"
       /is released and cannot be reused/,
     );
     assert.equal((await stat(retainedFile)).isFile(), true);
+  } finally {
+    secondStore.close();
+  }
+});
+
+test("restart keeps an existing managed workspace active until explicit release", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const managedRoot = join(fixture.worktreeRoot, "managed-active");
+  await mkdir(managedRoot);
+
+  const firstStore = new SqliteWorkspaceStore(fixture.stateDir);
+  firstStore.createSession({
+    id: "ws_restart_active",
+    root: managedRoot,
+    mode: "worktree",
+    sourceRoot: fixture.sourceRoot,
+    baseRef: "origin/main",
+    baseSha: "abc123",
+    managed: true,
+  });
+  firstStore.close();
+
+  const secondStore = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    assert.equal(secondStore.getSession("ws_restart_active")?.status, "active");
+    const restored = new WorkspaceRegistry(fixture.config, secondStore).getWorkspace(
+      "ws_restart_active",
+    );
+    assert.equal(restored.id, "ws_restart_active");
+    assert.equal(restored.root, managedRoot);
+  } finally {
+    secondStore.close();
+  }
+});
+
+test("legacy lifecycle state is neither reusable nor explicit release authority", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const managedRoot = join(fixture.worktreeRoot, "legacy-state");
+  await mkdir(managedRoot);
+
+  const firstStore = new SqliteWorkspaceStore(fixture.stateDir);
+  firstStore.createSession({
+    id: "ws_legacy_state",
+    root: managedRoot,
+    mode: "worktree",
+    sourceRoot: fixture.sourceRoot,
+    managed: true,
+  });
+  firstStore.close();
+
+  const database = openDatabase(fixture.stateDir);
+  try {
+    database.sqlite
+      .prepare("update workspace_sessions set status = 'inactive' where id = ?")
+      .run("ws_legacy_state");
+  } finally {
+    database.close();
+  }
+
+  const secondStore = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    assert.equal(secondStore.getSession("ws_legacy_state")?.status, "unknown");
+    const registry = new WorkspaceRegistry(fixture.config, secondStore);
+    assert.throws(
+      () => registry.getWorkspace("ws_legacy_state"),
+      /is unknown and cannot be reused/,
+    );
+    assert.throws(
+      () => registry.releaseWorkspace("ws_legacy_state"),
+      /Unknown workspaceId/,
+    );
+    assert.equal(secondStore.getSession("ws_legacy_state")?.status, "unknown");
+    assert.equal((await stat(managedRoot)).isDirectory(), true);
   } finally {
     secondStore.close();
   }
