@@ -2,13 +2,21 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
 import { logEvent } from "./logger.js";
-import { ProcessSessionManager } from "./process-sessions.js";
+import type { ProcessSessionManager } from "./process-sessions.js";
 import { logToolCall, textBlock } from "./tool-surfaces/shared.js";
 import { workspaceIdDescription } from "./tool-surfaces/types.js";
-import { WorkspaceRegistry } from "./workspaces.js";
+import type { WorkspaceRegistry } from "./workspaces.js";
 
 const RECONCILIATION_BATCH_SIZE = 128;
-const RECONCILIATION_INTERVAL_MS = 5 * 60 * 1_000;
+const RECONCILIATION_RESCAN_MS = 6 * 60 * 60 * 1_000;
+
+interface ReconciliationState {
+  cursor?: string;
+  running: boolean;
+  lastFullSweepAt?: number;
+}
+
+const reconciliationStates = new WeakMap<WorkspaceRegistry, ReconciliationState>();
 
 export function registerWorkspaceLifecycleTool(
   server: McpServer,
@@ -16,6 +24,8 @@ export function registerWorkspaceLifecycleTool(
   workspaces: WorkspaceRegistry,
   processSessions: ProcessSessionManager,
 ): void {
+  requestManagedWorkspaceReconciliation(config, workspaces);
+
   server.registerTool(
     "close_workspace",
     {
@@ -91,22 +101,35 @@ export function registerWorkspaceLifecycleTool(
   );
 }
 
-export function startManagedWorkspaceReconciliation(
+export function requestManagedWorkspaceReconciliation(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
-): () => void {
-  let cursor: string | undefined;
-  let running = false;
+): void {
+  const state = reconciliationStates.get(workspaces) ?? {
+    running: false,
+  };
+  reconciliationStates.set(workspaces, state);
 
-  const run = async (): Promise<void> => {
-    if (running) return;
-    running = true;
-    try {
-      const result = await workspaces.reconcileManagedWorktreeSessions({
-        cursor,
-        limit: RECONCILIATION_BATCH_SIZE,
-      });
-      cursor = result.nextCursor;
+  if (state.running) return;
+  if (
+    state.cursor === undefined &&
+    state.lastFullSweepAt !== undefined &&
+    Date.now() - state.lastFullSweepAt < RECONCILIATION_RESCAN_MS
+  ) {
+    return;
+  }
+
+  state.running = true;
+  void workspaces
+    .reconcileManagedWorktreeSessions({
+      cursor: state.cursor,
+      limit: RECONCILIATION_BATCH_SIZE,
+    })
+    .then((result) => {
+      state.cursor = result.nextCursor;
+      if (result.nextCursor === undefined) {
+        state.lastFullSweepAt = Date.now();
+      }
       if (result.reconciled > 0) {
         logEvent(config.logging, "info", "workspace_sessions_reconciled", {
           checked: result.checked,
@@ -114,20 +137,13 @@ export function startManagedWorkspaceReconciliation(
           batchSize: RECONCILIATION_BATCH_SIZE,
         });
       }
-    } catch (error) {
+    })
+    .catch((error: unknown) => {
       logEvent(config.logging, "warn", "workspace_session_reconciliation_failed", {
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      running = false;
-    }
-  };
-
-  void run();
-  const timer = setInterval(() => {
-    void run();
-  }, RECONCILIATION_INTERVAL_MS);
-  timer.unref();
-
-  return () => clearInterval(timer);
+    })
+    .finally(() => {
+      state.running = false;
+    });
 }
