@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -14,6 +14,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import {
   createPiSandboxExtension,
   createPiSandboxModeRef,
@@ -45,8 +46,22 @@ export type PiSessionFactory = (
   input: LocalAgentRunInput,
 ) => Promise<PiSessionLike>;
 
+export type PiModelRegistryConfigurer = (registry: ModelRegistry) => void;
+
+export type PiModelResolver = (
+  registry: ModelRegistry,
+  reference: string,
+) => unknown;
+
+export interface PiLocalAgentDriverOptions {
+  provider?: LocalAgentProvider;
+  defaultModel?: string;
+  configureModelRegistry?: PiModelRegistryConfigurer;
+  resolveModel?: PiModelResolver;
+}
+
 export class PiSessionRuntime implements LocalAgentRuntime {
-  readonly provider = "pi" as const;
+  readonly provider: LocalAgentProvider;
   private readonly unsubscribe: () => void;
   private alive = true;
   private closed = false;
@@ -55,7 +70,10 @@ export class PiSessionRuntime implements LocalAgentRuntime {
 
   constructor(
     private readonly session: PiSessionLike,
+    provider: LocalAgentProvider = "pi",
+    private readonly resolveModel: PiModelResolver = resolvePiModel,
   ) {
+    this.provider = provider;
     this.unsubscribe = session.subscribe((event) => {
       if (!this.collectingEvents) return;
       if (this.events.length >= MAX_PI_EVENTS) this.events.shift();
@@ -74,7 +92,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
             provider: this.provider,
             operation: "run",
             retryable: true,
-            message: "Pi runtime is not running.",
+            message: `${this.provider} runtime is not running.`,
           });
         }
         await callbacks?.onSessionId?.(this.session.sessionId);
@@ -98,7 +116,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
               operation: "run",
               retryable: false,
               cause: new Error(providerError),
-              message: "Pi agent turn failed.",
+              message: `${this.provider} agent turn failed.`,
             });
           }
           throw new AgentProviderProtocolError({
@@ -106,7 +124,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
             provider: this.provider,
             operation: "run",
             retryable: false,
-            message: "Pi did not return a final assistant response.",
+            message: `${this.provider} did not return a final assistant response.`,
           });
         }
         return {
@@ -143,14 +161,14 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     await updatePiSandboxSession(this.session, input.workspaceRoot, input.writeMode ?? "allowed");
     this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     if (input.model) {
-      const model = resolvePiModel(this.session.modelRegistry, input.model);
+      const model = this.resolveModel(this.session.modelRegistry, input.model);
       if (!model) {
         throw new AgentProviderProtocolError({
           code: "PROVIDER_PROTOCOL_ERROR",
-          provider: "pi",
+          provider: this.provider,
           operation: "configure_model",
           retryable: false,
-          message: `Pi model not found: ${input.model}.`,
+          message: `Model not found for ${this.provider}: ${input.model}.`,
         });
       }
       await this.session.setModel(model as never);
@@ -162,13 +180,29 @@ export class PiSessionRuntime implements LocalAgentRuntime {
 }
 
 export class PiLocalAgentDriver implements LocalAgentDriver {
-  readonly provider = "pi" as const;
+  readonly provider: LocalAgentProvider;
   readonly idleTimeoutMs = 3 * 60_000;
+  private readonly factory: PiSessionFactory;
+  private readonly defaultModel?: string;
+  private readonly resolveModel: PiModelResolver;
 
-  constructor(private readonly factory: PiSessionFactory = defaultPiSessionFactory) {}
+  constructor(
+    factory?: PiSessionFactory,
+    options: PiLocalAgentDriverOptions = {},
+  ) {
+    this.provider = options.provider ?? "pi";
+    this.defaultModel = options.defaultModel;
+    this.resolveModel = options.resolveModel ?? resolvePiModel;
+    this.factory = factory ?? ((context, input) => defaultPiSessionFactory(
+      context,
+      input,
+      options.configureModelRegistry,
+      this.resolveModel,
+    ));
+  }
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
-    return `pi:${context.agentId}`;
+    return `${this.provider}:${context.agentId}`;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -177,16 +211,21 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
       agentId: context.agentId,
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
+        const effectiveContext: LocalAgentRuntimeContext = {
+          ...context,
+          provider: this.provider,
+          model: context.model ?? this.defaultModel,
+        };
         const input: LocalAgentRunInput = {
           prompt: "",
-          workspaceRoot: context.workspaceRoot,
-          providerSessionId: context.providerSessionId,
-          writeMode: context.writeMode,
-          model: context.model,
-          effort: context.effort,
+          workspaceRoot: effectiveContext.workspaceRoot,
+          providerSessionId: effectiveContext.providerSessionId,
+          writeMode: effectiveContext.writeMode,
+          model: effectiveContext.model,
+          effort: effectiveContext.effort,
         };
-        const session = await this.factory(context, input);
-        return new PiSessionRuntime(session);
+        const session = await this.factory(effectiveContext, input);
+        return new PiSessionRuntime(session, this.provider, this.resolveModel);
       },
     });
   }
@@ -195,6 +234,8 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
 async function defaultPiSessionFactory(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
+  configureModelRegistry?: PiModelRegistryConfigurer,
+  resolveModel: PiModelResolver = resolvePiModel,
 ): Promise<PiSessionLike> {
   const {
     AuthStorage,
@@ -209,16 +250,22 @@ async function defaultPiSessionFactory(
   const agentDir = getAgentDir();
   const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-  const sessionManager = await resolveSessionManager(SessionManager, input.workspaceRoot, input.providerSessionId);
-  const model = input.model ? resolvePiModel(modelRegistry, input.model) : undefined;
+  configureModelRegistry?.(modelRegistry);
+  const sessionManager = await resolveSessionManager(
+    SessionManager,
+    input.workspaceRoot,
+    input.providerSessionId,
+    context.provider,
+  );
+  const model = input.model ? resolveModel(modelRegistry, input.model) : undefined;
   if (input.model && !model) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
-      provider: "pi",
+      provider: context.provider,
       agentId: context.agentId,
       operation: "configure_model",
       retryable: false,
-      message: `Pi model not found: ${input.model}.`,
+      message: `Model not found for ${context.provider}: ${input.model}.`,
     });
   }
   const modeRef = createPiSandboxModeRef(input.writeMode ?? "allowed");
@@ -278,6 +325,7 @@ async function resolveSessionManager(
   SessionManager: PiSessionManagerApi,
   workspaceRoot: string,
   providerSessionId: string | undefined,
+  provider: LocalAgentProvider = "pi",
 ): Promise<unknown> {
   if (!providerSessionId) return SessionManager.create(workspaceRoot);
   const sessions = await SessionManager.list(workspaceRoot);
@@ -285,16 +333,19 @@ async function resolveSessionManager(
   if (!match) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
-      provider: "pi",
+      provider,
       operation: "session",
       retryable: false,
-      message: `Pi session not found: ${providerSessionId}.`,
+      message: `${provider} session not found: ${providerSessionId}.`,
     });
   }
   return SessionManager.open(match.path);
 }
 
-function resolvePiModel(registry: { find(provider: string, modelId: string): unknown; getAll?: () => unknown[] }, reference: string): unknown {
+export function resolvePiModel(
+  registry: { find(provider: string, modelId: string): unknown; getAll?: () => unknown[] },
+  reference: string,
+): unknown {
   const separator = reference.indexOf("/");
   if (separator !== -1) {
     return registry.find(reference.slice(0, separator), reference.slice(separator + 1));

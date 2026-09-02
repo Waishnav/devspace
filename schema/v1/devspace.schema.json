@@ -179,7 +179,8 @@
                   "pi",
                   "cursor",
                   "copilot",
-                  "grok"
+                  "grok",
+                  "minimax"
                 ]
               },
               "enabled": {

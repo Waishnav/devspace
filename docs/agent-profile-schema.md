@@ -74,6 +74,7 @@ provider: pi
 provider: cursor
 provider: copilot
 provider: grok
+provider: minimax
 ```
 
 Unsupported or custom providers are rejected. DevSpace maps providers to their
@@ -86,6 +87,7 @@ native integration:
 - `cursor`: ACP
 - `copilot`: ACP
 - `grok`: Grok Build ACP (`grok agent stdio`)
+- `minimax`: embedded MiniMax API runtime, with MiniMax-M3 as the default model
 
 Codex is resolved from the user's environment rather than bundled with
 DevSpace. Run `codex login` normally before using it; set `CODEX_COMMAND` when
@@ -122,6 +124,7 @@ DevSpace passes this through to providers that expose a matching control:
 - `opencode`: model variant.
 - `cursor` and `copilot`: ACP thought-level config when supported.
 - `grok`: `--reasoning-effort` on startup and xAI's ACP model metadata for resumed sessions.
+- `minimax`: `off` disables MiniMax-M3 thinking; other levels enable adaptive thinking. MiniMax-M2.7 always uses thinking.
 
 ### `disabled`
 

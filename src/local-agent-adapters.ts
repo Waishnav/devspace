@@ -10,6 +10,7 @@ import {
   type ClaudeQueryFactory,
 } from "./local-agent-claude.js";
 import { CodexLocalAgentDriver } from "./local-agent-codex.js";
+import { MiniMaxLocalAgentDriver } from "./local-agent-minimax.js";
 import {
   OpencodeLocalAgentDriver,
   extractOpenCodeFinalResponse,
@@ -43,6 +44,7 @@ export function createLocalAgentDrivers(
     new AcpLocalAgentDriver("cursor", options.env),
     new AcpLocalAgentDriver("copilot", options.env),
     new AcpLocalAgentDriver("grok", options.env),
+    new MiniMaxLocalAgentDriver(options.piSessionFactory),
   ];
 }
 

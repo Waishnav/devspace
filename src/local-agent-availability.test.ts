@@ -10,3 +10,4 @@ assert.deepEqual(snapshot.find((provider) => provider.name === "codex"), {
   available: false,
   reason: "/definitely/missing/devspace-codex executable not found",
 });
+assert.equal(snapshot.find((provider) => provider.name === "minimax")?.available, true);
