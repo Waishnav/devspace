@@ -169,52 +169,54 @@ test("legacy lifecycle state is neither reusable nor explicit release authority"
 test("managed session reconciliation is bounded and only terminalizes missing roots", async (t) => {
   const fixture = await lifecycleFixture(t);
   const store = new SqliteWorkspaceStore(fixture.stateDir);
-  t.after(() => store.close());
+  try {
+    const activeRoot = join(fixture.worktreeRoot, "active-existing");
+    await mkdir(activeRoot);
+    await writeFile(join(activeRoot, "work.txt"), "still active\n");
 
-  const activeRoot = join(fixture.worktreeRoot, "active-existing");
-  await mkdir(activeRoot);
-  await writeFile(join(activeRoot, "work.txt"), "still active\n");
+    store.createSession({
+      id: "ws_001_active",
+      root: activeRoot,
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
+    store.createSession({
+      id: "ws_002_missing",
+      root: join(fixture.worktreeRoot, "missing-2"),
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
+    store.createSession({
+      id: "ws_003_missing",
+      root: join(fixture.worktreeRoot, "missing-3"),
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
 
-  store.createSession({
-    id: "ws_001_active",
-    root: activeRoot,
-    mode: "worktree",
-    sourceRoot: fixture.sourceRoot,
-    managed: true,
-  });
-  store.createSession({
-    id: "ws_002_missing",
-    root: join(fixture.worktreeRoot, "missing-2"),
-    mode: "worktree",
-    sourceRoot: fixture.sourceRoot,
-    managed: true,
-  });
-  store.createSession({
-    id: "ws_003_missing",
-    root: join(fixture.worktreeRoot, "missing-3"),
-    mode: "worktree",
-    sourceRoot: fixture.sourceRoot,
-    managed: true,
-  });
+    const registry = new WorkspaceRegistry(fixture.config, store);
+    const first = await registry.reconcileManagedWorktreeSessions({ limit: 2 });
+    assert.equal(first.checked, 2);
+    assert.equal(first.reconciled, 1);
+    assert.equal(first.nextCursor, "ws_002_missing");
+    assert.equal(store.getSession("ws_001_active")?.status, "active");
+    assert.equal(store.getSession("ws_002_missing")?.status, "missing");
+    assert.equal(store.getSession("ws_003_missing")?.status, "active");
 
-  const registry = new WorkspaceRegistry(fixture.config, store);
-  const first = await registry.reconcileManagedWorktreeSessions({ limit: 2 });
-  assert.equal(first.checked, 2);
-  assert.equal(first.reconciled, 1);
-  assert.equal(first.nextCursor, "ws_002_missing");
-  assert.equal(store.getSession("ws_001_active")?.status, "active");
-  assert.equal(store.getSession("ws_002_missing")?.status, "missing");
-  assert.equal(store.getSession("ws_003_missing")?.status, "active");
-
-  const second = await registry.reconcileManagedWorktreeSessions({
-    cursor: first.nextCursor,
-    limit: 2,
-  });
-  assert.equal(second.checked, 1);
-  assert.equal(second.reconciled, 1);
-  assert.equal(second.nextCursor, undefined);
-  assert.equal(store.getSession("ws_003_missing")?.status, "missing");
-  assert.equal((await stat(activeRoot)).isDirectory(), true);
+    const second = await registry.reconcileManagedWorktreeSessions({
+      cursor: first.nextCursor,
+      limit: 2,
+    });
+    assert.equal(second.checked, 1);
+    assert.equal(second.reconciled, 1);
+    assert.equal(second.nextCursor, undefined);
+    assert.equal(store.getSession("ws_003_missing")?.status, "missing");
+    assert.equal((await stat(activeRoot)).isDirectory(), true);
+  } finally {
+    store.close();
+  }
 });
 
 test("managed reconciliation sweep continues through every bounded page", async () => {
