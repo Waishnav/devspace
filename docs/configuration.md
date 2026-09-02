@@ -121,6 +121,12 @@ Subagent providers are explicit. Omitted providers are disabled:
         "enabled": true,
         "model": "sonnet",
       },
+      {
+        "id": "minimax",
+        "enabled": true,
+        "model": "MiniMax-M3",
+        "effort": "high",
+      },
     ],
   },
 }
@@ -134,6 +140,14 @@ Provider executable discovery remains process-scoped. The supported overrides
 are `CODEX_COMMAND`, `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`,
 `COPILOT_COMMAND`, `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. DevSpace does not
 persist provider credentials.
+
+MiniMax supports `MiniMax-M3` and `MiniMax-M2.7`. The unqualified model ids use
+the global `https://api.minimax.io/anthropic` endpoint and
+`MINIMAX_API_KEY`. Use a `minimax-cn/` prefix, such as
+`minimax-cn/MiniMax-M3`, with `MINIMAX_CN_API_KEY` to select the China
+`https://api.minimaxi.com/anthropic` endpoint. The corresponding
+OpenAI-compatible endpoints are `https://api.minimax.io/v1` and
+`https://api.minimaxi.com/v1`.
 
 ## Native artifact download
 

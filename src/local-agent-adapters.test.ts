@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
+  createLocalAgentDrivers,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
   extractPiProviderError,
@@ -9,6 +10,12 @@ import {
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
+
+assert.deepEqual(
+  createLocalAgentDrivers().map((driver) => driver.provider),
+  ["codex", "claude", "opencode", "pi", "cursor", "copilot", "grok", "minimax"],
+);
+
 assert.deepEqual(
   resolveAcpModelConfigUpdate({
     sessionId: "session_model_1",
