@@ -37,6 +37,11 @@ const migrations: Migration[] = [
     name: "local-agent-effort-rename",
     up: migrateLocalAgentEffortRename,
   },
+  {
+    version: 7,
+    name: "workspace-terminal-lifecycle",
+    up: migrateWorkspaceTerminalLifecycle,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -233,6 +238,15 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
     return;
   }
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
+}
+
+function migrateWorkspaceTerminalLifecycle(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "workspace_sessions", "terminal_at", "text");
+  addColumnIfMissing(sqlite, "workspace_sessions", "terminal_reason", "text");
+  sqlite.exec(`
+    create index if not exists workspace_sessions_lifecycle_idx
+      on workspace_sessions(status, mode, managed, id);
+  `);
 }
 
 function addColumnIfMissing(
