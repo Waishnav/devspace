@@ -54,10 +54,12 @@ export function releaseWorkspaceLease(
   }
 
   const session = workspaces.releaseWorkspace(workspaceId);
-  if (session.status === "active") {
-    throw new Error(`Workspace ${workspaceId} could not be released safely.`);
+  if (session.status !== "released" && session.status !== "missing") {
+    throw new Error(
+      `Workspace ${workspaceId} did not reach an explicit terminal lifecycle state.`,
+    );
   }
-  return session as TerminalWorkspaceSession;
+  return session;
 }
 
 export function registerWorkspaceLifecycleTool(
