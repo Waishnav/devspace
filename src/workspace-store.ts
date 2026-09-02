@@ -8,7 +8,8 @@ import {
 } from "./db/schema.js";
 
 export type WorkspaceMode = "checkout" | "worktree";
-export type WorkspaceSessionStatus = "active" | "released" | "missing";
+export type WorkspaceSessionStatus = "active" | "released" | "missing" | "unknown";
+type TerminalWorkspaceSessionStatus = "released" | "missing";
 
 export interface WorkspaceSession {
   id: string;
@@ -266,7 +267,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
 
   private transitionSession(
     id: string,
-    status: Exclude<WorkspaceSessionStatus, "active">,
+    status: TerminalWorkspaceSessionStatus,
     reason: string,
   ): WorkspaceSession | undefined {
     const now = new Date().toISOString();
@@ -312,8 +313,12 @@ function rowToWorkspaceSession(row: WorkspaceSessionRow): WorkspaceSession {
 }
 
 function workspaceSessionStatus(status: string): WorkspaceSessionStatus {
-  if (status === "released" || status === "missing") return status;
-  return "active";
+  if (status === "active" || status === "released" || status === "missing") {
+    return status;
+  }
+  // Legacy or unexpected states are never treated as an active reusable lease,
+  // but they also do not constitute explicit release authority for GC.
+  return "unknown";
 }
 
 function rowToWorkspaceConversationBinding(
