@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
 import { logEvent } from "./logger.js";
 import type { ProcessSessionManager } from "./process-sessions.js";
+import type { WorkspaceSession } from "./workspace-store.js";
 import { logToolCall, textBlock } from "./tool-surfaces/shared.js";
 import { workspaceIdDescription } from "./tool-surfaces/types.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
@@ -17,6 +18,24 @@ interface ReconciliationState {
 }
 
 const reconciliationStates = new WeakMap<WorkspaceRegistry, ReconciliationState>();
+
+export function releaseWorkspaceLease(
+  workspaces: Pick<WorkspaceRegistry, "releaseWorkspace">,
+  processSessions: Pick<ProcessSessionManager, "hasRunningForWorkspace">,
+  workspaceId: string,
+): WorkspaceSession {
+  // Keep the running-process check and lifecycle transition synchronous with
+  // respect to the Node event loop: no await may appear between these calls.
+  // ProcessSessionManager.start() records its session before its first yield,
+  // so a concurrent start either wins and blocks close or sees a terminal ID.
+  if (processSessions.hasRunningForWorkspace(workspaceId)) {
+    throw new Error(
+      `Workspace ${workspaceId} still owns a running process session. Terminate or finish it before closing the workspace.`,
+    );
+  }
+
+  return workspaces.releaseWorkspace(workspaceId);
+}
 
 export function registerWorkspaceLifecycleTool(
   server: McpServer,
@@ -54,18 +73,7 @@ export function registerWorkspaceLifecycleTool(
     },
     async ({ workspaceId }) => {
       const startedAt = performance.now();
-
-      // Keep the running-process check and lifecycle transition synchronous with
-      // respect to the Node event loop: no await may appear between these calls.
-      // processSessions.start() records the session before its first yield, so a
-      // concurrent start either wins and blocks close or sees the terminal ID.
-      if (processSessions.hasRunningForWorkspace(workspaceId)) {
-        throw new Error(
-          `Workspace ${workspaceId} still owns a running process session. Terminate or finish it before closing the workspace.`,
-        );
-      }
-
-      const session = workspaces.releaseWorkspace(workspaceId);
+      const session = releaseWorkspaceLease(workspaces, processSessions, workspaceId);
       const worktreeRetained = session.mode === "worktree" && session.managed;
       const result = {
         workspaceId: session.id,
