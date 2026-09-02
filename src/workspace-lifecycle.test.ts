@@ -8,7 +8,9 @@ import { openDatabase } from "./db/client.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import {
+  getManagedWorkspaceReconciliationStatus,
   releaseWorkspaceLease,
+  requestManagedWorkspaceReconciliation,
   runManagedWorkspaceReconciliationSweep,
 } from "./workspace-lifecycle.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
@@ -248,6 +250,36 @@ test("managed reconciliation sweep continues through every bounded page", async 
     checked: 263,
     reconciled: 6,
   });
+});
+
+test("managed reconciliation keeps an inspectable owned task and completion result", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const store = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    const registry = new WorkspaceRegistry(fixture.config, store);
+    const task = requestManagedWorkspaceReconciliation(fixture.config, registry);
+    assert.ok(task);
+
+    const running = getManagedWorkspaceReconciliationStatus(registry);
+    assert.equal(running?.running, true);
+    assert.equal(running?.task, task);
+    assert.equal(requestManagedWorkspaceReconciliation(fixture.config, registry), task);
+
+    await task;
+
+    const completed = getManagedWorkspaceReconciliationStatus(registry);
+    assert.equal(completed?.running, false);
+    assert.equal(completed?.task, undefined);
+    assert.equal(completed?.lastError, undefined);
+    assert.deepEqual(completed?.lastResult, {
+      batches: 1,
+      checked: 0,
+      reconciled: 0,
+    });
+    assert.ok(completed?.lastFullSweepAt);
+  } finally {
+    store.close();
+  }
 });
 
 test("release fails closed when a DevSpace process owns the workspace", async () => {

@@ -14,9 +14,12 @@ import type {
 const RECONCILIATION_BATCH_SIZE = 128;
 const RECONCILIATION_RESCAN_MS = 6 * 60 * 60 * 1_000;
 
-interface ReconciliationState {
+export interface ManagedWorkspaceReconciliationStatus {
   running: boolean;
   lastFullSweepAt?: number;
+  lastResult?: ManagedWorkspaceReconciliationSweepResult;
+  lastError?: string;
+  task?: Promise<void>;
 }
 
 interface ManagedWorkspaceReconciler {
@@ -36,7 +39,10 @@ type TerminalWorkspaceSession = WorkspaceSession & {
   status: "released" | "missing";
 };
 
-const reconciliationStates = new WeakMap<WorkspaceRegistry, ReconciliationState>();
+const reconciliationStates = new WeakMap<
+  WorkspaceRegistry,
+  ManagedWorkspaceReconciliationStatus
+>();
 
 function isTerminalWorkspaceSession(
   session: WorkspaceSession,
@@ -175,16 +181,23 @@ export async function runManagedWorkspaceReconciliationSweep(
   return { batches, checked, reconciled };
 }
 
+export function getManagedWorkspaceReconciliationStatus(
+  workspaces: WorkspaceRegistry,
+): Readonly<ManagedWorkspaceReconciliationStatus> | undefined {
+  const state = reconciliationStates.get(workspaces);
+  return state ? { ...state } : undefined;
+}
+
 export function requestManagedWorkspaceReconciliation(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
-): void {
+): Promise<void> | undefined {
   const state = reconciliationStates.get(workspaces) ?? {
     running: false,
   };
   reconciliationStates.set(workspaces, state);
 
-  if (state.running) return;
+  if (state.running) return state.task;
   if (
     state.lastFullSweepAt !== undefined &&
     Date.now() - state.lastFullSweepAt < RECONCILIATION_RESCAN_MS
@@ -193,8 +206,10 @@ export function requestManagedWorkspaceReconciliation(
   }
 
   state.running = true;
-  void runManagedWorkspaceReconciliationSweep(workspaces)
+  state.lastError = undefined;
+  const task = runManagedWorkspaceReconciliationSweep(workspaces)
     .then((result) => {
+      state.lastResult = result;
       state.lastFullSweepAt = Date.now();
       if (result.reconciled > 0) {
         logEvent(config.logging, "info", "workspace_sessions_reconciled", {
@@ -206,11 +221,15 @@ export function requestManagedWorkspaceReconciliation(
       }
     })
     .catch((error: unknown) => {
+      state.lastError = error instanceof Error ? error.message : String(error);
       logEvent(config.logging, "warn", "workspace_session_reconciliation_failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: state.lastError,
       });
     })
     .finally(() => {
       state.running = false;
+      state.task = undefined;
     });
+  state.task = task;
+  return task;
 }
