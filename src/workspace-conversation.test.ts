@@ -261,6 +261,34 @@ test("failed managed worktree context initialization does not leave a lease or w
   assert.equal(context.store.listActiveManagedSessions().length, 0);
 });
 
+test("failed managed worktree conversation binding does not leave an active lease or worktree", async (t) => {
+  const context = await fixture(t, { git: true });
+  const failingStore = new Proxy(context.store, {
+    get(target, property, receiver) {
+      if (property === "setConversationBinding") {
+        return () => {
+          throw new Error("simulated conversation binding failure");
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const registry = new WorkspaceRegistry(context.config, failingStore);
+  const before = await directoryNames(context.config.worktreeRoot);
+
+  await assert.rejects(
+    () => registry.openWorkspace(
+      { path: context.project, mode: "worktree" },
+      { conversationScopeId: "chat-1" },
+    ),
+    /simulated conversation binding failure/,
+  );
+
+  assert.deepEqual(await directoryNames(context.config.worktreeRoot), before);
+  assert.equal(context.store.listActiveManagedSessions().length, 0);
+});
+
 test("a failed first context load does not consume bootstrap", async (t) => {
   const { project, registry } = await fixture(t);
   const agentsDir = join(project, ".devspace", "agents");

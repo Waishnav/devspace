@@ -261,15 +261,49 @@ export class WorkspaceRegistry {
     }
 
     const context = await this.openWorktreeWorkspace(input.path, input.baseRef);
-    this.store?.setConversationBinding({
-      conversationScopeId,
-      targetKey,
-      workspaceSessionId: context.workspace.id,
-    });
+    try {
+      this.store?.setConversationBinding({
+        conversationScopeId,
+        targetKey,
+        workspaceSessionId: context.workspace.id,
+      });
+    } catch (error) {
+      await this.cleanupFailedConversationWorktree(context.workspace, error);
+    }
     return {
       ...context,
       includeBootstrapContext: true,
     };
+  }
+
+  private async cleanupFailedConversationWorktree(
+    workspace: Workspace,
+    error: unknown,
+  ): Promise<never> {
+    this.workspaces.delete(workspace.id);
+    const worktree = workspace.worktree;
+    if (!worktree?.managed) throw error;
+
+    try {
+      await removeManagedWorktree(worktree);
+      const transitioned = this.store?.markSessionMissing(
+        workspace.id,
+        "managed_worktree_open_failed",
+      );
+      if (transitioned && transitioned.status !== "missing") {
+        throw new Error(
+          `Failed managed worktree ${workspace.id} did not reach missing state after cleanup.`,
+        );
+      }
+      this.store?.deleteConversationBindingsForWorkspace(workspace.id);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Managed worktree conversation binding failed and cleanup did not complete: ${workspace.root}`,
+      );
+    }
+
+    throw error;
   }
 
   private async findReusableCheckoutWorkspace(
