@@ -92,6 +92,14 @@ managed worktree, branch, commit, or project files, and a released workspace ID
 cannot be reused. A dropped MCP transport, server restart, age, or filesystem
 mtime does not imply release.
 
+When the host supplies supported conversation metadata, a managed worktree is
+leased to that conversation by canonical Git repository and base ref. Repeated
+or concurrent opens reuse the active lease across DevSpace restarts instead of
+creating duplicate worktrees. Releasing the workspace removes that binding, so
+the next open creates a fresh managed worktree. Hosts without conversation
+metadata keep the explicit `workspaceId` workflow and do not infer reuse from
+age or filesystem state.
+
 The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each mode uses
 its shell tool with programs such as `rg`, `find`, and `ls` when it needs those
 operations.

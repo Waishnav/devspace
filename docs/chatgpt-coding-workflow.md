@@ -17,29 +17,25 @@ ChatGPT should call `open_workspace` once for a project folder:
 The result includes a `workspaceId`. All later file, search, edit, show-changes,
 and shell calls should reuse that same `workspaceId`.
 
-ChatGPT may support automatic checkout recovery through optional host
+ChatGPT may support automatic workspace recovery through optional host
 conversation metadata. This is an OpenAI-host adapter detail, not a standard MCP
 conversation field. When that optional context is available, opening the same
 checkout project again in the same conversation can continue in the existing
-workspace, and the context already provided for that reused checkout is not
-repeated. The portable workflow remains the same: keep using the `workspaceId`
-returned by `open_workspace` for later operations. Hosts without supported
-conversation context receive a normal new workspace and continue with that
-explicit `workspaceId` workflow.
+workspace. Worktree mode similarly reuses the active managed worktree lease for
+the same conversation, canonical Git repository, and base ref. The portable
+workflow remains the same: keep using the `workspaceId` returned by
+`open_workspace` for later operations. Hosts without supported conversation
+context receive a normal new workspace and continue with that explicit
+`workspaceId` workflow.
 The model receives actionable workspace instructions; automatic-reuse
 bookkeeping is not a model-facing choice.
 
-Worktree mode is deliberately different: every call creates a new managed
-worktree and a new workspace session with complete context, even for the same
-path and base ref.
-
-The first successful open of a checkout provides complete instructions and
-coding context. A repeated open that reuses the same checkout workspace does
-not repeat the model-visible context, but the workspace UI continues to show the
-complete details. Every new worktree establishes and returns its own complete
-context, even when the same project was already opened in checkout or another
-worktree. Opening checkout after a worktree therefore provides the checkout's
-own context.
+The first successful open of a checkout or managed worktree provides complete
+instructions and coding context. A repeated open that reuses the same
+conversation workspace does not repeat the model-visible context, but the
+workspace UI continues to show the complete details. A different conversation,
+base ref, or workspace mode establishes its own context. Opening checkout after
+a worktree therefore still provides the checkout's own context.
 
 Do not call `open_workspace` again for the same checkout folder unless:
 
@@ -80,10 +76,14 @@ Managed worktrees are created under:
 Worktree mode requires a Git repository with at least one commit. It starts from
 `HEAD` unless `baseRef` is provided.
 
-Each worktree-mode call creates a new managed worktree and returns a new
-`workspaceId`. Reuse that ID for work inside that worktree; call
-`open_workspace` in worktree mode again only when another isolated worktree is
-actually required.
+With supported conversation metadata, the first worktree-mode open creates one
+managed worktree lease for the conversation, canonical Git repository, and base
+ref. Repeated or concurrent opens reuse that same `workspaceId`, including after
+a DevSpace restart. A different conversation or base ref receives a separate
+managed worktree. After `close_workspace` releases a terminal lease, the next
+open creates a fresh worktree. Hosts without supported conversation metadata
+continue to receive a fresh worktree for each open, so callers should still
+reuse the returned `workspaceId` directly whenever possible.
 
 Uncommitted source checkout changes are not copied into the managed worktree.
 DevSpace reports when the source checkout was dirty so the model can decide how
