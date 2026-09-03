@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -82,7 +82,7 @@ test("a checkout without a conversation scope does not use conversation reuse", 
   assert.notEqual(second.workspace.id, first.workspace.id);
 });
 
-test("worktree requests remain fresh without replacing the reusable checkout", async (t) => {
+test("a conversation reuses its managed worktree without replacing the reusable checkout", async (t) => {
   const { project, registry } = await fixture(t, { git: true });
   const worktreeInput = { path: project, mode: "worktree" as const };
 
@@ -95,8 +95,9 @@ test("worktree requests remain fresh without replacing the reusable checkout", a
   });
   const checkoutAgain = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
 
-  assert.notEqual(firstWorktree.workspace.id, secondWorktree.workspace.id);
-  assert.notEqual(firstWorktree.workspace.root, secondWorktree.workspace.root);
+  assert.equal(secondWorktree.workspace.id, firstWorktree.workspace.id);
+  assert.equal(secondWorktree.workspace.root, firstWorktree.workspace.root);
+  assert.equal(secondWorktree.workspaceReused, true);
   assert.equal(checkoutAgain.workspace.id, checkout.workspace.id);
 });
 
@@ -115,7 +116,39 @@ test("a worktree-first conversation creates and then reuses its checkout", async
   assert.equal(checkoutAgain.workspace.id, checkout.workspace.id);
 });
 
-test("concurrent worktree opens remain fresh and return complete context", async (t) => {
+test("different conversations receive separate managed worktree leases", async (t) => {
+  const { project, registry } = await fixture(t, { git: true });
+  const input = { path: project, mode: "worktree" as const };
+
+  const first = await registry.openWorkspace(input, { conversationScopeId: "chat-1" });
+  const second = await registry.openWorkspace(input, { conversationScopeId: "chat-2" });
+
+  assert.notEqual(second.workspace.id, first.workspace.id);
+  assert.notEqual(second.workspace.root, first.workspace.root);
+});
+
+test("managed worktree lease uses the canonical Git root across repository subpaths", async (t) => {
+  const { project, registry } = await fixture(t, { git: true });
+  const nested = join(project, "apps", "api");
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(nested, "README.md"), "api\n");
+  await git(project, ["add", "."]);
+  await git(project, ["commit", "-m", "Add nested project"]);
+
+  const rootOpen = await registry.openWorkspace(
+    { path: project, mode: "worktree" },
+    { conversationScopeId: "chat-1" },
+  );
+  const nestedOpen = await registry.openWorkspace(
+    { path: nested, mode: "worktree" },
+    { conversationScopeId: "chat-1" },
+  );
+
+  assert.equal(nestedOpen.workspace.id, rootOpen.workspace.id);
+  assert.equal(nestedOpen.workspace.root, rootOpen.workspace.root);
+});
+
+test("concurrent worktree opens reuse one lease and return complete context", async (t) => {
   const { project, registry } = await fixture(t, { git: true });
   const worktreeInput = { path: project, mode: "worktree" as const };
 
@@ -124,8 +157,8 @@ test("concurrent worktree opens remain fresh and return complete context", async
     registry.openWorkspace(worktreeInput, { conversationScopeId: "chat-1" }),
   ]);
 
-  assert.notEqual(first.workspace.id, second.workspace.id);
-  assert.notEqual(first.workspace.root, second.workspace.root);
+  assert.equal(first.workspace.id, second.workspace.id);
+  assert.equal(first.workspace.root, second.workspace.root);
   assert.deepEqual(
     first.agentsFiles.map((file) => file.content),
     second.agentsFiles.map((file) => file.content),
@@ -150,6 +183,82 @@ test("checkout reuse survives a registry restart", async (t) => {
   });
 
   assert.equal(restored.workspace.id, first.workspace.id);
+});
+
+test("managed worktree reuse survives a registry restart", async (t) => {
+  const context = await fixture(t, { git: true });
+  const input = { path: context.project, mode: "worktree" as const };
+  const first = await context.registry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+  context.closeStore(context.store);
+
+  const restoredStore = context.openStore();
+  const restoredRegistry = new WorkspaceRegistry(context.config, restoredStore);
+  const restored = await restoredRegistry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+
+  assert.equal(restored.workspace.id, first.workspace.id);
+  assert.equal(restored.workspace.root, first.workspace.root);
+  assert.equal(restored.workspaceReused, true);
+});
+
+test("released managed worktree lease is replaced for the same conversation", async (t) => {
+  const context = await fixture(t, { git: true });
+  const input = { path: context.project, mode: "worktree" as const };
+  const first = await context.registry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+
+  const released = context.registry.releaseWorkspace(first.workspace.id);
+  assert.equal(released.status, "released");
+
+  const replacement = await context.registry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+
+  assert.notEqual(replacement.workspace.id, first.workspace.id);
+  assert.notEqual(replacement.workspace.root, first.workspace.root);
+  assert.equal(replacement.workspaceReused, false);
+});
+
+test("missing managed worktree is reconciled before its conversation gets a replacement", async (t) => {
+  const context = await fixture(t, { git: true });
+  const input = { path: context.project, mode: "worktree" as const };
+  const first = await context.registry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+
+  await rm(first.workspace.root, { recursive: true, force: true });
+  const replacement = await context.registry.openWorkspace(input, {
+    conversationScopeId: "chat-1",
+  });
+
+  assert.equal(context.store.getSession(first.workspace.id)?.status, "missing");
+  assert.notEqual(replacement.workspace.id, first.workspace.id);
+  assert.notEqual(replacement.workspace.root, first.workspace.root);
+});
+
+test("failed managed worktree context initialization does not leave a lease or worktree", async (t) => {
+  const context = await fixture(t, { git: true });
+  const agentsDir = join(context.project, ".devspace", "agents");
+  await rm(agentsDir, { recursive: true, force: true });
+  await writeFile(agentsDir, "not a directory\n");
+  await git(context.project, ["add", "-A"]);
+  await git(context.project, ["commit", "-m", "Break agent directory"]);
+
+  const before = await directoryNames(context.config.worktreeRoot);
+  await assert.rejects(
+    () => context.registry.openWorkspace(
+      { path: context.project, mode: "worktree" },
+      { conversationScopeId: "chat-1" },
+    ),
+    /directory|ENOTDIR/i,
+  );
+
+  assert.deepEqual(await directoryNames(context.config.worktreeRoot), before);
+  assert.equal(context.store.listActiveManagedSessions().length, 0);
 });
 
 test("a failed first context load does not consume bootstrap", async (t) => {
@@ -471,6 +580,25 @@ async function initializeGitRepository(root: string): Promise<void> {
 
 async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
+}
+
+async function directoryNames(path: string): Promise<string[]> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 function checkoutTargetKey(project: string): string {
