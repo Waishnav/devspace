@@ -97,7 +97,9 @@ export async function createManagedWorktree(input: {
   };
 }
 
-export async function removeManagedWorktree(worktree: ManagedWorktree): Promise<void> {
+export async function removeManagedWorktree(
+  worktree: Pick<ManagedWorktree, "sourceRoot" | "path">,
+): Promise<void> {
   await git(["worktree", "remove", worktree.path], worktree.sourceRoot);
 }
 

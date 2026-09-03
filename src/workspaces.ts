@@ -282,10 +282,11 @@ export class WorkspaceRegistry {
   ): Promise<never> {
     this.workspaces.delete(workspace.id);
     const worktree = workspace.worktree;
-    if (!worktree?.managed) throw error;
+    const sourceRoot = workspace.sourceRoot;
+    if (!worktree?.managed || !sourceRoot) throw error;
 
     try {
-      await removeManagedWorktree(worktree);
+      await removeManagedWorktree({ sourceRoot, path: worktree.path });
       const transitioned = this.store?.markSessionMissing(
         workspace.id,
         "managed_worktree_open_failed",
