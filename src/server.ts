@@ -9,6 +9,8 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { createMcpHandler, isLegacyRequest } from "@modelcontextprotocol/server";
+import { toNodeHandler, toWebRequest } from "@modelcontextprotocol/node";
 import {
   registerAppResource,
   registerAppTool,
@@ -34,6 +36,12 @@ import {
 } from "./logger.js";
 import { readFileTool } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
+import {
+  compileMcpRegistrationSurface,
+  createModernMcpServerAdapter,
+  modernMcpAdapterErrorLogFields,
+  type McpRegistrationTarget,
+} from "./mcp-modern-server.js";
 import {
   McpSessionRegistry,
   type McpSessionCloseResult,
@@ -77,6 +85,16 @@ type Transport = StreamableHTTPServerTransport;
 const MCP_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 const MCP_SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
+
+function mcpServerInfo() {
+  return {
+    name: "devspace",
+    title: "DevSpace",
+    version: "0.1.0",
+    description:
+      "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
+  };
+}
 
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
@@ -288,17 +306,34 @@ export function createMcpServer(
 ): McpServer {
   const toolSurface = getToolSurface(config.toolMode);
   const server = new McpServer(
-    {
-      name: "devspace",
-      title: "DevSpace",
-      version: "0.1.0",
-      description:
-        "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
-    },
+    mcpServerInfo(),
     {
       instructions: serverInstructions(config, toolSurface),
     },
   );
+
+  registerMcpSurface(
+    server,
+    config,
+    workspaces,
+    reviewCheckpoints,
+    processSessions,
+    resolveLocalAgentProviders,
+    incomingArtifactAdapters,
+  );
+  return server;
+}
+
+function registerMcpSurface(
+  server: McpRegistrationTarget,
+  config: ServerConfig,
+  workspaces: WorkspaceRegistry,
+  reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
+  processSessions: ProcessSessionManager,
+  resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
+  incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
+): void {
+  const toolSurface = getToolSurface(config.toolMode);
 
   registerAppResource(
     server,
@@ -698,8 +733,6 @@ export function createMcpServer(
       incomingArtifactAdapters,
     });
   }
-
-  return server;
 }
 
 export interface CreateServerOptions {
@@ -740,6 +773,34 @@ export function createServer(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(),
   );
+  const modernToolSurface = getToolSurface(config.toolMode);
+  const bindModernMcpSurface = compileMcpRegistrationSurface((target) => {
+    registerMcpSurface(
+      target,
+      config,
+      workspaces,
+      reviewCheckpoints,
+      processSessions,
+      resolveLocalAgentProviders,
+      incomingArtifactAdapters,
+    );
+  });
+  const modernMcpHandler = createMcpHandler(() => {
+    const adapter = createModernMcpServerAdapter(
+      mcpServerInfo(),
+      { instructions: serverInstructions(config, modernToolSurface) },
+    );
+    bindModernMcpSurface(adapter.registrationTarget);
+    return adapter.server;
+  }, { legacy: "reject" });
+  const modernNodeHandler = toNodeHandler(modernMcpHandler, {
+    onerror: (error) => logEvent(
+      config.logging,
+      "error",
+      "mcp_modern_adapter_error",
+      modernMcpAdapterErrorLogFields(error),
+    ),
+  });
 
   const logSessionCloseResults = (
     reason: "idle_timeout" | "server_shutdown",
@@ -863,6 +924,12 @@ export function createServer(
     });
 
     try {
+      const webRequest = await toWebRequest(req, req.body);
+      if (!await isLegacyRequest(webRequest, req.body)) {
+        await modernNodeHandler(req, res, req.body);
+        return;
+      }
+
       let transport: Transport | undefined;
 
       if (sessionId) {
@@ -928,6 +995,13 @@ export function createServer(
     close: () => {
       closePromise ??= (async () => {
         clearInterval(sessionCleanupTimer);
+        try {
+          await modernMcpHandler.close();
+        } catch (error) {
+          logEvent(config.logging, "warn", "mcp_modern_handler_close_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         const results = await transports.closeAll();
         logSessionCloseResults("server_shutdown", results);
         processSessions.shutdown();
