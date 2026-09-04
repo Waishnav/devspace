@@ -14,9 +14,11 @@ const oauthConfig = {
   accessTokenTtlSeconds: 3600,
   refreshTokenTtlSeconds: 2592000,
   scopes: ["devspace"],
+  allowedResourceUrls: ["https://tunnel.example.com/v1/mcp/tunnel_123"],
   allowedRedirectHosts: ["chatgpt.com"],
 };
 const mcpUrl = new URL("https://agent.example.com/mcp");
+const tunnelUrl = new URL(oauthConfig.allowedResourceUrls[0]!);
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
 
 try {
@@ -188,6 +190,11 @@ function testTransactionalTokenRotation(stateDir: string): void {
 
 async function testProviderRestartRotationAndRevocation(stateDir: string): Promise<void> {
   const firstProvider = new SingleUserOAuthProvider(oauthConfig, mcpUrl, stateDir);
+  assert.equal(firstProvider.isResourceAllowed(mcpUrl), true);
+  assert.equal(firstProvider.isResourceAllowed(new URL(`${mcpUrl.href}/session`)), true);
+  assert.equal(firstProvider.isResourceAllowed(tunnelUrl), true);
+  assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}/session`)), false);
+  assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}?other=1`)), false);
   const client = await firstProvider.clientsStore.registerClient?.({
     redirect_uris: [redirectUri],
     client_name: "ChatGPT",
@@ -201,16 +208,20 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
       redirectUri,
       codeChallenge: "challenge",
       scopes: ["devspace"],
-      resource: mcpUrl,
+      resource: tunnelUrl,
     },
     expiresAtMs: Date.now() + 60_000,
   });
+  await assert.rejects(
+    firstProvider.exchangeAuthorizationCode(client, code, undefined, redirectUri, mcpUrl),
+    InvalidGrantError,
+  );
   const issued = await firstProvider.exchangeAuthorizationCode(
     client,
     code,
     undefined,
     redirectUri,
-    mcpUrl,
+    tunnelUrl,
   );
   assert.ok(issued.refresh_token);
   firstProvider.close();
@@ -219,18 +230,24 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
   try {
     const verified = await secondProvider.verifyAccessToken(issued.access_token);
     assert.equal(verified.clientId, client.client_id);
+    assert.equal(verified.resource?.href, tunnelUrl.href);
+
+    await assert.rejects(
+      secondProvider.exchangeRefreshToken(client, issued.refresh_token, ["devspace"], mcpUrl),
+      InvalidGrantError,
+    );
 
     const refreshed = await secondProvider.exchangeRefreshToken(
       client,
       issued.refresh_token,
       ["devspace"],
-      mcpUrl,
+      tunnelUrl,
     );
     assert.ok(refreshed.refresh_token);
     assert.notEqual(refreshed.access_token, issued.access_token);
 
     await assert.rejects(
-      secondProvider.exchangeRefreshToken(client, issued.refresh_token, ["devspace"], mcpUrl),
+      secondProvider.exchangeRefreshToken(client, issued.refresh_token, ["devspace"], tunnelUrl),
       InvalidGrantError,
     );
 

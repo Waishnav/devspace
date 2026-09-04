@@ -277,6 +277,14 @@
             "minLength": 1
           }
         },
+        "allowedResourceUrls": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
         "allowedRedirectHosts": {
           "default": [
             "chatgpt.com",

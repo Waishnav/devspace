@@ -68,6 +68,7 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
     "accessTokenTtlSeconds": 3600,
     "refreshTokenTtlSeconds": 2592000,
     "scopes": ["devspace"],
+    "allowedResourceUrls": [],
     "allowedRedirectHosts": ["chatgpt.com", "localhost", "127.0.0.1"],
   },
 }
@@ -76,6 +77,12 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
 Omitted sections and keys use the defaults shown above. An empty
 `workspaces.allowedRoots` uses the current working directory. Unknown keys are
 rejected so spelling mistakes cannot silently alter behavior.
+
+`oauth.allowedResourceUrls` accepts exact alternate MCP resource URLs for
+clients that connect through a resource alias, such as a secure MCP tunnel.
+The normal `server.publicBaseUrl` `/mcp` resource remains allowed automatically.
+Configure the complete alias URL, not a hostname or origin; aliases do not
+change OAuth discovery URLs or proxy routing.
 
 ## Tool modes and UI
 
