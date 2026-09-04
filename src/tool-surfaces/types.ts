@@ -74,7 +74,7 @@ export interface ToolWidgetDescriptorMeta {
 }
 
 export interface ToolRegistrationContext {
-  server: McpServer;
+  server: Pick<McpServer, "registerTool" | "registerResource">;
   config: ServerConfig;
   workspaces: WorkspaceRegistry;
   processSessions: ProcessSessionManager;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -287,6 +288,113 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.ok(Array.isArray(structuredContent(unscoped).agentsFiles));
 });
 
+test("HTTP endpoint serves modern MCP while preserving legacy sessions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-modern-http-test-"));
+  const ownerToken = "test-owner-token-that-is-long-enough";
+  const env = writeTestDevspaceConfig(join(root, ".config"), {
+    server: {
+      port: 1,
+      publicBaseUrl: "https://example.test",
+    },
+    workspaces: {
+      allowedRoots: [root],
+      worktreeRoot: join(root, ".worktrees"),
+    },
+    storage: { stateDir: join(root, ".state") },
+  });
+  const config = loadConfig(env);
+  const running = createServer(config, { incomingArtifactAdapters: [] });
+  const httpServer = running.app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => httpServer.once("listening", resolve));
+
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => error ? reject(error) : resolve());
+    });
+    await running.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const localBaseUrl = `http://127.0.0.1:${address.port}`;
+  const accessToken = await issueTestAccessToken(
+    localBaseUrl,
+    config.publicBaseUrl,
+    ownerToken,
+  );
+
+  const unauthenticated = await postModernMcp(
+    localBaseUrl,
+    undefined,
+    "tools/list",
+    {},
+  );
+  assert.equal(unauthenticated.status, 401, await unauthenticated.clone().text());
+
+  const discovery = await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "server/discover",
+    {},
+  );
+  assert.equal(discovery.status, 200, await discovery.clone().text());
+  const discoveryBody = await discovery.json() as {
+    result?: { supportedVersions?: string[] };
+  };
+  assert.ok(discoveryBody.result?.supportedVersions?.includes("2026-07-28"));
+
+  const listed = await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/list",
+    {},
+  );
+  assert.equal(listed.status, 200, await listed.clone().text());
+  const listBody = await listed.json() as {
+    result?: { tools?: Array<{ name?: string }> };
+  };
+  assert.ok(listBody.result?.tools?.some((tool) => tool.name === "open_workspace"));
+
+  const called = await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/call",
+    {
+      name: "open_workspace",
+      arguments: { path: root },
+      _meta: { "openai/session": "modern-http-test" },
+    },
+  );
+  assert.equal(called.status, 200, await called.clone().text());
+  const callBody = await called.json() as {
+    result?: { structuredContent?: { workspaceId?: string } };
+  };
+  assert.equal(typeof callBody.result?.structuredContent?.workspaceId, "string");
+
+  const legacy = await fetch(`${localBaseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "legacy-initialize",
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "devspace-legacy-test", version: "1.0.0" },
+      },
+    }),
+  });
+  assert.equal(legacy.status, 200, await legacy.clone().text());
+  assert.ok(legacy.headers.get("mcp-session-id"));
+  assert.match(await legacy.text(), /"protocolVersion"/);
+});
+
 interface ServerFixture {
   client: Client;
   project: string;
@@ -399,6 +507,116 @@ async function fixture(
 
 async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
+}
+
+async function issueTestAccessToken(
+  localBaseUrl: string,
+  publicBaseUrl: string,
+  ownerToken: string,
+): Promise<string> {
+  const redirectUri = "http://127.0.0.1/callback";
+  const resource = new URL("/mcp", publicBaseUrl).href;
+  const verifier = "devspace-modern-protocol-test-verifier-0123456789";
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const registration = await fetch(`${localBaseUrl}/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "DevSpace modern protocol test",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  assert.equal(registration.status, 201, await registration.clone().text());
+  const client = await registration.json() as { client_id?: string };
+  assert.ok(client.client_id);
+
+  const approval = await fetch(`${localBaseUrl}/authorize`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: client.client_id,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      scope: "devspace",
+      resource,
+      state: "modern-test",
+      owner_token: ownerToken,
+    }),
+    redirect: "manual",
+  });
+  assert.equal(approval.status, 302, await approval.clone().text());
+  const location = approval.headers.get("location");
+  assert.ok(location);
+  const code = new URL(location).searchParams.get("code");
+  assert.ok(code);
+
+  const exchange = await fetch(`${localBaseUrl}/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: client.client_id,
+      code,
+      code_verifier: verifier,
+      redirect_uri: redirectUri,
+      resource,
+    }),
+  });
+  assert.equal(exchange.status, 200, await exchange.clone().text());
+  const tokens = await exchange.json() as { access_token?: string };
+  assert.ok(tokens.access_token);
+  return tokens.access_token;
+}
+
+function postModernMcp(
+  localBaseUrl: string,
+  accessToken: string | undefined,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<Response> {
+  const mcpName = typeof params.name === "string"
+    ? params.name
+    : typeof params.uri === "string"
+      ? params.uri
+      : undefined;
+  return fetch(`${localBaseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+      "content-type": "application/json",
+      "mcp-method": method,
+      "mcp-protocol-version": "2026-07-28",
+      ...(mcpName ? { "mcp-name": mcpName } : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `modern-${method}`,
+      method,
+      params: {
+        ...params,
+        _meta: {
+          ...recordValue(params._meta),
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientInfo": {
+            name: "devspace-modern-http-test",
+            version: "1.0.0",
+          },
+        },
+      },
+    }),
+  });
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 async function callOpen(
