@@ -60,8 +60,8 @@ jobs:
           DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: pnpm test
 
-      - name: Build
-        run: pnpm build
+      - name: Package install smoke test
+        run: pnpm test:package-install
 
       - name: Doctor
         run: node dist/cli.js doctor
