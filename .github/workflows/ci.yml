@@ -60,6 +60,9 @@ jobs:
           DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: pnpm test
 
+      - name: Package install smoke test
+        run: pnpm test:package-install
+
       - name: Build
         run: pnpm build
 
