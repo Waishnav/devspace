@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   isSubagentProviderEnabled,
+  localAgentProviderConfigRevision,
   localAgentProviderEnvironment,
   subagentProviderConfig,
   subagentsConfigSchema,
@@ -55,6 +56,33 @@ assert.deepEqual(inherited, {
   OPENAI_API_KEY: "inherited",
   UNCHANGED: "yes",
 });
+assert.equal(
+  localAgentProviderConfigRevision(config),
+  localAgentProviderConfigRevision(subagentsConfigSchema.parse({
+    enabled: true,
+    providers: [
+      { id: "claude", enabled: false, model: "sonnet" },
+      {
+        id: "codex",
+        enabled: true,
+        effort: "high",
+        model: "gpt-5.4",
+        command: "/opt/bin/codex-wrapper",
+        env: { EMPTY_VALUE: "", OPENAI_API_KEY: "configured" },
+      },
+    ],
+  })),
+  "provider and environment key order must not restart the daemon",
+);
+assert.notEqual(
+  localAgentProviderConfigRevision(config),
+  localAgentProviderConfigRevision(subagentsConfigSchema.parse({
+    ...config,
+    providers: config.providers.map((provider) => provider.id === "codex"
+      ? { ...provider, command: "/opt/bin/another-wrapper" }
+      : provider),
+  })),
+);
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,

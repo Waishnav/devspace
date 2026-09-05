@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
   LOCAL_AGENT_PROVIDERS,
@@ -92,4 +93,26 @@ export function providerCommandVariable(provider: LocalAgentProvider): string | 
     case "pi":
       return undefined;
   }
+}
+
+export function localAgentProviderConfigRevision(config: SubagentsConfig): string {
+  const providers = [...config.providers]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((provider) => ({
+      id: provider.id,
+      enabled: provider.enabled,
+      ...(provider.model ? { model: provider.model } : {}),
+      ...(provider.effort ? { effort: provider.effort } : {}),
+      ...(provider.command ? { command: provider.command } : {}),
+      ...(provider.env && Object.keys(provider.env).length > 0
+        ? {
+            env: Object.fromEntries(
+              Object.entries(provider.env).sort(([left], [right]) => left.localeCompare(right)),
+            ),
+          }
+        : {}),
+    }));
+  return createHash("sha256")
+    .update(JSON.stringify({ enabled: config.enabled, providers }))
+    .digest("hex");
 }
