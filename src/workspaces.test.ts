@@ -13,7 +13,7 @@ import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 
-test("a checkout exposes initial and nested instruction context while filtering outside symlinks", async (t) => {
+test("a checkout exposes initial and nested instruction context", async (t) => {
   const context = await fixture(t);
   const opened = await context.registry.openWorkspace(context.root);
 
@@ -42,30 +42,53 @@ test("a checkout exposes initial and nested instruction context while filtering 
     }],
   );
 
-  if (platform() !== "win32") {
-    const unsafeAgentDir = join(context.root, ".pi", "unsafe-agent");
-    await mkdir(unsafeAgentDir, { recursive: true });
-    await writeFile(join(context.outsideRoot, "secret.txt"), "outside secret\n");
-    await symlink(join(context.outsideRoot, "secret.txt"), join(unsafeAgentDir, "AGENTS.md"));
+});
 
-    const unsafeConfig = loadConfig(writeTestDevspaceConfig(
-      join(context.root, ".devspace-unsafe-home"),
-      {
-        server: { port: 1 },
-        workspaces: {
-          allowedRoots: [context.root],
-          worktreeRoot: join(context.root, ".devspace", "unsafe-worktrees"),
-        },
-        skills: { agentDir: unsafeAgentDir },
+test("global instruction symlinks may target user-managed files outside agentDir", {
+  skip: platform() === "win32",
+}, async (t) => {
+  const context = await fixture(t);
+  const agentDir = join(context.root, ".codex-test");
+  const dotfilesAgents = join(context.outsideRoot, "agents", ".codex");
+  await mkdir(agentDir, { recursive: true });
+  await mkdir(dotfilesAgents, { recursive: true });
+  await writeFile(join(dotfilesAgents, "AGENTS.md"), "dotfiles instructions\n");
+  await symlink(join(dotfilesAgents, "AGENTS.md"), join(agentDir, "AGENTS.md"));
+
+  const config = loadConfig(writeTestDevspaceConfig(
+    join(context.root, ".devspace-dotfiles-home"),
+    {
+      server: { port: 1 },
+      workspaces: {
+        allowedRoots: [context.root],
+        worktreeRoot: join(context.root, ".devspace", "dotfiles-worktrees"),
       },
-    ));
-    const unsafeWorkspace = await new WorkspaceRegistry(unsafeConfig).openWorkspace(context.root);
+      skills: { agentDir },
+    },
+  ));
+  const opened = await new WorkspaceRegistry(config).openWorkspace(context.root);
 
-    assert.deepEqual(
-      unsafeWorkspace.agentsFiles.map((file) => file.content),
-      ["root instructions\n"],
-    );
-  }
+  assert.deepEqual(
+    opened.agentsFiles.map((file) => file.content),
+    ["dotfiles instructions\n", "root instructions\n"],
+  );
+});
+
+test("workspace instruction symlinks cannot escape the workspace", {
+  skip: platform() === "win32",
+}, async (t) => {
+  const context = await fixture(t);
+  const outsideInstructions = join(context.outsideRoot, "AGENTS.md");
+  await writeFile(outsideInstructions, "outside instructions\n");
+  await rm(join(context.root, "AGENTS.md"));
+  await symlink(outsideInstructions, join(context.root, "AGENTS.md"));
+
+  const opened = await context.registry.openWorkspace(context.root);
+
+  assert.deepEqual(
+    opened.agentsFiles.map((file) => file.content),
+    ["global instructions\n"],
+  );
 });
 
 test("opening a missing checkout creates its workspace root", async (t) => {
