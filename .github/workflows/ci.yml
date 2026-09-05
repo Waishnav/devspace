@@ -63,8 +63,5 @@ jobs:
       - name: Package install smoke test
         run: pnpm test:package-install
 
-      - name: Build
-        run: pnpm build
-
       - name: Doctor
         run: node dist/cli.js doctor
