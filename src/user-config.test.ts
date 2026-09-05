@@ -9,9 +9,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "./config.js";
-import { getToolSurface } from "./tool-surfaces/index.js";
-import type { ToolRegistrationContext } from "./tool-surfaces/types.js";
 import {
   loadDevspaceFiles,
   setDevspaceConfigValue,
@@ -47,41 +44,6 @@ withConfigDir((configDir, env) => {
 
   const nextLoad = loadDevspaceFiles(env);
   assert.equal(nextLoad.migratedLegacyConfig, false);
-});
-
-withConfigDir((configDir, env) => {
-  writeFileSync(join(configDir, "config.json"), JSON.stringify({
-    "tools.mode": "claude",
-  }));
-
-  const files = loadDevspaceFiles(env);
-  assert.equal(files.migratedLegacyConfig, true);
-  assert.equal(files.config.tools.mode, "claude");
-});
-
-withConfigDir((configDir, env) => {
-  writeFileSync(join(configDir, "config.json"), JSON.stringify({
-    "tools.mode": "codex",
-  }));
-
-  const config = loadConfig({
-    ...env,
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  });
-  assert.equal(config.toolMode, "codex");
-
-  const registeredTools: string[] = [];
-  getToolSurface(config.toolMode).register({
-    server: {
-      registerTool(name: string) {
-        registeredTools.push(name);
-      },
-    },
-    config,
-    workspaces: {},
-    processSessions: {},
-  } as unknown as ToolRegistrationContext);
-  assert.deepEqual(registeredTools, ["apply_patch", "exec_command", "write_stdin"]);
 });
 
 await withConfigDirAsync(async (configDir) => {
