@@ -121,7 +121,8 @@ const stale = store.create({
   profileName: "reviewer",
   provider: "codex",
 });
-store.update(stale.id, { status: "running", latestResponse: "previous response" });
+const staleTurn = store.beginTurn(stale.id, { prompt: "interrupted turn" });
+store.update(stale.id, { latestResponse: "previous response" });
 
 const manager = new LocalAgentManager({
   store,
@@ -222,6 +223,8 @@ assert.equal(getRecord(stale.id).latestResponse, "previous response");
 assert.equal(getRecord(stale.id).error, "DevSpace restarted while this agent turn was running.");
 assert.equal(getRecord(stale.id).errorCode, "DAEMON_UNAVAILABLE");
 assert.equal(getRecord(stale.id).errorRetryable, true);
+assert.equal(store.getTurnById(staleTurn.turn.id)?.status, "failed");
+assert.equal(store.getTurnById(staleTurn.turn.id)?.errorCode, "DAEMON_UNAVAILABLE");
 
 const first = unwrap(await manager.start({
   target: "reviewer",
@@ -244,6 +247,10 @@ runtimes.get(first.id)!.release();
 await waitFor(() => getRecord(first.id).status === "idle");
 assert.equal(getRecord(first.id).providerSessionId, "thread_test");
 assert.match(getRecord(first.id).latestResponse ?? "", /Task:\nhold/);
+assert.deepEqual(
+  store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
+  [{ prompt: "hold", status: "completed" }],
+);
 
 const continued = unwrap(await manager.continue(first.id, "continue", {
   model: "gpt-run",
@@ -253,6 +260,13 @@ assert.equal(continued.status, "running");
 await waitFor(() => getRecord(first.id).status === "idle");
 assert.equal(getRecord(first.id).model, "gpt-run");
 assert.equal(getRecord(first.id).effort, "high");
+assert.deepEqual(
+  store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
+  [
+    { prompt: "hold", status: "completed" },
+    { prompt: "continue", status: "completed" },
+  ],
+);
 
 const second = unwrap(await manager.start({
   target: "reviewer",
@@ -274,6 +288,8 @@ await waitFor(() => getRecord(failed.id).status === "error");
 assert.equal(getRecord(failed.id).error, "provider failed");
 assert.equal(getRecord(failed.id).errorCode, "PROVIDER_EXECUTION_ERROR");
 assert.equal(getRecord(failed.id).errorRetryable, false);
+assert.equal(store.getLatestTurn(failed.id)?.status, "failed");
+assert.equal(store.getLatestTurn(failed.id)?.error, "provider failed");
 const recovered = unwrap(await manager.continue(failed.id, "recovered", {}, scope));
 assert.equal(recovered.status, "running", "provider Err releases active-turn ownership");
 await waitFor(() => getRecord(failed.id).status === "idle");
