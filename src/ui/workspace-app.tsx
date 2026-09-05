@@ -25,6 +25,7 @@ import {
 } from "./patch-display.js";
 import {
   decodeToolResult,
+  historicalReviewToolCall,
   toolResultFromChatGptGlobals,
   type ChatGptToolGlobals,
 } from "./tool-result.js";
@@ -206,11 +207,7 @@ async function reopenReview(
     throw new Error("This host cannot reload historical review details.");
   }
 
-  return app.callServerTool({
-    name: "show_changes",
-    arguments: { workspaceId },
-    _meta: { "devspace/reviewRef": reviewRef },
-  });
+  return app.callServerTool(historicalReviewToolCall(workspaceId, reviewRef));
 }
 
 function chatGptRestoredResult(): CallToolResult | undefined {

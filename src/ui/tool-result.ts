@@ -11,6 +11,17 @@ export interface ChatGptToolGlobals {
   toolResponseMetadata?: unknown;
 }
 
+export function historicalReviewToolCall(
+  workspaceId: string,
+  reviewRef: string,
+) {
+  return {
+    name: "show_changes" as const,
+    arguments: { workspace_id: workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  };
+}
+
 export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   const structured = asRecord(result.structuredContent);
   const metaCard = cardFields(asRecord(asRecord(result._meta)?.card));

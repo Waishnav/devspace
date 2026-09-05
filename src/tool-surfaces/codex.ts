@@ -83,7 +83,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
       description:
         "Apply one Codex-style patch in a workspace. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the workspace.",
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
         patch: z
           .string()
           .describe(
@@ -103,8 +103,9 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
       }),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, patch }) => {
+    async ({ workspace_id, patch }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const applied = await runLoggedToolOperation(
         config,
         { tool: "apply_patch", workspaceId },
@@ -141,7 +142,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       description:
         "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes.",
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
         cmd: z.string().min(1).describe("Shell command to execute."),
         tty: z
           .boolean()
@@ -163,13 +164,13 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .max(1_000)
           .optional()
           .describe("Initial PTY height. Defaults to 24."),
-        workingDirectory: z
+        working_directory: z
           .string()
           .optional()
           .describe(
             "Working directory relative to the workspace root. Defaults to the workspace root.",
           ),
-        yieldTimeMs: z
+        yield_time_ms: z
           .number()
           .int()
           .min(0)
@@ -178,7 +179,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe(
             "Milliseconds to wait before returning a running session. Defaults to 10000.",
           ),
-        maxOutputTokens: z
+        max_output_tokens: z
           .number()
           .int()
           .positive()
@@ -190,16 +191,20 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({
-      workspaceId,
+      workspace_id,
       cmd,
       tty,
       columns,
       rows,
-      workingDirectory,
-      yieldTimeMs,
-      maxOutputTokens,
+      working_directory,
+      yield_time_ms,
+      max_output_tokens,
     }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
+      const workingDirectory = working_directory;
+      const yieldTimeMs = yield_time_ms;
+      const maxOutputTokens = max_output_tokens;
       const snapshot = await runLoggedToolOperation(
         config,
         {
@@ -241,10 +246,10 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       description:
         "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
       inputSchema: {
-        workspaceId: z
+        workspace_id: z
           .string()
           .describe("Workspace identifier used to start the process."),
-        sessionId: z
+        session_id: z
           .number()
           .describe("Process session identifier returned by exec_command."),
         chars: z
@@ -267,7 +272,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .max(1_000)
           .optional()
           .describe("Resize a PTY to this height."),
-        yieldTimeMs: z
+        yield_time_ms: z
           .number()
           .int()
           .min(0)
@@ -276,7 +281,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe(
             "Milliseconds to wait for process output or completion. Defaults to 10000.",
           ),
-        maxOutputTokens: z
+        max_output_tokens: z
           .number()
           .int()
           .positive()
@@ -288,15 +293,19 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({
-      workspaceId,
-      sessionId,
+      workspace_id,
+      session_id,
       chars,
       columns,
       rows,
-      yieldTimeMs,
-      maxOutputTokens,
+      yield_time_ms,
+      max_output_tokens,
     }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
+      const sessionId = session_id;
+      const yieldTimeMs = yield_time_ms;
+      const maxOutputTokens = max_output_tokens;
       const snapshot = await runLoggedToolOperation(
         config,
         { tool: "write_stdin", workspaceId },

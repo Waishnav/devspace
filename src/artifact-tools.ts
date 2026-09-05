@@ -103,8 +103,8 @@ export function registerArtifactTools(
         file: openAIFileReferenceInputSchema.describe(
           "Native file value authorized and supplied by the MCP host.",
         ),
-        workspaceId: z.string().min(1).describe(
-          "Workspace to use. Reuse the current project's workspaceId.",
+        workspace_id: z.string().min(1).describe(
+          "Workspace to use. Pass the workspaceId returned by open_workspace as workspace_id.",
         ),
         path: z.string().min(1).describe(
           "Relative destination path inside the selected workspace. The destination must not already exist.",
@@ -117,7 +117,7 @@ export function registerArtifactTools(
       annotations: ARTIFACT_WRITE_ANNOTATIONS,
     },
     async (input) => executeArtifactTool(config, input, async () => {
-      const workspace = workspaces.getWorkspace(input.workspaceId);
+      const workspace = workspaces.getWorkspace(input.workspace_id);
       const downloaded = await downloadIncomingArtifact({
         registry: incomingRegistry,
         workspaceId: workspace.id,
@@ -292,7 +292,7 @@ export function artifactToolLogFields(
     fileProvided: input.file !== undefined,
     fileReferenceShape: describeIncomingArtifactValue(input.file),
     downloadUrlHostname: incomingFileDownloadHostname(input.file),
-    workspaceId: input.workspaceId,
+    workspaceId: input.workspace_id,
     path: input.path,
   };
 }

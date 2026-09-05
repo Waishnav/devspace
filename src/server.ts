@@ -107,7 +107,7 @@ function serverInstructions(
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
-  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected.`;
+  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId as workspace_id. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
 }
@@ -293,7 +293,7 @@ export function createMcpServer(
       title: "DevSpace",
       version: "0.1.0",
       description:
-        "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
+        "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId as workspace_id.",
     },
     {
       instructions: serverInstructions(config, toolSurface),
@@ -337,7 +337,7 @@ export function createMcpServer(
     {
       title: "Open workspace",
       description:
-        "Start work in a project directory or isolated worktree when no usable workspaceId exists for it. During continued work, reuse the existing workspaceId instead of calling this tool again. By default this uses the actual checkout; set mode=\"worktree\" for isolated or parallel work.",
+        "Start work in a project directory or isolated worktree when no usable workspaceId exists for it. During continued work, reuse the returned workspaceId as workspace_id instead of calling this tool again. By default this uses the actual checkout; set mode=\"worktree\" for isolated or parallel work.",
       inputSchema: {
         path: z
           .string()
@@ -350,7 +350,7 @@ export function createMcpServer(
           .describe(
             "Defaults to checkout, which works in the actual directory. Use worktree for isolated or parallel Git work.",
           ),
-        baseRef: z
+        base_ref: z
           .string()
           .optional()
           .describe("Git ref to base a worktree on. Only used with mode=\"worktree\". Defaults to HEAD."),
@@ -388,8 +388,9 @@ export function createMcpServer(
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
-    async ({ path, mode, baseRef }, { _meta }) => {
+    async ({ path, mode, base_ref }, { _meta }) => {
       const startedAt = performance.now();
+      const baseRef = base_ref;
       const {
         workspace,
         agentsFiles,
@@ -438,16 +439,16 @@ export function createMcpServer(
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this workspaceId as workspace_id for subsequent work in this project. Keep reusing that workspace_id while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
+        : "Use this workspaceId as workspace_id for subsequent work in this project. Keep reusing that workspace_id while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
       const instruction = workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
-            "Continue with this workspaceId.",
+            "Continue passing this workspaceId as workspace_id.",
             "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
           ].join("\n\n")
         : workspace.mode === "worktree"
-          ? "Use this workspaceId for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
+          ? "Use this workspaceId as workspace_id for subsequent work in this isolated worktree. Keep reusing that workspace_id while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
           : cardInstruction;
       const resultContent: ToolContent[] = [
         {
@@ -554,7 +555,7 @@ export function createMcpServer(
           .filter(Boolean)
           .join(" "),
       inputSchema: {
-        workspaceId: z
+        workspace_id: z
           .string()
           .describe(workspaceIdDescription),
         path: z
@@ -580,8 +581,9 @@ export function createMcpServer(
       outputSchema: resultOutputSchema(),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ workspace_id, ...input }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = workspaces.getWorkspace(workspaceId);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
       const response = await readFileTool(
@@ -635,7 +637,7 @@ export function createMcpServer(
       description:
         "Show the changes made in this turn for an open workspace. Call this once after the final related file change and before your final response so the user can review the combined diff. Do not call it after each individual file change.",
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
       },
       outputSchema: resultOutputSchema({
         workspaceId: z.string(),
@@ -644,8 +646,9 @@ export function createMcpServer(
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId }, { _meta }) => {
+    async ({ workspace_id }, { _meta }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = workspaces.getWorkspace(workspaceId);
       const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
         ? _meta["devspace/reviewRef"]
