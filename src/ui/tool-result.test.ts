@@ -3,8 +3,17 @@ import test from "node:test";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   decodeToolResult,
+  historicalReviewToolCall,
   toolResultFromChatGptGlobals,
 } from "./tool-result.js";
+
+test("historical review reload requests use snake_case tool inputs", () => {
+  assert.deepEqual(historicalReviewToolCall("ws_1", "review_1"), {
+    name: "show_changes",
+    arguments: { workspace_id: "ws_1" },
+    _meta: { "devspace/reviewRef": "review_1" },
+  });
+});
 
 test("workspace cards can be rebuilt from structured content without result metadata", () => {
   const decoded = decodeToolResult({

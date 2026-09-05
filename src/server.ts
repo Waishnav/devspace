@@ -439,16 +439,16 @@ export function createMcpServer(
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this workspaceId as workspace_id for subsequent work in this project. Keep reusing that workspace_id while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
+        : "Use this workspaceId as workspace_id for subsequent work in this project. Keep reusing that workspace_id while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
       const instruction = workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
-            "Continue with this workspaceId.",
+            "Continue passing this workspaceId as workspace_id.",
             "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
           ].join("\n\n")
         : workspace.mode === "worktree"
-          ? "Use this workspaceId for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
+          ? "Use this workspaceId as workspace_id for subsequent work in this isolated worktree. Keep reusing that workspace_id while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
           : cardInstruction;
       const resultContent: ToolContent[] = [
         {

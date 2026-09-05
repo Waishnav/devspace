@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -92,6 +92,51 @@ test("Codex process tools accept snake_case session and yield inputs", async (t)
   }));
   assert.equal(finished.running, false);
   assert.equal(finished.exitCode, 0);
+});
+
+test("open_workspace instructions tell models to pass the returned ID as workspace_id", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const first = structuredContent(
+    await callOpen(context.client, context.project, "snake-case-instructions"),
+  );
+  const repeated = structuredContent(
+    await callOpen(context.client, context.project, "snake-case-instructions"),
+  );
+
+  assert.match(first.instruction as string, /workspace_id/);
+  assert.match(repeated.instruction as string, /workspace_id/);
+});
+
+test("Claude edit and bash tools accept snake_case runtime inputs", async (t) => {
+  const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "snake-case-claude"),
+  ).workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  await writeFile(join(context.project, "note.txt"), "before\n");
+  await mkdir(join(context.project, "nested"));
+
+  const edited = await context.client.callTool({
+    name: "edit",
+    arguments: {
+      workspace_id: workspaceId,
+      path: "note.txt",
+      edits: [{ old_text: "before", new_text: "after" }],
+    },
+  });
+  assert.equal(edited.isError, undefined);
+  assert.equal(await readFile(join(context.project, "note.txt"), "utf8"), "after\n");
+
+  const shell = structuredContent(await context.client.callTool({
+    name: "bash",
+    arguments: {
+      workspace_id: workspaceId,
+      command: "pwd",
+      working_directory: "nested",
+    },
+  }));
+  assert.match(shell.result as string, /nested/i);
 });
 
 test("UI metadata is limited to workspace and aggregate review", async (t) => {
