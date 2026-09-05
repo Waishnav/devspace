@@ -144,7 +144,8 @@ Set `skills.enabled` to `false` to hide skills from workspace output. Enable
 Subagents and choose providers through `devspace init` or the persisted provider
 configuration. The bundled `subagents` skill teaches the minimal
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
-`devspace agents continue`, and `devspace agents show` workflow. The catalog
+`devspace agents continue`, `devspace agents show`, and `devspace agents wait`
+workflow. The catalog
 comes from `open_workspace`; `devspace agents ls` lists existing subagent
 sessions for that workspace.
 

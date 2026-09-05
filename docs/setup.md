@@ -65,7 +65,7 @@ npx skills add Waishnav/devspace --skill subagents --global
 ```
 
 The Skills CLI asks which installed Coding Agents should receive the skill.
-The skill uses `devspace agents targets`, `run`, `continue`, `show`, and `ls`.
+The skill uses `devspace agents targets`, `run`, `continue`, `show`, `wait`, and `ls`.
 These commands do not require `devspace serve`.
 
 ### Connect ChatGPT

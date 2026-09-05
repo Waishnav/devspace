@@ -5,7 +5,7 @@ by the MCP server and not by an individual CLI invocation. The daemon is an
 internal implementation detail: the normal workflow remains:
 
 ```text
-devspace agents run/continue/show/ls
+devspace agents targets/run/continue/show/wait/ls
           │
           ▼
     devspace-agentd
@@ -58,15 +58,24 @@ devspace agents daemon stop
 devspace agents daemon logs
 ```
 
-Agent commands accept `--json` when a machine-readable response is needed.
-They emit one compact JSON value. `run` and `continue` return only the logical
-agent ID and status, `ls` returns session summaries, and `show` returns the
-response or structured failure for one agent. Internal workspace paths,
-provider session IDs, timestamps, and prior responses are not included in list
-or receipt output. Immediate failures are emitted as
-`{ error: { code, message, retryable, ... } }` with a non-zero exit code.
-Successful `daemon status` and `daemon stop` output the daemon status object,
-and successful `daemon logs` output is `{ "logs": "<text>" }`.
+The client and daemon compare an internal revision of the provider
+configuration. A client replaces an idle daemon when that configuration has
+changed. It never stops a daemon with active work; the client returns the
+retryable `DAEMON_CONFIG_CHANGED` error until that work finishes. The revision
+is not included in status, logs, or agent command output.
+
+Model-facing agent commands emit compact XML fragments by default. Lists use
+one fragment per item without a root wrapper, and empty lists print nothing.
+`run` and `continue` return only the logical agent ID and status. `show` returns
+an immediate snapshot. `wait` blocks for one or more agents and can return a
+complete ordered snapshot at a caller-supplied timeout. It does not stream
+individual completions.
+
+Internal turns, prompts, workspace paths, provider session IDs, timestamps, and
+prior responses are not included. Immediate failures use an `<error>` fragment
+and a non-zero exit code. `--json` remains available for compatibility and
+scripts. Daemon diagnostic commands keep their existing text and JSON output;
+they do not use the model-facing XML format.
 
 Agent identity is explicit at the client boundary. `agents run` starts a new
 logical agent from a profile or provider; `agents continue <id>` continues an
