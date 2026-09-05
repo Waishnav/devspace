@@ -22,6 +22,7 @@ const legacyConfigSchema = z.object({
   tools: z.object({
     mode: z.enum(["claude", "codex"]).optional(),
   }).strict().optional(),
+  "tools.mode": z.enum(["claude", "codex"]).optional(),
   ui: z.object({
     enabled: z.boolean().optional(),
   }).strict().optional(),
@@ -40,6 +41,7 @@ const LEGACY_CONFIG_KEYS = new Set([
   "agentDir",
   "subagents",
   "tools",
+  "tools.mode",
   "ui",
 ]);
 
@@ -65,7 +67,7 @@ export function migrateLegacyConfig(value: unknown): DevspaceConfig {
       worktreeRoot: legacy.worktreeRoot,
     }),
     storage: definedEntries({ stateDir: legacy.stateDir }),
-    tools: definedEntries({ mode: legacy.tools?.mode }),
+    tools: definedEntries({ mode: legacy.tools?.mode ?? legacy["tools.mode"] }),
     ui: definedEntries({ enabled: legacy.ui?.enabled }),
     artifacts: definedEntries({
       enabled: legacy.artifactsEnabled,

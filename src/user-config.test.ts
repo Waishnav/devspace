@@ -46,6 +46,16 @@ withConfigDir((configDir, env) => {
   assert.equal(nextLoad.migratedLegacyConfig, false);
 });
 
+withConfigDir((configDir, env) => {
+  writeFileSync(join(configDir, "config.json"), JSON.stringify({
+    "tools.mode": "claude",
+  }));
+
+  const files = loadDevspaceFiles(env);
+  assert.equal(files.migratedLegacyConfig, true);
+  assert.equal(files.config.tools.mode, "claude");
+});
+
 await withConfigDirAsync(async (configDir) => {
   writeFileSync(join(configDir, "config.json"), JSON.stringify({
     port: 8787,
