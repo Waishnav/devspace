@@ -1,9 +1,13 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import {
+  localAgentProviderEnvironment,
+  type SubagentsConfig,
+} from "./local-agent-config.js";
 
 export interface LocalAgentProviderAvailability {
   name: LocalAgentProvider;
@@ -14,37 +18,45 @@ export interface LocalAgentProviderAvailability {
 
 export function getLocalAgentProviderAvailabilitySnapshot(
   env: NodeJS.ProcessEnv = process.env,
+  config?: SubagentsConfig,
 ): LocalAgentProviderAvailability[] {
-  return LOCAL_AGENT_PROVIDERS.map((provider) => checkLocalAgentProviderAvailability(provider, env));
+  return LOCAL_AGENT_PROVIDERS.map((provider) => (
+    checkLocalAgentProviderAvailability(provider, env, config)
+  ));
 }
 
 function checkLocalAgentProviderAvailability(
   provider: LocalAgentProvider,
   env: NodeJS.ProcessEnv = process.env,
+  config?: SubagentsConfig,
 ): LocalAgentProviderAvailability {
+  const providerEnv = config ? localAgentProviderEnvironment(config, provider, env) : env;
   switch (provider) {
     case "codex":
-      return codexAvailability(env);
+      return codexAvailability(providerEnv);
     case "claude":
-      return packageAvailability(provider, "@anthropic-ai/claude-agent-sdk");
+      return providerEnv.CLAUDE_COMMAND
+        ? commandAvailability(provider, providerEnv.CLAUDE_COMMAND, providerEnv)
+        : packageAvailability(provider, "@anthropic-ai/claude-agent-sdk");
     case "opencode":
       return packageAvailability(provider, "@opencode-ai/sdk/v2");
     case "pi":
       return packageAvailability(provider, "@earendil-works/pi-coding-agent");
     case "cursor":
-      return commandAvailability(provider, env.CURSOR_COMMAND ?? "cursor-agent", env);
+      return commandAvailability(provider, providerEnv.CURSOR_COMMAND ?? "cursor-agent", providerEnv);
     case "copilot":
-      return commandAvailability(provider, env.COPILOT_COMMAND ?? "copilot", env);
+      return commandAvailability(provider, providerEnv.COPILOT_COMMAND ?? "copilot", providerEnv);
     case "grok":
-      return commandAvailability(provider, env.GROK_COMMAND ?? "grok", env);
+      return commandAvailability(provider, providerEnv.GROK_COMMAND ?? "grok", providerEnv);
   }
 }
 
 export function assertLocalAgentProviderAvailable(
   provider: LocalAgentProvider,
   env: NodeJS.ProcessEnv = process.env,
+  config?: SubagentsConfig,
 ): void {
-  const availability = checkLocalAgentProviderAvailability(provider, env);
+  const availability = checkLocalAgentProviderAvailability(provider, env, config);
   if (availability.available) return;
   throw new Error(
     `${provider} provider is not available: ${availability.reason ?? "provider preflight failed"}`,
@@ -91,6 +103,7 @@ function commandAvailability(
 }
 
 function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (!command) return undefined;
   if (command.includes("/") || command.includes("\\")) {
     return executableExists(command) ? command : undefined;
   }
@@ -113,7 +126,7 @@ function executableExists(command: string): boolean {
   const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
   try {
     accessSync(command, mode);
-    return true;
+    return statSync(command).isFile();
   } catch {
     return false;
   }

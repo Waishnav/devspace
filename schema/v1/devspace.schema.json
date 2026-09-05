@@ -192,6 +192,21 @@
               "effort": {
                 "type": "string",
                 "minLength": 1
+              },
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [

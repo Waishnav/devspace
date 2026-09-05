@@ -1,4 +1,9 @@
 import {
+  localAgentProviderEnvironment,
+  type SubagentsConfig,
+} from "./local-agent-config.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import {
   AcpLocalAgentDriver,
   resolveAcpCommand,
   resolveAcpModelConfigUpdate,
@@ -27,6 +32,7 @@ export type LocalAgentAdapter = LocalAgentDriver;
 
 export interface LocalAgentDriverOptions {
   env?: NodeJS.ProcessEnv;
+  subagents?: SubagentsConfig;
   claudeQueryFactory?: ClaudeQueryFactory;
   opencodeFactory?: OpencodeFactory;
   piSessionFactory?: PiSessionFactory;
@@ -35,14 +41,18 @@ export interface LocalAgentDriverOptions {
 export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
+  const env = options.env ?? process.env;
+  const providerEnv = (provider: LocalAgentProvider) => options.subagents
+    ? localAgentProviderEnvironment(options.subagents, provider, env)
+    : env;
   return [
-    new CodexLocalAgentDriver(options.env),
-    new ClaudeLocalAgentDriver(options.claudeQueryFactory, options.env),
+    new CodexLocalAgentDriver(providerEnv("codex")),
+    new ClaudeLocalAgentDriver(options.claudeQueryFactory, providerEnv("claude")),
     new OpencodeLocalAgentDriver(options.opencodeFactory),
     new PiLocalAgentDriver(options.piSessionFactory),
-    new AcpLocalAgentDriver("cursor", options.env),
-    new AcpLocalAgentDriver("copilot", options.env),
-    new AcpLocalAgentDriver("grok", options.env),
+    new AcpLocalAgentDriver("cursor", providerEnv("cursor")),
+    new AcpLocalAgentDriver("copilot", providerEnv("copilot")),
+    new AcpLocalAgentDriver("grok", providerEnv("grok")),
   ];
 }
 
