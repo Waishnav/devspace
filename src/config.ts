@@ -59,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       accessTokenTtlSeconds: stored.oauth.accessTokenTtlSeconds,
       refreshTokenTtlSeconds: stored.oauth.refreshTokenTtlSeconds,
       scopes: stored.oauth.scopes,
+      allowedResourceUrls: stored.oauth.allowedResourceUrls,
       allowedRedirectHosts: stored.oauth.allowedRedirectHosts,
     },
     allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
