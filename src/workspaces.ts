@@ -72,6 +72,8 @@ export interface WorkspaceReadPath {
   skillRead?: SkillReadResolution;
 }
 
+type InitialAgentsFileSource = "global" | "workspace";
+
 export interface OpenWorkspaceInput {
   path: string;
   mode?: WorkspaceMode;
@@ -417,10 +419,12 @@ export class WorkspaceRegistry {
 
     for (const file of loadProjectContextFiles({ cwd: root, agentDir })) {
       const path = resolve(file.path);
-      if (!isInitialAgentsFilePath(path, root, agentDir)) continue;
+      const source = initialAgentsFileSource(path, root, agentDir);
+      if (!source) continue;
       const content = await readResolvedContextFile(
         path,
         file.content,
+        source,
         resolvedRoot,
         resolvedAgentDir,
       );
@@ -527,20 +531,27 @@ export function formatAgentsPath(path: string, workspaceRoot: string | undefined
   return relationship.split(sep).join("/");
 }
 
-function isInitialAgentsFilePath(path: string, root: string, agentDir: string): boolean {
-  if (isPathInsideRoot(path, agentDir)) return true;
-  return isPathInsideRoot(path, root) && dirname(path) === root;
+function initialAgentsFileSource(
+  path: string,
+  root: string,
+  agentDir: string,
+): InitialAgentsFileSource | undefined {
+  if (isPathInsideRoot(path, agentDir)) return "global";
+  if (isPathInsideRoot(path, root) && dirname(path) === root) return "workspace";
+  return undefined;
 }
 
 async function readResolvedContextFile(
   path: string,
   fallbackContent: string,
+  source: InitialAgentsFileSource,
   root: string,
   agentDir: string,
 ): Promise<string | undefined> {
   try {
     const resolvedPath = await realpath(path);
-    if (!isInitialAgentsFilePath(resolvedPath, root, agentDir)) return undefined;
+    const resolvedSource = initialAgentsFileSource(resolvedPath, root, agentDir);
+    if (resolvedSource !== source) return undefined;
     return await readFile(resolvedPath, "utf8");
   } catch {
     return fallbackContent;
