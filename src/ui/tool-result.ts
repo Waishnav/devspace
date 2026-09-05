@@ -130,25 +130,55 @@ function mcpToolResult(value: unknown): CallToolResult | undefined {
 function cardFields(record: Record<string, unknown> | undefined): Partial<ToolResultCard> | undefined {
   if (!record) return undefined;
 
-  const agentsFiles = arrayRecords(record.agentsFiles)?.map((item) => ({
+  const instructionScopes = asRecord(record.instructions);
+  const projectInstructions = asRecord(instructionScopes?.project);
+  const scopedAgentsFiles = instructionScopes
+    ? [
+        ...(arrayRecords(instructionScopes.global) ?? []),
+        ...(arrayRecords(projectInstructions?.loaded) ?? []),
+      ]
+    : undefined;
+  const agentsFileRecords = arrayRecords(record.agentsFiles) ?? scopedAgentsFiles;
+  const agentsFiles = agentsFileRecords?.map((item) => ({
     path: stringField(item.path),
     content: stringField(item.content),
   }));
-  const availableAgentsFiles = arrayRecords(record.availableAgentsFiles)?.map((item) => ({
+  const availableAgentFileRecords = arrayRecords(record.availableAgentsFiles)
+    ?? arrayRecords(projectInstructions?.available);
+  const availableAgentsFiles = availableAgentFileRecords?.map((item) => ({
     path: stringField(item.path),
   }));
-  const skills = arrayRecords(record.skills)?.map((item) => ({
+  const skillScopes = asRecord(record.skills);
+  const scopedSkillRecords = skillScopes
+    ? [
+        ...(arrayRecords(skillScopes.global) ?? []),
+        ...(arrayRecords(skillScopes.project) ?? []),
+      ]
+    : undefined;
+  const skillRecords = arrayRecords(record.skills) ?? scopedSkillRecords;
+  const skills = skillRecords?.map((item) => ({
     name: stringField(item.name),
     description: stringField(item.description),
     path: stringField(item.path),
   }));
-  const agentProviders = arrayRecords(record.agentProviders)?.map((item) => ({
+  const agentScopes = asRecord(record.agents);
+  const profileScopes = asRecord(agentScopes?.profiles);
+  const agentProviderRecords = arrayRecords(record.agentProviders)
+    ?? arrayRecords(agentScopes?.providers);
+  const agentProviders = agentProviderRecords?.map((item) => ({
     id: stringField(item.id),
     model: stringField(item.model),
     effort: stringField(item.effort),
     note: stringField(item.note),
   }));
-  const agents = arrayRecords(record.agents)?.map((item) => ({
+  const scopedAgentRecords = profileScopes
+    ? [
+        ...(arrayRecords(profileScopes.global) ?? []),
+        ...(arrayRecords(profileScopes.project) ?? []),
+      ]
+    : undefined;
+  const agentRecords = arrayRecords(record.agents) ?? scopedAgentRecords;
+  const agents = agentRecords?.map((item) => ({
     name: stringField(item.name),
     description: stringField(item.description),
     provider: stringField(item.provider),

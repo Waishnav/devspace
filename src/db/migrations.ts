@@ -37,6 +37,11 @@ const migrations: Migration[] = [
     name: "local-agent-effort-rename",
     up: migrateLocalAgentEffortRename,
   },
+  {
+    version: 7,
+    name: "workspace-conversation-contexts",
+    up: migrateWorkspaceConversationContexts,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -205,6 +210,19 @@ function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
 
     create index if not exists workspace_conversation_bindings_workspace_idx
       on workspace_conversation_bindings(workspace_session_id);
+  `);
+}
+
+function migrateWorkspaceConversationContexts(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workspace_conversation_contexts (
+      conversation_scope_id text not null,
+      context_key text not null,
+      fingerprint text not null,
+      created_at text not null,
+      last_used_at text not null,
+      primary key (conversation_scope_id, context_key)
+    );
   `);
 }
 

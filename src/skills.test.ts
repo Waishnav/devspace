@@ -235,6 +235,14 @@ try {
   const skillFileRead = resolveSkillReadPath(loaded.skills, new Set(), projectSkill.filePath);
   assert.equal(skillFileRead?.isSkillFile, true);
   assert.equal(skillFileRead?.absolutePath, projectSkill.filePath);
+  const relativeSkillFileRead = resolveSkillReadPath(
+    loaded.skills,
+    new Set(),
+    ".agents/skills/agent-project-skill/SKILL.md",
+    projectRoot,
+  );
+  assert.equal(relativeSkillFileRead?.isSkillFile, true);
+  assert.equal(relativeSkillFileRead?.absolutePath, projectSkill.filePath);
 
   const resourcePath = join(projectSkill.baseDir, "references.md");
   await writeFile(resourcePath, "reference\n");

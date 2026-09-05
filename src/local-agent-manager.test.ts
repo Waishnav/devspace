@@ -28,6 +28,7 @@ const profile: LocalAgentProfile = {
   name: "reviewer",
   description: "Test reviewer",
   provider: "codex",
+  scope: "project",
   filePath: join(root, "reviewer.md"),
   body: "Review only.",
   disabled: false,

@@ -13,10 +13,23 @@ test("workspace cards can be rebuilt from structured content without result meta
       workspaceId: "ws_1",
       root: "/tmp/project",
       mode: "checkout",
-      skills: [{ name: "tdd", description: "Tests first", path: "/tmp/tdd/SKILL.md" }],
-      agentsFiles: [{ path: "AGENTS.md", content: "instructions" }],
-      review: { available: true },
-      instruction: "Reuse this workspace.",
+      instructions: {
+        global: [{ path: "~/.codex/AGENTS.md", content: "global instructions" }],
+        project: {
+          loaded: [{ path: "AGENTS.md", content: "project instructions" }],
+          available: [{ path: "src/AGENTS.md" }],
+        },
+      },
+      skills: {
+        global: [{ name: "tdd", description: "Tests first", path: "~/.agents/skills/tdd/SKILL.md" }],
+        project: [{ name: "release", description: "Release flow", path: ".agents/skills/release/SKILL.md" }],
+      },
+      agents: {
+        profiles: {
+          project: [{ name: "reviewer", description: "Review", provider: "codex" }],
+        },
+        providers: [{ id: "codex" }],
+      },
     },
   });
 
@@ -24,8 +37,11 @@ test("workspace cards can be rebuilt from structured content without result meta
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "open_workspace");
   assert.equal(decoded.card.workspaceId, "ws_1");
-  assert.equal(decoded.card.summary?.skills, 1);
-  assert.equal(decoded.card.summary?.agentsFiles, 1);
+  assert.equal(decoded.card.summary?.skills, 2);
+  assert.equal(decoded.card.summary?.agentsFiles, 2);
+  assert.equal(decoded.card.summary?.availableAgentsFiles, 1);
+  assert.equal(decoded.card.summary?.agentProviders, 1);
+  assert.equal(decoded.card.summary?.agents, 1);
 });
 
 test("review results use rich metadata when the host provides it", () => {
