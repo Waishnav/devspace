@@ -83,8 +83,22 @@ rejected so spelling mistakes cannot silently alter behavior.
 
 | Value | Tool surface |
 | --- | --- |
-| `codex` | Default. `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
-| `claude` | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
+| `codex` | Default. `open_workspace`, `close_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
+| `claude` | `open_workspace`, `close_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
+
+`close_workspace` is an explicit lease release, not a deletion primitive. Call
+it only when work in that workspace is genuinely terminal. It does not remove a
+managed worktree, branch, commit, or project files, and a released workspace ID
+cannot be reused. A dropped MCP transport, server restart, age, or filesystem
+mtime does not imply release.
+
+When the host supplies supported conversation metadata, a managed worktree is
+leased to that conversation by canonical Git repository and base ref. Repeated
+or concurrent opens reuse the active lease across DevSpace restarts instead of
+creating duplicate worktrees. Releasing the workspace removes that binding, so
+the next open creates a fresh managed worktree. Hosts without conversation
+metadata keep the explicit `workspaceId` workflow and do not infer reuse from
+age or filesystem state.
 
 The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each mode uses
 its shell tool with programs such as `rg`, `find`, and `ls` when it needs those

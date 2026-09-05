@@ -281,6 +281,13 @@ export class ProcessSessionManager {
     if (session.running) session.process?.kill("SIGTERM");
   }
 
+  hasRunningForWorkspace(workspaceId: string): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.workspaceId === workspaceId && session.running) return true;
+    }
+    return false;
+  }
+
   shutdown(): void {
     for (const session of this.sessions.values()) {
       if (session.cleanupTimer) clearTimeout(session.cleanupTimer);

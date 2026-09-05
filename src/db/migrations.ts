@@ -37,6 +37,11 @@ const migrations: Migration[] = [
     name: "local-agent-effort-rename",
     up: migrateLocalAgentEffortRename,
   },
+  {
+    version: 7,
+    name: "workspace-terminal-lifecycle",
+    up: migrateWorkspaceTerminalLifecycle,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -233,6 +238,30 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
     return;
   }
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
+}
+
+function migrateWorkspaceTerminalLifecycle(sqlite: Database.Database): void {
+  // Interrupted legacy upgrades can have migration 1 recorded while the
+  // workspace tables are absent. Repair the baseline instead of recording v7
+  // against a database that still cannot persist workspace lifecycle state.
+  if (!tableExists(sqlite, "workspace_sessions")) {
+    migrateWorkspaceState(sqlite);
+  }
+
+  addColumnIfMissing(sqlite, "workspace_sessions", "terminal_at", "text");
+  addColumnIfMissing(sqlite, "workspace_sessions", "terminal_reason", "text");
+  sqlite.exec(`
+    create index if not exists workspace_sessions_lifecycle_idx
+      on workspace_sessions(status, mode, managed, id);
+  `);
+}
+
+function tableExists(sqlite: Database.Database, table: string): boolean {
+  return Boolean(
+    sqlite
+      .prepare("select 1 from sqlite_master where type = 'table' and name = ? limit 1")
+      .get(table),
+  );
 }
 
 function addColumnIfMissing(

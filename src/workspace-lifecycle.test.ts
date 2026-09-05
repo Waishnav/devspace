@@ -1,0 +1,350 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { type TestContext } from "node:test";
+import { loadConfig, type ServerConfig } from "./config.js";
+import { openDatabase } from "./db/client.js";
+import { ProcessSessionManager } from "./process-sessions.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import {
+  getManagedWorkspaceReconciliationStatus,
+  releaseWorkspaceLease,
+  requestManagedWorkspaceReconciliation,
+  runManagedWorkspaceReconciliationSweep,
+} from "./workspace-lifecycle.js";
+import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { WorkspaceRegistry } from "./workspaces.js";
+
+interface LifecycleFixture {
+  root: string;
+  sourceRoot: string;
+  worktreeRoot: string;
+  stateDir: string;
+  config: ServerConfig;
+}
+
+async function lifecycleFixture(t: TestContext): Promise<LifecycleFixture> {
+  const root = await mkdtemp(join(tmpdir(), "devspace-lifecycle-test-"));
+  const sourceRoot = join(root, "project");
+  const worktreeRoot = join(root, ".devspace", "worktrees");
+  const stateDir = join(root, ".state");
+  await mkdir(sourceRoot, { recursive: true });
+  await mkdir(worktreeRoot, { recursive: true });
+
+  const config = loadConfig(writeTestDevspaceConfig(join(root, ".devspace-home"), {
+    server: { port: 1 },
+    workspaces: {
+      allowedRoots: [root],
+      worktreeRoot,
+    },
+  }));
+
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  return { root, sourceRoot, worktreeRoot, stateDir, config };
+}
+
+test("explicit release persists across restart and retains the managed worktree", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const managedRoot = join(fixture.worktreeRoot, "managed-retained");
+  const retainedFile = join(managedRoot, "unique.txt");
+  await mkdir(managedRoot);
+  await writeFile(retainedFile, "unique source remains\n");
+
+  const firstStore = new SqliteWorkspaceStore(fixture.stateDir);
+  firstStore.createSession({
+    id: "ws_released",
+    root: managedRoot,
+    mode: "worktree",
+    sourceRoot: fixture.sourceRoot,
+    baseRef: "origin/main",
+    baseSha: "abc123",
+    managed: true,
+  });
+  const firstRegistry = new WorkspaceRegistry(fixture.config, firstStore);
+
+  const released = firstRegistry.releaseWorkspace("ws_released");
+  assert.equal(released.status, "released");
+  assert.equal(released.terminalReason, "explicit_release");
+  assert.ok(released.terminalAt);
+  assert.equal((await stat(managedRoot)).isDirectory(), true);
+  assert.equal((await stat(retainedFile)).isFile(), true);
+
+  const releasedAgain = firstRegistry.releaseWorkspace("ws_released");
+  assert.equal(releasedAgain.status, "released");
+  assert.equal(releasedAgain.terminalAt, released.terminalAt);
+  firstStore.close();
+
+  const secondStore = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    const restored = secondStore.getSession("ws_released");
+    assert.equal(restored?.status, "released");
+    assert.equal(restored?.terminalAt, released.terminalAt);
+
+    const secondRegistry = new WorkspaceRegistry(fixture.config, secondStore);
+    assert.throws(
+      () => secondRegistry.getWorkspace("ws_released"),
+      /is released and cannot be reused/,
+    );
+    assert.equal((await stat(retainedFile)).isFile(), true);
+  } finally {
+    secondStore.close();
+  }
+});
+
+test("restart keeps an existing managed workspace active until explicit release", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const managedRoot = join(fixture.worktreeRoot, "managed-active");
+  await mkdir(managedRoot);
+
+  const firstStore = new SqliteWorkspaceStore(fixture.stateDir);
+  firstStore.createSession({
+    id: "ws_restart_active",
+    root: managedRoot,
+    mode: "worktree",
+    sourceRoot: fixture.sourceRoot,
+    baseRef: "origin/main",
+    baseSha: "abc123",
+    managed: true,
+  });
+  firstStore.close();
+
+  const secondStore = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    assert.equal(secondStore.getSession("ws_restart_active")?.status, "active");
+    const restored = new WorkspaceRegistry(fixture.config, secondStore).getWorkspace(
+      "ws_restart_active",
+    );
+    assert.equal(restored.id, "ws_restart_active");
+    assert.equal(restored.root, managedRoot);
+  } finally {
+    secondStore.close();
+  }
+});
+
+test("legacy lifecycle state is neither reusable nor explicit release authority", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const managedRoot = join(fixture.worktreeRoot, "legacy-state");
+  await mkdir(managedRoot);
+
+  const firstStore = new SqliteWorkspaceStore(fixture.stateDir);
+  firstStore.createSession({
+    id: "ws_legacy_state",
+    root: managedRoot,
+    mode: "worktree",
+    sourceRoot: fixture.sourceRoot,
+    managed: true,
+  });
+  firstStore.close();
+
+  const database = openDatabase(fixture.stateDir);
+  try {
+    database.sqlite
+      .prepare("update workspace_sessions set status = 'inactive' where id = ?")
+      .run("ws_legacy_state");
+  } finally {
+    database.close();
+  }
+
+  const secondStore = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    assert.equal(secondStore.getSession("ws_legacy_state")?.status, "unknown");
+    const registry = new WorkspaceRegistry(fixture.config, secondStore);
+    assert.throws(
+      () => registry.getWorkspace("ws_legacy_state"),
+      /is unknown and cannot be reused/,
+    );
+    assert.throws(
+      () => registry.releaseWorkspace("ws_legacy_state"),
+      /Unknown workspaceId/,
+    );
+    assert.equal(secondStore.getSession("ws_legacy_state")?.status, "unknown");
+    assert.equal((await stat(managedRoot)).isDirectory(), true);
+  } finally {
+    secondStore.close();
+  }
+});
+
+test("managed session reconciliation is bounded and only terminalizes missing roots", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const store = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    const activeRoot = join(fixture.worktreeRoot, "active-existing");
+    await mkdir(activeRoot);
+    await writeFile(join(activeRoot, "work.txt"), "still active\n");
+
+    store.createSession({
+      id: "ws_001_active",
+      root: activeRoot,
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
+    store.createSession({
+      id: "ws_002_missing",
+      root: join(fixture.worktreeRoot, "missing-2"),
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
+    store.createSession({
+      id: "ws_003_missing",
+      root: join(fixture.worktreeRoot, "missing-3"),
+      mode: "worktree",
+      sourceRoot: fixture.sourceRoot,
+      managed: true,
+    });
+
+    const registry = new WorkspaceRegistry(fixture.config, store);
+    const first = await registry.reconcileManagedWorktreeSessions({ limit: 2 });
+    assert.equal(first.checked, 2);
+    assert.equal(first.reconciled, 1);
+    assert.equal(first.nextCursor, "ws_002_missing");
+    assert.equal(store.getSession("ws_001_active")?.status, "active");
+    assert.equal(store.getSession("ws_002_missing")?.status, "missing");
+    assert.equal(store.getSession("ws_003_missing")?.status, "active");
+
+    const second = await registry.reconcileManagedWorktreeSessions({
+      cursor: first.nextCursor,
+      limit: 2,
+    });
+    assert.equal(second.checked, 1);
+    assert.equal(second.reconciled, 1);
+    assert.equal(second.nextCursor, undefined);
+    assert.equal(store.getSession("ws_003_missing")?.status, "missing");
+    assert.equal((await stat(activeRoot)).isDirectory(), true);
+  } finally {
+    store.close();
+  }
+});
+
+test("managed reconciliation sweep continues through every bounded page", async () => {
+  const calls: Array<{ cursor?: string; limit?: number }> = [];
+  const result = await runManagedWorkspaceReconciliationSweep({
+    async reconcileManagedWorktreeSessions(input) {
+      calls.push({ ...input });
+      assert.equal(input.limit, 128);
+      if (input.cursor === undefined) {
+        return { checked: 128, reconciled: 3, nextCursor: "ws_128" };
+      }
+      if (input.cursor === "ws_128") {
+        return { checked: 128, reconciled: 2, nextCursor: "ws_256" };
+      }
+      if (input.cursor === "ws_256") {
+        return { checked: 7, reconciled: 1 };
+      }
+      throw new Error(`Unexpected reconciliation cursor: ${input.cursor}`);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { cursor: undefined, limit: 128 },
+    { cursor: "ws_128", limit: 128 },
+    { cursor: "ws_256", limit: 128 },
+  ]);
+  assert.deepEqual(result, {
+    batches: 3,
+    checked: 263,
+    reconciled: 6,
+  });
+});
+
+test("managed reconciliation keeps an inspectable owned task and completion result", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const store = new SqliteWorkspaceStore(fixture.stateDir);
+  try {
+    const registry = new WorkspaceRegistry(fixture.config, store);
+    const task = requestManagedWorkspaceReconciliation(fixture.config, registry);
+    assert.ok(task);
+
+    const running = getManagedWorkspaceReconciliationStatus(registry);
+    assert.equal(running?.running, true);
+    assert.equal(running?.task, task);
+    assert.equal(requestManagedWorkspaceReconciliation(fixture.config, registry), task);
+
+    await task;
+
+    const completed = getManagedWorkspaceReconciliationStatus(registry);
+    assert.equal(completed?.running, false);
+    assert.equal(completed?.task, undefined);
+    assert.equal(completed?.lastError, undefined);
+    assert.deepEqual(completed?.lastResult, {
+      batches: 1,
+      checked: 0,
+      reconciled: 0,
+    });
+    assert.ok(completed?.lastFullSweepAt);
+  } finally {
+    store.close();
+  }
+});
+
+test("release fails closed when a DevSpace process owns the workspace", async () => {
+  let releaseCalls = 0;
+  const workspaces = {
+    releaseWorkspace: () => {
+      releaseCalls += 1;
+      throw new Error("release must not run while busy");
+    },
+  };
+  const processSessions = {
+    hasRunningForWorkspace: (workspaceId: string) => workspaceId === "ws_busy",
+  };
+
+  assert.throws(
+    () => releaseWorkspaceLease(workspaces, processSessions, "ws_busy"),
+    /still owns a running process session/,
+  );
+  assert.equal(releaseCalls, 0);
+});
+
+test("release rejects a nonterminal lifecycle result", () => {
+  const workspaces = {
+    releaseWorkspace: () => ({
+      id: "ws_unknown",
+      root: "/tmp/devspace-unknown",
+      status: "unknown" as const,
+      mode: "worktree" as const,
+      managed: true,
+      createdAt: "2026-09-02T00:00:00.000Z",
+      lastUsedAt: "2026-09-02T00:00:00.000Z",
+    }),
+  };
+  const processSessions = {
+    hasRunningForWorkspace: () => false,
+  };
+
+  assert.throws(
+    () => releaseWorkspaceLease(workspaces, processSessions, "ws_unknown"),
+    /did not reach an explicit terminal lifecycle state/,
+  );
+});
+
+test("a process start publishes its workspace lease before the first async yield", async () => {
+  const manager = new ProcessSessionManager({ completedSessionTtlMs: 100 });
+  const node = process.platform === "win32"
+    ? `"${process.execPath}"`
+    : JSON.stringify(process.execPath);
+
+  try {
+    const pending = manager.start({
+      workspaceId: "ws_race",
+      cwd: process.cwd(),
+      command: `${node} -e "setTimeout(() => {}, 1000)"`,
+      yieldTimeMs: 0,
+    });
+
+    assert.equal(manager.hasRunningForWorkspace("ws_race"), true);
+    assert.equal(manager.hasRunningForWorkspace("ws_other"), false);
+
+    const snapshot = await pending;
+    assert.equal(snapshot.running, true);
+    assert.ok(snapshot.sessionId);
+    manager.terminate("ws_race", snapshot.sessionId);
+  } finally {
+    manager.shutdown();
+  }
+});

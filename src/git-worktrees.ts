@@ -33,11 +33,10 @@ export interface ManagedWorktree {
   managed: boolean;
 }
 
-export async function createManagedWorktree(input: {
+export async function resolveManagedWorktreeSourceRoot(input: {
   sourcePath: string;
-  baseRef?: string;
   config: ServerConfig;
-}): Promise<ManagedWorktree> {
+}): Promise<string> {
   const sourcePath = assertAllowedPath(input.sourcePath, input.config.allowedRoots);
 
   try {
@@ -56,7 +55,15 @@ export async function createManagedWorktree(input: {
     );
   }
 
-  const sourceRoot = await resolveGitRoot(sourcePath, input.config.allowedRoots);
+  return resolveGitRoot(sourcePath, input.config.allowedRoots);
+}
+
+export async function createManagedWorktree(input: {
+  sourcePath: string;
+  baseRef?: string;
+  config: ServerConfig;
+}): Promise<ManagedWorktree> {
+  const sourceRoot = await resolveManagedWorktreeSourceRoot(input);
   const baseRef = input.baseRef ?? "HEAD";
   const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
   const dirtySource = (await git(["status", "--porcelain=v1"], sourceRoot)).trim().length > 0;
@@ -88,6 +95,12 @@ export async function createManagedWorktree(input: {
     detached: true,
     managed: true,
   };
+}
+
+export async function removeManagedWorktree(
+  worktree: Pick<ManagedWorktree, "sourceRoot" | "path">,
+): Promise<void> {
+  await git(["worktree", "remove", worktree.path], worktree.sourceRoot);
 }
 
 async function resolveGitRoot(path: string, allowedRoots: string[]): Promise<string> {

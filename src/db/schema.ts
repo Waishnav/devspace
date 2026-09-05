@@ -13,10 +13,18 @@ export const workspaceSessions = sqliteTable(
     managed: text("managed").notNull().default("false"),
     createdAt: text("created_at").notNull(),
     lastUsedAt: text("last_used_at").notNull(),
+    terminalAt: text("terminal_at"),
+    terminalReason: text("terminal_reason"),
   },
   (table) => [
     index("workspace_sessions_root_idx").on(table.root, table.lastUsedAt),
     index("workspace_sessions_status_idx").on(table.status, table.lastUsedAt),
+    index("workspace_sessions_lifecycle_idx").on(
+      table.status,
+      table.mode,
+      table.managed,
+      table.id,
+    ),
   ],
 );
 
