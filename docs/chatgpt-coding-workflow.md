@@ -15,7 +15,7 @@ ChatGPT should call `open_workspace` once for a project folder:
 ```
 
 The result includes a `workspaceId`. All later file, search, edit, show-changes,
-and shell calls should reuse that same `workspaceId`.
+and shell calls should pass that same value as `workspace_id`.
 
 ChatGPT may support automatic checkout recovery through optional host
 conversation metadata. This is an OpenAI-host adapter detail, not a standard MCP
@@ -23,9 +23,9 @@ conversation field. When that optional context is available, opening the same
 checkout project again in the same conversation can continue in the existing
 workspace, and the context already provided for that reused checkout is not
 repeated. The portable workflow remains the same: keep using the `workspaceId`
-returned by `open_workspace` for later operations. Hosts without supported
-conversation context receive a normal new workspace and continue with that
-explicit `workspaceId` workflow.
+returned by `open_workspace` as `workspace_id` for later operations. Hosts
+without supported conversation context receive a normal new workspace and
+continue with that explicit workspace ID workflow.
 The model receives actionable workspace instructions; automatic-reuse
 bookkeeping is not a model-facing choice.
 
@@ -78,12 +78,12 @@ Managed worktrees are created under:
 ```
 
 Worktree mode requires a Git repository with at least one commit. It starts from
-`HEAD` unless `baseRef` is provided.
+`HEAD` unless `base_ref` is provided.
 
 Each worktree-mode call creates a new managed worktree and returns a new
-`workspaceId`. Reuse that ID for work inside that worktree; call
-`open_workspace` in worktree mode again only when another isolated worktree is
-actually required.
+`workspaceId`. Reuse that ID as `workspace_id` for work inside that worktree;
+call `open_workspace` in worktree mode again only when another isolated worktree
+is actually required.
 
 Uncommitted source checkout changes are not copied into the managed worktree.
 DevSpace reports when the source checkout was dirty so the model can decide how

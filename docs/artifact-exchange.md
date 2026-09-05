@@ -8,19 +8,20 @@ directly into an open workspace. Enable the tool with
 
 ```text
 open_workspace
-  -> download_artifact({ file, workspaceId, path })
+  -> download_artifact({ file, workspace_id, path })
   -> { path }
 ```
 
 1. Open the project with `open_workspace`.
-2. Pass the host-provided native `file`, the returned `workspaceId`, and an
-   unused workspace-relative `path` to `download_artifact`.
+2. Pass the host-provided native `file`, the returned `workspaceId` as
+   `workspace_id`, and an unused workspace-relative `path` to
+   `download_artifact`.
 3. Use the returned path with the ordinary DevSpace filesystem tools.
 
 ```text
 download_artifact({
   file: <native file value supplied by the MCP host>,
-  workspaceId: "ws_123",
+  workspace_id: "ws_123",
   path: "public/images/generated-image.png"
 })
 ```

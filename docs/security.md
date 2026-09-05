@@ -96,9 +96,9 @@ sessions.
 
 Native file download is an opt-in, one-shot transfer into an already-open
 workspace. `download_artifact` accepts the MCP host's native file value, the
-`workspaceId` returned by `open_workspace`, and an unused relative destination
-path. It returns only the workspace-relative path and does not create a
-persistent artifact service or reusable artifact ID.
+`workspace_id` containing the `workspaceId` returned by `open_workspace`, and an
+unused relative destination path. It returns only the workspace-relative path
+and does not create a persistent artifact service or reusable artifact ID.
 
 DevSpace accepts only the documented native-file object and trusted OpenAI
 download hosts and redirects. Arbitrary URL strings, local source paths,

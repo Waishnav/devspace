@@ -47,7 +47,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       title: "Write file",
       description: `Create or completely overwrite a file in a workspace. Prefer ${toolNames.edit} for targeted changes to existing files.`,
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
         path: z
           .string()
           .describe("File path to write, relative to the workspace root."),
@@ -56,8 +56,9 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       outputSchema: resultOutputSchema(),
       annotations: WRITE_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ workspace_id, ...input }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = workspaces.getWorkspace(workspaceId);
       workspaces.resolvePath(workspace, input.path);
       const response = await writeFileTool(input, {
@@ -100,21 +101,21 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
     toolNames.edit,
     {
       title: "Edit file",
-      description: `Edit one file in a workspace by replacing exact text blocks. Prefer this over ${toolNames.write} for targeted changes. Each oldText must match a unique, non-overlapping region of the original file; merge nearby changes into one edit and keep oldText as small as possible while still unique.`,
+      description: `Edit one file in a workspace by replacing exact text blocks. Prefer this over ${toolNames.write} for targeted changes. Each old_text must match a unique, non-overlapping region of the original file; merge nearby changes into one edit and keep old_text as small as possible while still unique.`,
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
         path: z
           .string()
           .describe("File path to edit, relative to the workspace root."),
         edits: z
           .array(
             z.object({
-              oldText: z
+              old_text: z
                 .string()
                 .describe(
                   "Exact text to replace. Must match uniquely in the original file.",
                 ),
-              newText: z.string().describe("Replacement text."),
+              new_text: z.string().describe("Replacement text."),
             }),
           )
           .min(1),
@@ -124,11 +125,18 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       }),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ workspace_id, edits, ...input }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = workspaces.getWorkspace(workspaceId);
       workspaces.resolvePath(workspace, input.path);
-      const response = await editFileTool(input, {
+      const response = await editFileTool({
+        ...input,
+        edits: edits.map(({ old_text, new_text }) => ({
+          oldText: old_text,
+          newText: new_text,
+        })),
+      }, {
         cwd: workspace.root,
         root: workspace.root,
       });
@@ -180,11 +188,11 @@ function registerShellTool(context: ToolRegistrationContext): void {
       title: "Bash",
       description: CLAUDE_SHELL_DESCRIPTION,
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
         command: z
           .string()
           .describe("Shell command to execute."),
-        workingDirectory: z
+        working_directory: z
           .string()
           .optional()
           .describe(
@@ -200,8 +208,10 @@ function registerShellTool(context: ToolRegistrationContext): void {
       outputSchema: resultOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, workingDirectory, ...input }) => {
+    async ({ workspace_id, working_directory, ...input }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
+      const workingDirectory = working_directory;
       const workspace = workspaces.getWorkspace(workspaceId);
       const cwd = workspaces.resolveWorkingDirectory(
         workspace,

@@ -149,8 +149,9 @@ the same project in that conversation; repeated opens reuse the `workspaceId`
 and do not repeat context already provided for that reused checkout. Worktree
 mode always creates a new isolated workspace with its own complete context.
 Hosts without supported conversation metadata receive a normal new workspace.
-In all cases, continue passing the `workspaceId` returned by `open_workspace` to
-later tools. Other MCP hosts use this explicit workspace workflow as well.
+In all cases, continue passing the `workspaceId` returned by `open_workspace` as
+`workspace_id` to later tools. Other MCP hosts use this explicit workspace
+workflow as well.
 
 To review work, call `show_changes` once after the final related file change. It
 shows the combined changes and advances the review point automatically.
@@ -186,7 +187,7 @@ Worktree mode requires:
 - Git installed
 - the path is inside a Git repository
 - the repository has at least one commit
-- the requested `baseRef` resolves to a commit
+- the requested `base_ref` resolves to a commit
 
 For a new repository, create the first commit or use checkout mode.
 

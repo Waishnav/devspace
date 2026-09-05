@@ -48,6 +48,52 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }
 });
 
+test("model-facing tool inputs use snake_case recursively", async (t) => {
+  for (const toolMode of ["claude", "codex"] as const) {
+    await t.test(toolMode, async (nested) => {
+      const context = await fixture(nested, { toolMode, uiEnabled: false });
+      const tools = await context.client.listTools();
+      const invalidPaths = tools.tools.flatMap((tool) => (
+        schemaPropertyPaths(tool.inputSchema)
+          .filter(({ key }) => !/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(key))
+          .map(({ path }) => `${tool.name}.${path}`)
+      ));
+
+      assert.deepEqual(invalidPaths, []);
+    });
+  }
+});
+
+test("Codex process tools accept snake_case session and yield inputs", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "snake-case-process"),
+  ).workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  const started = structuredContent(await context.client.callTool({
+    name: "exec_command",
+    arguments: {
+      workspace_id: workspaceId,
+      cmd: 'node -e "setTimeout(() => {}, 500)"',
+      yield_time_ms: 0,
+    },
+  }));
+  assert.equal(started.running, true);
+  assert.equal(typeof started.sessionId, "number");
+
+  const finished = structuredContent(await context.client.callTool({
+    name: "write_stdin",
+    arguments: {
+      workspace_id: workspaceId,
+      session_id: started.sessionId,
+      yield_time_ms: 2_000,
+    },
+  }));
+  assert.equal(finished.running, false);
+  assert.equal(finished.exitCode, 0);
+});
+
 test("UI metadata is limited to workspace and aggregate review", async (t) => {
   for (const uiEnabled of [true, false]) {
     await t.test(uiEnabled ? "enabled" : "disabled", async (nested) => {
@@ -85,7 +131,7 @@ test("show_changes keeps model output compact and preserves the rich review card
   await writeFile(join(context.project, "README.md"), "goodbye\n");
   const review = await context.client.callTool({
     name: "show_changes",
-    arguments: { workspaceId },
+    arguments: { workspace_id: workspaceId },
   });
   const structured = structuredContent(review);
   assert.equal((review._meta as Record<string, unknown> | undefined)?.tool, undefined);
@@ -138,7 +184,7 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   await writeFile(join(context.project, "README.md"), "first\n");
   const first = structuredContent(await context.client.callTool({
     name: "show_changes",
-    arguments: { workspaceId },
+    arguments: { workspace_id: workspaceId },
   }));
   const reviewRef = first.reviewRef;
   assert.equal(typeof reviewRef, "string");
@@ -146,7 +192,7 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   await writeFile(join(context.project, "README.md"), "second\n");
   const reopened = await context.client.callTool({
     name: "show_changes",
-    arguments: { workspaceId },
+    arguments: { workspace_id: workspaceId },
     _meta: { "devspace/reviewRef": reviewRef },
   } as Parameters<Client["callTool"]>[0]);
   assert.equal(structuredContent(reopened).reviewRef, reviewRef);
@@ -157,7 +203,7 @@ test("show_changes can reopen a historical review without advancing the checkpoi
 
   const current = await context.client.callTool({
     name: "show_changes",
-    arguments: { workspaceId },
+    arguments: { workspace_id: workspaceId },
   });
   assert.match(
     (((responseCard(current).payload as { patch?: string } | undefined)?.patch) ?? ""),
@@ -290,6 +336,31 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
 interface ServerFixture {
   client: Client;
   project: string;
+}
+
+function schemaPropertyPaths(
+  schema: unknown,
+  prefix = "",
+): Array<{ key: string; path: string }> {
+  if (!schema || typeof schema !== "object") return [];
+  const record = schema as {
+    properties?: Record<string, unknown>;
+    items?: unknown;
+    anyOf?: unknown[];
+    oneOf?: unknown[];
+    allOf?: unknown[];
+  };
+  const paths = Object.entries(record.properties ?? {}).flatMap(([key, child]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return [{ key, path }, ...schemaPropertyPaths(child, path)];
+  });
+  if (record.items) paths.push(...schemaPropertyPaths(record.items, `${prefix}[]`));
+  for (const variant of [record.anyOf, record.oneOf, record.allOf]) {
+    for (const child of variant ?? []) {
+      paths.push(...schemaPropertyPaths(child, prefix));
+    }
+  }
+  return paths;
 }
 
 async function fixture(

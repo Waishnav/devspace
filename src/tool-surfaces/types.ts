@@ -14,7 +14,7 @@ export const toolNames = {
 } as const;
 
 export const workspaceIdDescription =
-  "Workspace to use. Reuse the current project's workspaceId.";
+  "Workspace to use. Pass the workspaceId returned by open_workspace as workspace_id.";
 
 export const WRITE_TOOL_ANNOTATIONS = {
   readOnlyHint: false,
