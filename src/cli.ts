@@ -25,6 +25,7 @@ import {
 import { createLocalAgentClient } from "./local-agent-client.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import {
+  formatAgentCommandError,
   formatAgentObservation,
   formatAgentReceipt,
   formatAgentSummary,
@@ -447,19 +448,19 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   switch (subcommand) {
     case "ls":
     case "list":
-      await runAgentsList(commandArgs, json);
+      await runAgentWorkflowCommand(json, () => runAgentsList(commandArgs, json));
       return;
     case "run":
-      await runAgentsRun(commandArgs, json);
+      await runAgentWorkflowCommand(json, () => runAgentsRun(commandArgs, json));
       return;
     case "continue":
-      await runAgentsContinue(commandArgs, json);
+      await runAgentWorkflowCommand(json, () => runAgentsContinue(commandArgs, json));
       return;
     case "show":
-      await runAgentsShow(commandArgs, json);
+      await runAgentWorkflowCommand(json, () => runAgentsShow(commandArgs, json));
       return;
     case "targets":
-      await runAgentsTargets(commandArgs, json);
+      await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
       return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
@@ -471,7 +472,7 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       printAgentsHelp();
       return;
     default:
-      throw new Error(`Unknown agents command: ${subcommand}`);
+      writeAgentWorkflowError(`Unknown agents command: ${subcommand}`, json);
   }
 }
 
@@ -487,7 +488,7 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
   const catalog = buildLocalAgentCatalog(config.subagents, profiles, providers);
   const output = presentAgentTargetCatalog(catalog);
   if (json) printJson(output);
-  else console.log(formatAgentTargetCatalog(output));
+  else printAgentXml(formatAgentTargetCatalog(output));
 }
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
@@ -495,7 +496,7 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   const result = await client.list(resolveCliWorkspaceContext(config.allowedRoots));
-  const agents = presentAgentResult(result, json);
+  const agents = presentAgentWorkflowResult(result, json);
   if (!agents) return;
 
   const summaries = agents.map(presentAgentSummary);
@@ -504,14 +505,7 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
     return;
   }
 
-  if (agents.length === 0) {
-    console.log("No subagent sessions found for this workspace.");
-    return;
-  }
-
-  for (const summary of summaries) {
-    console.log(formatAgentSummary(summary));
-  }
+  printAgentXml(summaries.map(formatAgentSummary).join("\n"));
 }
 
 async function runAgentsRun(args: string[], json: boolean): Promise<void> {
@@ -527,14 +521,14 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
     model: parsed.model,
     effort: parsed.effort,
   });
-  const record = presentAgentResult(result, json);
+  const record = presentAgentWorkflowResult(result, json);
   if (!record) return;
   const receipt = presentAgentReceipt(record);
   if (json) {
     printJson(receipt);
     return;
   }
-  console.log(formatAgentReceipt(receipt));
+  printAgentXml(formatAgentReceipt(receipt));
 }
 
 async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
@@ -546,14 +540,14 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
     model: parsed.model,
     effort: parsed.effort,
   }, scope);
-  const record = presentAgentResult(result, json);
+  const record = presentAgentWorkflowResult(result, json);
   if (!record) return;
   const receipt = presentAgentReceipt(record);
   if (json) {
     printJson(receipt);
     return;
   }
-  console.log(formatAgentReceipt(receipt));
+  printAgentXml(formatAgentReceipt(receipt));
 }
 
 async function runAgentsShow(args: string[], json: boolean): Promise<void> {
@@ -564,20 +558,20 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const client = createLocalAgentClient(config);
   const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const initial = await client.get(id, scope);
-  let record = presentAgentResult(initial, json);
+  let record = presentAgentWorkflowResult(initial, json);
   if (!record) return;
 
   const deadline = Date.now() + 15_000;
   while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
     await sleep(500);
-    const refreshed = presentAgentResult(await client.get(id, scope), json);
+    const refreshed = presentAgentWorkflowResult(await client.get(id, scope), json);
     if (!refreshed) return;
     record = refreshed;
   }
 
   const observation = presentAgentObservation(record);
   if (json) printJson(observation);
-  else console.log(formatAgentObservation(observation));
+  else printAgentXml(formatAgentObservation(observation));
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
@@ -641,6 +635,37 @@ function presentAgentResult<T, E extends LocalAgentError>(
     return undefined;
   }
   throw new Error(result.error.message);
+}
+
+function presentAgentWorkflowResult<T, E extends LocalAgentError>(
+  result: BetterResult<T, E>,
+  json: boolean,
+): T | undefined {
+  if (result.isOk()) return result.value;
+  const error = toAgentErrorPayload(result.error);
+  if (json) printJson({ error });
+  else console.error(formatAgentCommandError(error));
+  process.exitCode = 1;
+  return undefined;
+}
+
+async function runAgentWorkflowCommand(json: boolean, command: () => Promise<void>): Promise<void> {
+  try {
+    await command();
+  } catch (error) {
+    writeAgentWorkflowError(error instanceof Error ? error.message : String(error), json);
+  }
+}
+
+function writeAgentWorkflowError(message: string, json: boolean): void {
+  const error = { code: "AGENT_COMMAND_ERROR", message, retryable: false };
+  if (json) printJson({ error });
+  else console.error(formatAgentCommandError(error));
+  process.exitCode = 1;
+}
+
+function printAgentXml(fragment: string): void {
+  if (fragment) console.log(fragment);
 }
 
 function printJson(value: unknown): void {
