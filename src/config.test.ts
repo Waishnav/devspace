@@ -53,7 +53,7 @@ try {
     skills: { enabled: false, paths: ["~/skills"], agentDir: "~/agent" },
     subagents: {
       enabled: true,
-      providers: [{ id: "codex", enabled: true }],
+      providers: [{ id: "codex", enabled: true, networkAccess: true }],
     },
     logging: {
       level: "debug",
@@ -96,6 +96,7 @@ try {
   assert.deepEqual(configured.skillPaths, ["~/skills"]);
   assert.equal(configured.agentDir, resolve(homedir(), "agent"));
   assert.equal(configured.subagents.enabled, true);
+  assert.equal(configured.subagents.providers[0]?.networkAccess, true);
   assert.equal(configured.oauth.ownerToken, "persisted-owner-token-long-enough");
   assert.equal(configured.oauth.accessTokenTtlSeconds, 120);
   assert.deepEqual(configured.oauth.scopes, ["devspace", "admin"]);

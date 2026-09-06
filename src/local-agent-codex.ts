@@ -77,6 +77,7 @@ export interface CodexAppServerRuntimeOptions {
   command: string;
   env: NodeJS.ProcessEnv;
   version?: string;
+  networkAccess?: boolean;
 }
 
 export class CodexAppServerRuntime implements LocalAgentRuntime {
@@ -146,7 +147,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
-        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId, this.options.networkAccess));
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
@@ -237,13 +238,14 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly commandResolver: CodexCommandResolver = resolveCodexCommand,
+    private readonly networkAccess = false,
   ) {}
 
   runtimeKey(_context: LocalAgentRuntimeContext): string {
     const command = this.resolveCommand();
     const executable = command?.executable ?? this.env.CODEX_COMMAND ?? "codex";
     const codexHome = resolve(this.env.CODEX_HOME ?? join(homedir(), ".codex"));
-    return `codex:${executable}:${codexHome}`;
+    return `codex:${executable}:${codexHome}:${this.networkAccess}`;
   }
 
   async createRuntime(_context: LocalAgentRuntimeContext) {
@@ -274,6 +276,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
           command: command.executable,
           env: codexCommandEnvironment(this.env),
           version: command.version,
+          networkAccess: this.networkAccess,
         });
         try {
           await runtime.initialize();
@@ -461,12 +464,16 @@ function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
   };
 }
 
-function turnParams(input: LocalAgentRunInput, threadId: string): Record<string, unknown> {
+function turnParams(
+  input: LocalAgentRunInput,
+  threadId: string,
+  networkAccess = false,
+): Record<string, unknown> {
   return {
     threadId,
     input: [{ type: "text", text: input.prompt }],
     approvalPolicy: "never",
-    sandboxPolicy: sandboxPolicyFor(input.writeMode),
+    sandboxPolicy: sandboxPolicyFor(input.writeMode, networkAccess),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
   };
@@ -481,9 +488,12 @@ export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
   }
 }
 
-function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string> {
+function sandboxPolicyFor(
+  writeMode: LocalAgentWriteMode | undefined,
+  networkAccess: boolean,
+): Record<string, string | boolean> {
   switch (writeMode) {
-    case "allowed": return { type: "workspaceWrite" };
+    case "allowed": return { type: "workspaceWrite", networkAccess };
     case "full_access": return { type: "dangerFullAccess" };
     case "read_only":
     case undefined: return { type: "readOnly" };

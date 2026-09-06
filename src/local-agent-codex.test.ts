@@ -73,7 +73,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [] } } });
         return;
       }
-      const item = { type: "agentMessage", text: "fake response " + turn };
+      const item = { type: "agentMessage", text: message.params.input[0].text === "policy"
+        ? JSON.stringify(message.params)
+        : "fake response " + turn };
       output({ method: "item/completed", params: { threadId: message.params.threadId, turnId, item } });
       output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [item] } } });
     });
@@ -134,6 +136,27 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       assert.equal("cause" in toAgentErrorPayload(protocolFailure.error), false);
     }
     await runtime.releaseSession("thread_new");
+    for (const networkAccess of [undefined, false, true]) {
+      const policyRuntime = new CodexAppServerRuntime({ command, env: process.env, networkAccess });
+      try {
+        await policyRuntime.initialize();
+        for (const writeMode of ["allowed", "read_only", "full_access"] as const) {
+          for (const providerSessionId of [undefined, "thread_new"]) {
+            const result = await policyRuntime.run({
+              prompt: "policy", workspaceRoot: "/tmp/project", writeMode, providerSessionId,
+            });
+            if (result.isErr()) throw result.error;
+            const params = JSON.parse(result.value.finalResponse);
+            assert.equal(params.approvalPolicy, "never");
+            assert.deepEqual(params.sandboxPolicy, writeMode === "allowed"
+              ? { type: "workspaceWrite", networkAccess: networkAccess ?? false }
+              : { type: writeMode === "read_only" ? "readOnly" : "dangerFullAccess" });
+          }
+        }
+      } finally {
+        await policyRuntime.close();
+      }
+    }
   } finally {
     await runtime.close();
     await runtime.close();

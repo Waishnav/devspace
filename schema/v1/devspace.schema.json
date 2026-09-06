@@ -192,6 +192,9 @@
               "effort": {
                 "type": "string",
                 "minLength": 1
+              },
+              "networkAccess": {
+                "type": "boolean"
               }
             },
             "required": [

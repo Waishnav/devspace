@@ -27,6 +27,7 @@ export type LocalAgentAdapter = LocalAgentDriver;
 
 export interface LocalAgentDriverOptions {
   env?: NodeJS.ProcessEnv;
+  codexNetworkAccess?: boolean;
   claudeQueryFactory?: ClaudeQueryFactory;
   opencodeFactory?: OpencodeFactory;
   piSessionFactory?: PiSessionFactory;
@@ -36,7 +37,7 @@ export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
   return [
-    new CodexLocalAgentDriver(options.env),
+    new CodexLocalAgentDriver(options.env, undefined, options.codexNetworkAccess),
     new ClaudeLocalAgentDriver(options.claudeQueryFactory, options.env),
     new OpencodeLocalAgentDriver(options.opencodeFactory),
     new PiLocalAgentDriver(options.piSessionFactory),

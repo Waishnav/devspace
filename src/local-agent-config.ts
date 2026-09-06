@@ -9,6 +9,7 @@ const providerSchema = z.object({
   enabled: z.boolean(),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
+  networkAccess: z.boolean().optional(),
 }).strict();
 
 export const subagentsConfigSchema = z.object({
@@ -25,6 +26,13 @@ export const subagentsConfigSchema = z.object({
       });
     }
     seen.add(provider.id);
+    if (provider.networkAccess !== undefined && provider.id !== "codex") {
+      context.addIssue({
+        code: "custom",
+        path: ["providers", index, "networkAccess"],
+        message: "networkAccess is only supported by the codex provider",
+      });
+    }
   }
 });
 

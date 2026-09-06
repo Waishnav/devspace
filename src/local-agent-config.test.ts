@@ -19,6 +19,20 @@ assert.deepEqual(config, {
     { id: "claude", enabled: false, model: "sonnet" },
   ],
 });
+for (const networkAccess of [false, true]) {
+  const parsed = subagentsConfigSchema.parse({
+    enabled: true,
+    providers: [{ id: "codex", enabled: true, networkAccess }],
+  });
+  assert.equal(subagentProviderConfig(parsed, "codex")?.networkAccess, networkAccess);
+}
+assert.equal(subagentProviderConfig(config, "codex")?.networkAccess, undefined);
+for (const provider of [
+  { id: "codex", enabled: true, networkAccess: "true" },
+  { id: "claude", enabled: true, networkAccess: true },
+]) {
+  assert.equal(subagentsConfigSchema.safeParse({ enabled: true, providers: [provider] }).success, false);
+}
 assert.equal(isSubagentProviderEnabled(config, "codex"), true);
 assert.equal(isSubagentProviderEnabled(config, "claude"), false);
 assert.equal(isSubagentProviderEnabled(config, "pi"), false);

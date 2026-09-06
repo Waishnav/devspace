@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
+import { subagentProviderConfig } from "./local-agent-config.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
 import { LocalAgentDaemon, writeLocalAgentDaemonLog } from "./local-agent-daemon.js";
 import {
@@ -22,7 +23,9 @@ const log = (
 const store = new LocalAgentStore(paths.stateDir);
 const manager = new LocalAgentManager({
   store,
-  drivers: createLocalAgentDrivers(),
+  drivers: createLocalAgentDrivers({
+    codexNetworkAccess: subagentProviderConfig(config.subagents, "codex")?.networkAccess,
+  }),
   pool: new LocalAgentRuntimePool({ logger: log }),
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,

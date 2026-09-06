@@ -115,6 +115,7 @@ Subagent providers are explicit. Omitted providers are disabled:
         "enabled": true,
         "model": "gpt-5.4",
         "effort": "high",
+        "networkAccess": false,
       },
       {
         "id": "claude",
@@ -125,6 +126,17 @@ Subagent providers are explicit. Omitted providers are disabled:
   },
 }
 ```
+
+For Codex workers that need package downloads or HTTP requests, set
+`"networkAccess": true` on the `codex` provider entry. It defaults to `false` and
+only enables network access in Codex's `workspace-write` sandbox; filesystem
+write restrictions remain in place. Read-only and full-access modes are
+unchanged. This owner setting applies to all Codex profiles; it is not a
+per-task CLI or profile override. Other providers reject this option.
+
+After changing it, let running agents finish, then run
+`devspace agents daemon stop`. The next agent command starts a daemon with the
+updated configuration.
 
 Profiles are loaded from `~/.devspace/agents/*.md` and project
 `.devspace/agents/*.md`. `devspace agents targets` prints the configured targets
