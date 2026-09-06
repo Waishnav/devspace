@@ -135,12 +135,15 @@ are `CODEX_COMMAND`, `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`,
 `COPILOT_COMMAND`, `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. DevSpace does not
 persist provider credentials.
 
-## Native artifact download
+## Native artifact exchange
 
-Set `artifacts.enabled` to `true` when a host needs to save a native attached or
-generated file into an open workspace. `artifacts.maxFileBytes` limits one
-streamed file. The secure publication path is currently available only on
-Linux; the tool is not registered on macOS, Windows, or BSD.
+Set `artifacts.enabled` to `true` to exchange native files with the MCP host.
+`export_artifact` can attach an existing workspace file through a short-lived
+MCP resource on every supported platform; its effective size limit is the lower
+of `artifacts.maxFileBytes` and 8 MiB. `download_artifact` saves a host-provided
+native file into a workspace, with `artifacts.maxFileBytes` limiting one streamed
+download. The secure download publication path is currently available only on
+Linux; `download_artifact` is not registered on macOS, Windows, or BSD.
 
 ## Environment boundary
 

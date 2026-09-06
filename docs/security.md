@@ -92,13 +92,22 @@ Managed worktrees reduce accidental edits to your active checkout, but they are
 not a security boundary. They are a workflow boundary for isolated coding
 sessions.
 
-## Native File Download
+## Native File Exchange
 
-Native file download is an opt-in, one-shot transfer into an already-open
-workspace. `download_artifact` accepts the MCP host's native file value, the
-`workspaceId` returned by `open_workspace`, and an unused relative destination
-path. It returns only the workspace-relative path and does not create a
-persistent artifact service or reusable artifact ID.
+Artifact exchange is opt-in. `export_artifact` exposes one existing workspace
+file as a short-lived MCP resource so the host can materialize it as an
+attachment. The source is canonicalized before export; symlinks whose real
+target escapes the selected workspace are rejected. The selected file handle is
+pinned for the five-minute resource lifetime. Export size is capped by the lower
+of `artifacts.maxFileBytes` and 8 MiB. Binary `resources/read` responses use the
+MCP `blob` field, so the limit also bounds base64 expansion in the MCP response.
+No public download endpoint or persistent artifact store is created for exports.
+
+Native file download is a one-shot transfer into an already-open workspace.
+`download_artifact` accepts the MCP host's native file value, the `workspaceId`
+returned by `open_workspace`, and an unused relative destination path. It
+returns only the workspace-relative path and does not create a persistent
+artifact service or reusable artifact ID.
 
 DevSpace accepts only the documented native-file object and trusted OpenAI
 download hosts and redirects. Arbitrary URL strings, local source paths,
@@ -116,9 +125,12 @@ disabled unless `logging.shellCommands` is `true`.
 
 Do not enable shell command logging if commands may contain secrets.
 
-Artifact tool logs contain bounded workspace ID, validated hostname,
+Download artifact logs contain bounded workspace ID, validated hostname,
 workspace-relative output path, byte count, hash, duration, and status metadata.
+Export logs contain only the tool name, workspace ID, byte count, duration, and
+status metadata; they do not include the source path or resource token.
 `download_artifact` does not log the opaque file value. Raw content, connector
 references, native file IDs, bearer credentials, presigned URLs, host paths,
-temporary paths, and base64 chunks are never included in tool logs or tool
-results.
+temporary paths, and base64 chunks are never included in tool logs. Exported
+file bytes are absent from the `export_artifact` tool result itself; the host
+retrieves them only in the follow-up MCP `resources/read` response.
