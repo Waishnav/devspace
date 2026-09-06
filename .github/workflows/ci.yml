@@ -60,8 +60,16 @@ jobs:
           DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: pnpm test
 
-      - name: Package install smoke test
-        run: pnpm test:package-install
+      - name: Packaged MCP E2E tests
+        run: pnpm test:e2e
+
+      - name: Preserve E2E server logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-${{ matrix.os }}
+          path: test-results/e2e/
+          if-no-files-found: ignore
 
       - name: Doctor
         run: node dist/cli.js doctor

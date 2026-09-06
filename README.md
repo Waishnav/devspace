@@ -257,6 +257,7 @@ pnpm dev:seed
 pnpm dev
 pnpm typecheck
 pnpm test
+pnpm test:e2e
 pnpm build
 pnpm start
 ```
@@ -265,4 +266,5 @@ pnpm start
 checkout-local `.devspace-dev/` directory so source builds and migrations do not
 modify your normal installation. Use `pnpm dev:reset` to discard that QA state
 and fork it again. See [Development and Manual QA](docs/development.md) for
-worktree switching, ChatGPT, and database-migration workflows.
+worktree switching, ChatGPT, and database-migration workflows. See
+[Testing DevSpace](docs/testing.md) for the automated MCP workflows and test-writing guidance.

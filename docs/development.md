@@ -93,5 +93,8 @@ The usual repository checks remain:
 ```bash
 pnpm typecheck
 pnpm test
-pnpm build
+pnpm test:e2e
 ```
+
+The E2E suite builds and installs the package before exercising MCP workflows.
+See [Testing DevSpace](testing.md) for coverage, focused runs, and failure logs.
