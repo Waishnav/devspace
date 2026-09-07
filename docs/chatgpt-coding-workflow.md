@@ -180,6 +180,11 @@ returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
+Set `tools.fileRead` to `shell` to omit the dedicated `read` tool. File,
+instruction, and skill inspection then goes through the configured shell tool:
+`exec_cmd` in Codex mode or `bash` in Claude mode. The default is `tool`, which
+keeps `read` exposed.
+
 Set `tools.mode` to `claude` in `~/.devspace/config.jsonc` to expose `write`,
 `edit`, and `bash` instead of the Codex mutation and command tools. Dedicated
 MCP tools for `grep`, `glob`, and `ls` are not registered in either mode; use
