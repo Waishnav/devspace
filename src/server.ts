@@ -619,10 +619,10 @@ function registerMcpSurface(
       title: "Read file",
       description:
         [
-          "Read a file in a workspace. Use this for file inspection instead of shell commands like cat or sed.",
+          "Read all or part of a file in a workspace.",
           "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_workspace before working in nested directories.",
           config.skillsEnabled
-            ? "If available skills were returned and a task matches one, read that skill's path before proceeding. Skill paths may be outside the workspace; files within advertised skill directories are readable."
+            ? "If available skills were returned and a task matches one, read the returned skill path before proceeding."
             : "",
         ]
           .filter(Boolean)
@@ -635,7 +635,7 @@ function registerMcpSurface(
           .string()
           .describe(
             config.skillsEnabled
-              ? "File path to read, relative to the workspace root. May also be an advertised skill path from open_workspace skills."
+              ? "File path relative to the workspace root, or a skill path returned by open_workspace."
               : "File path to read, relative to the workspace root.",
           ),
         offset: z
