@@ -95,7 +95,7 @@ After restarting, refresh tokens for removed aliases can no longer mint tokens.
 
 | Value | Tool surface |
 | --- | --- |
-| `codex` | Default. `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
+| `codex` | Default. `open_workspace`, `read`, `apply_patch`, `exec_cmd`, `write_stdin`, and `show_changes`. |
 | `claude` | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
 
 The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each mode uses

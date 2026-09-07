@@ -171,11 +171,11 @@ DevSpace uses the Codex-style surface by default. It exposes:
 - `open_workspace`
 - `read`
 - `apply_patch`
-- `exec_command`
+- `exec_cmd`
 - `write_stdin`
 - `show_changes`
 
-In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
+In this mode, `write`, `edit`, and `bash` are not registered. `exec_cmd`
 returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.

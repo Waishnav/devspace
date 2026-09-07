@@ -32,7 +32,7 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
     },
     {
       mode: "codex",
-      expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "show_changes"],
+      expected: ["open_workspace", "read", "apply_patch", "exec_cmd", "write_stdin", "show_changes"],
     },
   ];
 
@@ -72,7 +72,7 @@ test("Codex process tools bound model-facing yield windows to 12 seconds", async
   const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
   const tools = await context.client.listTools();
 
-  for (const toolName of ["exec_command", "write_stdin"] as const) {
+  for (const toolName of ["exec_cmd", "write_stdin"] as const) {
     const tool = tools.tools.find(({ name }) => name === toolName);
     const yieldSchema = tool?.inputSchema?.properties?.yield_time_ms as {
       maximum?: number;
@@ -537,7 +537,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
     accessToken,
     "tools/call",
     {
-      name: "exec_command",
+      name: "exec_cmd",
       arguments: {
         workspace_id: workspaceId,
         cmd: `node -e \"${command}\"`,
