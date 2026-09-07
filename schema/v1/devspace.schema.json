@@ -99,6 +99,14 @@
             "claude",
             "codex"
           ]
+        },
+        "fileRead": {
+          "default": "tool",
+          "type": "string",
+          "enum": [
+            "tool",
+            "shell"
+          ]
         }
       },
       "additionalProperties": false

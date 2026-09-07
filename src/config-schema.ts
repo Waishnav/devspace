@@ -24,6 +24,7 @@ const storageConfigSchema = z.object({
 
 const toolsConfigSchema = z.object({
   mode: z.enum(["claude", "codex"]).default("codex"),
+  fileRead: z.enum(["tool", "shell"]).default("tool"),
 }).strict().prefault({});
 
 const uiConfigSchema = z.object({
@@ -90,6 +91,7 @@ export const devspaceConfigSchema = z.object({
 export type DevspaceConfig = z.output<typeof devspaceConfigSchema>;
 export type DevspaceConfigInput = z.input<typeof devspaceConfigSchema>;
 export type ToolMode = DevspaceConfig["tools"]["mode"];
+export type FileReadMode = DevspaceConfig["tools"]["fileRead"];
 
 export function defaultDevspaceConfig(): DevspaceConfig {
   return devspaceConfigSchema.parse({ configVersion: DEVSPACE_CONFIG_VERSION });
