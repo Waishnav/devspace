@@ -11,6 +11,7 @@ export const toolNames = {
   write: "write",
   edit: "edit",
   shell: "bash",
+  exec: "exec_cmd",
 } as const;
 
 export const workspaceIdDescription =
@@ -86,6 +87,7 @@ export interface ToolInstructionContext {
 }
 
 export interface ToolSurface {
+  shellToolName: string;
   register(context: ToolRegistrationContext): void;
   instructions(context: ToolInstructionContext): string;
 }

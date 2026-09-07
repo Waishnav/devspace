@@ -22,21 +22,17 @@ import {
   textBlock,
 } from "./shared.js";
 
-const CLAUDE_INSTRUCTIONS = `Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
-
 export function claudeInstructions({
   agents,
   skills,
 }: ToolInstructionContext): string {
-  return `${agents}${skills}${CLAUDE_INSTRUCTIONS}`;
+  return `${agents}${skills}`;
 }
 
 export function registerClaudeTools(context: ToolRegistrationContext): void {
   registerClaudeMutationTools(context);
   registerShellTool(context);
 }
-
-const CLAUDE_SHELL_DESCRIPTION = "Run a shell command in a workspace with the user's local permissions.";
 
 function registerClaudeMutationTools(context: ToolRegistrationContext): void {
   const { server, config, workspaces } = context;
@@ -187,7 +183,10 @@ function registerShellTool(context: ToolRegistrationContext): void {
     toolNames.shell,
     {
       title: "Bash",
-      description: CLAUDE_SHELL_DESCRIPTION,
+      description:
+        config.fileReadMode === "shell"
+          ? "Run a shell command in a workspace with the user's local permissions, including commands that inspect or read files."
+          : "Run a shell command in a workspace with the user's local permissions.",
       inputSchema: {
         workspace_id: z.string().describe(workspaceIdDescription),
         command: z

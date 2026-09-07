@@ -24,6 +24,7 @@ const execFileAsync = promisify(execFile);
 test("tool modes expose the expected host-facing tool surface", async (t) => {
   const cases: Array<{
     mode: ToolMode;
+    fileReadMode?: ServerConfig["fileReadMode"];
     expected: string[];
   }> = [
     {
@@ -34,11 +35,25 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
       mode: "codex",
       expected: ["open_workspace", "read", "apply_patch", "exec_cmd", "write_stdin", "show_changes"],
     },
+    {
+      mode: "claude",
+      fileReadMode: "shell",
+      expected: ["open_workspace", "write", "edit", "bash", "show_changes"],
+    },
+    {
+      mode: "codex",
+      fileReadMode: "shell",
+      expected: ["open_workspace", "apply_patch", "exec_cmd", "write_stdin", "show_changes"],
+    },
   ];
 
-  for (const { mode, expected } of cases) {
-    await t.test(mode, async (nested) => {
-      const context = await fixture(nested, { toolMode: mode, uiEnabled: false });
+  for (const { mode, fileReadMode, expected } of cases) {
+    await t.test(`${mode}/${fileReadMode ?? "tool"}`, async (nested) => {
+      const context = await fixture(nested, {
+        toolMode: mode,
+        fileReadMode,
+        uiEnabled: false,
+      });
       const tools = await context.client.listTools();
 
       assert.deepEqual(
@@ -644,6 +659,7 @@ async function fixture(
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
     toolMode?: ToolMode;
+    fileReadMode?: ServerConfig["fileReadMode"];
     uiEnabled?: boolean;
   } = {},
 ): Promise<ServerFixture> {
@@ -690,6 +706,7 @@ async function fixture(
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     toolMode: options.toolMode ?? loadedConfig.toolMode,
+    fileReadMode: options.fileReadMode ?? loadedConfig.fileReadMode,
     uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
   };
   const config: ServerConfig = options.localAgentProviders

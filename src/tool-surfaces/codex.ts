@@ -9,6 +9,7 @@ import {
   SHELL_TOOL_ANNOTATIONS,
   toolNames,
   workspaceIdDescription,
+  type ToolInstructionContext,
   type ToolRegistrationContext,
 } from "./types.js";
 import {
@@ -20,10 +21,11 @@ import {
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
 
-const CODEX_INSTRUCTIONS = `Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
-
-export function codexInstructions(): string {
-  return CODEX_INSTRUCTIONS;
+export function codexInstructions({
+  agents,
+  skills,
+}: ToolInstructionContext): string {
+  return `${agents}${skills}`;
 }
 
 export function registerCodexTools(context: ToolRegistrationContext): void {
@@ -142,11 +144,13 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
   const { server, config, workspaces, processSessions } = context;
 
   server.registerTool(
-    "exec_cmd",
+    toolNames.exec,
     {
       title: "Execute command",
       description:
-        "Run a shell command in a workspace with the user's local permissions. Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin.",
+        config.fileReadMode === "shell"
+          ? "Run a shell command in a workspace with the user's local permissions, including commands that inspect or read files. Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin."
+          : "Run a shell command in a workspace with the user's local permissions. Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin.",
       inputSchema: {
         workspace_id: z.string().describe(workspaceIdDescription),
         cmd: z.string().min(1).describe("Shell command to execute."),
@@ -214,7 +218,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       const snapshot = await runLoggedToolOperation(
         config,
         {
-          tool: "exec_cmd",
+          tool: toolNames.exec,
           workspaceId,
           workingDirectory: workingDirectory ?? ".",
           command: cmd,
@@ -250,14 +254,14 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Write to process",
       description:
-        "Poll or write characters to a process returned by exec_cmd. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
+        `Poll or write characters to a process returned by ${toolNames.exec}. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.`,
       inputSchema: {
         workspace_id: z
           .string()
           .describe("Workspace identifier used to start the process."),
         session_id: z
           .number()
-          .describe("Process session identifier returned by exec_cmd."),
+          .describe(`Process session identifier returned by ${toolNames.exec}.`),
         chars: z
           .string()
           .optional()
