@@ -282,7 +282,8 @@
           "type": "array",
           "items": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "description": "Exact resource URL: HTTPS, or HTTP on localhost, 127.0.0.1, or [::1]."
           }
         },
         "allowedRedirectHosts": {

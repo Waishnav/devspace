@@ -54,7 +54,13 @@ const oauthConfigSchema = z.object({
   accessTokenTtlSeconds: z.number().int().positive().default(60 * 60),
   refreshTokenTtlSeconds: z.number().int().positive().default(30 * 24 * 60 * 60),
   scopes: z.array(z.string().trim().min(1)).min(1).default(["devspace"]),
-  allowedResourceUrls: z.array(z.string().trim().url()).default([]),
+  allowedResourceUrls: z.array(z.string().trim().url().refine((value) => {
+    const url = URL.parse(value);
+    return url !== null && (url.protocol === "https:"
+      || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)));
+  }, "Resource URLs must use HTTPS, or HTTP on localhost, 127.0.0.1, or [::1]")
+    .describe("Exact resource URL: HTTPS, or HTTP on localhost, 127.0.0.1, or [::1]."))
+    .default([]),
   allowedRedirectHosts: z.array(z.string().trim().min(1)).min(1).default([
     "chatgpt.com",
     "localhost",

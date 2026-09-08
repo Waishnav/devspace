@@ -224,7 +224,10 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError("Invalid refresh token");
     }
     const recordedResource = record.resource ? new URL(record.resource) : undefined;
-    if (resource && (!recordedResource || !sameResource(resource, recordedResource))) {
+    if (!recordedResource || !this.isResourceAllowed(recordedResource)) {
+      throw new InvalidGrantError("Invalid resource");
+    }
+    if (resource && !sameResource(resource, recordedResource)) {
       throw new InvalidGrantError("Invalid resource");
     }
 

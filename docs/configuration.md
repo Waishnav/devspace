@@ -83,6 +83,10 @@ clients that connect through a resource alias, such as a secure MCP tunnel.
 The normal `server.publicBaseUrl` `/mcp` resource remains allowed automatically.
 Configure the complete alias URL, not a hostname or origin; aliases do not
 change OAuth discovery URLs or proxy routing.
+Resource URLs must use HTTPS; HTTP is allowed only for `localhost`, `127.0.0.1`,
+or `[::1]`, with optional ports. Restart DevSpace after changing
+`oauth.allowedResourceUrls`: the provider reads this policy at server creation.
+After restarting, refresh tokens for removed aliases can no longer mint tokens.
 
 ## Tool modes and UI
 
