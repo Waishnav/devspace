@@ -329,16 +329,21 @@ try {
   }
   assert.equal(staleActiveSpawns, 0);
   assert.equal(staleActiveManager.closed, false);
-  assert.deepEqual(Object.keys(unwrap(await staleActiveClient.status())).sort(), [
-    "activeTurns",
-    "clientConnections",
-    "endpoint",
-    "pid",
-    "protocolVersion",
-    "runtimeCount",
-    "startedAt",
-    "state",
+  const staleScope = { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot };
+  assert.equal(unwrap(await staleActiveClient.get(record.id, staleScope)).id, record.id);
+  assert.equal(unwrap(await staleActiveClient.list(staleScope))[0]?.id, record.id);
+  assert.deepEqual(unwrap(await staleActiveClient.wait([record.id], staleScope, 0)), [
+    { id: record.id, status: "running" },
   ]);
+  const blockedStart = await staleActiveClient.run({
+    target: "reviewer",
+    prompt: "must use current provider config",
+    workspaceId: record.workspaceId!,
+    workspaceRoot: record.workspaceRoot,
+  });
+  assert.equal(blockedStart.isErr(), true);
+  if (blockedStart.isErr()) assert.equal(blockedStart.error.code, "DAEMON_CONFIG_CHANGED");
+  assert.equal("configRevision" in unwrap(await staleActiveClient.status()), false);
 } finally {
   await staleActiveDaemon.close();
 }
