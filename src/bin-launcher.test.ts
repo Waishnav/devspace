@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxRoot = join(projectRoot, "node_modules", "tsx");

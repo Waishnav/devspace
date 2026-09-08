@@ -7,11 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { loadConfig } from "./config.js";
 import { localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { LocalAgentStore } from "./local-agent-store.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -253,7 +252,6 @@ try {
     });
   }
 
-  assert.equal(loadConfig(cliConfigEnv).subagents.enabled, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

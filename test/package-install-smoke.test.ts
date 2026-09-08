@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeTestDevspaceConfig } from "../src/test-support/config.test.js";
+import { writeTestDevspaceConfig } from "../src/test-support/config.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 

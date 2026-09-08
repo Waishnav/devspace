@@ -21,7 +21,6 @@ try {
     effort: "high",
   });
 
-  assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
   assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");

@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);

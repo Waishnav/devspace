@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isExpandableCard } from "./card-types.js";
 
-test("aggregate review opens when a patch is available", () => {
-  const card = {
-    tool: "show_changes" as const,
-    files: [{ path: "src/a.ts", type: "change" as const }],
-    payload: { patch: "diff --git a/src/a.ts b/src/a.ts" },
-  };
-  assert.equal(isExpandableCard(card), true);
+test("review expansion requires files or a patch", () => {
+  for (const [card, expected] of [
+    [{ tool: "show_changes" }, false],
+    [{ tool: "show_changes", files: [], payload: { patch: "" } }, false],
+    [{ tool: "show_changes", payload: { patch: "diff --git a/a.ts b/a.ts" } }, true],
+    [{ tool: "show_changes", files: [{ path: "a.ts", type: "change" }] }, true],
+  ] satisfies Array<[Parameters<typeof isExpandableCard>[0], boolean]>) {
+    assert.equal(isExpandableCard(card), expected, JSON.stringify(card));
+  }
 });
 
 test("workspace details open only when there is useful context", () => {

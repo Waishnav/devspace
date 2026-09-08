@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
 

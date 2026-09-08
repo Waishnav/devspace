@@ -116,3 +116,22 @@ Start at the boundary named by the problem and follow the data. Keep policy in D
 - Add compatibility behavior only for an identified consumer with a real upgrade path.
 - Reuse glossary terms in schemas, types, documentation, and errors.
 - Keep the execution layer small, reliable, and unsurprising.
+
+## Tests that matter
+
+Start with an observable contract and a plausible bug the test should catch.
+Prefer public MCP workflows for ordinary product behavior, and focused tests
+with controlled event ordering for races and partial failures. Use real temporary
+files, Git, and SQLite when they are the boundary being tested; fake external
+providers only where their timing or failures need to be controlled.
+
+Give independent scenarios names and fresh state. Keep fixtures minimal, assert
+outcomes rather than only calls or attempts, and register cleanup as soon as a
+resource is acquired. Check error results as well as thrown errors. For bug
+fixes, demonstrate the test failing before the fix and passing afterward.
+
+Extend an existing scenario before duplicating coverage. Do not pin opaque IDs,
+incidental formatting, or implementation call counts without a consumer contract.
+Do not add tests merely because a function exists or experimental behavior was
+removed. Delete redundant tests only after identifying where their meaningful
+failure is still covered. Keep test helpers out of test discovery and builds.
