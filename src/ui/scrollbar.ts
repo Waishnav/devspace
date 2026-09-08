@@ -19,6 +19,15 @@ export const pierrePrettyScrollbarCss = `
     display: none;
     width: 0;
     height: 0;
+    background: transparent;
+  }
+
+  [data-code]::-webkit-scrollbar-button:horizontal {
+    width: 0;
+  }
+
+  [data-code]::-webkit-scrollbar-button:vertical {
+    height: 0;
   }
 
   [data-code]::-webkit-scrollbar-track {

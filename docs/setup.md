@@ -68,6 +68,11 @@ The Skills CLI asks which installed Coding Agents should receive the skill.
 The skill uses `devspace agents targets`, `run`, `continue`, `show`, and `ls`.
 These commands do not require `devspace serve`.
 
+This Coding Agent installation is separate from ChatGPT MCP usage. For MCP
+workspaces with Subagents enabled, DevSpace manages its own copy at
+`~/.devspace/skills/subagents/SKILL.md`; users do not install that copy
+manually.
+
 ### Connect ChatGPT
 
 Setup only asks for a public URL if you selected ChatGPT. Start your tunnel or
@@ -98,6 +103,10 @@ Configure the MCP client with the full MCP endpoint:
 ```text
 https://your-tunnel-host.example.com/mcp
 ```
+
+Protocol compatibility is automatic. DevSpace serves MCP 2026-07-28 requests
+directly and handles older 2025-era clients statelessly on the same endpoint;
+there is no client-protocol setting to maintain.
 
 A Coding Agents-only setup skips this section.
 
@@ -150,7 +159,10 @@ pinned in `package.json`. Install it with `npm install --global pnpm@11.25.0`.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm dev:seed
 pnpm dev
 ```
 
-The same setup rules apply.
+The source server uses an ignored checkout-local fork of your normal DevSpace
+configuration and SQLite state. See [Development and Manual QA](development.md)
+for worktree switching, ChatGPT testing, and database migration workflows.

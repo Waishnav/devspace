@@ -158,12 +158,21 @@
     "subagents": {
       "default": {
         "enabled": false,
+        "instructions": "on-demand",
         "providers": []
       },
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "instructions": {
+          "default": "on-demand",
+          "type": "string",
+          "enum": [
+            "on-demand",
+            "preload"
+          ]
         },
         "providers": {
           "type": "array",

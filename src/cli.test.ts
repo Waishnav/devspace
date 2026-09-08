@@ -42,7 +42,7 @@ try {
   const cliConfigEnv = writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [projectRoot] },
     storage: { stateDir },
-    subagents: { enabled: true, providers: [] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [] },
   });
   writeFileSync(
     join(configDir, "agents", "reviewer.md"),

@@ -36,6 +36,7 @@ export function updateOnboardingSubagentsConfig(
   const selected = new Set(selectedProviders);
   return {
     enabled: true,
+    instructions: current.instructions,
     providers: LOCAL_AGENT_PROVIDERS
       .filter((id) => selected.has(id) || current.providers.some((provider) => provider.id === id))
       .map((id) => {

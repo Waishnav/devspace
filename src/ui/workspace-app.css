@@ -719,10 +719,6 @@ body {
   overflow-y: auto;
 }
 
-.review-diff-file-header:hover {
-  background: var(--tool-card-hover-bg);
-}
-
 .review-diff-file-name,
 .review-diff-file-stats {
   overflow: hidden;

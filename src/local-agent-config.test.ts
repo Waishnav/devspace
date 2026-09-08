@@ -14,6 +14,7 @@ const config = subagentsConfigSchema.parse({
 });
 assert.deepEqual(config, {
   enabled: true,
+  instructions: "on-demand",
   providers: [
     { id: "codex", enabled: true, model: "gpt-5.4", effort: "high" },
     { id: "claude", enabled: false, model: "sonnet" },
@@ -23,6 +24,10 @@ assert.equal(isSubagentProviderEnabled(config, "codex"), true);
 assert.equal(isSubagentProviderEnabled(config, "claude"), false);
 assert.equal(isSubagentProviderEnabled(config, "pi"), false);
 assert.equal(subagentProviderConfig(config, "codex")?.model, "gpt-5.4");
+assert.equal(
+  subagentsConfigSchema.parse({ enabled: true, instructions: "preload", providers: [] }).instructions,
+  "preload",
+);
 
 assert.throws(
   () => subagentsConfigSchema.parse({

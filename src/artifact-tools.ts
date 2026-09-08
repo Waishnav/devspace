@@ -83,7 +83,7 @@ interface ArtifactDestination {
 }
 
 export function registerArtifactTools(
-  server: McpServer,
+  server: Pick<McpServer, "registerTool">,
   {
     config,
     workspaces,

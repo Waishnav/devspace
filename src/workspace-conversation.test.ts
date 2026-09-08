@@ -421,7 +421,7 @@ async function fixture(
     server: { port: 1 },
     workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
     skills: { agentDir },
-    subagents: { enabled: true, providers: [] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
   const openStore = () => {
     const store = new SqliteWorkspaceStore(stateDir);

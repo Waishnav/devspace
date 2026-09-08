@@ -78,7 +78,11 @@ export const devspaceConfigSchema = z.object({
   ui: uiConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
-  subagents: subagentsConfigSchema.default({ enabled: false, providers: [] }),
+  subagents: subagentsConfigSchema.default({
+    enabled: false,
+    instructions: "on-demand",
+    providers: [],
+  }),
   logging: loggingConfigSchema,
   oauth: oauthConfigSchema,
 }).strict();

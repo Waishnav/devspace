@@ -13,6 +13,7 @@ const providerSchema = z.object({
 
 export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
+  instructions: z.enum(["on-demand", "preload"]).default("on-demand"),
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
   const seen = new Set<LocalAgentProvider>();

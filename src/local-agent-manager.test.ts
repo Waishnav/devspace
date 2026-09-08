@@ -40,6 +40,7 @@ const disabledProfile: LocalAgentProfile = {
 };
 const subagents: SubagentsConfig = {
   enabled: true,
+  instructions: "on-demand",
   providers: [
     { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
     { id: "claude", enabled: true },

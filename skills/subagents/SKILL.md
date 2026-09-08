@@ -5,6 +5,8 @@ description: Delegate focused coding, research, review, or verification work to 
 
 # DevSpace subagents
 
+Subagents are optional. Use the normal workspace tools for routine work; delegate only when a separate worker materially helps through independent context, specialization, or follow-up.
+
 Use the DevSpace CLI through the shell or process tool. Run commands from the project the subagent should work on.
 
 ## Choose a target

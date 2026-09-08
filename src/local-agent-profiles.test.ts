@@ -60,7 +60,7 @@ try {
 
   const enabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [workspaceRoot] },
-    subagents: { enabled: true, providers: [] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
   const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
 
@@ -89,7 +89,7 @@ try {
 
   const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [workspaceRoot] },
-    subagents: { enabled: false, providers: [] },
+    subagents: { enabled: false, instructions: "on-demand", providers: [] },
   }));
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
 } finally {

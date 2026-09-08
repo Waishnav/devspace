@@ -68,10 +68,6 @@ export function requestPath(req: Request): string {
   return req.path || req.url.split("?")[0] || req.url;
 }
 
-export function sessionIdPrefix(sessionId: string | undefined): string | undefined {
-  return sessionId ? sessionId.slice(0, 8) : undefined;
-}
-
 export function commandPreview(command: string): string {
   const normalized = command.replace(/\s+/g, " ").trim();
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;

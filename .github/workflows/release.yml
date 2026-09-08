@@ -1,0 +1,291 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require main
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Releases must be dispatched from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+
+      - name: Require successful main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state="$(gh run list \
+            --workflow ci.yml \
+            --commit "$GITHUB_SHA" \
+            --event push \
+            --limit 1 \
+            --json status,conclusion \
+            --jq '.[0] | "\(.status):\(.conclusion)"')"
+          if [[ "$state" != "completed:success" ]]; then
+            echo "The exact release commit must have a successful main CI push run; got ${state:-no run}." >&2
+            exit 1
+          fi
+
+      - name: Resolve release metadata
+        id: release
+        run: |
+          stable='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          prerelease='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(beta|rc)\.([1-9][0-9]*)$'
+
+          if [[ "$VERSION" =~ $stable ]]; then
+            npm_tag=latest
+            is_prerelease=false
+          elif [[ "$VERSION" =~ $prerelease ]]; then
+            npm_tag=beta
+            is_prerelease=true
+          else
+            echo "Unsupported release version: $VERSION" >&2
+            echo "Use X.Y.Z-beta.N, X.Y.Z-rc.N, or X.Y.Z." >&2
+            exit 1
+          fi
+
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release tag ownership
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            tag_sha="$(git rev-parse "$TAG^{commit}")"
+            if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "$TAG already points to $tag_sha instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Setup pnpm and Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+        with:
+          runtime: node@22
+          cache: false
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate stable version progression
+        if: steps.release.outputs.prerelease != 'true'
+        run: |
+          package_name="$(node -p 'require("./package.json").name')"
+          source_version="$(node -p 'require("./package.json").version')"
+          latest_version="$(npm view "$package_name" dist-tags.latest)"
+          node --input-type=module - "$VERSION" "$source_version" "$latest_version" <<'NODE'
+          import semver from "semver"
+
+          const [candidate, source, latest] = process.argv.slice(2)
+          if (!semver.valid(source) || !semver.valid(latest)) {
+            console.error(`Stable release baseline is invalid: source=${source}, npm@latest=${latest}`)
+            process.exit(1)
+          }
+          if (semver.lt(candidate, source) || semver.lt(candidate, latest)) {
+            console.error(`Stable release ${candidate} would regress source ${source} or npm@latest ${latest}`)
+            process.exit(1)
+          }
+          NODE
+
+      - name: Set package version
+        run: |
+          npm pkg set version="$VERSION"
+          node -e 'const pkg = require("./package.json"); if (pkg.version !== process.env.VERSION) process.exit(1)'
+
+      - name: Package install smoke test
+        run: pnpm test:package-install
+
+      - name: Pack release artifact
+        id: pack
+        run: |
+          mkdir -p .release
+          filename="$(npm pack --silent --pack-destination .release | tail -n 1)"
+          test -n "$filename"
+          tarball=".release/$filename"
+          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | openssl base64 -A)"
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect existing publication
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          FILENAME: ${{ steps.pack.outputs.filename }}
+          LOCAL_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          NPM_TAG: ${{ steps.release.outputs.npm_tag }}
+        run: |
+          package_name="$(node -p 'require("./package.json").name')"
+          npm_exists=false
+          if npm_integrity="$(npm view "$package_name@$VERSION" dist.integrity 2>/dev/null)"; then
+            if [[ -z "$npm_integrity" || "$npm_integrity" != "$LOCAL_INTEGRITY" ]]; then
+              echo "$package_name@$VERSION already exists on npm with different integrity." >&2
+              exit 1
+            fi
+            published_channel="$(npm view "$package_name" "dist-tags.$NPM_TAG" 2>/dev/null || true)"
+            if [[ "$published_channel" != "$VERSION" ]]; then
+              echo "$package_name@$VERSION exists on npm but @$NPM_TAG points to ${published_channel:-nothing}." >&2
+              exit 1
+            fi
+            npm_exists=true
+          fi
+
+          release_exists=false
+          release_draft=false
+          complete=false
+          if release_json="$(gh release view "$TAG" --json isDraft,isPrerelease,targetCommitish 2>/dev/null)"; then
+            release_exists=true
+            release_draft="$(jq -r .isDraft <<<"$release_json")"
+            release_prerelease="$(jq -r .isPrerelease <<<"$release_json")"
+            release_target="$(jq -r .targetCommitish <<<"$release_json")"
+            if [[ "$release_target" != "$GITHUB_SHA" ]]; then
+              echo "$TAG already targets $release_target instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
+            if [[ "$release_draft" != "true" ]]; then
+              if [[ "$release_prerelease" != "$IS_PRERELEASE" ]]; then
+                echo "$TAG is already public with the wrong prerelease state." >&2
+                exit 1
+              fi
+              if [[ "$npm_exists" != "true" ]]; then
+                echo "$TAG is already public on GitHub but $package_name@$VERSION is missing from npm." >&2
+                exit 1
+              fi
+
+              mkdir -p .release/existing
+              if ! gh release download "$TAG" --pattern "$FILENAME" --dir .release/existing --clobber; then
+                echo "$TAG is already public but its release artifact could not be verified." >&2
+                exit 1
+              fi
+              if ! cmp --silent "$TARBALL" ".release/existing/$FILENAME"; then
+                echo "$TAG is already public with a different release artifact." >&2
+                exit 1
+              fi
+              complete=true
+            fi
+          fi
+
+          echo "npm_exists=$npm_exists" >> "$GITHUB_OUTPUT"
+          echo "release_exists=$release_exists" >> "$GITHUB_OUTPUT"
+          echo "release_draft=$release_draft" >> "$GITHUB_OUTPUT"
+          echo "complete=$complete" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare draft GitHub release
+        if: steps.publication.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          RELEASE_EXISTS: ${{ steps.publication.outputs.release_exists }}
+        run: |
+          if [[ "$RELEASE_EXISTS" == "true" ]]; then
+            echo "Reusing existing draft GitHub release $TAG."
+          else
+            args=(release create "$TAG" --draft --title "$TAG" --target "$GITHUB_SHA" --generate-notes)
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            fi
+            gh "${args[@]}"
+          fi
+
+      - name: Upload release artifact
+        if: steps.publication.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: gh release upload "$TAG" "$TARBALL" --clobber
+
+      - name: Setup npm trusted publishing
+        if: steps.publication.outputs.complete != 'true' && steps.publication.outputs.npm_exists != 'true'
+        run: |
+          node_version="$(node -p 'process.versions.node')"
+          npm_version="$(npx --yes npm@11.8.0 --version)"
+          echo "Node.js $node_version"
+          echo "npm $npm_version"
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(1)'
+          if [[ "$npm_version" != "11.8.0" ]]; then
+            echo "Expected npm 11.8.0 for trusted publishing; resolved npm $npm_version." >&2
+            exit 1
+          fi
+          npx --yes npm@11.8.0 config set registry https://registry.npmjs.org/
+
+      - name: Publish npm package
+        if: steps.publication.outputs.complete != 'true' && steps.publication.outputs.npm_exists != 'true'
+        env:
+          NPM_TAG: ${{ steps.release.outputs.npm_tag }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: npx --yes npm@11.8.0 publish "$TARBALL" --access public --tag "$NPM_TAG" --provenance
+
+      - name: Publish GitHub release
+        if: steps.publication.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          fi
+
+      - name: Sync stable version to main
+        if: steps.release.outputs.prerelease != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main
+          remote_main="$(git rev-parse origin/main)"
+          remote_version="$(git show origin/main:package.json | jq -r .version)"
+          if [[ "$remote_version" == "$VERSION" ]]; then
+            echo "package.json on main already records $VERSION; no sync commit needed."
+            exit 0
+          fi
+          if [[ "$remote_main" != "$GITHUB_SHA" ]]; then
+            echo "main moved from $GITHUB_SHA to $remote_main during the release; refusing to push a version sync commit." >&2
+            exit 1
+          fi
+
+          npm pkg set version="$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore(release): prepare v$VERSION"
+          gh auth setup-git
+          git push origin HEAD:main

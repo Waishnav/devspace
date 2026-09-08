@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -195,17 +195,34 @@ try {
     false,
   );
 
+  await mkdir(join(devspaceSkills, "subagents"), { recursive: true });
+  await writeFile(
+    join(devspaceSkills, "subagents", "SKILL.md"),
+    [
+      "---",
+      "name: subagents",
+      "description: stale user copy",
+      "---",
+      "",
+      "# Stale subagents skill",
+    ].join("\n"),
+  );
   const experimentalConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     server: { port: 1 },
     workspaces: { allowedRoots: [projectRoot] },
     skills: { agentDir },
-    subagents: { enabled: true, providers: [] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
+  const experimentalSkills = loadWorkspaceSkills(experimentalConfig, projectRoot).skills;
+  const managedSubagents = experimentalSkills.find((skill) => skill.name === "subagents");
+  assert.ok(managedSubagents);
   assert.equal(
-    loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
-      (skill) => skill.name === "subagents",
-    ),
-    true,
+    managedSubagents.filePath,
+    join(devspaceSkills, "subagents", "SKILL.md"),
+  );
+  assert.match(
+    await readFile(join(devspaceSkills, "subagents", "SKILL.md"), "utf8"),
+    /# DevSpace subagents/,
   );
 
   const duplicateConfig = loadConfig(writeTestDevspaceConfig(configDir, {
@@ -232,18 +249,12 @@ try {
   assert.ok(projectSkill);
   assert.match(formatPathForPrompt(projectSkill.filePath), /SKILL\.md$/);
 
-  const skillFileRead = resolveSkillReadPath(loaded.skills, new Set(), projectSkill.filePath);
-  assert.equal(skillFileRead?.isSkillFile, true);
+  const skillFileRead = resolveSkillReadPath(loaded.skills, projectSkill.filePath);
   assert.equal(skillFileRead?.absolutePath, projectSkill.filePath);
 
   const resourcePath = join(projectSkill.baseDir, "references.md");
   await writeFile(resourcePath, "reference\n");
-  assert.equal(resolveSkillReadPath(loaded.skills, new Set(), resourcePath), undefined);
-  assert.equal(
-    resolveSkillReadPath(loaded.skills, new Set([projectSkill.baseDir]), resourcePath)
-      ?.isSkillFile,
-    false,
-  );
+  assert.equal(resolveSkillReadPath(loaded.skills, resourcePath)?.absolutePath, resourcePath);
 } finally {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;

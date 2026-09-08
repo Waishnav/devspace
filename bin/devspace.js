@@ -1,2 +1,4 @@
 #!/usr/bin/env node
-import "../dist/cli.js";
+import { runEntrypoint } from "./run-entrypoint.js";
+
+await runEntrypoint("../src/cli.ts", "../dist/cli.js");

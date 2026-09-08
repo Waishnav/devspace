@@ -15,11 +15,12 @@ assert.throws(() => resolveOnboardingUsage([]), /Choose ChatGPT, Coding Agents, 
 
 assert.deepEqual(
   updateOnboardingSubagentsConfig(
-    { enabled: false, providers: [] },
+    { enabled: false, instructions: "on-demand", providers: [] },
     ["codex", "claude"],
   ),
   {
     enabled: true,
+    instructions: "on-demand",
     providers: [
       { id: "codex", enabled: true },
       { id: "claude", enabled: true },
@@ -29,6 +30,7 @@ assert.deepEqual(
 
 const configured = {
   enabled: true,
+  instructions: "preload" as const,
   providers: [
     { id: "codex" as const, enabled: true, model: "gpt-5.4", effort: "high" },
     { id: "claude" as const, enabled: true, model: "sonnet" },
@@ -38,6 +40,7 @@ assert.deepEqual(
   updateOnboardingSubagentsConfig(configured, ["claude"]),
   {
     enabled: true,
+    instructions: "preload",
     providers: [
       { id: "codex", enabled: false, model: "gpt-5.4", effort: "high" },
       { id: "claude", enabled: true, model: "sonnet" },

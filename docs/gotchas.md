@@ -222,20 +222,26 @@ DevSpace looks in standard Agent Skills locations:
 
 It also checks compatibility and custom paths:
 
-- the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
 - `skills.agentDir/skills`, defaulting to `~/.codex/skills`
 - additional paths from `skills.paths`
 
 When Subagents are enabled, DevSpace loads agent profiles from
 `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`, then exposes a
-compact profile catalog through `open_workspace`. The bundled
-`subagents` skill keeps the model-facing workflow to
+compact profile catalog through `open_workspace`. DevSpace also synchronizes
+its managed `subagents` skill to `~/.devspace/skills/subagents/SKILL.md` and
+uses that copy instead of a package-manager path. The skill keeps the
+model-facing workflow to
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
 `devspace agents continue`, and `devspace agents show`.
 Those commands automatically manage the internal local agent daemon; `devspace
 serve` is not a prerequisite.
 `devspace agents ls` lists existing subagent sessions, not profile
 definitions.
+
+By default, `subagents.instructions` is `on-demand`, so `open_workspace`
+advertises the skill and the model reads it only when useful. Set it to
+`preload` to include the workflow directly in the initial workspace
+instructions instead.
 
 For a Coding Agent, run the installation command printed by
 `devspace init`:
@@ -245,15 +251,18 @@ npx skills add Waishnav/devspace --skill subagents --global
 ```
 
 The Skills CLI handles agent discovery and installation. DevSpace setup does
-not copy files into agent skill directories.
+not copy files into agent skill directories. The managed
+`~/.devspace/skills/subagents` copy is for DevSpace MCP workspaces and is
+separate from Coding Agent installation.
 
 Packaged agent profile examples under `examples/agents/` are starter templates.
 Copy or adapt them into one of the active profile directories before use.
 
 Legacy project paths such as `.pi/skills` can be added to `skills.paths` when needed.
 
-If a skill appears in `open_workspace`, the model must read that skill's
-`SKILL.md` before reading other files inside the skill directory.
+If a skill appears in `open_workspace`, the model should read that skill's
+`SKILL.md` before following it. DevSpace permits reads within advertised skill
+directories without tracking whether `SKILL.md` was read first.
 
 ## Review Card Does Not Appear
 

@@ -50,6 +50,10 @@ const providerLogos = {
     light: new URL("./assets/provider-logos/cursor-light.svg", import.meta.url).href,
     dark: new URL("./assets/provider-logos/cursor-dark.svg", import.meta.url).href,
   },
+  grok: {
+    light: new URL("./assets/provider-logos/grok-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/grok-dark.svg", import.meta.url).href,
+  },
   opencode: {
     light: new URL("./assets/provider-logos/opencode-light.svg", import.meta.url).href,
     dark: new URL("./assets/provider-logos/opencode-dark.svg", import.meta.url).href,

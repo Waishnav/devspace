@@ -21,10 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
 
     env:
       DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
@@ -60,8 +57,8 @@ jobs:
           DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: pnpm test
 
-      - name: Build
-        run: pnpm build
+      - name: Package install smoke test
+        run: pnpm test:package-install
 
       - name: Doctor
         run: node dist/cli.js doctor

@@ -2,6 +2,10 @@
   "name": "@waishnav/devspace",
   "version": "1.0.8",
   "description": "Expose a secure local coding workspace through an MCP server.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Waishnav/devspace.git"
+  },
   "type": "module",
   "main": "dist/server.js",
   "engines": {
@@ -29,12 +33,15 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "pnpm clean && pnpm build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
-    "dev": "tsx watch --clear-screen=false src/cli.ts serve",
+    "dev": "tsx scripts/dev.ts",
+    "dev:seed": "tsx scripts/dev-state.ts seed",
+    "dev:reset": "tsx scripts/dev-state.ts reset",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
     "test": "tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
+    "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
@@ -47,7 +54,9 @@
     "@clack/prompts": "^1.5.1",
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.3.6",
     "better-result": "^2.10.0",

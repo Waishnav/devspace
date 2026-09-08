@@ -54,6 +54,7 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
   },
   "subagents": {
     "enabled": false,
+    "instructions": "on-demand",
     "providers": [],
   },
   "logging": {
@@ -113,6 +114,11 @@ DevSpace discovers standard Agent Skills from `~/.agents/skills`, project
 `skills.agentDir/skills` and each path in `skills.paths`. Relative custom paths
 are resolved from the active workspace.
 
+When Subagents are enabled for MCP workspaces, DevSpace keeps its bundled
+`subagents` skill synchronized at `~/.devspace/skills/subagents/SKILL.md`.
+That managed copy is the authoritative `subagents` skill for DevSpace and is
+refreshed when the packaged skill changes.
+
 Subagent providers are explicit. Omitted providers are disabled:
 
 ```jsonc
@@ -120,6 +126,7 @@ Subagent providers are explicit. Omitted providers are disabled:
   "configVersion": 1,
   "subagents": {
     "enabled": true,
+    "instructions": "on-demand",
     "providers": [
       {
         "id": "codex",
@@ -136,6 +143,16 @@ Subagent providers are explicit. Omitted providers are disabled:
   },
 }
 ```
+
+`subagents.instructions` controls when ChatGPT receives the managed workflow:
+
+| Value | Behavior |
+| --- | --- |
+| `on-demand` | Default. `open_workspace` advertises the `subagents` skill and the model reads it only when the task benefits from delegation. |
+| `preload` | `open_workspace` includes the `subagents` workflow in its initial workspace instructions instead of advertising that skill for a separate read. |
+
+Both modes only make the workflow available; neither tells the model to prefer
+subagents for routine work.
 
 Profiles are loaded from `~/.devspace/agents/*.md` and project
 `.devspace/agents/*.md`. `devspace agents targets` prints the configured targets
