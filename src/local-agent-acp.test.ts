@@ -336,6 +336,7 @@ if (process.platform !== "win32") {
     await writeFile(candidate, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`, { mode: 0o700 });
     await chmod(candidate, 0o700);
     assert.equal(resolveAcpCommand("cursor", { PATH: commandRoot }), candidate);
+    assert.equal(resolveAcpCommand("cursor", { CURSOR_COMMAND: commandRoot }), undefined);
     assert.equal(existsSync(marker), false, "ACP command discovery must not execute PATH candidates");
   } finally {
     await rm(commandRoot, { recursive: true, force: true });

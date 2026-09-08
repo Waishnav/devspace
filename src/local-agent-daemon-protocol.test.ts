@@ -127,6 +127,8 @@ const record = decodeAgentRecord({
 });
 assert.equal(record.id, "agt_1234");
 assert.equal(record.latestResponse, "  response whitespace  \n");
+assert.equal(decodeAgentRecord({ ...record, latestResponse: "" }).latestResponse, "");
+assert.equal(decodeAgentRecord({ ...record, latestResponse: "  \n" }).latestResponse, "  \n");
 
 const directRecord = decodeAgentRecord({ ...record, workspaceId: undefined });
 assert.equal(directRecord.workspaceId, undefined);
