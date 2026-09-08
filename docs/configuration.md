@@ -168,11 +168,15 @@ a wrapper executable when startup needs fixed arguments. `env` maps environment
 variable names to literal string values and preserves empty strings. DevSpace
 does not expand `$NAME` references in these values.
 
-Codex, Claude, Cursor, Copilot, and Grok accept `command` and `env`. OpenCode and
-Pi are embedded, so their provider entries reject both fields. The daemon
-inherits its startup environment, then overlays the provider's `env`. An
-explicit `command` wins over both the inherited command override and a command
-override placed in `env`.
+All subagent providers accept `env`. The daemon inherits its startup
+environment, then overlays the provider's `env` without mutating the daemon's
+process environment. OpenCode receives that environment on its managed server
+process; embedded Pi scopes it to its provider requests and command execution.
+
+Codex, Claude, Cursor, Copilot, and Grok also accept `command`. OpenCode and Pi
+do not expose a command override. For providers that support it, an explicit
+`command` wins over both the inherited command override and a command override
+placed in `env`.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
 `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,

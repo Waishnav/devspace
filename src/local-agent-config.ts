@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
-  LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
 
@@ -10,25 +9,30 @@ const environmentSchema = z.record(
   z.string(),
 );
 
-const providerSchema = z.object({
-  id: z.enum(LOCAL_AGENT_PROVIDERS as [LocalAgentProvider, ...LocalAgentProvider[]]),
+const providerShape = {
   enabled: z.boolean(),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
-  command: z.string()
-    .regex(/\S/, "Command must contain a non-whitespace character")
-    .trim()
-    .min(1)
-    .optional(),
   env: environmentSchema.optional(),
-}).strict().superRefine((value, context) => {
-  if ((value.id === "opencode" || value.id === "pi") && (value.command || value.env)) {
-    context.addIssue({
-      code: "custom",
-      message: `${value.id} is embedded and does not support command or env configuration.`,
-    });
-  }
-});
+};
+
+const commandSchema = z.string()
+  .regex(/\S/, "Command must contain a non-whitespace character")
+  .trim()
+  .min(1)
+  .optional();
+
+const providerSchema = z.discriminatedUnion("id", [
+  z.object({
+    id: z.enum(["codex", "claude", "cursor", "copilot", "grok"]),
+    ...providerShape,
+    command: commandSchema,
+  }).strict(),
+  z.object({
+    id: z.enum(["opencode", "pi"]),
+    ...providerShape,
+  }).strict(),
+]);
 
 export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
@@ -79,8 +83,16 @@ export function localAgentProviderEnvironment(
   const providerConfig = subagentProviderConfig(config, provider);
   const env = { ...inherited, ...providerConfig?.env };
   const commandVariable = providerCommandVariable(provider);
-  if (commandVariable && providerConfig?.command) env[commandVariable] = providerConfig.command;
+  const command = providerConfig && "command" in providerConfig ? providerConfig.command : undefined;
+  if (commandVariable && command) env[commandVariable] = command;
   return env;
+}
+
+export function localAgentProviderEnvironmentOverrides(
+  config: SubagentsConfig,
+  provider: LocalAgentProvider,
+): Record<string, string> {
+  return { ...subagentProviderConfig(config, provider)?.env };
 }
 
 export function providerCommandVariable(provider: LocalAgentProvider): string | undefined {
@@ -104,7 +116,7 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
       enabled: provider.enabled,
       ...(provider.model ? { model: provider.model } : {}),
       ...(provider.effort ? { effort: provider.effort } : {}),
-      ...(provider.command ? { command: provider.command } : {}),
+      ...("command" in provider && provider.command ? { command: provider.command } : {}),
       ...(provider.env && Object.keys(provider.env).length > 0
         ? {
             env: Object.fromEntries(

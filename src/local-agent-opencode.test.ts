@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   opencodeAgentConfig,
   OpencodeLocalAgentDriver,
@@ -51,14 +54,16 @@ const client = {
 } as unknown as OpencodeClientLike;
 let factoryCalls = 0;
 let closeCalls = 0;
-const factory: OpencodeFactory = async () => {
+let factoryEnv: NodeJS.ProcessEnv | undefined;
+const factory: OpencodeFactory = async (_context, env) => {
   factoryCalls += 1;
+  factoryEnv = env;
   return {
     client,
     server: { close: () => { closeCalls += 1; } },
   };
 };
-const driver = new OpencodeLocalAgentDriver(factory);
+const driver = new OpencodeLocalAgentDriver(factory, { HARNESS_ENV: "opencode" });
 const pool = new LocalAgentRuntimePool();
 
 const first = await pool.run(driver, {
@@ -81,8 +86,41 @@ const second = await pool.run(driver, {
 });
 
 assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
+assert.equal(factoryEnv?.HARNESS_ENV, "opencode");
 assert.equal(first.isOk(), true);
 assert.equal(second.isOk(), true);
+
+if (process.platform !== "win32") {
+  const commandRoot = await mkdtemp(join(tmpdir(), "devspace-opencode-env-"));
+  const marker = join(commandRoot, "env.txt");
+  const command = join(commandRoot, "opencode");
+  try {
+    await writeFile(command, [
+      "#!/bin/sh",
+      'printf "%s" "$HARNESS_ENV" > "$MARKER"',
+      'echo "opencode server listening on http://127.0.0.1:4096"',
+      "trap 'exit 0' TERM INT",
+      "while true; do /bin/sleep 1; done",
+      "",
+    ].join("\n"));
+    await chmod(command, 0o700);
+    const envDriver = new OpencodeLocalAgentDriver(undefined, {
+      PATH: commandRoot,
+      HARNESS_ENV: "opencode-child",
+      MARKER: marker,
+    });
+    const created = await envDriver.createRuntime({
+      agentId: "agt_env",
+      provider: "opencode",
+      workspaceRoot: "/tmp/project",
+    });
+    assert.equal(created.isOk(), true);
+    if (created.isOk()) await created.value.close();
+    assert.equal(await readFile(marker, "utf8"), "opencode-child");
+  } finally {
+    await rm(commandRoot, { recursive: true, force: true });
+  }
+}
 if (first.isErr()) throw first.error;
 if (second.isErr()) throw second.error;
 const firstRecord = first.value;

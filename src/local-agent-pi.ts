@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -43,6 +43,7 @@ export type PiSessionLike = Pick<
 export type PiSessionFactory = (
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
+  env?: NodeJS.ProcessEnv,
 ) => Promise<PiSessionLike>;
 
 export class PiSessionRuntime implements LocalAgentRuntime {
@@ -165,7 +166,10 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "pi" as const;
   readonly idleTimeoutMs = 3 * 60_000;
 
-  constructor(private readonly factory: PiSessionFactory = defaultPiSessionFactory) {}
+  constructor(
+    private readonly factory: PiSessionFactory = defaultPiSessionFactory,
+    private readonly env: NodeJS.ProcessEnv = {},
+  ) {}
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
     return `pi:${context.agentId}`;
@@ -185,7 +189,7 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
           model: context.model,
           effort: context.effort,
         };
-        const session = await this.factory(context, input);
+        const session = await this.factory(context, input, this.env);
         return new PiSessionRuntime(session);
       },
     });
@@ -195,6 +199,7 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
 async function defaultPiSessionFactory(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
+  env: NodeJS.ProcessEnv = {},
 ): Promise<PiSessionLike> {
   const {
     AuthStorage,
@@ -209,6 +214,7 @@ async function defaultPiSessionFactory(
   const agentDir = getAgentDir();
   const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+  applyPiProviderEnvironment(modelRegistry, env);
   const sessionManager = await resolveSessionManager(SessionManager, input.workspaceRoot, input.providerSessionId);
   const model = input.model ? resolvePiModel(modelRegistry, input.model) : undefined;
   if (input.model && !model) {
@@ -225,7 +231,7 @@ async function defaultPiSessionFactory(
   const resourceLoader = new DefaultResourceLoader({
     cwd: input.workspaceRoot,
     agentDir,
-    extensionFactories: [createPiSandboxExtension(input.workspaceRoot, modeRef)],
+    extensionFactories: [createPiSandboxExtension(input.workspaceRoot, modeRef, env)],
   });
   let session: PiSessionLike | undefined;
   try {
@@ -256,6 +262,27 @@ async function defaultPiSessionFactory(
     }
     throw error;
   }
+}
+
+function applyPiProviderEnvironment(
+  modelRegistry: ModelRegistry,
+  env: NodeJS.ProcessEnv,
+): void {
+  const getApiKeyAndHeaders = modelRegistry.getApiKeyAndHeaders.bind(modelRegistry);
+  const providerEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  modelRegistry.getApiKeyAndHeaders = async (model) => {
+    const auth = await getApiKeyAndHeaders(model);
+    if (!auth.ok) return auth;
+    return {
+      ...auth,
+      env: {
+        ...auth.env,
+        ...providerEnv,
+      },
+    };
+  };
 }
 
 export function piToolsForWriteMode(writeMode: LocalAgentRunInput["writeMode"]): readonly string[] {
