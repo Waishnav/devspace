@@ -29,7 +29,7 @@ import type {
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
-export type AcpProvider = "cursor" | "copilot" | "grok";
+export type AcpProvider = "cursor" | "copilot" | "grok" | "antigravity";
 
 const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
@@ -44,6 +44,7 @@ const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
   cursor: ["cursor-agent", "acp"],
   copilot: ["copilot", "--acp"],
   grok: ["grok", "agent", "stdio"],
+  antigravity: ["agy_acp_server"],
 };
 
 interface AcpConnectionLike {
@@ -615,7 +616,9 @@ export function resolveAcpCommand(
     ? env.CURSOR_COMMAND
     : provider === "copilot"
       ? env.COPILOT_COMMAND
-      : env.GROK_COMMAND;
+      : provider === "grok"
+        ? env.GROK_COMMAND
+        : env.ANTIGRAVITY_COMMAND ?? env.AGY_ACP_COMMAND;
   const command = configured ?? ACP_COMMANDS[provider][0];
   if (command.includes("/") || command.includes("\\")) return executableExists(command) ? command : undefined;
   const path = env.PATH;
@@ -641,6 +644,9 @@ export function acpCommandArgs(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const writeMode = context.writeMode ?? "allowed";
+  if (provider === "antigravity") {
+    return [];
+  }
   if (provider === "cursor") {
     return [
       "acp",

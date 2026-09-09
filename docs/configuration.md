@@ -160,7 +160,7 @@ available in the current workspace.
 
 Provider executable discovery remains process-scoped. The supported overrides
 are `CODEX_COMMAND`, `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`,
-`COPILOT_COMMAND`, `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. DevSpace does not
+`COPILOT_COMMAND`, `GROK_COMMAND`, `GROK_AGENT_PROFILE`, and `ANTIGRAVITY_COMMAND`. DevSpace does not
 persist provider credentials.
 
 ## Native artifact download

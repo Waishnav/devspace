@@ -74,6 +74,7 @@ provider: pi
 provider: cursor
 provider: copilot
 provider: grok
+provider: antigravity
 ```
 
 Unsupported or custom providers are rejected. DevSpace maps providers to their
@@ -86,12 +87,12 @@ native integration:
 - `cursor`: ACP
 - `copilot`: ACP
 - `grok`: Grok Build ACP (`grok agent stdio`)
+- `antigravity`: Google Antigravity ACP (`agy_acp_server`)
 
-Codex is resolved from the user's environment rather than bundled with
-DevSpace. Run `codex login` normally before using it; set `CODEX_COMMAND` when
-the executable is not on the normal PATH. OpenCode, Cursor, and Copilot
-runtimes are started and reused by the daemon internally, while Pi is embedded
-through its Node SDK.
+Codex and Antigravity ACP servers are resolved from the user's environment rather than bundled with
+DevSpace. Set `ANTIGRAVITY_COMMAND` when the `agy_acp_server` executable is not on the normal PATH.
+OpenCode, Cursor, Copilot, and Antigravity runtimes are started and reused by the daemon internally,
+while Pi is embedded through its Node SDK.
 
 ### `model`
 

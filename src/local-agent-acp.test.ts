@@ -285,6 +285,7 @@ assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "read_
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_access" }), [
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
 ]);
+assert.deepEqual(acpCommandArgs("antigravity", cachedContext), []);
 
 const missingCommandDriver = new AcpLocalAgentDriver(
   "cursor",
@@ -336,6 +337,7 @@ if (process.platform !== "win32") {
     await writeFile(candidate, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`, { mode: 0o700 });
     await chmod(candidate, 0o700);
     assert.equal(resolveAcpCommand("cursor", { PATH: commandRoot }), candidate);
+    assert.equal(resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: candidate }), candidate);
     assert.equal(existsSync(marker), false, "ACP command discovery must not execute PATH candidates");
   } finally {
     await rm(commandRoot, { recursive: true, force: true });
