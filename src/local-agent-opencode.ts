@@ -27,6 +27,7 @@ const OPENCODE_SESSION_POLL_INTERVAL_MS = 250;
 const OPENCODE_SESSION_POLL_TIMEOUT_MS = 5 * 60_000;
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
+const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
@@ -179,8 +180,23 @@ async function startOpencodeServer(
   env: NodeJS.ProcessEnv,
   config: Record<string, unknown>,
 ): Promise<OpencodeServerLike & { url: string }> {
+  for (let attempt = 1; attempt <= OPENCODE_SERVER_START_ATTEMPTS; attempt += 1) {
+    const port = await allocateOpencodePort();
+    try {
+      return await launchOpencodeServer(env, config, port);
+    } catch (error) {
+      if (attempt === OPENCODE_SERVER_START_ATTEMPTS || !await isOpencodePortInUse(port)) throw error;
+    }
+  }
+  throw new Error("OpenCode server failed to start.");
+}
+
+async function launchOpencodeServer(
+  env: NodeJS.ProcessEnv,
+  config: Record<string, unknown>,
+  port: number,
+): Promise<OpencodeServerLike & { url: string }> {
   const detached = process.platform !== "win32";
-  const port = await allocateOpencodePort();
   const child = spawn("opencode", [
     "serve",
     `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
@@ -253,6 +269,20 @@ async function allocateOpencodePort(): Promise<number> {
         return;
       }
       server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+async function isOpencodePortInUse(port: number): Promise<boolean> {
+  const server = createNetServer();
+  server.unref();
+  return new Promise<boolean>((resolve, reject) => {
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") resolve(true);
+      else reject(error);
+    });
+    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port, exclusive: true }, () => {
+      server.close((error) => error ? reject(error) : resolve(false));
     });
   });
 }
