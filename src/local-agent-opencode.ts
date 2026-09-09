@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { createServer as createNetServer } from "node:net";
 import type {
   ModelRef,
   OpencodeClient,
@@ -25,7 +26,6 @@ import { terminateProcessTree } from "./process-platform.js";
 const OPENCODE_SESSION_POLL_INTERVAL_MS = 250;
 const OPENCODE_SESSION_POLL_TIMEOUT_MS = 5 * 60_000;
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
-const OPENCODE_SERVER_PORT = 4096;
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
@@ -180,10 +180,11 @@ async function startOpencodeServer(
   config: Record<string, unknown>,
 ): Promise<OpencodeServerLike & { url: string }> {
   const detached = process.platform !== "win32";
+  const port = await allocateOpencodePort();
   const child = spawn("opencode", [
     "serve",
     `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
-    `--port=${OPENCODE_SERVER_PORT}`,
+    `--port=${port}`,
   ], {
     detached,
     env: {
@@ -237,6 +238,23 @@ async function startOpencodeServer(
     });
   });
   return { url, close };
+}
+
+async function allocateOpencodePort(): Promise<number> {
+  const server = createNetServer();
+  server.unref();
+  return new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port: 0, exclusive: true }, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Failed to allocate an OpenCode server port."));
+        return;
+      }
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
 }
 
 export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {

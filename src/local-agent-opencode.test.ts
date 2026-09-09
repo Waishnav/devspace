@@ -93,12 +93,16 @@ assert.equal(second.isOk(), true);
 if (process.platform !== "win32") {
   const commandRoot = await mkdtemp(join(tmpdir(), "devspace-opencode-env-"));
   const marker = join(commandRoot, "env.txt");
+  const argsMarker = join(commandRoot, "args.txt");
   const command = join(commandRoot, "opencode");
   try {
     await writeFile(command, [
       "#!/bin/sh",
       'printf "%s" "$HARNESS_ENV" > "$MARKER"',
-      'echo "opencode server listening on http://127.0.0.1:4096"',
+      'printf "%s\\n" "$@" > "$ARGS_MARKER"',
+      'port=""',
+      'for arg in "$@"; do case "$arg" in --port=*) port="${arg#--port=}" ;; esac; done',
+      'echo "opencode server listening on http://127.0.0.1:$port"',
       "trap 'exit 0' TERM INT",
       "while true; do /bin/sleep 1; done",
       "",
@@ -108,6 +112,7 @@ if (process.platform !== "win32") {
       PATH: commandRoot,
       HARNESS_ENV: "opencode-child",
       MARKER: marker,
+      ARGS_MARKER: argsMarker,
     });
     const created = await envDriver.createRuntime({
       agentId: "agt_env",
@@ -117,6 +122,10 @@ if (process.platform !== "win32") {
     assert.equal(created.isOk(), true);
     if (created.isOk()) await created.value.close();
     assert.equal(await readFile(marker, "utf8"), "opencode-child");
+    const args = (await readFile(argsMarker, "utf8")).trim().split("\n");
+    const portArgument = args.find((argument) => argument.startsWith("--port="));
+    assert.ok(portArgument, "OpenCode receives an explicitly allocated port");
+    assert.notEqual(portArgument, "--port=4096", "OpenCode must not use a process-global fixed port");
   } finally {
     await rm(commandRoot, { recursive: true, force: true });
   }
