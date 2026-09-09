@@ -46,6 +46,7 @@ assert.equal(
       },
       {
         enabled: true,
+        instructions: "on-demand",
         providers: [{
           id: "codex",
           enabled: true,
