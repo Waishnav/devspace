@@ -96,10 +96,11 @@ if (process.platform !== "win32") {
   const argsMarker = join(commandRoot, "args.txt");
   const collisionMarker = join(commandRoot, "collision.txt");
   const holderReady = join(commandRoot, "holder-ready.txt");
-  const holderScript = join(commandRoot, "hold-port.mjs");
+  const holderProcess = join(commandRoot, "hold-port.mjs");
+  const holderLauncher = join(commandRoot, "launch-holder.mjs");
   const command = join(commandRoot, "opencode");
   try {
-    await writeFile(holderScript, [
+    await writeFile(holderProcess, [
       'import { writeFileSync } from "node:fs";',
       'import { createServer } from "node:net";',
       'const [port, ready] = process.argv.slice(2);',
@@ -110,6 +111,16 @@ if (process.platform !== "win32") {
       '});',
       "",
     ].join("\n"));
+    await writeFile(holderLauncher, [
+      'import { spawn } from "node:child_process";',
+      'const [script, port, ready] = process.argv.slice(2);',
+      'const child = spawn(process.execPath, [script, port, ready], {',
+      '  detached: true,',
+      '  stdio: "ignore",',
+      '});',
+      'child.unref();',
+      "",
+    ].join("\n"));
     await writeFile(command, [
       "#!/bin/sh",
       'printf "%s" "$HARNESS_ENV" > "$MARKER"',
@@ -118,7 +129,7 @@ if (process.platform !== "win32") {
       'for arg in "$@"; do case "$arg" in --port=*) port="${arg#--port=}" ;; esac; done',
       'if [ ! -f "$COLLISION_MARKER" ]; then',
       '  printf "collision" > "$COLLISION_MARKER"',
-      '  "$NODE_EXECUTABLE" "$HOLDER_SCRIPT" "$port" "$HOLDER_READY" &',
+      '  "$NODE_EXECUTABLE" "$HOLDER_LAUNCHER" "$HOLDER_PROCESS" "$port" "$HOLDER_READY"',
       '  while [ ! -f "$HOLDER_READY" ]; do /bin/sleep 0.01; done',
       '  exit 1',
       'fi',
@@ -135,7 +146,8 @@ if (process.platform !== "win32") {
       ARGS_MARKER: argsMarker,
       COLLISION_MARKER: collisionMarker,
       HOLDER_READY: holderReady,
-      HOLDER_SCRIPT: holderScript,
+      HOLDER_PROCESS: holderProcess,
+      HOLDER_LAUNCHER: holderLauncher,
       NODE_EXECUTABLE: process.execPath,
     });
     const created = await envDriver.createRuntime({
