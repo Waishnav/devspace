@@ -169,6 +169,7 @@ Antigravity operates via the Agent Client Protocol (ACP). Because the standard `
 1. **Download**: Obtain the `agy_acp_server` distribution archive for your platform (Linux, macOS, Windows) from the [ACP Registry manifest](https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json).
 2. **Install**: Extract the binary and place it in your `PATH` as `agy_acp_server` (e.g., in `~/.local/bin/`), or set the `ANTIGRAVITY_COMMAND` environment variable to the executable path.
 3. **Authentication**: Set up your authentication method in `~/.gemini/antigravity-acp/settings.json` (e.g., `{"auth": {"type": "oauth-personal"}}` for personal Google OAuth, or Gemini/Vertex API key).
+4. **Restart Daemon**: Environment variable lookups are process-scoped. After newly setting or updating `PATH` or `ANTIGRAVITY_COMMAND`, restart the DevSpace daemon (`devspace agents daemon stop` or restart `devspace serve`) so that changes are reflected in the process environment.
 
 ## Mental Model
 

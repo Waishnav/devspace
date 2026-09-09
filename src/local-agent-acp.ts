@@ -44,7 +44,9 @@ const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
   cursor: ["cursor-agent", "acp"],
   copilot: ["copilot", "--acp"],
   grok: ["grok", "agent", "stdio"],
-  antigravity: ["agy_acp_server"],
+  antigravity: process.platform === "win32"
+    ? ["agy_acp_server.exe"]
+    : ["agy_acp_server.par"],
 };
 
 interface AcpConnectionLike {
@@ -620,7 +622,10 @@ export function resolveAcpCommand(
         ? env.GROK_COMMAND
         : env.ANTIGRAVITY_COMMAND ?? env.AGY_ACP_COMMAND;
   const command = configured ?? ACP_COMMANDS[provider][0];
-  if (command.includes("/") || command.includes("\\")) return executableExists(command) ? command : undefined;
+  if (command.includes("/") || command.includes("\\")) {
+    const candidate = resolve(command);
+    return executableExists(candidate) ? candidate : undefined;
+  }
   const path = env.PATH;
   if (!path) return undefined;
   const extensions = process.platform === "win32"
@@ -645,7 +650,7 @@ export function acpCommandArgs(
 ): string[] {
   const writeMode = context.writeMode ?? "allowed";
   if (provider === "antigravity") {
-    return [];
+    return process.platform === "linux" ? ["--uid="] : [];
   }
   if (provider === "cursor") {
     return [

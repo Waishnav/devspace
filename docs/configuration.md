@@ -161,7 +161,7 @@ available in the current workspace.
 Provider executable discovery remains process-scoped. The supported overrides
 are `CODEX_COMMAND`, `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`,
 `COPILOT_COMMAND`, `GROK_COMMAND`, `GROK_AGENT_PROFILE`, and `ANTIGRAVITY_COMMAND`. DevSpace does not
-persist provider credentials.
+persist provider credentials. If you set or modify these environment variables or `PATH` while DevSpace is running, restart the daemon (`devspace agents daemon stop` or restart `devspace serve`) so that the running process picks up the changes.
 
 ## Native artifact download
 

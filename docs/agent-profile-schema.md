@@ -89,8 +89,9 @@ native integration:
 - `grok`: Grok Build ACP (`grok agent stdio`)
 - `antigravity`: Google Antigravity ACP (`agy_acp_server`)
 
-Codex and Antigravity ACP servers are resolved from the user's environment rather than bundled with
+Codex app-server and Antigravity ACP server are resolved from the user's environment rather than bundled with
 DevSpace. Set `ANTIGRAVITY_COMMAND` when the `agy_acp_server` executable is not on the normal PATH.
+Because environment variable lookups and executable discovery are process-scoped, if you set or modify `PATH` or `ANTIGRAVITY_COMMAND` while DevSpace is running, restart the DevSpace daemon (`devspace agents daemon stop` or restart `devspace serve`) so that changes take effect.
 OpenCode, Cursor, Copilot, and Antigravity runtimes are started and reused by the daemon internally,
 while Pi is embedded through its Node SDK.
 
