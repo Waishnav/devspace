@@ -50,9 +50,10 @@ export function createLocalAgentDrivers(
     new ClaudeLocalAgentDriver(options.claudeQueryFactory, providerEnv("claude")),
     new OpencodeLocalAgentDriver(options.opencodeFactory),
     new PiLocalAgentDriver(options.piSessionFactory),
-    new AcpLocalAgentDriver("cursor", providerEnv("cursor")),
-    new AcpLocalAgentDriver("copilot", providerEnv("copilot")),
-    new AcpLocalAgentDriver("grok", providerEnv("grok")),
+    new AcpLocalAgentDriver("cursor", options.env),
+    new AcpLocalAgentDriver("copilot", options.env),
+    new AcpLocalAgentDriver("grok", options.env),
+    new AcpLocalAgentDriver("antigravity", options.env),
   ];
 }
 

@@ -168,16 +168,19 @@ a wrapper executable when startup needs fixed arguments. `env` maps environment
 variable names to literal string values and preserves empty strings. DevSpace
 does not expand `$NAME` references in these values.
 
-Codex, Claude, Cursor, Copilot, and Grok accept `command` and `env`. OpenCode and
-Pi are embedded, so their provider entries reject both fields. The daemon
-inherits its startup environment, then overlays the provider's `env`. An
+Codex, Claude, Cursor, Copilot, Grok, and Antigravity accept `command` and `env`.
+OpenCode and Pi are embedded, so their provider entries reject both fields. The
+daemon inherits its startup environment, then overlays the provider's `env`. An
 explicit `command` wins over both the inherited command override and a command
 override placed in `env`.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
 `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
-`GROK_COMMAND`, and `GROK_AGENT_PROFILE`. Provider configuration takes
-precedence where the same value is set in both places.
+`GROK_COMMAND`, `GROK_AGENT_PROFILE`, and `ANTIGRAVITY_COMMAND`. Provider
+configuration takes precedence where the same value is set in both places. If
+you set or modify these environment variables or `PATH` while DevSpace is
+running, restart the daemon (`devspace agents daemon stop` or restart
+`devspace serve`) so that the running process picks up the changes.
 
 DevSpace writes `config.jsonc` with mode `0600`, but provider environment values
 are still plain text on disk. Keep the file out of version control. Leave

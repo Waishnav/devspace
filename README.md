@@ -146,7 +146,30 @@ DevSpace gives ChatGPT tools to:
 - use isolated Git worktrees for parallel coding sessions
 - follow project instructions from `AGENTS.md` and `CLAUDE.md`
 - discover local agent skills from your skill folders
+- run bounded subagents (`devspace agents run`) across multiple providers
 - show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
+
+### Subagent Providers
+
+DevSpace supports delegating tasks to local coding subagents:
+
+- **Codex**: `codex app-server`
+- **Claude**: Claude Code SDK
+- **OpenCode**: OpenCode SDK
+- **Pi**: Embedded Pi Coding Agent SDK
+- **Cursor**: ACP (`cursor-agent acp`)
+- **GitHub Copilot**: ACP (`copilot --acp`)
+- **Grok**: ACP (`grok agent stdio`)
+- **Google Antigravity**: ACP (`agy_acp_server`)
+
+#### Google Antigravity Setup
+
+Antigravity operates via the Agent Client Protocol (ACP). Because the standard `agy` CLI is designed for terminal interactions, ACP communication requires the official `agy_acp_server` binary from the [ACP Registry](https://github.com/agentclientprotocol/registry):
+
+1. **Download**: Obtain the `agy_acp_server` distribution archive for your platform (Linux, macOS, Windows) from the [ACP Registry manifest](https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json).
+2. **Install**: Extract the binary and place it in your `PATH` as `agy_acp_server` (e.g., in `~/.local/bin/`), or set the `ANTIGRAVITY_COMMAND` environment variable to the executable path.
+3. **Authentication**: Set up your authentication method in `~/.gemini/antigravity-acp/settings.json` (e.g., `{"auth": {"type": "oauth-personal"}}` for personal Google OAuth, or Gemini/Vertex API key).
+4. **Restart Daemon**: Environment variable lookups are process-scoped. After newly setting or updating `PATH` or `ANTIGRAVITY_COMMAND`, restart the DevSpace daemon (`devspace agents daemon stop` or restart `devspace serve`) so that changes are reflected in the process environment.
 
 ## Mental Model
 

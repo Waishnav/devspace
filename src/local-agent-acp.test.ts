@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import {
   AcpLocalAgentDriver,
   AcpRuntime,
@@ -285,6 +285,10 @@ assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "read_
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_access" }), [
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
 ]);
+assert.deepEqual(
+  acpCommandArgs("antigravity", cachedContext),
+  process.platform === "linux" ? ["--uid="] : [],
+);
 
 const missingCommandDriver = new AcpLocalAgentDriver(
   "cursor",
@@ -326,6 +330,59 @@ if (process.platform === "win32") {
   } finally {
     await rm(shimRoot, { recursive: true, force: true });
   }
+
+  const daemonDir = process.cwd();
+  const relTestDir = await mkdtemp(join(daemonDir, ".tmp-devspace-acp-rel-test-"));
+  const relCandidate = join(relTestDir, "agy_acp_server.cmd");
+  const relMarker = join(tmpdir(), `devspace-acp-marker-${Date.now()}.txt`);
+  const relWorkspaceRoot = await mkdtemp(join(tmpdir(), "devspace-acp-diff-workspace-"));
+  try {
+    await writeFile(relCandidate, `@ECHO OFF\r\ncd > "${relMarker}"\r\nexit /b 0\r\n`);
+    const relPathWithDot = `.\\${relative(daemonDir, relCandidate)}`;
+    const relPathForwardSlash = `./${relative(daemonDir, relCandidate).replace(/\\/g, "/")}`;
+
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: relPathWithDot }),
+      relCandidate,
+      "resolveAcpCommand must normalize ANTIGRAVITY_COMMAND with .\\ to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { AGY_ACP_COMMAND: relPathWithDot }),
+      relCandidate,
+      "resolveAcpCommand must normalize AGY_ACP_COMMAND with .\\ to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: relPathForwardSlash }),
+      relCandidate,
+      "resolveAcpCommand must normalize ANTIGRAVITY_COMMAND with forward slashes to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: ".\\non\\existent\\agy_acp_server.exe" }),
+      undefined,
+      "resolveAcpCommand must return undefined for non-existent relative commands",
+    );
+
+    const driver = new AcpLocalAgentDriver("antigravity", {
+      ...process.env,
+      ANTIGRAVITY_COMMAND: relPathWithDot,
+    });
+    const runtimeResult = await driver.createRuntime({
+      ...cachedContext,
+      provider: "antigravity",
+      workspaceRoot: relWorkspaceRoot,
+    });
+    assert.equal(runtimeResult.isErr(), true);
+    if (runtimeResult.isErr()) {
+      assert.equal(runtimeResult.error.code, "PROVIDER_PROTOCOL_ERROR");
+    }
+    assert.equal(existsSync(relMarker), true, "mock executable must have been executed despite different workspaceRoot");
+    const executedCwd = (await readFile(relMarker, "utf8")).trim();
+    assert.equal(executedCwd, resolve(relWorkspaceRoot), "executable must run in the specified workspaceRoot");
+  } finally {
+    await rm(relTestDir, { recursive: true, force: true });
+    await rm(relWorkspaceRoot, { recursive: true, force: true });
+    await rm(relMarker, { force: true });
+  }
 }
 
 if (process.platform !== "win32") {
@@ -336,9 +393,65 @@ if (process.platform !== "win32") {
     await writeFile(candidate, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`, { mode: 0o700 });
     await chmod(candidate, 0o700);
     assert.equal(resolveAcpCommand("cursor", { PATH: commandRoot }), candidate);
+    assert.equal(resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: candidate }), candidate);
     assert.equal(existsSync(marker), false, "ACP command discovery must not execute PATH candidates");
   } finally {
     await rm(commandRoot, { recursive: true, force: true });
+  }
+
+  const daemonDir = process.cwd();
+  const relTestDir = await mkdtemp(join(daemonDir, ".tmp-devspace-acp-rel-test-"));
+  const relCandidate = join(relTestDir, "agy_acp_server.par");
+  const relMarker = join(tmpdir(), `devspace-acp-marker-${Date.now()}.txt`);
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "devspace-acp-diff-workspace-"));
+  try {
+    await writeFile(relCandidate, `#!/bin/sh\npwd > '${relMarker}'\nexit 0\n`, { mode: 0o700 });
+    await chmod(relCandidate, 0o700);
+
+    const relPathWithDot = `./${relative(daemonDir, relCandidate)}`;
+    const relPathWithoutDot = relative(daemonDir, relCandidate);
+
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: relPathWithDot }),
+      relCandidate,
+      "resolveAcpCommand must normalize ANTIGRAVITY_COMMAND with ./ to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { AGY_ACP_COMMAND: relPathWithDot }),
+      relCandidate,
+      "resolveAcpCommand must normalize AGY_ACP_COMMAND with ./ to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: relPathWithoutDot }),
+      relCandidate,
+      "resolveAcpCommand must normalize relative ANTIGRAVITY_COMMAND without leading ./ to an absolute path",
+    );
+    assert.equal(
+      resolveAcpCommand("antigravity", { ANTIGRAVITY_COMMAND: "./non/existent/agy_acp_server.par" }),
+      undefined,
+      "resolveAcpCommand must return undefined for non-existent relative commands",
+    );
+
+    const driver = new AcpLocalAgentDriver("antigravity", {
+      ...process.env,
+      ANTIGRAVITY_COMMAND: relPathWithDot,
+    });
+    const runtimeResult = await driver.createRuntime({
+      ...cachedContext,
+      provider: "antigravity",
+      workspaceRoot,
+    });
+    assert.equal(runtimeResult.isErr(), true);
+    if (runtimeResult.isErr()) {
+      assert.equal(runtimeResult.error.code, "PROVIDER_PROTOCOL_ERROR");
+    }
+    assert.equal(existsSync(relMarker), true, "mock executable must have been executed despite different workspaceRoot");
+    const executedCwd = (await readFile(relMarker, "utf8")).trim();
+    assert.equal(executedCwd, resolve(workspaceRoot), "executable must run in the specified workspaceRoot");
+  } finally {
+    await rm(relTestDir, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(relMarker, { force: true });
   }
 }
 

@@ -62,6 +62,10 @@ const providerLogos = {
     light: new URL("./assets/provider-logos/pi-on-light.svg", import.meta.url).href,
     dark: new URL("./assets/provider-logos/pi-on-dark.svg", import.meta.url).href,
   },
+  antigravity: {
+    light: new URL("./assets/provider-logos/antigravity.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/antigravity.svg", import.meta.url).href,
+  },
 } as const;
 
 export type ProviderLogoTheme = "light" | "dark";
