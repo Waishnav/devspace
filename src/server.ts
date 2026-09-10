@@ -15,7 +15,7 @@ import {
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import express from "express";
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import * as z from "zod/v4";
 import {
   isArtifactDownloadSupportedPlatform,
@@ -81,6 +81,7 @@ import {
 } from "./tool-surfaces/types.js";
 
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
+const WORKSPACE_INSPECTOR_MANIFEST_ENTRY = "workspace-inspector.html";
 
 function mcpServerInfo() {
   return {
@@ -122,6 +123,7 @@ class ToolActivityTracker {
 interface WorkspaceAppManifestEntry {
   file: string;
   css?: string[];
+  imports?: string[];
   isEntry?: boolean;
 }
 
@@ -237,12 +239,14 @@ function readWorkspaceAppManifest(): WorkspaceAppManifest {
   return JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
 }
 
-function getWorkspaceAppManifestEntry(): WorkspaceAppManifestEntry {
+function getWorkspaceAppManifestEntry(
+  entryName = WORKSPACE_APP_MANIFEST_ENTRY,
+): WorkspaceAppManifestEntry {
   const manifest = readWorkspaceAppManifest();
-  const entry = manifest[WORKSPACE_APP_MANIFEST_ENTRY];
+  const entry = manifest[entryName];
 
   if (!entry?.file) {
-    throw new Error(`Missing ${WORKSPACE_APP_MANIFEST_ENTRY} in UI manifest.`);
+    throw new Error(`Missing ${entryName} in UI manifest.`);
   }
 
   return entry;
@@ -252,10 +256,28 @@ function assetUrl(baseUrl: string, assetPath: string): string {
   return `${baseUrl}/${assetPath.replace(/^\/+/, "")}`;
 }
 
+function workspaceAppStylesheets(entryName: string): string[] {
+  const manifest = readWorkspaceAppManifest();
+  const stylesheets = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (name: string) => {
+    if (visited.has(name)) return;
+    visited.add(name);
+    const entry = manifest[name];
+    if (!entry) return;
+    for (const stylesheet of entry.css ?? []) stylesheets.add(stylesheet);
+    for (const imported of entry.imports ?? []) visit(imported);
+  };
+
+  visit(entryName);
+  return [...stylesheets];
+}
+
 function workspaceAppHtml(config: ServerConfig): string {
   const baseUrl = assetBaseUrl(config);
   const entry = getWorkspaceAppManifestEntry();
-  const stylesheets = (entry.css ?? [])
+  const stylesheets = workspaceAppStylesheets(WORKSPACE_APP_MANIFEST_ENTRY)
     .map(
       (stylesheet) =>
         `    <link rel="stylesheet" crossorigin href="${assetUrl(baseUrl, stylesheet)}" />`,
@@ -275,6 +297,37 @@ ${stylesheets}
     <main id="app" class="shell">
       <section class="empty">Waiting for a tool result.</section>
     </main>
+  </body>
+</html>`;
+}
+
+function workspaceInspectorHtml(input: {
+  workspaceId: string;
+  root: string;
+  mode: "checkout" | "worktree";
+}): string {
+  const entry = getWorkspaceAppManifestEntry(WORKSPACE_INSPECTOR_MANIFEST_ENTRY);
+  const baseUrl = "/mcp-app-assets";
+  const stylesheets = workspaceAppStylesheets(WORKSPACE_INSPECTOR_MANIFEST_ENTRY)
+    .map(
+      (stylesheet) =>
+        `    <link rel="stylesheet" crossorigin href="${assetUrl(baseUrl, stylesheet)}" />`,
+    )
+    .join("\n");
+  const bootstrap = JSON.stringify(input).replace(/</g, "\\u003c");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DevSpace Workspace Inspector</title>
+    <script type="module" crossorigin src="${assetUrl(baseUrl, entry.file)}"></script>
+${stylesheets}
+  </head>
+  <body>
+    <main id="app"></main>
+    <script id="devspace-workspace-bootstrap" type="application/json">${bootstrap}</script>
   </body>
 </html>`;
 }
@@ -303,7 +356,10 @@ function setAssetHeaders(res: Response): void {
 
 async function assertWorkspaceAppAssets(): Promise<void> {
   const entry = getWorkspaceAppManifestEntry();
-  const candidates = [entry.file, ...(entry.css ?? [])].map(
+  const candidates = [
+    entry.file,
+    ...workspaceAppStylesheets(WORKSPACE_APP_MANIFEST_ENTRY),
+  ].map(
     (assetPath) => new URL(`../dist/ui/${assetPath}`, import.meta.url),
   );
 
@@ -842,26 +898,10 @@ function registerWorkspaceInspectorTools(
     },
     async ({ workspace_id, review_ref }) => {
       await workspaces.getWorkspace(workspace_id);
-      const groups = review_ref
-        ? [activity.findReviewGroup(workspace_id, review_ref)].filter(Boolean)
-        : activity.listActivity(workspace_id).groups;
-      const outputGroups = groups.map((group) => ({
-        id: group!.id,
-        kind: group!.kind,
-        started_at: group!.startedAt,
-        completed_at: group!.completedAt,
-        review_ref: group!.reviewRef,
-        calls: group!.calls.map((call) => ({
-          id: call.id,
-          tool_name: call.toolName,
-          started_at: call.startedAt,
-          completed_at: call.completedAt,
-          duration_ms: call.durationMs,
-        })),
-      }));
+      const output = workspaceActivityOutput(activity, workspace_id, review_ref);
       return {
-        content: [textBlock(`Loaded ${outputGroups.length} activity groups.`)],
-        structuredContent: { groups: outputGroups },
+        content: [textBlock(`Loaded ${output.groups.length} activity groups.`)],
+        structuredContent: output,
       };
     },
   );
@@ -898,19 +938,7 @@ function registerWorkspaceInspectorTools(
       if (!call) throw new Error(`Unknown tool call ${call_id} for workspace ${workspace_id}.`);
       return {
         content: [textBlock(`Loaded ${call.toolName} tool call.`)],
-        structuredContent: {
-          call: {
-            id: call.id,
-            tool_name: call.toolName,
-            arguments: call.arguments,
-            result: call.result,
-            error: call.error,
-            started_at: call.startedAt,
-            completed_at: call.completedAt,
-            duration_ms: call.durationMs,
-            review_ref: call.reviewRef,
-          },
-        },
+        structuredContent: { call: workspaceToolCallOutput(call) },
       };
     },
   );
@@ -949,12 +977,7 @@ function registerWorkspaceInspectorTools(
       const diff = await readWorkspaceDiff(workspace, reviewCheckpoints, internalScope);
       return {
         content: [textBlock(`Loaded workspace diff for ${diff.scope.kind}.`)],
-        structuredContent: {
-          scope: workspaceDiffScopeToOutput(diff.scope),
-          summary: diff.summary,
-          files: diff.files,
-          patch: diff.patch,
-        },
+        structuredContent: workspaceDiffOutput(diff),
       };
     },
   );
@@ -979,14 +1002,103 @@ function registerWorkspaceInspectorTools(
       const refs = await listWorkspaceRefs(workspace);
       return {
         content: [textBlock(`Loaded ${refs.refs.length} Git refs.`)],
-        structuredContent: {
-          current_ref: refs.currentRef,
-          default_base_ref: refs.defaultBaseRef,
-          refs: refs.refs,
-        },
+        structuredContent: workspaceRefsOutput(refs),
       };
     },
   );
+}
+
+function workspaceActivityOutput(
+  activity: WorkspaceActivityService,
+  workspaceId: string,
+  reviewRef?: string,
+): {
+  groups: Array<{
+    id: string;
+    kind: "review" | "inferred";
+    started_at: string;
+    completed_at?: string;
+    review_ref?: string;
+    calls: Array<{
+      id: number;
+      tool_name: string;
+      started_at: string;
+      completed_at?: string;
+      duration_ms?: number;
+    }>;
+  }>;
+} {
+  const groups = reviewRef
+    ? [activity.findReviewGroup(workspaceId, reviewRef)].filter(
+        (group): group is NonNullable<typeof group> => Boolean(group),
+      )
+    : activity.listActivity(workspaceId).groups;
+  return {
+    groups: groups.map((group) => ({
+      id: group.id,
+      kind: group.kind,
+      started_at: group.startedAt,
+      ...(group.completedAt ? { completed_at: group.completedAt } : {}),
+      ...(group.reviewRef ? { review_ref: group.reviewRef } : {}),
+      calls: group.calls.map((call) => ({
+        id: call.id,
+        tool_name: call.toolName,
+        started_at: call.startedAt,
+        ...(call.completedAt ? { completed_at: call.completedAt } : {}),
+        ...(call.durationMs !== undefined ? { duration_ms: call.durationMs } : {}),
+      })),
+    })),
+  };
+}
+
+function workspaceToolCallOutput(call: NonNullable<ReturnType<WorkspaceActivityService["getToolCall"]>>): {
+  id: number;
+  tool_name: string;
+  arguments: unknown;
+  result?: unknown;
+  error?: unknown;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  review_ref?: string;
+} {
+  return {
+    id: call.id,
+    tool_name: call.toolName,
+    arguments: call.arguments,
+    ...(call.result !== undefined ? { result: call.result } : {}),
+    ...(call.error !== undefined ? { error: call.error } : {}),
+    started_at: call.startedAt,
+    ...(call.completedAt ? { completed_at: call.completedAt } : {}),
+    ...(call.durationMs !== undefined ? { duration_ms: call.durationMs } : {}),
+    ...(call.reviewRef ? { review_ref: call.reviewRef } : {}),
+  };
+}
+
+function workspaceDiffOutput(diff: Awaited<ReturnType<typeof readWorkspaceDiff>>): {
+  scope: Record<string, unknown>;
+  summary: typeof diff.summary;
+  files: typeof diff.files;
+  patch: string;
+} {
+  return {
+    scope: workspaceDiffScopeToOutput(diff.scope),
+    summary: diff.summary,
+    files: diff.files,
+    patch: diff.patch,
+  };
+}
+
+function workspaceRefsOutput(refs: Awaited<ReturnType<typeof listWorkspaceRefs>>): {
+  current_ref?: string;
+  default_base_ref?: string;
+  refs: string[];
+} {
+  return {
+    ...(refs.currentRef ? { current_ref: refs.currentRef } : {}),
+    ...(refs.defaultBaseRef ? { default_base_ref: refs.defaultBaseRef } : {}),
+    refs: refs.refs,
+  };
 }
 
 function workspaceDiffScopeFromInput(input: {
@@ -1021,6 +1133,64 @@ function workspaceDiffScopeToOutput(scope: WorkspaceDiffScope): Record<string, u
     case "compare":
       return { kind: scope.kind, from_ref: scope.fromRef, to_ref: scope.toRef };
   }
+}
+
+function workspaceDiffScopeFromQuery(query: Request["query"]): WorkspaceDiffScope {
+  switch (query.scope) {
+    case "review":
+      if (typeof query.review !== "string" || !query.review) {
+        throw new Error("review is required for review diffs.");
+      }
+      return { kind: "review", reviewRef: query.review };
+    case "working-tree":
+      return { kind: "working-tree" };
+    case "branch":
+      return {
+        kind: "branch",
+        ...(typeof query.base === "string" && query.base ? { baseRef: query.base } : {}),
+      };
+    case "compare":
+      if (
+        typeof query.from !== "string"
+        || typeof query.to !== "string"
+        || !query.from
+        || !query.to
+      ) {
+        throw new Error("from and to are required for ref comparisons.");
+      }
+      return { kind: "compare", fromRef: query.from, toRef: query.to };
+    default:
+      throw new Error("scope must be review, working-tree, branch, or compare.");
+  }
+}
+
+export function isLocalInspectorHost(hostHeader: string | undefined): boolean {
+  if (!hostHeader) return false;
+  try {
+    const hostname = new URL(`http://${hostHeader}`).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function requireLocalInspectorHost(req: Request, res: Response, next: NextFunction): void {
+  if (isLocalInspectorHost(req.headers.host)) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: "Workspace inspector is only available on a loopback host." });
+}
+
+function sendInspectorHttpError(res: Response, error: unknown, status: number): void {
+  res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
+}
+
+function requiredRouteParam(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") return value[0];
+  throw new Error(`Missing route parameter: ${name}`);
 }
 
 function withObservedToolHandlers(
@@ -1068,7 +1238,7 @@ export function createServer(
     ?? [createOpenAIIncomingArtifactAdapter()];
   const allowedHosts = config.allowedHosts.includes("*")
     ? undefined
-    : Array.from(new Set([config.host, ...config.allowedHosts]));
+    : Array.from(new Set([config.host, ...config.allowedHosts, "localhost", "127.0.0.1", "[::1]"]));
   const app = createMcpExpressApp({
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
@@ -1188,6 +1358,82 @@ export function createServer(
       setHeaders: setAssetHeaders,
     }),
   );
+
+  if (config.uiEnabled) {
+    app.use("/ws", requireLocalInspectorHost);
+    app.use("/api/workspaces", requireLocalInspectorHost);
+
+    app.get("/ws/:workspaceId", (req, res) => {
+      const workspaceId = requiredRouteParam(req, "workspaceId");
+      const queryIndex = req.originalUrl.indexOf("?");
+      const search = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
+      res.redirect(302, `/ws/${encodeURIComponent(workspaceId)}/activity${search}`);
+    });
+
+    app.get(["/ws/:workspaceId/activity", "/ws/:workspaceId/changes"], async (req, res) => {
+      try {
+        const workspace = await workspaces.getWorkspace(requiredRouteParam(req, "workspaceId"));
+        res.type("html").send(workspaceInspectorHtml({
+          workspaceId: workspace.id,
+          root: workspace.root,
+          mode: workspace.mode,
+        }));
+      } catch (error) {
+        sendInspectorHttpError(res, error, 404);
+      }
+    });
+
+    app.get("/api/workspaces/:workspaceId/activity", async (req, res) => {
+      try {
+        const workspaceId = requiredRouteParam(req, "workspaceId");
+        await workspaces.getWorkspace(workspaceId);
+        const reviewRef = typeof req.query.review === "string" ? req.query.review : undefined;
+        res.json(workspaceActivityOutput(workspaceActivityService, workspaceId, reviewRef));
+      } catch (error) {
+        sendInspectorHttpError(res, error, 404);
+      }
+    });
+
+    app.get("/api/workspaces/:workspaceId/tool-calls/:callId", async (req, res) => {
+      try {
+        const workspaceId = requiredRouteParam(req, "workspaceId");
+        await workspaces.getWorkspace(workspaceId);
+        const callId = Number(requiredRouteParam(req, "callId"));
+        if (!Number.isSafeInteger(callId) || callId <= 0) {
+          res.status(400).json({ error: "callId must be a positive integer." });
+          return;
+        }
+        const call = workspaceActivityService.getToolCall(workspaceId, callId);
+        if (!call) {
+          res.status(404).json({ error: `Unknown tool call ${callId} for workspace ${workspaceId}.` });
+          return;
+        }
+        res.json({ call: workspaceToolCallOutput(call) });
+      } catch (error) {
+        sendInspectorHttpError(res, error, 404);
+      }
+    });
+
+    app.get("/api/workspaces/:workspaceId/diff", async (req, res) => {
+      try {
+        const workspace = await workspaces.getWorkspace(requiredRouteParam(req, "workspaceId"));
+        const scope = workspaceDiffScopeFromQuery(req.query);
+        const diff = await readWorkspaceDiff(workspace, reviewCheckpoints, scope);
+        res.json(workspaceDiffOutput(diff));
+      } catch (error) {
+        sendInspectorHttpError(res, error, 400);
+      }
+    });
+
+    app.get("/api/workspaces/:workspaceId/refs", async (req, res) => {
+      try {
+        const workspace = await workspaces.getWorkspace(requiredRouteParam(req, "workspaceId"));
+        res.json(workspaceRefsOutput(await listWorkspaceRefs(workspace)));
+      } catch (error) {
+        sendInspectorHttpError(res, error, 404);
+      }
+    });
+  }
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, name: "devspace" });
