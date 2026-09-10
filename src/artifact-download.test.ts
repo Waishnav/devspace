@@ -74,7 +74,7 @@ function testOneToolContract(): void {
   const descriptor = registered.get("download_artifact")?.descriptor;
   assert.ok(descriptor);
   assert.deepEqual(descriptor._meta, { "openai/fileParams": ["file"] });
-  assert.deepEqual(Object.keys(descriptor.inputSchema as object).sort(), ["file", "path", "workspaceId"]);
+  assert.deepEqual(Object.keys(descriptor.inputSchema as object).sort(), ["file", "path", "workspace_id"]);
   assert.deepEqual(Object.keys(descriptor.outputSchema as object), ["path"]);
   assert.equal((descriptor.annotations as { destructiveHint?: boolean }).destructiveHint, false);
 
@@ -353,7 +353,7 @@ function testLogRedaction(): void {
       file_name: "generated.png",
       authorization: "Bearer log-secret",
     },
-    workspaceId: "ws_secret",
+    workspace_id: "ws_secret",
     path: "private/generated.png",
   });
   const serialized = JSON.stringify(fields);

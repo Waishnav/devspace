@@ -22,7 +22,7 @@ These ideas should stay true as the project evolves:
 - **Host** — the MCP client presenting the agent experience and coordinating work.
 - **Server** — the local DevSpace MCP server.
 - **Workspace** — one opened directory or worktree and its accumulated instruction context.
-- **`workspaceId`** — the opaque handle returned by `open_workspace` and reused for calls in that workspace.
+- **`workspace_id`** — the opaque handle returned by `open_workspace` and reused for calls in that workspace.
 - **Allowed root** — a configured filesystem boundary within which a workspace may be opened. It is not itself necessarily a workspace.
 - **Checkout mode** — operating on an existing checkout supplied by the user.
 - **Worktree mode** — operating in an isolated Git worktree.

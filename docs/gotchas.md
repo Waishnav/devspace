@@ -137,19 +137,19 @@ To regenerate setup:
 npx @waishnav/devspace init --force
 ```
 
-## Unknown `workspaceId`
+## Unknown `workspace_id`
 
-`workspaceId` values are session identifiers. If the server restarts and the
+`workspace_id` values are session identifiers. If the server restarts and the
 client receives an unknown workspace error, call `open_workspace` again for that
 project.
 
 Workspace session metadata is persisted. ChatGPT may provide optional
 conversation metadata that lets DevSpace resume the same checkout workspace for
-the same project in that conversation; repeated opens reuse the `workspaceId`
+the same project in that conversation; repeated opens reuse the `workspace_id`
 and do not repeat context already provided for that reused checkout. Worktree
 mode always creates a new isolated workspace with its own complete context.
 Hosts without supported conversation metadata receive a normal new workspace.
-In all cases, continue passing the `workspaceId` returned by `open_workspace` to
+In all cases, continue passing the `workspace_id` returned by `open_workspace` to
 later tools. Other MCP hosts use this explicit workspace workflow as well.
 
 To review work, call `show_changes` once after the final related file change. It
@@ -186,7 +186,7 @@ Worktree mode requires:
 - Git installed
 - the path is inside a Git repository
 - the repository has at least one commit
-- the requested `baseRef` resolves to a commit
+- the requested `base_ref` resolves to a commit
 
 For a new repository, create the first commit or use checkout mode.
 
@@ -274,7 +274,7 @@ metadata and only show text results; `show_changes` remains available there.
 If both cards are missing in ChatGPT, confirm that `ui.enabled` is not `false`
 in `~/.devspace/config.jsonc` and reconnect the MCP server.
 
-Historical `show_changes` cards use the `reviewRef` in their structured result
+Historical `show_changes` cards use the `review_ref` in their structured result
 to recover the exact Git-backed review when a host reloads the app without its
 original result metadata. `open_workspace` can rebuild its card directly from
 its structured result.

@@ -16,8 +16,8 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   const metaCard = cardFields(asRecord(asRecord(result._meta)?.card));
 
   if (structured) {
-    const workspaceId = stringField(structured.workspaceId);
-    const reviewRef = stringField(structured.reviewRef);
+    const workspaceId = stringField(structured.workspace_id);
+    const reviewRef = stringField(structured.review_ref);
     if (workspaceId && reviewRef) {
       if (isCompleteReviewCard(metaCard)) {
         return {
@@ -45,7 +45,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
     const root = stringField(structured.root);
     const mode = workspaceMode(structured.mode);
     if (workspaceId && root && mode) {
-      const structuredCard = cardFields(structured) ?? {};
+      const structuredCard = structuredWorkspaceCardFields(structured) ?? {};
       return {
         kind: "card",
         card: {
@@ -71,6 +71,35 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   }
 
   return { kind: "invalid" };
+}
+
+function structuredWorkspaceCardFields(
+  record: Record<string, unknown> | undefined,
+): Partial<ToolResultCard> | undefined {
+  if (!record) return undefined;
+  const worktreeRecord = asRecord(record.worktree);
+  return cardFields({
+    root: record.root,
+    mode: record.mode,
+    sourceRoot: record.source_root,
+    worktree: worktreeRecord
+      ? {
+          path: worktreeRecord.path,
+          baseRef: worktreeRecord.base_ref,
+          baseSha: worktreeRecord.base_sha,
+          dirtySource: worktreeRecord.dirty_source,
+          detached: worktreeRecord.detached,
+          managed: worktreeRecord.managed,
+      }
+      : undefined,
+    review: record.review,
+    agentsFiles: record.agents_files,
+    availableAgentsFiles: record.available_agents_files,
+    skills: record.skills,
+    agentProviders: record.agent_providers,
+    agents: record.agents,
+    instruction: record.instruction,
+  });
 }
 
 function isCompleteReviewCard(

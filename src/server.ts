@@ -81,7 +81,7 @@ function mcpServerInfo() {
     title: "DevSpace",
     version: DEVSPACE_VERSION,
     description:
-      "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
+      "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspace_id.",
   };
 }
 
@@ -133,8 +133,8 @@ function serverInstructions(
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, and ${toolNames.read} permits files within advertised skill directories. `
     : "";
-  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in availableAgentsFiles, use ${toolNames.read} to inspect that instruction file and follow it. `;
-  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspaceId. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspaceId is rejected.`;
+  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
+  const common = `Use DevSpace for coding work. Call ${toolNames.openWorkspace} once for each project folder or isolated worktree, then keep using its workspace_id. During continued work in the same project or worktree, do not call ${toolNames.openWorkspace} again. Open another workspace only when changing projects, switching checkout/worktree mode, creating another isolated worktree, or when the current workspace_id is rejected.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
 }
@@ -387,7 +387,7 @@ function registerMcpSurface(
     {
       title: "Open workspace",
       description:
-        "Start work in a project directory or isolated worktree when no usable workspaceId exists for it. During continued work, reuse the existing workspaceId instead of calling this tool again. By default this uses the actual checkout; set mode=\"worktree\" for isolated or parallel work.",
+        "Start work in a project directory or isolated worktree when no usable workspace_id exists for it. During continued work, reuse the existing workspace_id instead of calling this tool again. By default this uses the actual checkout; set mode=\"worktree\" for isolated or parallel work.",
       inputSchema: {
         path: z
           .string()
@@ -400,32 +400,32 @@ function registerMcpSurface(
           .describe(
             "Defaults to checkout, which works in the actual directory. Use worktree for isolated or parallel Git work.",
           ),
-        baseRef: z
+        base_ref: z
           .string()
           .optional()
           .describe("Git ref to base a worktree on. Only used with mode=\"worktree\". Defaults to HEAD."),
       },
       outputSchema: {
-        workspaceId: z.string(),
+        workspace_id: z.string(),
         root: z.string(),
         mode: z.enum(["checkout", "worktree"]),
-        sourceRoot: z.string().optional(),
+        source_root: z.string().optional(),
         worktree: z
           .object({
             path: z.string(),
-            baseRef: z.string(),
-            baseSha: z.string(),
-            dirtySource: z.boolean(),
+            base_ref: z.string(),
+            base_sha: z.string(),
+            dirty_source: z.boolean(),
             detached: z.boolean(),
             managed: z.boolean(),
           })
           .optional(),
-        agentsFiles: z.array(workspaceAgentsFileOutputSchema).optional(),
-        availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
+        agents_files: z.array(workspaceAgentsFileOutputSchema).optional(),
+        available_agents_files: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
         skills: z.array(workspaceSkillOutputSchema).optional(),
-        agentProviders: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
+        agent_providers: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
         agents: z.array(workspaceLocalAgentOutputSchema).optional(),
-        skillDiagnostics: z.array(z.unknown()).optional(),
+        skill_diagnostics: z.array(z.unknown()).optional(),
         review: z.discriminatedUnion("available", [
           z.object({ available: z.literal(true) }),
           z.object({
@@ -438,8 +438,9 @@ function registerMcpSurface(
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
-    async ({ path, mode, baseRef }, { _meta }) => {
+    async ({ path, mode, base_ref }, { _meta }) => {
       const startedAt = performance.now();
+      const baseRef = base_ref;
       const {
         workspace,
         agentsFiles,
@@ -495,16 +496,16 @@ function registerMcpSurface(
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspaceId for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agentsFiles instructions. Before working under a path listed in availableAgentsFiles, read that instruction file.";
+        ? "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
+        : "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file.";
       const workspaceInstruction = workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
-            "Continue with this workspaceId.",
+            "Continue with this workspace_id.",
             "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
           ].join("\n\n")
         : workspace.mode === "worktree"
-          ? "Use this workspaceId for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
+          ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
           : cardInstruction;
       const instruction = preloadedSubagentInstructions && includeBootstrapContext
         ? [
@@ -581,20 +582,29 @@ function registerMcpSurface(
           },
         },
         structuredContent: {
-          workspaceId: workspace.id,
+          workspace_id: workspace.id,
           root: workspace.root,
           mode: workspace.mode,
-          sourceRoot: workspace.sourceRoot,
-          worktree: workspace.worktree,
+          source_root: workspace.sourceRoot,
+          worktree: workspace.worktree
+            ? {
+                path: workspace.worktree.path,
+                base_ref: workspace.worktree.baseRef,
+                base_sha: workspace.worktree.baseSha,
+                dirty_source: workspace.worktree.dirtySource,
+                detached: workspace.worktree.detached,
+                managed: workspace.worktree.managed,
+              }
+            : undefined,
           review,
           ...(includeBootstrapContext
             ? {
-                agentsFiles: loadedAgentsFiles,
-                availableAgentsFiles: availableAgentsFileOutputs,
+                agents_files: loadedAgentsFiles,
+                available_agents_files: availableAgentsFileOutputs,
                 skills: visibleSkills,
-                agentProviders: visibleAgentProviders,
+                agent_providers: visibleAgentProviders,
                 agents: visibleAgents,
-                skillDiagnostics: workspace.skillDiagnostics,
+                skill_diagnostics: workspace.skillDiagnostics,
               }
             : {}),
           instruction,
@@ -618,7 +628,7 @@ function registerMcpSurface(
           .filter(Boolean)
           .join(" "),
       inputSchema: {
-        workspaceId: z
+        workspace_id: z
           .string()
           .describe(workspaceIdDescription),
         path: z
@@ -644,8 +654,9 @@ function registerMcpSurface(
       outputSchema: resultOutputSchema(),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId, ...input }) => {
+    async ({ workspace_id, ...input }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = await workspaces.getWorkspace(workspaceId);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
       const response = await readFileTool(
@@ -698,17 +709,18 @@ function registerMcpSurface(
       description:
         "Show the changes made in this turn for an open workspace. Call this once after the final related file change and before your final response so the user can review the combined diff. Do not call it after each individual file change.",
       inputSchema: {
-        workspaceId: z.string().describe(workspaceIdDescription),
+        workspace_id: z.string().describe(workspaceIdDescription),
       },
       outputSchema: resultOutputSchema({
-        workspaceId: z.string(),
-        reviewRef: z.string().regex(/^[0-9a-f]{40,64}$/),
+        workspace_id: z.string(),
+        review_ref: z.string().regex(/^[0-9a-f]{40,64}$/),
       }),
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId }, { _meta }) => {
+    async ({ workspace_id }, { _meta }) => {
       const startedAt = performance.now();
+      const workspaceId = workspace_id;
       const workspace = await workspaces.getWorkspace(workspaceId);
       const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
         ? _meta["devspace/reviewRef"]
@@ -746,8 +758,8 @@ function registerMcpSurface(
           },
         },
         structuredContent: {
-          workspaceId,
-          reviewRef: review.reviewRef,
+          workspace_id: workspaceId,
+          review_ref: review.reviewRef,
           result: contentText(content),
         },
       };

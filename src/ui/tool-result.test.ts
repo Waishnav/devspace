@@ -10,11 +10,11 @@ test("workspace cards can be rebuilt from structured content without result meta
   const decoded = decodeToolResult({
     content: [],
     structuredContent: {
-      workspaceId: "ws_1",
+      workspace_id: "ws_1",
       root: "/tmp/project",
       mode: "checkout",
       skills: [{ name: "tdd", description: "Tests first", path: "/tmp/tdd/SKILL.md" }],
-      agentsFiles: [{ path: "AGENTS.md", content: "instructions" }],
+      agents_files: [{ path: "AGENTS.md", content: "instructions" }],
       review: { available: true },
       instruction: "Reuse this workspace.",
     },
@@ -32,8 +32,8 @@ test("review results use rich metadata when the host provides it", () => {
   const decoded = decodeToolResult({
     content: [],
     structuredContent: {
-      workspaceId: "ws_1",
-      reviewRef: "a".repeat(40),
+      workspace_id: "ws_1",
+      review_ref: "a".repeat(40),
       result: "Changed 1 file (+1 -0).",
     },
     _meta: {
@@ -57,8 +57,8 @@ test("review structured content becomes a reload reference when metadata is miss
   const decoded = decodeToolResult({
     content: [],
     structuredContent: {
-      workspaceId: "ws_1",
-      reviewRef: "b".repeat(40),
+      workspace_id: "ws_1",
+      review_ref: "b".repeat(40),
       result: "Changed 1 file (+1 -0).",
     },
   });
@@ -74,8 +74,8 @@ test("incomplete review metadata falls back to the durable review reference", ()
   const decoded = decodeToolResult({
     content: [],
     structuredContent: {
-      workspaceId: "ws_1",
-      reviewRef: "e".repeat(40),
+      workspace_id: "ws_1",
+      review_ref: "e".repeat(40),
       result: "Changed 1 file (+1 -0).",
     },
     _meta: { card: {} },
@@ -114,8 +114,8 @@ test("ChatGPT globals restore structured output and hidden MCP result metadata t
   };
   const restored = toolResultFromChatGptGlobals({
     toolOutput: {
-      workspaceId: "ws_1",
-      reviewRef: "c".repeat(40),
+      workspace_id: "ws_1",
+      review_ref: "c".repeat(40),
       result: "Changed 1 file.",
     },
     toolResponseMetadata: {
@@ -124,8 +124,8 @@ test("ChatGPT globals restore structured output and hidden MCP result metadata t
   });
 
   assert.deepEqual(restored?.structuredContent, {
-    workspaceId: "ws_1",
-    reviewRef: "c".repeat(40),
+    workspace_id: "ws_1",
+    review_ref: "c".repeat(40),
     result: "Changed 1 file.",
   });
   assert.deepEqual(restored?._meta, fullResult._meta);
@@ -134,8 +134,8 @@ test("ChatGPT globals restore structured output and hidden MCP result metadata t
 test("ChatGPT globals also accept result metadata exposed directly", () => {
   const restored = toolResultFromChatGptGlobals({
     toolOutput: {
-      workspaceId: "ws_1",
-      reviewRef: "d".repeat(40),
+      workspace_id: "ws_1",
+      review_ref: "d".repeat(40),
       result: "Changed 1 file.",
     },
     toolResponseMetadata: {

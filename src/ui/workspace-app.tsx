@@ -208,7 +208,7 @@ async function reopenReview(
 
   return app.callServerTool({
     name: "show_changes",
-    arguments: { workspaceId },
+    arguments: { workspace_id: workspaceId },
     _meta: { "devspace/reviewRef": reviewRef },
   });
 }
