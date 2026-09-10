@@ -49,4 +49,16 @@ test("workspace activity persists raw tool calls across store reopen", async (t)
       durationMs: 10,
     },
   ]);
+  assert.deepEqual(reopened.listCallSummaries({ workspaceId: "ws_test", limit: 10 }), [
+    {
+      id: callId,
+      workspaceId: "ws_test",
+      conversationScopeId: "conversation-1",
+      requestId: "request-1",
+      toolName: "read",
+      startedAt: "2026-09-11T00:00:00.000Z",
+      completedAt: "2026-09-11T00:00:00.010Z",
+      durationMs: 10,
+    },
+  ]);
 });
