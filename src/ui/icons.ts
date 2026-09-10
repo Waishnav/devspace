@@ -11,6 +11,7 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  Maximize2,
   createElement,
   type IconNode,
 } from "lucide";
@@ -28,6 +29,7 @@ export const toolIcons = {
   providers: Cpu,
   skills: Blocks,
   sourceCheckout: FolderGit2,
+  fullscreen: Maximize2,
   warning: CircleAlert,
 } as const satisfies Record<string, IconNode>;
 
