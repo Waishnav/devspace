@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   opencodeAgentConfig,
   OpencodeLocalAgentDriver,
+  OpencodeRuntime,
   opencodeAgentFor,
   opencodePermissionFor,
   type OpencodeClientLike,
@@ -196,6 +197,32 @@ assert.deepEqual(promptInputs[2], {
   agent: "devspace_allowed",
   variant: "low",
 });
+
+const timeoutClient = {
+  global: {
+    async health() { return { data: { healthy: true } }; },
+  },
+  session: {
+    async create() { return { data: { id: "session_timeout" } }; },
+    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      return new Promise<never>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    },
+  },
+} as unknown as OpencodeClientLike;
+const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 5);
+const timedOutPrompt = await timeoutRuntime.run({
+  prompt: "never finishes",
+  workspaceRoot: "/tmp/project",
+});
+assert.equal(timedOutPrompt.isErr(), true);
+if (timedOutPrompt.isErr()) {
+  assert.equal(timedOutPrompt.error.code, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal(timedOutPrompt.error.retryable, true);
+  assert.match(timedOutPrompt.error.message, /provider timeout/);
+}
+await timeoutRuntime.close();
 
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");

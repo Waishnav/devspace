@@ -23,6 +23,7 @@ import { terminateProcessTree } from "./process-platform.js";
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_START_ATTEMPTS = 3;
+const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
@@ -49,10 +50,12 @@ export class OpencodeRuntime implements LocalAgentRuntime {
   readonly provider = "opencode" as const;
   private alive = true;
   private closed = false;
+  private readonly promptControllers = new Set<AbortController>();
 
   constructor(
     private readonly client: OpencodeClientLike,
     private readonly server: OpencodeServerLike,
+    private readonly promptTimeoutMs = OPENCODE_PROMPT_TIMEOUT_MS,
   ) {}
 
   async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
@@ -73,7 +76,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           await assertOpencodeHealthy(this.client);
           const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input);
           await callbacks?.onSessionId?.(sessionId);
-          const promptResult = await promptOpencodeSession(this.client, sessionId, input);
+          const promptResult = await this.prompt(sessionId, input);
           assertOpenCodePromptSucceeded(promptResult);
           const finalResponse = requireFinalResponse(extractOpenCodeFinalResponse(promptResult));
           return {
@@ -112,7 +115,35 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     if (this.closed) return;
     this.closed = true;
     this.alive = false;
+    for (const controller of this.promptControllers) controller.abort();
+    this.promptControllers.clear();
     this.server.close();
+  }
+
+  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<unknown> {
+    const controller = new AbortController();
+    this.promptControllers.add(controller);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.promptTimeoutMs);
+    try {
+      return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
+    } catch (error) {
+      if (!timedOut) throw error;
+      throw new AgentProviderProtocolError({
+        code: "PROVIDER_PROTOCOL_ERROR",
+        provider: "opencode",
+        operation: "prompt",
+        retryable: true,
+        cause: error,
+        message: "OpenCode did not finish the prompt before the provider timeout.",
+      });
+    } finally {
+      clearTimeout(timer);
+      this.promptControllers.delete(controller);
+    }
   }
 }
 
@@ -356,6 +387,7 @@ async function promptOpencodeSession(
   client: OpencodeClientLike,
   sessionId: string,
   input: LocalAgentRunInput,
+  signal: AbortSignal,
 ): Promise<unknown> {
   const model = input.model ? parseOpencodeModel(input.model) : undefined;
   return client.session.prompt({
@@ -365,7 +397,7 @@ async function promptOpencodeSession(
     agent: opencodeAgentFor(input.writeMode),
     ...(model ? { model } : {}),
     ...(input.effort ? { variant: input.effort } : {}),
-  }, { throwOnError: true });
+  }, { throwOnError: true, signal });
 }
 
 function parseOpencodeModel(model: string): OpencodeModelRef {
