@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { groupWorkspaceToolCalls } from "./workspace-activity.js";
-import type { WorkspaceToolCall } from "./workspace-activity-store.js";
+import type { WorkspaceToolCallSummary } from "./workspace-activity-store.js";
 
 test("show_changes closes one review-backed activity group", () => {
   const calls = [
@@ -42,13 +42,12 @@ function call(
   toolName: string,
   startedAt: string,
   conversationScopeId = "conversation-a",
-): WorkspaceToolCall {
+): WorkspaceToolCallSummary {
   return {
     id,
     workspaceId: "ws_test",
     conversationScopeId,
     toolName,
-    arguments: {},
     startedAt,
     completedAt: startedAt,
     durationMs: 0,

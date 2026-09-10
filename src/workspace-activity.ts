@@ -1,4 +1,4 @@
-import type { WorkspaceToolCall } from "./workspace-activity-store.js";
+import type { WorkspaceToolCallSummary } from "./workspace-activity-store.js";
 
 const ACTIVITY_GROUP_GAP_MS = 2 * 60 * 1000;
 
@@ -8,13 +8,13 @@ export interface WorkspaceActivityGroup {
   startedAt: string;
   completedAt?: string;
   reviewRef?: string;
-  calls: WorkspaceToolCall[];
+  calls: WorkspaceToolCallSummary[];
 }
 
 export function groupWorkspaceToolCalls(
-  calls: ReadonlyArray<WorkspaceToolCall>,
+  calls: ReadonlyArray<WorkspaceToolCallSummary>,
 ): WorkspaceActivityGroup[] {
-  const byConversation = new Map<string, WorkspaceToolCall[]>();
+  const byConversation = new Map<string, WorkspaceToolCallSummary[]>();
   for (const call of calls) {
     const key = call.conversationScopeId ?? "__unscoped__";
     const conversationCalls = byConversation.get(key) ?? [];
@@ -30,13 +30,13 @@ export function groupWorkspaceToolCalls(
   });
 }
 
-function groupConversationCalls(calls: WorkspaceToolCall[]): WorkspaceActivityGroup[] {
+function groupConversationCalls(calls: WorkspaceToolCallSummary[]): WorkspaceActivityGroup[] {
   const ordered = [...calls].sort((left, right) => {
     const timeOrder = left.startedAt.localeCompare(right.startedAt);
     return timeOrder !== 0 ? timeOrder : left.id - right.id;
   });
   const groups: WorkspaceActivityGroup[] = [];
-  let current: WorkspaceToolCall[] = [];
+  let current: WorkspaceToolCallSummary[] = [];
 
   const flush = () => {
     if (current.length === 0) return;
@@ -56,7 +56,7 @@ function groupConversationCalls(calls: WorkspaceToolCall[]): WorkspaceActivityGr
   return groups;
 }
 
-function toActivityGroup(calls: WorkspaceToolCall[]): WorkspaceActivityGroup {
+function toActivityGroup(calls: WorkspaceToolCallSummary[]): WorkspaceActivityGroup {
   const first = calls[0]!;
   const last = calls.at(-1)!;
   const reviewRef = isReviewBoundary(last) ? last.reviewRef : undefined;
@@ -70,7 +70,10 @@ function toActivityGroup(calls: WorkspaceToolCall[]): WorkspaceActivityGroup {
   };
 }
 
-function callStartedAfterGap(previous: WorkspaceToolCall, next: WorkspaceToolCall): boolean {
+function callStartedAfterGap(
+  previous: WorkspaceToolCallSummary,
+  next: WorkspaceToolCallSummary,
+): boolean {
   const previousEnd = Date.parse(previous.completedAt ?? previous.startedAt);
   const nextStart = Date.parse(next.startedAt);
   return Number.isFinite(previousEnd)
@@ -78,6 +81,8 @@ function callStartedAfterGap(previous: WorkspaceToolCall, next: WorkspaceToolCal
     && nextStart - previousEnd > ACTIVITY_GROUP_GAP_MS;
 }
 
-function isReviewBoundary(call: WorkspaceToolCall): call is WorkspaceToolCall & { reviewRef: string } {
+function isReviewBoundary(
+  call: WorkspaceToolCallSummary,
+): call is WorkspaceToolCallSummary & { reviewRef: string } {
   return call.toolName === "show_changes" && typeof call.reviewRef === "string";
 }
