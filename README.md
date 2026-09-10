@@ -83,7 +83,11 @@ npx @waishnav/devspace init
 During setup, DevSpace asks for:
 
 - where you will use it: ChatGPT, Coding Agents, or both
-- which Coding Agents DevSpace may use
+- which agents DevSpace may use as subagents
+
+The first choice is where you invoke DevSpace from. The subagent choice is
+separate: ChatGPT or another coding agent can delegate work through DevSpace to
+the agents you select there.
 
 If you select ChatGPT, setup also asks which local project folders it may open
 and for your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy,

@@ -27,6 +27,8 @@ The setup flow asks one question at a time.
 
 First choose where you will use DevSpace: ChatGPT, Coding Agents, or both.
 DevSpace uses that answer to skip setup that does not apply to you.
+This selects where you invoke DevSpace from. It does not control which agents
+DevSpace may run for delegated work.
 
 ### Project roots
 
@@ -52,11 +54,15 @@ commands use the current Git project, or the current directory outside a
 repository, with the authority of your local shell. MCP workspace operations
 remain limited to the roots configured for ChatGPT.
 
-### Coding Agents
+### Subagents
 
-Setup detects supported Coding Agents and asks which ones DevSpace may use.
+Setup detects supported agents and asks which ones DevSpace may use as
+subagents. ChatGPT or another coding agent can delegate work through DevSpace
+to the agents selected here.
 These choices are stored as provider objects under `subagents` in
 `~/.devspace/config.jsonc`.
+
+### Coding Agents
 
 If you selected Coding Agents, setup prints:
 
