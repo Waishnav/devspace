@@ -59,6 +59,8 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "@opencode-ai/sdk": "^1.17.13",
     "@pierre/diffs": "^1.3.6",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-router": "^1.170.33",
     "better-result": "^2.10.0",
     "better-sqlite3": "^12.10.0",
     "cross-spawn": "^7.0.6",
