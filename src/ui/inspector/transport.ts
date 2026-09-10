@@ -18,11 +18,11 @@ const activityGroupSchema = z.object({
   calls: z.array(activityCallSchema),
 });
 
-const activitySchema = z.object({
+export const workspaceActivityDataSchema = z.object({
   groups: z.array(activityGroupSchema),
 });
 
-const toolCallSchema = z.object({
+export const workspaceToolCallDataSchema = z.object({
   call: z.object({
     id: z.number().int(),
     tool_name: z.string(),
@@ -36,7 +36,7 @@ const toolCallSchema = z.object({
   }),
 });
 
-const diffSchema = z.object({
+export const workspaceDiffDataSchema = z.object({
   scope: z.unknown(),
   summary: z.object({
     files: z.number().int(),
@@ -53,16 +53,16 @@ const diffSchema = z.object({
   patch: z.string(),
 });
 
-const refsSchema = z.object({
+export const workspaceRefsDataSchema = z.object({
   current_ref: z.string().optional(),
   default_base_ref: z.string().optional(),
   refs: z.array(z.string()),
 });
 
-export type WorkspaceActivityData = z.infer<typeof activitySchema>;
-export type WorkspaceToolCallData = z.infer<typeof toolCallSchema>["call"];
-export type WorkspaceDiffData = z.infer<typeof diffSchema>;
-export type WorkspaceRefsData = z.infer<typeof refsSchema>;
+export type WorkspaceActivityData = z.infer<typeof workspaceActivityDataSchema>;
+export type WorkspaceToolCallData = z.infer<typeof workspaceToolCallDataSchema>["call"];
+export type WorkspaceDiffData = z.infer<typeof workspaceDiffDataSchema>;
+export type WorkspaceRefsData = z.infer<typeof workspaceRefsDataSchema>;
 
 export type WorkspaceDiffScopeInput =
   | { kind: "review"; review_ref: string }
@@ -88,7 +88,7 @@ export function createMcpInspectorTransport(app: App): WorkspaceInspectorTranspo
             ...(reviewRef ? { review_ref: reviewRef } : {}),
           },
         }),
-        activitySchema,
+        workspaceActivityDataSchema,
       );
     },
     async getToolCall(workspaceId, callId) {
@@ -97,7 +97,7 @@ export function createMcpInspectorTransport(app: App): WorkspaceInspectorTranspo
           name: "get_workspace_tool_call",
           arguments: { workspace_id: workspaceId, call_id: callId },
         }),
-        toolCallSchema,
+        workspaceToolCallDataSchema,
       ).call;
     },
     async getDiff(workspaceId, scope) {
@@ -106,7 +106,7 @@ export function createMcpInspectorTransport(app: App): WorkspaceInspectorTranspo
           name: "get_workspace_diff",
           arguments: { workspace_id: workspaceId, scope },
         }),
-        diffSchema,
+        workspaceDiffDataSchema,
       );
     },
     async getRefs(workspaceId) {
@@ -115,7 +115,7 @@ export function createMcpInspectorTransport(app: App): WorkspaceInspectorTranspo
           name: "get_workspace_refs",
           arguments: { workspace_id: workspaceId },
         }),
-        refsSchema,
+        workspaceRefsDataSchema,
       );
     },
   };

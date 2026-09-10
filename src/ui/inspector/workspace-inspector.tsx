@@ -4,6 +4,7 @@ import {
   Outlet,
   RouterProvider,
   createMemoryHistory,
+  createBrowserHistory,
   createRootRoute,
   createRoute,
   createRouter,
@@ -34,6 +35,7 @@ interface InspectorOptions {
   transport: WorkspaceInspectorTransport;
   initialReviewRef?: string;
   onExitFullscreen?: () => void;
+  browserBasepath?: string;
 }
 
 interface MountedInspector {
@@ -84,9 +86,13 @@ export function mountWorkspaceInspector(
   const initialPath = options.initialReviewRef
     ? `/activity?review=${encodeURIComponent(options.initialReviewRef)}`
     : "/activity";
+  const history = options.browserBasepath
+    ? createBrowserHistory()
+    : createMemoryHistory({ initialEntries: [initialPath] });
   const router = createRouter({
     routeTree,
-    history: createMemoryHistory({ initialEntries: [initialPath] }),
+    history,
+    ...(options.browserBasepath ? { basepath: options.browserBasepath } : {}),
   });
 
   root.render(
