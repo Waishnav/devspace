@@ -1,14 +1,11 @@
 import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
 import type {
-  ModelRef,
   OpencodeClient,
-  PromptInput,
   PermissionConfig,
-  SessionMessagesResponse,
-  SessionV2Info,
 } from "@opencode-ai/sdk/v2";
 import {
+  AgentProviderExecutionError,
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
   captureAgentProviderResult,
@@ -23,15 +20,18 @@ import type {
 } from "./local-agent-runtime.js";
 import { terminateProcessTree } from "./process-platform.js";
 
-const OPENCODE_SESSION_POLL_INTERVAL_MS = 250;
-const OPENCODE_SESSION_POLL_TIMEOUT_MS = 5 * 60_000;
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
-export type OpencodeClientLike = Pick<OpencodeClient, "v2">;
+interface OpencodeModelRef {
+  providerID: string;
+  modelID: string;
+}
+
+export type OpencodeClientLike = Pick<OpencodeClient, "global" | "session">;
 
 export interface OpencodeServerLike {
   close(): void;
@@ -71,31 +71,16 @@ export class OpencodeRuntime implements LocalAgentRuntime {
         }
         try {
           await assertOpencodeHealthy(this.client);
-          const resumed = Boolean(input.providerSessionId);
-          const initialModel = input.model ? parseOpencodeModel(input.model, input.effort) : undefined;
-          const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input, initialModel);
+          const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input);
           await callbacks?.onSessionId?.(sessionId);
-          await this.client.v2.session.switchAgent({
-            sessionID: sessionId,
-            agent: opencodeAgentFor(input.writeMode),
-          }, { throwOnError: true });
-
-          const model = initialModel ?? (input.effort ? await modelWithEffort(this.client, sessionId, input.effort) : undefined);
-          if (model && (resumed || !initialModel)) {
-            await this.client.v2.session.switchModel({ sessionID: sessionId, model }, { throwOnError: true });
-          }
           const promptResult = await promptOpencodeSession(this.client, sessionId, input);
-          await waitForOpencodeSession(this.client, sessionId, promptResult);
-          const promptId = extractOpenCodePromptId(promptResult);
-          const messages = await readOpencodeMessages(this.client, sessionId, promptId);
-          const finalResponse = requireFinalResponse(
-            extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
-          );
+          assertOpenCodePromptSucceeded(promptResult);
+          const finalResponse = requireFinalResponse(extractOpenCodeFinalResponse(promptResult));
           return {
             provider: this.provider,
             providerSessionId: sessionId,
             finalResponse,
-            items: [promptResult, messages],
+            items: [promptResult],
           };
         } catch (error) {
           if (isOpenCodeTransportFailure(error)) {
@@ -300,14 +285,11 @@ export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]):
 async function createOpencodeSession(
   client: OpencodeClientLike,
   input: LocalAgentRunInput,
-  model?: ModelRef,
 ): Promise<string> {
-  const result = await client.v2.session.create({
-    location: { directory: input.workspaceRoot },
-    agent: opencodeAgentFor(input.writeMode),
-    ...(model ? { model } : {}),
+  const result = await client.session.create({
+    directory: input.workspaceRoot,
   }, { throwOnError: true });
-  return requireSessionId(result.data.data);
+  return requireSessionId(result.data);
 }
 
 export function opencodeAgentFor(writeMode: LocalAgentRunInput["writeMode"]): string {
@@ -335,10 +317,8 @@ export function opencodePermissionFor(writeMode: LocalAgentRunInput["writeMode"]
 }
 
 async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> {
-  const health = client.v2.health;
-  if (!health) return;
   try {
-    await health.get({ throwOnError: true });
+    await client.global.health({ throwOnError: true });
   } catch (error) {
     throw new OpencodeHealthError(errorMessage(error));
   }
@@ -372,160 +352,32 @@ class OpencodeHealthError extends Error {
   }
 }
 
-async function modelWithEffort(
-  client: OpencodeClientLike,
-  sessionId: string,
-  effort: string,
-): Promise<ModelRef> {
-  const result = await client.v2.session.get({ sessionID: sessionId }, { throwOnError: true });
-  const model = result.data.data.model;
-  if (!model) {
-    throw new AgentProviderProtocolError({
-      code: "PROVIDER_PROTOCOL_ERROR",
-      provider: "opencode",
-      operation: "resolve_model",
-      retryable: false,
-      message: "OpenCode did not return the current session model for an effort override.",
-    });
-  }
-  return { ...model, variant: effort };
-}
-
 async function promptOpencodeSession(
   client: OpencodeClientLike,
   sessionId: string,
   input: LocalAgentRunInput,
 ): Promise<unknown> {
-  const prompt: PromptInput = { text: input.prompt };
-  return client.v2.session.prompt({
+  const model = input.model ? parseOpencodeModel(input.model) : undefined;
+  return client.session.prompt({
     sessionID: sessionId,
-    prompt,
+    directory: input.workspaceRoot,
+    parts: [{ type: "text", text: input.prompt }],
+    agent: opencodeAgentFor(input.writeMode),
+    ...(model ? { model } : {}),
+    ...(input.effort ? { variant: input.effort } : {}),
   }, { throwOnError: true });
 }
 
-async function waitForOpencodeSession(
-  client: OpencodeClientLike,
-  sessionId: string,
-  promptResult: unknown,
-): Promise<void> {
-  // OpenCode 1.18 accepts the prompt before its foreground drain is ready.
-  // Its wait endpoint rejects that state and can keep rejecting after the
-  // session has completed, so use the v2 active-session lifecycle instead.
-  const active = typeof client.v2.session.active === "function"
-    ? client.v2.session.active.bind(client.v2.session)
-    : undefined;
-  if (!active) {
-    await client.v2.session.wait({ sessionID: sessionId }, { throwOnError: true });
-    return;
-  }
-
-  const promptId = extractOpenCodePromptId(promptResult);
-  const deadline = Date.now() + OPENCODE_SESSION_POLL_TIMEOUT_MS;
-  let observedActive = false;
-  while (true) {
-    const messages = await readOpencodeMessages(client, sessionId, promptId);
-    const activity = await active({ throwOnError: true });
-    const running = isOpenCodeSessionActive(activity, sessionId);
-    if (running) observedActive = true;
-
-    const completed = hasCompletedOpenCodeTurn(messages, promptId);
-    if (completed && (promptId !== undefined || (observedActive && !running))) return;
-    if (Date.now() >= deadline) {
-      throw new AgentProviderProtocolError({
-        code: "PROVIDER_PROTOCOL_ERROR",
-        provider: "opencode",
-        operation: "wait_for_session",
-        retryable: false,
-        message: "OpenCode did not finish the session before the provider timeout.",
-      });
-    }
-    await delay(OPENCODE_SESSION_POLL_INTERVAL_MS);
-  }
-}
-
-async function readOpencodeMessages(
-  client: OpencodeClientLike,
-  sessionId: string,
-  promptId?: string,
-): Promise<SessionMessagesResponse> {
-  const messages: SessionMessagesResponse["data"] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-
-  while (true) {
-    const result = await client.v2.session.messages({
-      sessionID: sessionId,
-      limit: 100,
-      ...(cursor ? { cursor } : { order: "asc" }),
-    }, { throwOnError: true });
-    const page = result.data;
-    messages.push(...page.data);
-
-    // A prompt-specific read can stop as soon as the submitted turn is
-    // complete. Reads without a prompt id still walk the full history because
-    // they are used to extract the final response after the wait fallback.
-    if (promptId !== undefined && hasCompletedOpenCodeTurn({ data: messages }, promptId)) {
-      break;
-    }
-
-    const nextCursor = page.cursor?.next;
-    if (!nextCursor || seenCursors.has(nextCursor)) break;
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-
-  return { data: messages, cursor: {} };
-}
-
-function extractOpenCodePromptId(value: unknown): string | undefined {
-  const id = asRecord(unwrapProviderPayload(value))?.id;
-  return typeof id === "string" ? id : undefined;
-}
-
-function isOpenCodeSessionActive(value: unknown, sessionId: string): boolean {
-  const activeSessions = asRecord(unwrapProviderPayload(value));
-  return activeSessions?.[sessionId] !== undefined;
-}
-
-function hasCompletedOpenCodeTurn(value: unknown, promptId?: string): boolean {
-  const root = unwrapProviderPayload(value);
-  const messages = Array.isArray(root) ? root : readArray(root, "messages");
-  if (!messages) return false;
-
-  let promptSeen = promptId === undefined;
-  for (const message of messages) {
-    const record = asRecord(message);
-    if (!record) continue;
-    const info = asRecord(record.info) ?? record;
-    const role = typeof info.role === "string" ? info.role : record.type;
-    if (promptId !== undefined && info.id === promptId && role === "user") {
-      promptSeen = true;
-      continue;
-    }
-    if (!promptSeen || role !== "assistant") continue;
-
-    const time = asRecord(info.time) ?? asRecord(record.time);
-    if (typeof info.finish === "string" || typeof record.finish === "string") return true;
-    if (typeof time?.completed === "number") return true;
-    if (info.error !== undefined || record.error !== undefined) return true;
-  }
-  return false;
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function parseOpencodeModel(model: string, variant?: string): ModelRef {
+function parseOpencodeModel(model: string): OpencodeModelRef {
   const separator = model.indexOf("/");
-  const reference = separator === -1
-    ? { providerID: "opencode", id: model }
-    : { providerID: model.slice(0, separator), id: model.slice(separator + 1) };
-  return variant ? { ...reference, variant } : reference;
+  return separator === -1
+    ? { providerID: "opencode", modelID: model }
+    : { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
 }
 
-function requireSessionId(session: SessionV2Info): string {
-  if (!session.id) {
+function requireSessionId(session: unknown): string {
+  const id = asRecord(session)?.id;
+  if (typeof id !== "string" || !id) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
       provider: "opencode",
@@ -534,7 +386,30 @@ function requireSessionId(session: SessionV2Info): string {
       message: "OpenCode did not return a session id.",
     });
   }
-  return session.id;
+  return id;
+}
+
+function assertOpenCodePromptSucceeded(value: unknown): void {
+  const result = asRecord(unwrapProviderPayload(value));
+  const info = asRecord(result?.info);
+  const error = asRecord(info?.error);
+  if (!error) return;
+  const data = asRecord(error.data);
+  const message = typeof data?.message === "string"
+    ? data.message
+    : typeof error.message === "string"
+      ? error.message
+      : typeof error.name === "string"
+        ? `OpenCode returned ${error.name}.`
+        : "OpenCode returned an assistant error.";
+  throw new AgentProviderExecutionError({
+    code: "PROVIDER_EXECUTION_ERROR",
+    provider: "opencode",
+    operation: "prompt",
+    retryable: data?.isRetryable === true,
+    cause: error,
+    message,
+  });
 }
 
 export function extractOpenCodeFinalResponse(value: unknown): string {
