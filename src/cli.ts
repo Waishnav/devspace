@@ -159,7 +159,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     prompts.intro("DevSpace setup");
 
     const destinationAnswer = await prompts.multiselect({
-      message: "Where will you use DevSpace?",
+      message: "Where do you want to use DevSpace?",
       options: [
         {
           value: "chatgpt",
@@ -231,8 +231,11 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       : availability
           .filter((provider) => provider.available)
           .map((provider) => provider.name);
+    prompts.log.info(
+      "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
+    );
     const providerAnswer = await prompts.multiselect({
-      message: "Which Coding Agents should be available?",
+      message: "Which agents can DevSpace use as subagents?",
       options: availability.map((provider) => ({
         value: provider.name,
         label: provider.name,
@@ -268,7 +271,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const lines = [
       ...(allowedRoots ? [`Project folders: ${allowedRoots.join(", ")}`] : []),
-      `Coding Agents: ${selectedProviders.join(", ")}`,
+      `Subagents: ${selectedProviders.join(", ")}`,
       ...(publicBaseUrl ? [`ChatGPT connection URL: ${publicBaseUrl}/mcp`] : []),
     ];
     prompts.note(lines.join("\n"), "DevSpace is ready");
