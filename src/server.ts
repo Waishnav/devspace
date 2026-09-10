@@ -46,6 +46,7 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
+import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -313,6 +314,7 @@ export function createMcpServer(
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
+  workspaceActivityJournal?: WorkspaceActivityJournal,
 ): McpServer {
   const toolSurface = getToolSurface(config.toolMode);
   const server = new McpServer(
@@ -331,6 +333,7 @@ export function createMcpServer(
     resolveLocalAgentProviders,
     incomingArtifactAdapters,
     trackToolActivity,
+    workspaceActivityJournal,
   );
   return server;
 }
@@ -344,9 +347,10 @@ function registerMcpSurface(
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
+  workspaceActivityJournal?: WorkspaceActivityJournal,
 ): void {
-  const registrationTarget = trackToolActivity
-    ? withTrackedToolHandlers(server, trackToolActivity)
+  const registrationTarget = trackToolActivity || workspaceActivityJournal
+    ? withObservedToolHandlers(server, { trackToolActivity, workspaceActivityJournal })
     : server;
   const toolSurface = getToolSurface(config.toolMode);
 
@@ -775,18 +779,33 @@ function registerMcpSurface(
   }
 }
 
-function withTrackedToolHandlers(
+function withObservedToolHandlers(
   server: McpRegistrationTarget,
-  trackToolActivity: TrackToolActivity,
+  options: {
+    trackToolActivity?: TrackToolActivity;
+    workspaceActivityJournal?: WorkspaceActivityJournal;
+  },
 ): McpRegistrationTarget {
   return {
     registerTool: ((...args: unknown[]) => {
+      const toolName = args[0] as string;
       const handler = args.at(-1) as (...handlerArgs: unknown[]) => unknown;
       return (server.registerTool as (...callArgs: unknown[]) => unknown)(
         ...args.slice(0, -1),
-        (...handlerArgs: unknown[]) => trackToolActivity(
-          () => Promise.resolve(handler(...handlerArgs)),
-        ),
+        (...handlerArgs: unknown[]) => {
+          const operation = () => Promise.resolve(handler(...handlerArgs));
+          const observedOperation = options.workspaceActivityJournal
+            ? () => options.workspaceActivityJournal!.capture({
+                toolName,
+                arguments: handlerArgs[0],
+                extra: (handlerArgs[1] ?? {}) as Record<string, unknown>,
+                operation,
+              })
+            : operation;
+          return options.trackToolActivity
+            ? options.trackToolActivity(observedOperation)
+            : observedOperation();
+        },
       );
     }) as McpRegistrationTarget["registerTool"],
     registerResource: server.registerResource.bind(server),
@@ -823,6 +842,11 @@ export function createServer(
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
   const toolActivities = new ToolActivityTracker();
+  const workspaceActivityJournal = new WorkspaceActivityJournal(config.stateDir, (error) => {
+    logEvent(config.logging, "warn", "workspace_activity_journal_error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
@@ -842,6 +866,7 @@ export function createServer(
       resolveLocalAgentProviders,
       incomingArtifactAdapters,
       toolActivities.track,
+      workspaceActivityJournal,
     );
   });
   const logMcpHandlerError = (error: Error) => logEvent(
@@ -978,6 +1003,7 @@ export function createServer(
           });
         }
         await toolActivities.waitForIdle();
+        workspaceActivityJournal.close();
         processSessions.shutdown();
         oauthProvider.close();
         workspaceStore.close?.();
