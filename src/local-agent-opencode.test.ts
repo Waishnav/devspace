@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   opencodeAgentConfig,
   OpencodeLocalAgentDriver,
@@ -51,14 +54,16 @@ const client = {
 } as unknown as OpencodeClientLike;
 let factoryCalls = 0;
 let closeCalls = 0;
-const factory: OpencodeFactory = async () => {
+let factoryEnv: NodeJS.ProcessEnv | undefined;
+const factory: OpencodeFactory = async (_context, env) => {
   factoryCalls += 1;
+  factoryEnv = env;
   return {
     client,
     server: { close: () => { closeCalls += 1; } },
   };
 };
-const driver = new OpencodeLocalAgentDriver(factory);
+const driver = new OpencodeLocalAgentDriver(factory, { HARNESS_ENV: "opencode" });
 const pool = new LocalAgentRuntimePool();
 
 const first = await pool.run(driver, {
@@ -81,8 +86,87 @@ const second = await pool.run(driver, {
 });
 
 assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
+assert.equal(factoryEnv?.HARNESS_ENV, "opencode");
 assert.equal(first.isOk(), true);
 assert.equal(second.isOk(), true);
+
+if (process.platform !== "win32") {
+  const commandRoot = await mkdtemp(join(tmpdir(), "devspace-opencode-env-"));
+  const marker = join(commandRoot, "env.txt");
+  const argsMarker = join(commandRoot, "args.txt");
+  const collisionMarker = join(commandRoot, "collision.txt");
+  const holderReady = join(commandRoot, "holder-ready.txt");
+  const holderProcess = join(commandRoot, "hold-port.mjs");
+  const holderLauncher = join(commandRoot, "launch-holder.mjs");
+  const command = join(commandRoot, "opencode");
+  try {
+    await writeFile(holderProcess, [
+      'import { writeFileSync } from "node:fs";',
+      'import { createServer } from "node:net";',
+      'const [port, ready] = process.argv.slice(2);',
+      'const server = createServer();',
+      'server.listen({ host: "127.0.0.1", port: Number(port), exclusive: true }, () => {',
+      '  writeFileSync(ready, "ready");',
+      '  setTimeout(() => server.close(() => process.exit(0)), 1000);',
+      '});',
+      "",
+    ].join("\n"));
+    await writeFile(holderLauncher, [
+      'import { spawn } from "node:child_process";',
+      'const [script, port, ready] = process.argv.slice(2);',
+      'const child = spawn(process.execPath, [script, port, ready], {',
+      '  detached: true,',
+      '  stdio: "ignore",',
+      '});',
+      'child.unref();',
+      "",
+    ].join("\n"));
+    await writeFile(command, [
+      "#!/bin/sh",
+      'printf "%s" "$HARNESS_ENV" > "$MARKER"',
+      'printf "%s\\n" "$@" > "$ARGS_MARKER"',
+      'port=""',
+      'for arg in "$@"; do case "$arg" in --port=*) port="${arg#--port=}" ;; esac; done',
+      'if [ ! -f "$COLLISION_MARKER" ]; then',
+      '  printf "collision" > "$COLLISION_MARKER"',
+      '  "$NODE_EXECUTABLE" "$HOLDER_LAUNCHER" "$HOLDER_PROCESS" "$port" "$HOLDER_READY"',
+      '  while [ ! -f "$HOLDER_READY" ]; do /bin/sleep 0.01; done',
+      '  exit 1',
+      'fi',
+      'echo "opencode server listening on http://127.0.0.1:$port"',
+      "trap 'exit 0' TERM INT",
+      "while true; do /bin/sleep 1; done",
+      "",
+    ].join("\n"));
+    await chmod(command, 0o700);
+    const envDriver = new OpencodeLocalAgentDriver(undefined, {
+      PATH: commandRoot,
+      HARNESS_ENV: "opencode-child",
+      MARKER: marker,
+      ARGS_MARKER: argsMarker,
+      COLLISION_MARKER: collisionMarker,
+      HOLDER_READY: holderReady,
+      HOLDER_PROCESS: holderProcess,
+      HOLDER_LAUNCHER: holderLauncher,
+      NODE_EXECUTABLE: process.execPath,
+    });
+    const created = await envDriver.createRuntime({
+      agentId: "agt_env",
+      provider: "opencode",
+      workspaceRoot: "/tmp/project",
+    });
+    assert.equal(created.isOk(), true);
+    if (created.isOk()) await created.value.close();
+    assert.equal(await readFile(marker, "utf8"), "opencode-child");
+    assert.equal(await readFile(collisionMarker, "utf8"), "collision", "OpenCode retries a claimed allocated port");
+    const args = (await readFile(argsMarker, "utf8")).trim().split("\n");
+    const portArgument = args.find((argument) => argument.startsWith("--port="));
+    assert.ok(portArgument, "OpenCode receives an explicitly allocated port");
+    assert.notEqual(portArgument, "--port=4096", "OpenCode must not use a process-global fixed port");
+  } finally {
+    await rm(commandRoot, { recursive: true, force: true });
+  }
+}
 if (first.isErr()) throw first.error;
 if (second.isErr()) throw second.error;
 const firstRecord = first.value;

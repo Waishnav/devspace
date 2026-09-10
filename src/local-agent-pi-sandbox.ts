@@ -81,6 +81,7 @@ export function createPiSandboxModeRef(value: PiSandboxWriteMode): PiSandboxMode
 export function createPiSandboxExtension(
   workspace: string,
   modeRef: PiSandboxModeRef,
+  env: NodeJS.ProcessEnv = {},
 ): ExtensionFactory {
   return (pi) => {
     const localRead = createReadTool(workspace);
@@ -107,9 +108,14 @@ export function createPiSandboxExtension(
     const restrictedLs = createLsTool(workspace, { operations: createLsOperations(workspace) });
     pi.registerTool(dynamicTool(localLs, restrictedLs, modeRef));
 
-    const localBash = createBashTool(workspace);
+    const withProviderEnv = (context: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => ({
+      ...context,
+      env: { ...context.env, ...env },
+    });
+    const localBash = createBashTool(workspace, { spawnHook: withProviderEnv });
     const restrictedBash = createBashTool(workspace, {
       operations: createSandboxedBashOperations(),
+      spawnHook: withProviderEnv,
     });
     pi.registerTool(dynamicTool(localBash, restrictedBash, modeRef, true));
   };

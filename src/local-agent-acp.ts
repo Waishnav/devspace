@@ -1,7 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants } from "node:fs";
 import { createRequire } from "node:module";
-import { delimiter, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   AgentProviderProtocolError,
@@ -28,6 +27,7 @@ import type {
   LocalAgentRuntimeContext,
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
+import { resolveExecutableCommand } from "./local-agent-command.js";
 
 export type AcpProvider = "cursor" | "copilot" | "grok";
 
@@ -617,20 +617,7 @@ export function resolveAcpCommand(
       ? env.COPILOT_COMMAND
       : env.GROK_COMMAND;
   const command = configured ?? ACP_COMMANDS[provider][0];
-  if (command.includes("/") || command.includes("\\")) return executableExists(command) ? command : undefined;
-  const path = env.PATH;
-  if (!path) return undefined;
-  const extensions = process.platform === "win32"
-    ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
-    : [""];
-  for (const directory of path.split(delimiter)) {
-    if (!directory) continue;
-    for (const extension of extensions) {
-      const candidate = resolve(directory, `${command}${extension}`);
-      if (executableExists(candidate)) return candidate;
-    }
-  }
-  return undefined;
+  return resolveExecutableCommand(command, env);
 }
 
 export type AcpCommandResolver = (provider: AcpProvider, env: NodeJS.ProcessEnv) => string | undefined;
@@ -827,15 +814,6 @@ function appendTail(current: string, chunk: string, maxBytes: number): string {
   const next = current + chunk;
   if (Buffer.byteLength(next, "utf8") <= maxBytes) return next;
   return Buffer.from(next, "utf8").subarray(-maxBytes).toString("utf8");
-}
-
-function executableExists(command: string): boolean {
-  try {
-    accessSync(command, process.platform === "win32" ? constants.F_OK : constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

@@ -100,7 +100,7 @@ assert.throws(
     enabled: true,
     providers: [{ id: "unknown", enabled: true }],
   }),
-  /Invalid option/,
+  /Invalid discriminator value/,
 );
 assert.throws(
   () => subagentsConfigSchema.parse({
@@ -124,11 +124,15 @@ assert.throws(
   /Invalid environment variable name/,
 );
 for (const id of ["opencode", "pi"] as const) {
+  const embedded = subagentsConfigSchema.parse({
+    enabled: true,
+    providers: [{ id, enabled: true, env: { HARNESS_ENV: id } }],
+  });
+  assert.equal(localAgentProviderEnvironment(embedded, id, {}).HARNESS_ENV, id);
   assert.throws(
     () => subagentsConfigSchema.parse({
       enabled: true,
       providers: [{ id, enabled: true, command: "/opt/bin/agent" }],
     }),
-    new RegExp(`${id} is embedded and does not support command or env configuration`),
   );
 }

@@ -1,9 +1,8 @@
-import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, resolve } from "node:path";
 import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import { resolveExecutableCommand } from "./local-agent-command.js";
 import {
   localAgentProviderEnvironment,
   type SubagentsConfig,
@@ -94,40 +93,10 @@ function commandAvailability(
   command: string,
   env: NodeJS.ProcessEnv,
 ): LocalAgentProviderAvailability {
-  if (resolveCommand(command, env)) return { name: provider, available: true };
+  if (resolveExecutableCommand(command, env)) return { name: provider, available: true };
   return {
     name: provider,
     available: false,
     reason: `${command} executable not found`,
   };
-}
-
-function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undefined {
-  if (!command) return undefined;
-  if (command.includes("/") || command.includes("\\")) {
-    return executableExists(command) ? command : undefined;
-  }
-  const path = env.PATH;
-  if (!path) return undefined;
-  const extensions = process.platform === "win32"
-    ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
-    : [""];
-  for (const directory of path.split(delimiter)) {
-    if (!directory) continue;
-    for (const extension of extensions) {
-      const candidate = resolve(directory, `${command}${extension}`);
-      if (executableExists(candidate)) return candidate;
-    }
-  }
-  return undefined;
-}
-
-function executableExists(command: string): boolean {
-  const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
-  try {
-    accessSync(command, mode);
-    return statSync(command).isFile();
-  } catch {
-    return false;
-  }
 }

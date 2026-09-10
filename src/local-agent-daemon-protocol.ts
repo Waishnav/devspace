@@ -223,7 +223,7 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     effort: optionalString(record?.effort),
     providerSessionId: optionalString(record?.providerSessionId),
     status,
-    latestResponse: optionalContentString(record?.latestResponse),
+    latestResponse: typeof record?.latestResponse === "string" ? record.latestResponse : undefined,
     error: optionalContentString(record?.error),
     errorCode: optionalString(record?.errorCode),
     errorRetryable: optionalBoolean(record?.errorRetryable),

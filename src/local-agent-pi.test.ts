@@ -53,13 +53,15 @@ class FakePiSession implements PiSessionLike {
 
 const contexts: LocalAgentRuntimeContext[] = [];
 const sessions: FakePiSession[] = [];
-const factory: PiSessionFactory = async (context) => {
+let factoryEnv: NodeJS.ProcessEnv | undefined;
+const factory: PiSessionFactory = async (context, _input, env) => {
   contexts.push(context);
+  factoryEnv = env;
   const session = new FakePiSession();
   sessions.push(session);
   return session;
 };
-const driver = new PiLocalAgentDriver(factory);
+const driver = new PiLocalAgentDriver(factory, { HARNESS_ENV: "pi" });
 const pool = new LocalAgentRuntimePool();
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_pi",
@@ -77,6 +79,7 @@ const first = await pool.run(driver, context, {
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
 });
+assert.equal(factoryEnv?.HARNESS_ENV, "pi");
 const second = await pool.run(driver, context, {
   prompt: "second",
   workspaceRoot: "/tmp/project",

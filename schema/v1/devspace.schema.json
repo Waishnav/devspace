@@ -177,52 +177,92 @@
         "providers": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "enum": [
-                  "codex",
-                  "claude",
-                  "opencode",
-                  "pi",
-                  "cursor",
-                  "copilot",
-                  "grok"
-                ]
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "model": {
-                "type": "string",
-                "minLength": 1
-              },
-              "effort": {
-                "type": "string",
-                "minLength": 1
-              },
-              "command": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "\\S"
-              },
-              "env": {
+            "oneOf": [
+              {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "enum": [
+                      "codex",
+                      "claude",
+                      "cursor",
+                      "copilot",
+                      "grok"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "effort": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "env": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "command": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  }
                 },
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "required": [
+                  "id",
+                  "enabled"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "enum": [
+                      "opencode",
+                      "pi"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "effort": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "env": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "enabled"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "id",
-              "enabled"
-            ],
-            "additionalProperties": false
+            ]
           }
         }
       },

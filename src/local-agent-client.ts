@@ -183,6 +183,13 @@ export class LocalAgentClient {
     return this.startupPromise;
   }
 
+  private async ensureReadyForObservation(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
+    const existing = await this.tryHello(true);
+    if (existing.isErr()) return existing;
+    if (existing.value) return Result.ok(existing.value);
+    return this.ensureReady();
+  }
+
   private async ensureReadyInternal(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
     const existing = await this.tryHello();
     if (existing.isErr()) return existing;
@@ -223,7 +230,9 @@ export class LocalAgentClient {
     }));
   }
 
-  private async tryHello(): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
+  private async tryHello(
+    allowStaleBusyConfig = false,
+  ): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
     const authToken = this.authTokenResult("hello");
     if (authToken.isErr()) return authToken;
     const response = await sendRequest(this.endpoint, {
@@ -263,6 +272,9 @@ export class LocalAgentClient {
     const decoded = decodeValue(response.value.result, "hello", decodeDaemonHello);
     if (decoded.isErr()) return decoded;
     if (!decoded.value.configMatches) {
+      if (allowStaleBusyConfig && decoded.value.status.activeTurns > 0) {
+        return Result.ok(decoded.value.status);
+      }
       return this.replaceIdleChangedDaemon(authToken.value, decoded.value.status);
     }
     return Result.ok(decoded.value.status.state === "ready" ? decoded.value.status : undefined);
@@ -376,7 +388,9 @@ export class LocalAgentClient {
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
     timeoutMs: number | null = this.requestTimeoutMs,
   ): Promise<BetterResult<unknown, RequestError<M>>> {
-    const ready = await this.ensureReady();
+    const ready = await (isObservationRequest(method)
+      ? this.ensureReadyForObservation()
+      : this.ensureReady());
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
     const authToken = this.authTokenResult(method);
     if (authToken.isErr()) return authToken as BetterResult<unknown, RequestError<M>>;
@@ -473,6 +487,12 @@ export class LocalAgentClient {
       }));
     }
   }
+}
+
+function isObservationRequest(
+  method: LocalAgentDaemonRequest["method"],
+): method is "agent.get" | "agent.list" | "agent.wait" {
+  return method === "agent.get" || method === "agent.list" || method === "agent.wait";
 }
 
 export function createLocalAgentClient(
