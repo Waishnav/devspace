@@ -1,5 +1,11 @@
 import * as z from "zod/v4";
 import { applyPatch } from "../apply-patch.js";
+import {
+  OPERATION_ID_DESCRIPTION,
+  OPERATION_ID_PATTERN,
+  recoverableStructuredContent,
+  runRecoverableOperation,
+} from "../operation-receipts.js";
 import type { ProcessSnapshot } from "../process-sessions.js";
 import {
   EDIT_TOOL_ANNOTATIONS,
@@ -17,7 +23,12 @@ import {
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
 
-const CODEX_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. Commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
+const CODEX_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, apply_patch for all file modifications, exec_command for inspection, tests, builds, and other commands, and write_stdin to poll or interact with running processes. For each side-effecting call, choose a fresh operationId and reuse that same ID only for an exact retry after an unknown or lost response. Commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
+
+const operationIdSchema = z
+  .string()
+  .regex(OPERATION_ID_PATTERN)
+  .describe(OPERATION_ID_DESCRIPTION);
 
 export function codexInstructions(): string {
   return CODEX_INSTRUCTIONS;
@@ -47,6 +58,12 @@ function processResult(snapshot: ProcessSnapshot): string {
 
 function processOutputSchema(): z.ZodRawShape {
   return resultOutputSchema({
+    operationId: z.string(),
+    operationReplayed: z
+      .boolean()
+      .describe(
+        "True when DevSpace returned the stored result of an earlier identical operation instead of repeating its local side effect.",
+      ),
     sessionId: z.number().optional(),
     running: z.boolean(),
     exitCode: z.number().int().optional(),
@@ -56,20 +73,28 @@ function processOutputSchema(): z.ZodRawShape {
   });
 }
 
-function processToolResponse(snapshot: ProcessSnapshot) {
+function processToolResponse(
+  snapshot: ProcessSnapshot,
+  operationId: string,
+  replayed: boolean,
+) {
   const result = processResult(snapshot);
   const content = [textBlock(result)];
   return {
     content,
-    structuredContent: {
-      result,
-      sessionId: snapshot.sessionId,
-      running: snapshot.running,
-      exitCode: snapshot.exitCode,
-      signal: snapshot.signal,
-      wallTimeMs: snapshot.wallTimeMs,
-      outputTruncated: snapshot.outputTruncated,
-    },
+    structuredContent: recoverableStructuredContent(
+      {
+        result,
+        sessionId: snapshot.sessionId,
+        running: snapshot.running,
+        exitCode: snapshot.exitCode,
+        signal: snapshot.signal,
+        wallTimeMs: snapshot.wallTimeMs,
+        outputTruncated: snapshot.outputTruncated,
+      },
+      operationId,
+      replayed,
+    ),
   };
 }
 
@@ -84,6 +109,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
         "Apply one Codex-style patch in a workspace. Supports adding, overwriting, updating, deleting, and moving files. Use this for all file modifications. Paths must be relative to the workspace.",
       inputSchema: {
         workspaceId: z.string().describe(workspaceIdDescription),
+        operationId: operationIdSchema,
         patch: z
           .string()
           .describe(
@@ -91,6 +117,12 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
           ),
       },
       outputSchema: resultOutputSchema({
+        operationId: z.string(),
+        operationReplayed: z
+          .boolean()
+          .describe(
+            "True when DevSpace returned the stored result of an earlier identical operation instead of applying the patch again.",
+          ),
         additions: z.number(),
         removals: z.number(),
         files: z.array(
@@ -103,29 +135,46 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
       }),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
-    async ({ workspaceId, patch }) => {
-      const startedAt = performance.now();
-      const applied = await runLoggedToolOperation(
-        config,
-        { tool: "apply_patch", workspaceId },
-        startedAt,
-        async () => {
-          const workspace = await workspaces.getWorkspace(workspaceId);
-          return applyPatch(workspace.root, patch);
+    async ({ workspaceId, operationId, patch }) => {
+      const recovered = await runRecoverableOperation({
+        workspaceId,
+        operationId,
+        tool: "apply_patch",
+        request: { patch },
+        execute: async () => {
+          const startedAt = performance.now();
+          const applied = await runLoggedToolOperation(
+            config,
+            { tool: "apply_patch", workspaceId },
+            startedAt,
+            async () => {
+              const workspace = await workspaces.getWorkspace(workspaceId);
+              return applyPatch(workspace.root, patch);
+            },
+          );
+          const paths = applied.files.map((file) => file.path).join(", ");
+          const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
+          const content = [textBlock(result)];
+
+          return {
+            content,
+            structuredContent: {
+              result,
+              additions: applied.additions,
+              removals: applied.removals,
+              files: applied.files,
+            },
+          };
         },
-      );
-      const paths = applied.files.map((file) => file.path).join(", ");
-      const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
-      const content = [textBlock(result)];
+      });
 
       return {
-        content,
-        structuredContent: {
-          result,
-          additions: applied.additions,
-          removals: applied.removals,
-          files: applied.files,
-        },
+        ...recovered.value,
+        structuredContent: recoverableStructuredContent(
+          recovered.value.structuredContent,
+          operationId,
+          recovered.replayed,
+        ),
       };
     },
   );
@@ -142,6 +191,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes.",
       inputSchema: {
         workspaceId: z.string().describe(workspaceIdDescription),
+        operationId: operationIdSchema,
         cmd: z.string().min(1).describe("Shell command to execute."),
         tty: z
           .boolean()
@@ -191,6 +241,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     },
     async ({
       workspaceId,
+      operationId,
       cmd,
       tty,
       columns,
@@ -199,38 +250,58 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       yieldTimeMs,
       maxOutputTokens,
     }) => {
-      const startedAt = performance.now();
-      const snapshot = await runLoggedToolOperation(
-        config,
-        {
-          tool: "exec_command",
-          workspaceId,
-          workingDirectory: workingDirectory ?? ".",
-          command: cmd,
-          commandLength: cmd.length,
+      const recovered = await runRecoverableOperation({
+        workspaceId,
+        operationId,
+        tool: "exec_command",
+        request: {
+          cmd,
+          tty,
+          columns,
+          rows,
+          workingDirectory,
+          yieldTimeMs,
+          maxOutputTokens,
         },
-        startedAt,
-        async () => {
-          const workspace = await workspaces.getWorkspace(workspaceId);
-          const cwd = workspaces.resolveWorkingDirectory(
-            workspace,
-            workingDirectory,
+        execute: async () => {
+          const startedAt = performance.now();
+          return runLoggedToolOperation(
+            config,
+            {
+              tool: "exec_command",
+              workspaceId,
+              workingDirectory: workingDirectory ?? ".",
+              command: cmd,
+              commandLength: cmd.length,
+            },
+            startedAt,
+            async () => {
+              const workspace = await workspaces.getWorkspace(workspaceId);
+              const cwd = workspaces.resolveWorkingDirectory(
+                workspace,
+                workingDirectory,
+              );
+              return processSessions.start({
+                workspaceId,
+                command: cmd,
+                cwd,
+                workspaceRoot: workspace.root,
+                tty,
+                columns,
+                rows,
+                yieldTimeMs,
+                maxOutputTokens,
+              });
+            },
           );
-          return processSessions.start({
-            workspaceId,
-            command: cmd,
-            cwd,
-            workspaceRoot: workspace.root,
-            tty,
-            columns,
-            rows,
-            yieldTimeMs,
-            maxOutputTokens,
-          });
         },
-      );
+      });
 
-      return processToolResponse(snapshot);
+      return processToolResponse(
+        recovered.value,
+        operationId,
+        recovered.replayed,
+      );
     },
   );
 
@@ -244,6 +315,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         workspaceId: z
           .string()
           .describe("Workspace identifier used to start the process."),
+        operationId: operationIdSchema,
         sessionId: z
           .number()
           .describe("Process session identifier returned by exec_command."),
@@ -289,6 +361,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     },
     async ({
       workspaceId,
+      operationId,
       sessionId,
       chars,
       columns,
@@ -296,26 +369,45 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       yieldTimeMs,
       maxOutputTokens,
     }) => {
-      const startedAt = performance.now();
-      const snapshot = await runLoggedToolOperation(
-        config,
-        { tool: "write_stdin", workspaceId },
-        startedAt,
-        async () => {
-          await workspaces.getWorkspace(workspaceId);
-          return processSessions.write({
-            workspaceId,
-            sessionId,
-            chars,
-            columns,
-            rows,
-            yieldTimeMs,
-            maxOutputTokens,
-          });
+      const recovered = await runRecoverableOperation({
+        workspaceId,
+        operationId,
+        tool: "write_stdin",
+        request: {
+          sessionId,
+          chars,
+          columns,
+          rows,
+          yieldTimeMs,
+          maxOutputTokens,
         },
-      );
+        execute: async () => {
+          const startedAt = performance.now();
+          return runLoggedToolOperation(
+            config,
+            { tool: "write_stdin", workspaceId },
+            startedAt,
+            async () => {
+              await workspaces.getWorkspace(workspaceId);
+              return processSessions.write({
+                workspaceId,
+                sessionId,
+                chars,
+                columns,
+                rows,
+                yieldTimeMs,
+                maxOutputTokens,
+              });
+            },
+          );
+        },
+      });
 
-      return processToolResponse(snapshot);
+      return processToolResponse(
+        recovered.value,
+        operationId,
+        recovered.replayed,
+      );
     },
   );
 }
