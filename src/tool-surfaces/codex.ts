@@ -1,6 +1,9 @@
 import * as z from "zod/v4";
 import { applyPatch } from "../apply-patch.js";
-import type { ProcessSnapshot } from "../process-sessions.js";
+import {
+  MAX_PROCESS_YIELD_MS,
+  type ProcessSnapshot,
+} from "../process-sessions.js";
 import {
   EDIT_TOOL_ANNOTATIONS,
   SHELL_TOOL_ANNOTATIONS,
@@ -143,7 +146,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Execute command",
       description:
-        "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes.",
+        "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a session_id to continue with write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes.",
       inputSchema: {
         workspace_id: z.string().describe(workspaceIdDescription),
         cmd: z.string().min(1).describe("Shell command to execute."),
@@ -177,10 +180,10 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .number()
           .int()
           .min(0)
-          .max(30_000)
+          .max(MAX_PROCESS_YIELD_MS)
           .optional()
           .describe(
-            "Milliseconds to wait before returning a running session. Defaults to 10000.",
+            "Milliseconds to wait before returning a running session. Defaults to 10000, maximum 12000. Use write_stdin for work that runs longer.",
           ),
         max_output_tokens: z
           .number()
@@ -279,10 +282,10 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .number()
           .int()
           .min(0)
-          .max(30_000)
+          .max(MAX_PROCESS_YIELD_MS)
           .optional()
           .describe(
-            "Milliseconds to wait for process output or completion. Defaults to 10000.",
+            "Milliseconds to wait for process output or completion. Maximum 12000; polling defaults to 5000 and interactive writes to 250.",
           ),
         max_output_tokens: z
           .number()

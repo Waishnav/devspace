@@ -525,7 +525,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
       arguments: {
         workspace_id: workspaceId,
         cmd: `node -e \"${command}\"`,
-        yield_time_ms: 30_000,
+        yield_time_ms: 12_000,
       },
     },
   );
