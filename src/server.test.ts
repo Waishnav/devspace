@@ -68,6 +68,22 @@ test("model-facing tool schemas use snake_case recursively", async (t) => {
   }
 });
 
+test("Codex process tools bound model-facing yield windows to 12 seconds", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const tools = await context.client.listTools();
+
+  for (const toolName of ["exec_command", "write_stdin"] as const) {
+    const tool = tools.tools.find(({ name }) => name === toolName);
+    const yieldSchema = tool?.inputSchema?.properties?.yield_time_ms as {
+      maximum?: number;
+      description?: string;
+    } | undefined;
+
+    assert.equal(yieldSchema?.maximum, 12_000);
+    assert.match(yieldSchema?.description ?? "", /maximum 12000/i);
+  }
+});
+
 test("Claude edit and bash tools accept snake_case runtime inputs", async (t) => {
   const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
   const workspaceId = structuredContent(
