@@ -20,6 +20,7 @@ import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import { groupWorkspaceToolCalls } from "./workspace-activity.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityService } from "./workspace-activity-service.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -288,6 +289,34 @@ test("workspace activity groups a real tool sequence under its review ref", asyn
   assert.equal(
     context.activity.listCalls({ workspaceId, limit: 20 }).filter((call) => call.toolName === "show_changes").length,
     1,
+  );
+});
+
+test("workspace inspector tools are app-only and do not journal their own reads", async (t) => {
+  const context = await fixture(t, { git: true, captureActivity: true, uiEnabled: true });
+  assert.ok(context.activity);
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "inspector-tools"),
+  ).workspace_id;
+  assert.ok(typeof workspaceId === "string");
+
+  await context.client.callTool({
+    name: "read",
+    arguments: { workspace_id: workspaceId, path: "README.md" },
+  });
+  const before = context.activity.listCalls({ workspaceId, limit: 20 }).length;
+  const activity = structuredContent(await context.client.callTool({
+    name: "get_workspace_activity",
+    arguments: { workspace_id: workspaceId },
+  }));
+  assert.ok(Array.isArray(activity.groups));
+  assert.equal(context.activity.listCalls({ workspaceId, limit: 20 }).length, before);
+
+  const tools = await context.client.listTools();
+  const inspectorTool = tools.tools.find((tool) => tool.name === "get_workspace_activity");
+  assert.deepEqual(
+    (inspectorTool?._meta as { ui?: { visibility?: string[] } } | undefined)?.ui?.visibility,
+    ["app"],
   );
 });
 
@@ -775,6 +804,9 @@ async function fixture(
   const activityJournal = options.captureActivity
     ? new WorkspaceActivityJournal(stateDir)
     : undefined;
+  const activityService = options.captureActivity
+    ? new WorkspaceActivityService(stateDir)
+    : undefined;
   const activity = options.captureActivity
     ? new WorkspaceActivityStore(stateDir)
     : undefined;
@@ -788,6 +820,7 @@ async function fixture(
     [],
     undefined,
     activityJournal,
+    activityService,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "devspace-test-client", version: "1.0.0" });
@@ -803,6 +836,7 @@ async function fixture(
     await client.close();
     await server.close();
     activity?.close();
+    activityService?.close();
     activityJournal?.close();
     store.close();
   };
