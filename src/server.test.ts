@@ -14,7 +14,7 @@ import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer, createServer } from "./server.js";
+import { createMcpServer, createServer, isLocalInspectorHost } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -589,6 +589,76 @@ test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) =
   assert.equal(legacyTools.status, 200, await legacyTools.clone().text());
   assert.equal(legacyTools.headers.get("mcp-session-id"), null);
   assert.match(await legacyTools.text(), /"open_workspace"/);
+});
+
+test("local workspace inspector exposes activity and diff APIs", async (t) => {
+  assert.equal(isLocalInspectorHost("localhost:3210"), true);
+  assert.equal(isLocalInspectorHost("127.0.0.1:3210"), true);
+  assert.equal(isLocalInspectorHost("[::1]:3210"), true);
+  assert.equal(isLocalInspectorHost("devspace.example"), false);
+
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(
+    t,
+    "devspace-inspector-http-test-",
+  );
+  await execFileAsync("git", ["init", "-b", "main"], { cwd: root });
+  await execFileAsync("git", ["config", "user.email", "devspace@example.com"], { cwd: root });
+  await execFileAsync("git", ["config", "user.name", "DevSpace Test"], { cwd: root });
+  await writeFile(join(root, "README.md"), "base\n");
+  await execFileAsync("git", ["add", "README.md"], { cwd: root });
+  await execFileAsync("git", ["commit", "-m", "base"], { cwd: root });
+
+  const opened = await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/call",
+    {
+      name: "open_workspace",
+      arguments: { path: root },
+      _meta: { "openai/session": "inspector-http-test" },
+    },
+  );
+  const openBody = await opened.json() as {
+    result?: { structuredContent?: { workspace_id?: string } };
+  };
+  const workspaceId = openBody.result?.structuredContent?.workspace_id;
+  assert.ok(typeof workspaceId === "string");
+
+  await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/call",
+    { name: "read", arguments: { workspace_id: workspaceId, path: "README.md" } },
+  );
+
+  const activity = await fetch(
+    `${localBaseUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/activity`,
+  );
+  assert.equal(activity.status, 200, await activity.clone().text());
+  const activityBody = await activity.json() as {
+    groups?: Array<{ calls?: Array<{ tool_name?: string }> }>;
+  };
+  assert.ok(activityBody.groups?.some((group) =>
+    group.calls?.some((call) => call.tool_name === "read"),
+  ));
+
+  await writeFile(join(root, "README.md"), "changed\n");
+  const diff = await fetch(
+    `${localBaseUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/diff?scope=working-tree`,
+  );
+  assert.equal(diff.status, 200, await diff.clone().text());
+  const diffBody = await diff.json() as { patch?: string };
+  assert.match(diffBody.patch ?? "", /-base\n\+changed/);
+
+  const deepLink = await fetch(
+    `${localBaseUrl}/ws/${encodeURIComponent(workspaceId)}?review=abc123`,
+    { redirect: "manual" },
+  );
+  assert.equal(deepLink.status, 302);
+  assert.equal(
+    deepLink.headers.get("location"),
+    `/ws/${encodeURIComponent(workspaceId)}/activity?review=abc123`,
+  );
 });
 
 test("server shutdown waits for an active MCP tool call", async (t) => {
