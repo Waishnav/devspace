@@ -138,6 +138,33 @@ export class WorkspaceActivityStore {
     return row ? rowToWorkspaceToolCall(row) : undefined;
   }
 
+  findCallSummaryByReviewRef(
+    workspaceId: string,
+    reviewRef: string,
+  ): WorkspaceToolCallSummary | undefined {
+    const row = this.database.db
+      .select({
+        id: workspaceToolCalls.id,
+        workspaceSessionId: workspaceToolCalls.workspaceSessionId,
+        conversationScopeId: workspaceToolCalls.conversationScopeId,
+        requestId: workspaceToolCalls.requestId,
+        toolName: workspaceToolCalls.toolName,
+        startedAt: workspaceToolCalls.startedAt,
+        completedAt: workspaceToolCalls.completedAt,
+        durationMs: workspaceToolCalls.durationMs,
+        reviewRef: workspaceToolCalls.reviewRef,
+      })
+      .from(workspaceToolCalls)
+      .where(
+        and(
+          eq(workspaceToolCalls.workspaceSessionId, workspaceId),
+          eq(workspaceToolCalls.reviewRef, reviewRef),
+        ),
+      )
+      .get();
+    return row ? rowToWorkspaceToolCallSummary(row) : undefined;
+  }
+
   close(): void {
     this.database.close();
   }

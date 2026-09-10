@@ -280,7 +280,7 @@ function reviewRefs(
   };
 }
 
-async function createWorkingTreeSnapshot(gitRoot: string, parent: string): Promise<string> {
+export async function createWorkingTreeSnapshot(gitRoot: string, parent: string): Promise<string> {
   const tempDir = await mkdtemp(join(tmpdir(), "devspace-review-index-"));
   const indexPath = join(tempDir, "index");
   const env = checkpointEnv(indexPath);
@@ -305,7 +305,7 @@ async function readReviewCommit(gitRoot: string, reviewRef: string): Promise<Rev
   };
 }
 
-async function readReviewBetween(
+export async function readReviewBetween(
   gitRoot: string,
   before: string,
   after: string,
