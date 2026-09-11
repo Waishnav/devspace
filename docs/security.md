@@ -106,8 +106,13 @@ credentials, malformed references, and unknown object fields are rejected.
 
 Absolute paths, traversal, symlinked parents, and existing destinations also
 fail closed. Downloads stream under the configured per-file limit and are
-published without overwrite as owner-only files. DevSpace does not extract or
-execute transferred content.
+published without overwrite. On Linux, destination traversal stays anchored to
+opened directory descriptors. On Windows, DevSpace holds native directory
+handles without delete sharing, rejects reparse points, and keeps those handles
+open while Node performs the path-based write and publication operations. On
+POSIX systems the partial is created with mode `0600`; Windows permissions
+follow inherited ACLs. DevSpace does not extract or execute transferred
+content.
 
 ## Logs
 
