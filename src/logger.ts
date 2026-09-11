@@ -70,7 +70,11 @@ export function requestPath(req: Request): string {
 
 export function commandPreview(command: string): string {
   const normalized = command.replace(/\s+/g, " ").trim();
-  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+  const redacted = normalized
+    .replace(/((?:--?|\/)(?:token|password|secret|api[-_]?key|authorization)(?:=|\s+))["']?[^\s"']+["']?/giu, "$1[REDACTED]")
+    .replace(/\b((?:token|password|secret|api[-_]?key|authorization)\s*=\s*)["']?[^\s"']+["']?/giu, "$1[REDACTED]")
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/giu, "$1[REDACTED]");
+  return redacted.length > 120 ? `${redacted.slice(0, 117)}...` : redacted;
 }
 
 function firstHeaderValue(value: string | undefined): string | undefined {
