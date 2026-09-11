@@ -11,7 +11,10 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     rollupOptions: {
-      input: resolve(__dirname, "src/ui/workspace-app.html"),
+      input: {
+        "workspace-app": resolve(__dirname, "src/ui/workspace-app.html"),
+        "workspace-inspector": resolve(__dirname, "src/ui/workspace-inspector.html"),
+      },
       output: {
         entryFileNames: "assets/[name]-[hash].js",
         chunkFileNames: "assets/[name]-[hash].js",
