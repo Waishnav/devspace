@@ -171,14 +171,19 @@ DevSpace uses the Codex-style surface by default. It exposes:
 - `open_workspace`
 - `read`
 - `apply_patch`
-- `exec_command`
+- `exec_cmd`
 - `write_stdin`
 - `show_changes`
 
-In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
+In this mode, `write`, `edit`, and `bash` are not registered. `exec_cmd`
 returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
+
+Set `tools.fileRead` to `shell` to omit the dedicated `read` tool. File,
+instruction, and skill inspection then goes through the configured shell tool:
+`exec_cmd` in Codex mode or `bash` in Claude mode. The default is `tool`, which
+keeps `read` exposed.
 
 Set `tools.mode` to `claude` in `~/.devspace/config.jsonc` to expose `write`,
 `edit`, and `bash` instead of the Codex mutation and command tools. Dedicated

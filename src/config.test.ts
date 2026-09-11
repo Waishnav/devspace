@@ -19,6 +19,7 @@ try {
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
   assert.equal(defaults.toolMode, "codex");
+  assert.equal(defaults.fileReadMode, "tool");
   assert.equal(defaults.uiEnabled, true);
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
@@ -52,7 +53,7 @@ try {
       worktreeRoot: "~/trees",
     },
     storage: { stateDir: "~/state" },
-    tools: { mode: "claude" },
+    tools: { mode: "claude", fileRead: "shell" },
     ui: { enabled: false },
     artifacts: { enabled: true, maxFileBytes: 321 },
     skills: { enabled: false, paths: ["~/skills"], agentDir: "~/agent" },
@@ -94,6 +95,7 @@ try {
     "example.internal",
   ]);
   assert.equal(configured.toolMode, "claude");
+  assert.equal(configured.fileReadMode, "shell");
   assert.equal(configured.uiEnabled, false);
   assert.equal(configured.stateDir, resolve(homedir(), "state"));
   assert.equal(configured.worktreeRoot, resolve(homedir(), "trees"));

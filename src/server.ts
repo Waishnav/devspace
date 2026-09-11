@@ -124,6 +124,12 @@ function serverInstructions(
   config: ServerConfig,
   toolSurface: ToolSurface,
 ): string {
+  const fileReadToolName = config.fileReadMode === "tool"
+    ? toolNames.read
+    : toolSurface.shellToolName;
+  const skillReadInstruction = config.fileReadMode === "tool"
+    ? `use ${toolNames.read} with the returned skill path`
+    : `use ${toolSurface.shellToolName} to read the returned skill path`;
   const artifactInstruction =
     config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
       ? " When the user provides an attached or generated file that needs to be added to the workspace, pass the provided file directly to download_artifact with the existing workspace_id and a suitable relative destination path. Do not reconstruct attached files manually."
@@ -131,9 +137,9 @@ function serverInstructions(
   const showChangesInstruction =
     " If files are modified, call show_changes once after the final related change and before the final response.";
   const skills = config.skillsEnabled
-    ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned skill path before proceeding. `
+    ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, ${skillReadInstruction} before proceeding. `
     : "";
-  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
+  const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${fileReadToolName} to inspect that instruction file and follow it. `;
   const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
@@ -613,7 +619,7 @@ function registerMcpSurface(
     },
   );
 
-  registrationTarget.registerTool(
+  if (config.fileReadMode === "tool") registrationTarget.registerTool(
     toolNames.read,
     {
       title: "Read file",

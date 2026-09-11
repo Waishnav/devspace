@@ -24,6 +24,7 @@ const execFileAsync = promisify(execFile);
 test("tool modes expose the expected host-facing tool surface", async (t) => {
   const cases: Array<{
     mode: ToolMode;
+    fileReadMode?: ServerConfig["fileReadMode"];
     expected: string[];
   }> = [
     {
@@ -32,13 +33,27 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
     },
     {
       mode: "codex",
-      expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "show_changes"],
+      expected: ["open_workspace", "read", "apply_patch", "exec_cmd", "write_stdin", "show_changes"],
+    },
+    {
+      mode: "claude",
+      fileReadMode: "shell",
+      expected: ["open_workspace", "write", "edit", "bash", "show_changes"],
+    },
+    {
+      mode: "codex",
+      fileReadMode: "shell",
+      expected: ["open_workspace", "apply_patch", "exec_cmd", "write_stdin", "show_changes"],
     },
   ];
 
-  for (const { mode, expected } of cases) {
-    await t.test(mode, async (nested) => {
-      const context = await fixture(nested, { toolMode: mode, uiEnabled: false });
+  for (const { mode, fileReadMode, expected } of cases) {
+    await t.test(`${mode}/${fileReadMode ?? "tool"}`, async (nested) => {
+      const context = await fixture(nested, {
+        toolMode: mode,
+        fileReadMode,
+        uiEnabled: false,
+      });
       const tools = await context.client.listTools();
 
       assert.deepEqual(
@@ -72,7 +87,7 @@ test("Codex process tools bound model-facing yield windows to 12 seconds", async
   const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
   const tools = await context.client.listTools();
 
-  for (const toolName of ["exec_command", "write_stdin"] as const) {
+  for (const toolName of ["exec_cmd", "write_stdin"] as const) {
     const tool = tools.tools.find(({ name }) => name === toolName);
     const yieldSchema = tool?.inputSchema?.properties?.yield_time_ms as {
       maximum?: number;
@@ -537,7 +552,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
     accessToken,
     "tools/call",
     {
-      name: "exec_command",
+      name: "exec_cmd",
       arguments: {
         workspace_id: workspaceId,
         cmd: `node -e \"${command}\"`,
@@ -644,6 +659,7 @@ async function fixture(
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
     toolMode?: ToolMode;
+    fileReadMode?: ServerConfig["fileReadMode"];
     uiEnabled?: boolean;
   } = {},
 ): Promise<ServerFixture> {
@@ -690,6 +706,7 @@ async function fixture(
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     toolMode: options.toolMode ?? loadedConfig.toolMode,
+    fileReadMode: options.fileReadMode ?? loadedConfig.fileReadMode,
     uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
   };
   const config: ServerConfig = options.localAgentProviders

@@ -1,12 +1,12 @@
 import { resolve } from "node:path";
-import type { ToolMode } from "./config-schema.js";
+import type { FileReadMode, ToolMode } from "./config-schema.js";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 
-export type { ToolMode } from "./config-schema.js";
+export type { FileReadMode, ToolMode } from "./config-schema.js";
 
 export interface ServerConfig {
   configDir: string;
@@ -17,6 +17,7 @@ export interface ServerConfig {
   allowedHosts: string[];
   publicBaseUrl: string;
   toolMode: ToolMode;
+  fileReadMode: FileReadMode;
   uiEnabled: boolean;
   stateDir: string;
   worktreeRoot: string;
@@ -66,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
     toolMode: stored.tools.mode,
+    fileReadMode: stored.tools.fileRead,
     uiEnabled: stored.ui.enabled,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),
