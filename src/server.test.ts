@@ -18,6 +18,9 @@ import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { groupWorkspaceToolCalls } from "./workspace-activity.js";
+import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -232,6 +235,59 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   assert.match(
     (((responseCard(current).payload as { patch?: string } | undefined)?.patch) ?? ""),
     /-first\n\+second/,
+  );
+});
+
+test("workspace activity groups a real tool sequence under its review ref", async (t) => {
+  const context = await fixture(t, { git: true, captureActivity: true });
+  assert.ok(context.activity);
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "activity-sequence"),
+  ).workspace_id;
+  assert.ok(typeof workspaceId === "string");
+
+  await context.client.callTool({
+    name: "read",
+    arguments: { workspace_id: workspaceId, path: "README.md" },
+  });
+  await context.client.callTool({
+    name: "exec_command",
+    arguments: { workspace_id: workspaceId, cmd: "printf activity" },
+  });
+  await context.client.callTool({
+    name: "apply_patch",
+    arguments: {
+      workspace_id: workspaceId,
+      patch: "*** Begin Patch\n*** Update File: README.md\n@@\n-hello\n+hello activity\n*** End Patch",
+    },
+  });
+  const shown = structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+  }));
+  const reviewRef = shown.review_ref;
+  assert.ok(typeof reviewRef === "string");
+
+  const groups = groupWorkspaceToolCalls(
+    context.activity.listCalls({ workspaceId, limit: 20 }),
+  );
+  const reviewed = groups.find((group) => group.reviewRef === reviewRef);
+  assert.ok(reviewed);
+  assert.deepEqual(reviewed.calls.map((call) => call.toolName), [
+    "read",
+    "exec_command",
+    "apply_patch",
+    "show_changes",
+  ]);
+
+  await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  } as Parameters<Client["callTool"]>[0]);
+  assert.equal(
+    context.activity.listCalls({ workspaceId, limit: 20 }).filter((call) => call.toolName === "show_changes").length,
+    1,
   );
 });
 
@@ -563,6 +619,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
 interface ServerFixture {
   client: Client;
   project: string;
+  activity?: WorkspaceActivityStore;
 }
 
 function schemaPropertyPaths(
@@ -645,6 +702,7 @@ async function fixture(
     subagents?: SubagentsConfig;
     toolMode?: ToolMode;
     uiEnabled?: boolean;
+    captureActivity?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -714,6 +772,12 @@ async function fixture(
     resolveProviderAvailability(),
   );
   const store = new SqliteWorkspaceStore(stateDir);
+  const activityJournal = options.captureActivity
+    ? new WorkspaceActivityJournal(stateDir)
+    : undefined;
+  const activity = options.captureActivity
+    ? new WorkspaceActivityStore(stateDir)
+    : undefined;
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
     config,
@@ -722,6 +786,8 @@ async function fixture(
     new ProcessSessionManager(),
     resolveLocalAgentProviders,
     [],
+    undefined,
+    activityJournal,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "devspace-test-client", version: "1.0.0" });
@@ -736,6 +802,8 @@ async function fixture(
     closed = true;
     await client.close();
     await server.close();
+    activity?.close();
+    activityJournal?.close();
     store.close();
   };
 
@@ -744,7 +812,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project };
+  return { client, project, ...(activity ? { activity } : {}) };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
