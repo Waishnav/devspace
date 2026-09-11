@@ -42,7 +42,7 @@ export function mountReviewPayload(
   };
 }
 
-function ReviewPayload({
+export function ReviewPayload({
   card,
   hostContext,
   errorMessage = null,

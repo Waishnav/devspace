@@ -47,6 +47,10 @@ interface MountedPayload {
   unmount(): void;
 }
 
+interface MountedInspector {
+  unmount(): void;
+}
+
 let app: App | null = null;
 let connected = false;
 let connectionError: string | null = null;
@@ -61,6 +65,8 @@ let openWorkspaceInstructionKey: string | null = null;
 let showAvailableWorkspaceInstructions = false;
 let pendingToolResult: CallToolResult | null = null;
 let pendingReviewKey: string | null = null;
+let currentInspector: MountedInspector | null = null;
+let currentInspectorContainer: HTMLElement | null = null;
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -77,7 +83,7 @@ async function boot(): Promise<void> {
 
   app = new App(
     { name: "devspace-tool-cards", version: "0.4.0" },
-    {},
+    { availableDisplayModes: ["inline", "fullscreen"] },
   );
 
   app.ontoolresult = (result) => {
@@ -90,11 +96,20 @@ async function boot(): Promise<void> {
 
   app.onhostcontextchanged = (ctx) => {
     const previousTheme = hostContext?.theme;
+    const previousDisplayMode = hostContext?.displayMode;
     hostContext = {
       ...hostContext,
       ...ctx,
     };
     applyHostContext();
+    if (ctx.displayMode && ctx.displayMode !== previousDisplayMode) {
+      render();
+      return;
+    }
+    if (hostContext?.displayMode === "fullscreen" && card?.tool === "open_workspace") {
+      render();
+      return;
+    }
     // Workspace details inherit host variables directly. Rebuilding their DOM on
     // iframe resize would reset an in-progress instruction preview interaction.
     if (card?.tool === "open_workspace") {
@@ -108,6 +123,7 @@ async function boot(): Promise<void> {
 
   app.onteardown = async () => {
     window.removeEventListener("openai:set_globals", handleChatGptGlobalsChanged);
+    unmountInspector();
     unmountPayload();
     return {};
   };
@@ -242,6 +258,7 @@ function applyHostContext(): void {
 }
 
 function render(): void {
+  unmountInspector();
   unmountPayload();
 
   if (connectionError) {
@@ -259,6 +276,15 @@ function render(): void {
     return;
   }
 
+  if (
+    card.tool === "open_workspace"
+    && card.workspaceId
+    && hostContext?.displayMode === "fullscreen"
+  ) {
+    renderWorkspaceInspector(card);
+    return;
+  }
+
   const display = cardDisplay(card);
   if (card.tool === "show_changes") {
     renderReviewCard(card, display);
@@ -270,8 +296,9 @@ function render(): void {
   const section = element("section", {
     className: toolCardClassName(display),
   });
+  const header = element("div", { className: "tool-header-shell" });
   const button = element("button", {
-    className: "tool-header",
+    className: "tool-header tool-header-primary",
     type: "button",
     ariaExpanded: String(expanded),
     disabled: !expandable,
@@ -304,7 +331,23 @@ function render(): void {
     renderHeaderSummary(card),
     renderChevron(expanded, expandable),
   );
-  section.append(button);
+  header.append(button);
+
+  if (canOpenWorkspaceInspector(card)) {
+    const fullscreen = element("button", {
+      className: "workspace-fullscreen-action",
+      type: "button",
+      title: "Open workspace inspector",
+      ariaLabel: "Open workspace inspector",
+    });
+    fullscreen.append(renderIcon(toolIcons.fullscreen));
+    fullscreen.addEventListener("click", () => {
+      void requestWorkspaceInspector();
+    });
+    header.append(fullscreen);
+  }
+
+  section.append(header);
 
   if (expanded) {
     const body = element("div", { className: "tool-body" });
@@ -315,6 +358,54 @@ function render(): void {
   main.append(section);
   appRoot.replaceChildren(main);
   renderPayloadIfNeeded();
+}
+
+function canOpenWorkspaceInspector(value: ToolResultCard): boolean {
+  return value.tool === "open_workspace"
+    && Boolean(value.workspaceId)
+    && Boolean(app?.getHostCapabilities()?.serverTools)
+    && Boolean(hostContext?.availableDisplayModes?.includes("fullscreen"));
+}
+
+async function requestWorkspaceInspector(): Promise<void> {
+  if (!app) return;
+  const result = await app.requestDisplayMode({ mode: "fullscreen" });
+  hostContext = { ...hostContext, displayMode: result.mode };
+  render();
+}
+
+async function exitWorkspaceInspector(): Promise<void> {
+  if (!app) return;
+  const result = await app.requestDisplayMode({ mode: "inline" });
+  hostContext = { ...hostContext, displayMode: result.mode };
+  render();
+}
+
+function renderWorkspaceInspector(workspaceCard: ToolResultCard): void {
+  if (!app || !workspaceCard.workspaceId) return;
+  const container = element("div", { className: "workspace-inspector-host" });
+  currentInspectorContainer = container;
+  appRoot.replaceChildren(container);
+  const target = container;
+  const currentApp = app;
+
+  void import("./inspector/workspace-inspector.js").then(({ mountMcpWorkspaceInspector }) => {
+    if (currentInspectorContainer !== target || hostContext?.displayMode !== "fullscreen") return;
+    currentInspector = mountMcpWorkspaceInspector(target, {
+      app: currentApp,
+      workspaceId: workspaceCard.workspaceId!,
+      root: workspaceCard.root ?? workspaceCard.path ?? workspaceCard.workspaceId!,
+      mode: workspaceCard.mode,
+      hostContext,
+      onExitFullscreen: () => { void exitWorkspaceInspector(); },
+    });
+  }).catch((error) => {
+    if (currentInspectorContainer !== target) return;
+    target.replaceChildren(element("div", {
+      className: "inspector-status error",
+      text: error instanceof Error ? error.message : String(error),
+    }));
+  });
 }
 
 function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
@@ -363,6 +454,12 @@ function unmountPayload(): void {
   unmountCurrentPayload();
   currentPayload = null;
   currentPayloadContainer = null;
+}
+
+function unmountInspector(): void {
+  currentInspector?.unmount();
+  currentInspector = null;
+  currentInspectorContainer = null;
 }
 
 function unmountCurrentPayload(): void {

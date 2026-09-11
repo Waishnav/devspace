@@ -47,6 +47,12 @@ import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityService } from "./workspace-activity-service.js";
+import {
+  listWorkspaceRefs,
+  readWorkspaceDiff,
+  type WorkspaceDiffScope,
+} from "./workspace-diff.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -315,6 +321,7 @@ export function createMcpServer(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
   workspaceActivityJournal?: WorkspaceActivityJournal,
+  workspaceActivityService?: WorkspaceActivityService,
 ): McpServer {
   const toolSurface = getToolSurface(config.toolMode);
   const server = new McpServer(
@@ -334,6 +341,7 @@ export function createMcpServer(
     incomingArtifactAdapters,
     trackToolActivity,
     workspaceActivityJournal,
+    workspaceActivityService,
   );
   return server;
 }
@@ -348,6 +356,7 @@ function registerMcpSurface(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
   workspaceActivityJournal?: WorkspaceActivityJournal,
+  workspaceActivityService?: WorkspaceActivityService,
 ): void {
   const registrationTarget = trackToolActivity || workspaceActivityJournal
     ? withObservedToolHandlers(server, { trackToolActivity, workspaceActivityJournal })
@@ -777,6 +786,241 @@ function registerMcpSurface(
       incomingArtifactAdapters,
     });
   }
+
+  if (config.uiEnabled && workspaceActivityService) {
+    registerWorkspaceInspectorTools(
+      server,
+      workspaces,
+      reviewCheckpoints,
+      workspaceActivityService,
+    );
+  }
+}
+
+function registerWorkspaceInspectorTools(
+  server: McpRegistrationTarget,
+  workspaces: WorkspaceRegistry,
+  reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
+  activity: WorkspaceActivityService,
+): void {
+  const appOnlyMeta = {
+    _meta: {
+      ui: {
+        visibility: ["app"] as const,
+      },
+    },
+  };
+
+  registerAppTool(
+    server,
+    "get_workspace_activity",
+    {
+      title: "Get workspace activity",
+      description: "Read recent persisted tool activity for a workspace.",
+      inputSchema: {
+        workspace_id: z.string(),
+        review_ref: z.string().optional(),
+      },
+      outputSchema: {
+        groups: z.array(z.object({
+          id: z.string(),
+          kind: z.enum(["review", "inferred"]),
+          started_at: z.string(),
+          completed_at: z.string().optional(),
+          review_ref: z.string().optional(),
+          calls: z.array(z.object({
+            id: z.number().int(),
+            tool_name: z.string(),
+            started_at: z.string(),
+            completed_at: z.string().optional(),
+            duration_ms: z.number().int().optional(),
+          })),
+        })),
+      },
+      ...appOnlyMeta,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspace_id, review_ref }) => {
+      await workspaces.getWorkspace(workspace_id);
+      const groups = review_ref
+        ? [activity.findReviewGroup(workspace_id, review_ref)].filter(Boolean)
+        : activity.listActivity(workspace_id).groups;
+      const outputGroups = groups.map((group) => ({
+        id: group!.id,
+        kind: group!.kind,
+        started_at: group!.startedAt,
+        completed_at: group!.completedAt,
+        review_ref: group!.reviewRef,
+        calls: group!.calls.map((call) => ({
+          id: call.id,
+          tool_name: call.toolName,
+          started_at: call.startedAt,
+          completed_at: call.completedAt,
+          duration_ms: call.durationMs,
+        })),
+      }));
+      return {
+        content: [textBlock(`Loaded ${outputGroups.length} activity groups.`)],
+        structuredContent: { groups: outputGroups },
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "get_workspace_tool_call",
+    {
+      title: "Get workspace tool call",
+      description: "Read the raw persisted input and result for one workspace tool call.",
+      inputSchema: {
+        workspace_id: z.string(),
+        call_id: z.number().int().positive(),
+      },
+      outputSchema: {
+        call: z.object({
+          id: z.number().int(),
+          tool_name: z.string(),
+          arguments: z.unknown(),
+          result: z.unknown().optional(),
+          error: z.unknown().optional(),
+          started_at: z.string(),
+          completed_at: z.string().optional(),
+          duration_ms: z.number().int().optional(),
+          review_ref: z.string().optional(),
+        }),
+      },
+      ...appOnlyMeta,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspace_id, call_id }) => {
+      await workspaces.getWorkspace(workspace_id);
+      const call = activity.getToolCall(workspace_id, call_id);
+      if (!call) throw new Error(`Unknown tool call ${call_id} for workspace ${workspace_id}.`);
+      return {
+        content: [textBlock(`Loaded ${call.toolName} tool call.`)],
+        structuredContent: {
+          call: {
+            id: call.id,
+            tool_name: call.toolName,
+            arguments: call.arguments,
+            result: call.result,
+            error: call.error,
+            started_at: call.startedAt,
+            completed_at: call.completedAt,
+            duration_ms: call.durationMs,
+            review_ref: call.reviewRef,
+          },
+        },
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "get_workspace_diff",
+    {
+      title: "Get workspace diff",
+      description: "Read a workspace diff for a review, working tree, branch, or exact ref comparison.",
+      inputSchema: {
+        workspace_id: z.string(),
+        scope: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("review"), review_ref: z.string() }),
+          z.object({ kind: z.literal("working-tree") }),
+          z.object({ kind: z.literal("branch"), base_ref: z.string().optional() }),
+          z.object({ kind: z.literal("compare"), from_ref: z.string(), to_ref: z.string() }),
+        ]),
+      },
+      outputSchema: {
+        scope: z.unknown(),
+        summary: z.object({
+          files: z.number().int(),
+          additions: z.number().int(),
+          removals: z.number().int(),
+        }),
+        files: z.array(z.unknown()),
+        patch: z.string(),
+      },
+      ...appOnlyMeta,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspace_id, scope }) => {
+      const workspace = await workspaces.getWorkspace(workspace_id);
+      const internalScope = workspaceDiffScopeFromInput(scope);
+      const diff = await readWorkspaceDiff(workspace, reviewCheckpoints, internalScope);
+      return {
+        content: [textBlock(`Loaded workspace diff for ${diff.scope.kind}.`)],
+        structuredContent: {
+          scope: workspaceDiffScopeToOutput(diff.scope),
+          summary: diff.summary,
+          files: diff.files,
+          patch: diff.patch,
+        },
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "get_workspace_refs",
+    {
+      title: "Get workspace refs",
+      description: "List Git refs available for workspace comparisons.",
+      inputSchema: { workspace_id: z.string() },
+      outputSchema: {
+        current_ref: z.string().optional(),
+        default_base_ref: z.string().optional(),
+        refs: z.array(z.string()),
+      },
+      ...appOnlyMeta,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspace_id }) => {
+      const workspace = await workspaces.getWorkspace(workspace_id);
+      const refs = await listWorkspaceRefs(workspace);
+      return {
+        content: [textBlock(`Loaded ${refs.refs.length} Git refs.`)],
+        structuredContent: {
+          current_ref: refs.currentRef,
+          default_base_ref: refs.defaultBaseRef,
+          refs: refs.refs,
+        },
+      };
+    },
+  );
+}
+
+function workspaceDiffScopeFromInput(input: {
+  kind: "review" | "working-tree" | "branch" | "compare";
+  review_ref?: string;
+  base_ref?: string;
+  from_ref?: string;
+  to_ref?: string;
+}): WorkspaceDiffScope {
+  switch (input.kind) {
+    case "review":
+      if (!input.review_ref) throw new Error("review_ref is required for review diffs.");
+      return { kind: "review", reviewRef: input.review_ref };
+    case "working-tree":
+      return { kind: "working-tree" };
+    case "branch":
+      return { kind: "branch", ...(input.base_ref ? { baseRef: input.base_ref } : {}) };
+    case "compare":
+      if (!input.from_ref || !input.to_ref) throw new Error("from_ref and to_ref are required.");
+      return { kind: "compare", fromRef: input.from_ref, toRef: input.to_ref };
+  }
+}
+
+function workspaceDiffScopeToOutput(scope: WorkspaceDiffScope): Record<string, unknown> {
+  switch (scope.kind) {
+    case "review":
+      return { kind: scope.kind, review_ref: scope.reviewRef };
+    case "working-tree":
+      return { kind: scope.kind };
+    case "branch":
+      return { kind: scope.kind, base_ref: scope.baseRef };
+    case "compare":
+      return { kind: scope.kind, from_ref: scope.fromRef, to_ref: scope.toRef };
+  }
 }
 
 function withObservedToolHandlers(
@@ -847,6 +1091,7 @@ export function createServer(
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  const workspaceActivityService = new WorkspaceActivityService(config.stateDir);
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
@@ -867,6 +1112,7 @@ export function createServer(
       incomingArtifactAdapters,
       toolActivities.track,
       workspaceActivityJournal,
+      workspaceActivityService,
     );
   });
   const logMcpHandlerError = (error: Error) => logEvent(
@@ -1004,6 +1250,7 @@ export function createServer(
         }
         await toolActivities.waitForIdle();
         workspaceActivityJournal.close();
+        workspaceActivityService.close();
         processSessions.shutdown();
         oauthProvider.close();
         workspaceStore.close?.();
