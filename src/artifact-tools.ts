@@ -14,6 +14,7 @@ import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { ArtifactError } from "./artifact-error.js";
+import { parseSafeWindowsArtifactRelativePath } from "./artifact-path-windows.js";
 import type { ServerConfig } from "./config.js";
 import {
   describeIncomingArtifactValue,
@@ -35,7 +36,7 @@ const PARTIAL_PREFIX = ".devspace-download-";
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_STALE_PARTIAL_CLEANUP = 32;
-const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux"]);
+const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux", "win32"]);
 
 const openAIFileReferenceInputSchema = z.strictObject({
   download_url: z.string(),
@@ -161,7 +162,7 @@ export async function downloadIncomingArtifact({
   if (!isArtifactDownloadSupportedPlatform()) {
     throw new ArtifactError(
       "artifact_platform_unsupported",
-      "Native file download requires descriptor-anchored directory operations on this platform.",
+      "Native file download requires secure platform filesystem primitives.",
     );
   }
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
@@ -192,15 +193,25 @@ export async function downloadIncomingArtifact({
       );
     }
 
-    workspaceHandle = await openDirectoryNoFollow(
-      workspaceRoot,
-      "artifact_workspace_unsafe",
-      "Selected workspace root is not a real directory.",
-    );
-    destinationDirectory = await prepareDestinationDirectory(
-      workspaceHandle,
-      destination.parentParts,
-    );
+    if (process.platform === "win32") {
+      const { prepareWindowsArtifactDestinationDirectory } = await import(
+        "./artifact-destination-windows.js"
+      );
+      destinationDirectory = await prepareWindowsArtifactDestinationDirectory(
+        workspaceRoot,
+        destination.parentParts,
+      );
+    } else {
+      workspaceHandle = await openDirectoryNoFollow(
+        workspaceRoot,
+        "artifact_workspace_unsafe",
+        "Selected workspace root is not a real directory.",
+      );
+      destinationDirectory = await prepareDestinationDirectory(
+        workspaceHandle,
+        destination.parentParts,
+      );
+    }
     await cleanupStalePartials(destinationDirectory);
 
     partialPath = join(
@@ -369,7 +380,7 @@ async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
 }
 
 function descriptorDirectoryPath(handle: FileHandle): string {
-  if (isArtifactDownloadSupportedPlatform()) return `/proc/self/fd/${handle.fd}`;
+  if (process.platform === "linux") return `/proc/self/fd/${handle.fd}`;
   throw new ArtifactError(
     "artifact_platform_unsupported",
     "Native file download requires descriptor-anchored directory operations on this platform.",
@@ -377,6 +388,21 @@ function descriptorDirectoryPath(handle: FileHandle): string {
 }
 
 function normalizeArtifactDestination(value: string): ArtifactDestination {
+  if (process.platform === "win32") {
+    const parsed = parseSafeWindowsArtifactRelativePath(value);
+    if (!parsed) {
+      throw new ArtifactError(
+        "artifact_destination_invalid",
+        "Artifact destination must be a safe relative Windows file path inside the workspace.",
+      );
+    }
+    return {
+      path: parsed.path,
+      parentParts: parsed.parts.slice(0, -1),
+      name: parsed.name,
+    };
+  }
+
   const rawParts = value.split(sep);
   if (
     !value
