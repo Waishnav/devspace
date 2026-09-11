@@ -9,6 +9,7 @@ import {
   SHELL_TOOL_ANNOTATIONS,
   toolNames,
   workspaceIdDescription,
+  type ToolLogFields,
   type ToolRegistrationContext,
 } from "./types.js";
 import {
@@ -239,6 +240,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             maxOutputTokens,
           });
         },
+        processLogFields,
       );
 
       return processToolResponse(snapshot);
@@ -328,9 +330,24 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             maxOutputTokens,
           });
         },
+        processLogFields,
       );
 
       return processToolResponse(snapshot);
     },
   );
+}
+
+export function processLogFields(result: ProcessSnapshot): Partial<ToolLogFields> {
+  const success = result.running || result.exitCode === 0;
+  const termination = result.signal
+    ? `Process terminated by signal ${result.signal}.`
+    : `Process exited with code ${result.exitCode ?? "unknown"}.`;
+  return {
+    sessionId: result.sessionId,
+    running: result.running,
+    exitCode: result.exitCode,
+    success,
+    ...(success ? {} : { error: termination }),
+  };
 }
