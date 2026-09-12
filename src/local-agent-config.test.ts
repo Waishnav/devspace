@@ -61,6 +61,19 @@ assert.deepEqual(inherited, {
   OPENAI_API_KEY: "inherited",
   UNCHANGED: "yes",
 });
+{
+  // Windows environment blocks commonly store "Path"; a spread drops the
+  // case-insensitive process.env.PATH lookup that command resolution relies on.
+  const windowsInherited = { Path: "C:\\tools;C:\\Windows", Other: "kept" };
+  const providerEnv = localAgentProviderEnvironment(
+    subagentsConfigSchema.parse({ enabled: true, providers: [{ id: "codex", enabled: true }] }),
+    "codex",
+    windowsInherited,
+  );
+  assert.equal(providerEnv.PATH, "C:\\tools;C:\\Windows");
+  assert.equal(providerEnv.Path, "C:\\tools;C:\\Windows");
+  assert.equal(providerEnv.Other, "kept");
+}
 assert.equal(
   localAgentProviderConfigRevision(config),
   localAgentProviderConfigRevision(subagentsConfigSchema.parse({

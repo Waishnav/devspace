@@ -82,10 +82,22 @@ export function localAgentProviderEnvironment(
 ): NodeJS.ProcessEnv {
   const providerConfig = subagentProviderConfig(config, provider);
   const env = { ...inherited, ...providerConfig?.env };
+  // process.env lookups are case-insensitive on Windows, but spreading copies
+  // only the original key casing (commonly "Path"); consumers reading the
+  // plain object's env.PATH then miss. Restore the canonical keys.
+  const pathValue = environmentValueCaseInsensitive(inherited, "PATH");
+  if (env.PATH === undefined && pathValue !== undefined) env.PATH = pathValue;
+  const pathExtValue = environmentValueCaseInsensitive(inherited, "PATHEXT");
+  if (env.PATHEXT === undefined && pathExtValue !== undefined) env.PATHEXT = pathExtValue;
   const commandVariable = providerCommandVariable(provider);
   const command = providerConfig && "command" in providerConfig ? providerConfig.command : undefined;
   if (commandVariable && command) env[commandVariable] = command;
   return env;
+}
+
+function environmentValueCaseInsensitive(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const found = Object.keys(env).find((entry) => entry.toUpperCase() === key);
+  return found === undefined ? undefined : env[found];
 }
 
 export function localAgentProviderEnvironmentOverrides(
