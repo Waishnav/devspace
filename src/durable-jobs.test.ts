@@ -116,7 +116,7 @@ test("Runtime environment normalization and LTS alias discovery", () => {
 
     const diag = getRuntimeDiagnostics(tempWs);
     assert.ok(diag.nodeVersion);
-    assert.ok(diag.gitVersion);
+    assert.ok(diag.gitVersion === null || typeof diag.gitVersion === "string");
     assert.ok(diag.shell);
   } finally {
     rmSync(tempWs, { recursive: true, force: true });

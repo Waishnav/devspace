@@ -167,10 +167,19 @@ export class DurableJobManager {
         .prepare("SELECT * FROM durable_jobs ORDER BY created_at DESC LIMIT ?")
         .all(limit) as RawJobRow[];
     }
-    return rows.map((r) => {
+    for (const r of rows) {
       this.checkCompletionMarker(r.id);
-      return this.rowToRecord(r);
-    });
+    }
+    if (workspaceId) {
+      rows = this.db
+        .prepare("SELECT * FROM durable_jobs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?")
+        .all(workspaceId, limit) as RawJobRow[];
+    } else {
+      rows = this.db
+        .prepare("SELECT * FROM durable_jobs ORDER BY created_at DESC LIMIT ?")
+        .all(limit) as RawJobRow[];
+    }
+    return rows.map((r) => this.rowToRecord(r));
   }
 
   private getMarkerPath(id: string): string {
@@ -212,15 +221,17 @@ export class DurableJobManager {
       DEVSPACE_JOB_ID: id,
     };
 
-    // Wrap command with bash trap so detached completion writes marker even if server terminates
+    // Wrap command with bash trap so detached completion writes marker even if command calls exit or terminates
     const wrappedCommand = `
-__devspace_job_cmd() {
-${params.command}
+__devspace_job_finished() {
+  __ec=$?
+  printf '{"exitCode": %s, "signal": null, "endedAt": %s}\\n' "$__ec" "$(date +%s)" > "${markerPath}" 2>/dev/null || true
+  exit "$__ec"
 }
-__devspace_job_cmd
-__ec=$?
-echo "{\\"exitCode\\": \${__ec}, \\"signal\\": null, \\"endedAt\\": $(date +%s)}" > "${markerPath}" 2>/dev/null || true
-exit \${__ec}
+trap __devspace_job_finished EXIT
+(
+${params.command}
+)
 `;
 
     let child;

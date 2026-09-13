@@ -29,10 +29,17 @@ export function resolveProjectEnvironment(workspaceRoot?: string): NodeJS.Proces
     }
 
     if (versionStr) {
-      if (versionStr.includes("lts") || versionStr.includes("22")) {
+      const normalized = versionStr.toLowerCase().trim();
+      // Resolve known LTS aliases
+      if (normalized === "lts/*" || normalized === "lts" || normalized === "lts/jod") {
         targetMajor = 22;
+      } else if (normalized === "lts/iron") {
+        targetMajor = 20;
+      } else if (normalized === "lts/hydrogen") {
+        targetMajor = 18;
       } else {
-        const match = versionStr.match(/(\d+)/);
+        // Match leading major version (e.g. "22", "v22", ">=22", "22.x", "v20.22.1" -> 20)
+        const match = normalized.match(/(?:^|[^\d])v?(\d+)(?:\.|\b)/);
         if (match) {
           targetMajor = parseInt(match[1], 10);
         }
