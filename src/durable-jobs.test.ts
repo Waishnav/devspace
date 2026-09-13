@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DurableJobManager } from "./durable-jobs.js";
@@ -75,13 +75,50 @@ test("DurableJobManager: cancels running job and updates record", async () => {
   }
 });
 
-test("Runtime environment normalization and diagnostics", () => {
-  const env = resolveProjectEnvironment(process.cwd());
-  assert.ok(typeof env.PATH === "string");
-  assert.ok(env.SHELL);
+test("DurableJobManager: log pagination with maxLines preserves nextOffset", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "devspace-jobs-pagination-test-"));
+  const mgr = new DurableJobManager(tempDir);
 
-  const diag = getRuntimeDiagnostics(process.cwd());
-  assert.ok(diag.nodeVersion);
-  assert.ok(diag.gitVersion);
-  assert.ok(diag.shell);
+  try {
+    const job = mgr.startJob({
+      workspaceId: "test_ws",
+      workspaceRoot: process.cwd(),
+      command: "echo line-one; echo line-two; echo line-three",
+      workingDirectory: process.cwd(),
+    });
+
+    for (let i = 0; i < 20; i++) {
+      const current = mgr.getJob(job.id);
+      if (current?.status !== "running") break;
+      await delay(100);
+    }
+
+    const chunk1 = mgr.readLogs(job.id, { maxLines: 1 });
+    assert.equal(chunk1.content, "line-one");
+    assert.equal(chunk1.hasMore, true);
+
+    const chunk2 = mgr.readLogs(job.id, { offset: chunk1.nextOffset });
+    assert.ok(chunk2.content.includes("line-two"));
+    assert.ok(chunk2.content.includes("line-three"));
+  } finally {
+    mgr.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Runtime environment normalization and LTS alias discovery", () => {
+  const tempWs = mkdtempSync(join(tmpdir(), "devspace-env-test-"));
+  try {
+    writeFileSync(join(tempWs, ".nvmrc"), "lts/*", "utf8");
+    const env = resolveProjectEnvironment(tempWs);
+    assert.ok(typeof env.PATH === "string");
+    assert.ok(env.SHELL);
+
+    const diag = getRuntimeDiagnostics(tempWs);
+    assert.ok(diag.nodeVersion);
+    assert.ok(diag.gitVersion);
+    assert.ok(diag.shell);
+  } finally {
+    rmSync(tempWs, { recursive: true, force: true });
+  }
 });

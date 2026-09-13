@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -10,35 +10,56 @@ export function resolveProjectEnvironment(workspaceRoot?: string): NodeJS.Proces
     SHELL: process.env.SHELL || "/bin/bash",
   };
 
-  let preferNode22 = false;
+  let targetMajor: number | null = null;
   if (workspaceRoot) {
     const nvmrcPath = join(workspaceRoot, ".nvmrc");
     const nodeVersionPath = join(workspaceRoot, ".node-version");
     const packageJsonPath = join(workspaceRoot, "package.json");
 
+    let versionStr = "";
     if (existsSync(nvmrcPath)) {
-      const v = readFileSync(nvmrcPath, "utf8").trim();
-      if (v.startsWith("22") || v.includes("lts")) preferNode22 = true;
+      versionStr = readFileSync(nvmrcPath, "utf8").trim();
     } else if (existsSync(nodeVersionPath)) {
-      const v = readFileSync(nodeVersionPath, "utf8").trim();
-      if (v.startsWith("22")) preferNode22 = true;
+      versionStr = readFileSync(nodeVersionPath, "utf8").trim();
     } else if (existsSync(packageJsonPath)) {
       try {
         const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { engines?: { node?: string } };
-        if (pkg.engines?.node && (pkg.engines.node.includes("22") || pkg.engines.node.includes("<25"))) {
-          preferNode22 = true;
-        }
+        versionStr = pkg.engines?.node || "";
       } catch {}
+    }
+
+    if (versionStr) {
+      if (versionStr.includes("lts") || versionStr.includes("22")) {
+        targetMajor = 22;
+      } else {
+        const match = versionStr.match(/(\d+)/);
+        if (match) {
+          targetMajor = parseInt(match[1], 10);
+        }
+      }
     }
   }
 
   const currentPath = process.env.PATH || "";
-  if (preferNode22) {
-    const home = process.env.HOME || "";
-    const nvmNode22 = join(home, ".nvm/versions/node/v22.23.2/bin");
-    if (existsSync(nvmNode22)) {
-      env.PATH = `${nvmNode22}:${currentPath}`;
-    }
+  const home = process.env.HOME || "";
+  const nvmVersionsDir = join(home, ".nvm/versions/node");
+
+  // Fix finding 5: Discover any installed Node version matching targetMajor dynamically
+  if (targetMajor !== null && existsSync(nvmVersionsDir)) {
+    try {
+      const installed = readdirSync(nvmVersionsDir);
+      // Look for versions matching `v<targetMajor>.*`, sort descending to pick latest installed patch
+      const matched = installed
+        .filter((dir) => dir.startsWith(`v${targetMajor}.`))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+
+      if (matched.length > 0) {
+        const selectedBin = join(nvmVersionsDir, matched[0], "bin");
+        if (existsSync(selectedBin)) {
+          env.PATH = `${selectedBin}:${currentPath}`;
+        }
+      }
+    } catch {}
   }
 
   return env;

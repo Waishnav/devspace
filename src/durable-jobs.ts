@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
-import { openSync, readFileSync, existsSync, mkdirSync, statSync, readSync, closeSync } from "node:fs";
+import {
+  openSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  readSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
@@ -72,12 +81,15 @@ export class DurableJobManager {
   private db: Database.Database;
   private jobsDir: string;
   private logsDir: string;
+  private metadataDir: string;
   private heartbeatTimer?: NodeJS.Timeout;
 
   constructor(stateDir: string) {
     this.jobsDir = join(stateDir, "jobs");
     this.logsDir = join(this.jobsDir, "logs");
+    this.metadataDir = join(this.jobsDir, "meta");
     mkdirSync(this.logsDir, { recursive: true });
+    mkdirSync(this.metadataDir, { recursive: true });
 
     const dbPath = join(this.jobsDir, "jobs.sqlite");
     this.db = new Database(dbPath);
@@ -136,6 +148,8 @@ export class DurableJobManager {
   }
 
   public getJob(id: string): JobRecord | null {
+    // Check if detached finish marker exists on disk
+    this.checkCompletionMarker(id);
     const row = this.db.prepare("SELECT * FROM durable_jobs WHERE id = ?").get(id) as
       | RawJobRow
       | undefined;
@@ -153,7 +167,33 @@ export class DurableJobManager {
         .prepare("SELECT * FROM durable_jobs ORDER BY created_at DESC LIMIT ?")
         .all(limit) as RawJobRow[];
     }
-    return rows.map((r) => this.rowToRecord(r));
+    return rows.map((r) => {
+      this.checkCompletionMarker(r.id);
+      return this.rowToRecord(r);
+    });
+  }
+
+  private getMarkerPath(id: string): string {
+    return join(this.metadataDir, `${id}.exit`);
+  }
+
+  private checkCompletionMarker(id: string): void {
+    const markerPath = this.getMarkerPath(id);
+    if (existsSync(markerPath)) {
+      try {
+        const raw = readFileSync(markerPath, "utf8").trim();
+        const parsed = JSON.parse(raw) as { exitCode: number; signal: string | null; endedAt: number };
+        const finalStatus = parsed.exitCode === 0 ? "succeeded" : "failed";
+        this.db
+          .prepare(
+            `
+          UPDATE durable_jobs SET status = ?, exit_code = ?, signal = ?, ended_at = ?, last_heartbeat = ?
+          WHERE id = ? AND status = 'running'
+        `
+          )
+          .run(finalStatus, parsed.exitCode, parsed.signal, parsed.endedAt, parsed.endedAt, id);
+      } catch {}
+    }
   }
 
   public startJob(params: StartJobParams): JobRecord {
@@ -162,6 +202,7 @@ export class DurableJobManager {
     const maxRuntime =
       params.maxRuntimeSeconds && params.maxRuntimeSeconds > 0 ? params.maxRuntimeSeconds : 86400;
     const logPath = join(this.logsDir, `${id}.log`);
+    const markerPath = this.getMarkerPath(id);
 
     const outFd = openSync(logPath, "a", 0o600);
 
@@ -171,12 +212,61 @@ export class DurableJobManager {
       DEVSPACE_JOB_ID: id,
     };
 
-    const child = spawn("bash", ["-c", params.command], {
-      cwd: params.workingDirectory,
-      env: mergedEnv,
-      detached: true,
-      stdio: ["ignore", outFd, outFd],
-    });
+    // Wrap command with bash trap so detached completion writes marker even if server terminates
+    const wrappedCommand = `
+__devspace_job_cmd() {
+${params.command}
+}
+__devspace_job_cmd
+__ec=$?
+echo "{\\"exitCode\\": \${__ec}, \\"signal\\": null, \\"endedAt\\": $(date +%s)}" > "${markerPath}" 2>/dev/null || true
+exit \${__ec}
+`;
+
+    let child;
+    try {
+      child = spawn("bash", ["-c", wrappedCommand], {
+        cwd: params.workingDirectory,
+        env: mergedEnv,
+        detached: true,
+        stdio: ["ignore", outFd, outFd],
+      });
+    } catch (err: unknown) {
+      closeSync(outFd);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const insert = this.db.prepare(`
+        INSERT INTO durable_jobs (
+          id, workspace_id, workspace_root, command, working_directory,
+          pid, pgid, status, exit_code, signal, log_path,
+          created_at, started_at, ended_at, last_heartbeat, max_runtime_seconds, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(
+        id,
+        params.workspaceId,
+        params.workspaceRoot,
+        params.command,
+        params.workingDirectory,
+        null,
+        null,
+        "failed",
+        null,
+        null,
+        logPath,
+        now,
+        now,
+        now,
+        now,
+        maxRuntime,
+        errMsg
+      );
+      return this.getJob(id)!;
+    } finally {
+      // Fix finding 2: Close parent FD copy immediately so parent does not leak file descriptors
+      try {
+        closeSync(outFd);
+      } catch {}
+    }
 
     const pid = child.pid ?? null;
     const pgid = pid;
@@ -209,6 +299,21 @@ export class DurableJobManager {
       maxRuntime,
       null
     );
+
+    // Fix finding 4: Handle asynchronous spawn error event
+    child.on("error", (err: Error) => {
+      const finishTime = Math.floor(Date.now() / 1000);
+      try {
+        this.db
+          .prepare(
+            `
+          UPDATE durable_jobs SET status = 'failed', error = ?, ended_at = ?, last_heartbeat = ?
+          WHERE id = ? AND status = 'running'
+        `
+          )
+          .run(err.message, finishTime, finishTime, id);
+      } catch {}
+    });
 
     child.on("close", (code, sig) => {
       if (!this.db || !this.db.open) return;
@@ -294,15 +399,22 @@ export class DurableJobManager {
       closeSync(fd);
     }
 
-    let text = buffer.subarray(0, bytesRead).toString("utf8");
+    let returnedBuffer = buffer.subarray(0, bytesRead);
+    let text = returnedBuffer.toString("utf8");
+
+    // Fix finding 3: Accurate pagination offset calculation when maxLines truncates
+    let actualBytesReturned = bytesRead;
     if (options.maxLines && options.maxLines > 0) {
       const lines = text.split("\n");
       if (lines.length > options.maxLines) {
-        text = lines.slice(0, options.maxLines).join("\n");
+        const slicedLines = lines.slice(0, options.maxLines);
+        text = slicedLines.join("\n");
+        // Count byte length of the truncated text representation up to the end of the last included line
+        actualBytesReturned = Buffer.byteLength(text, "utf8") + (lines.length > options.maxLines ? 1 : 0);
       }
     }
 
-    const nextOffset = start + bytesRead;
+    const nextOffset = start + actualBytesReturned;
     const hasMore = nextOffset < totalBytes;
 
     return {
@@ -319,6 +431,13 @@ export class DurableJobManager {
     const now = Math.floor(Date.now() / 1000);
 
     for (const row of running) {
+      // First check if a completion marker exists on disk
+      this.checkCompletionMarker(row.id);
+      const updated = this.db.prepare("SELECT status FROM durable_jobs WHERE id = ?").get(row.id) as { status: string };
+      if (updated && updated.status !== "running") {
+        continue;
+      }
+
       const pid = row.pid;
       let isAlive = false;
       if (pid) {
@@ -331,14 +450,19 @@ export class DurableJobManager {
       }
 
       if (!isAlive) {
-        this.db
-          .prepare(
-            `
-          UPDATE durable_jobs SET status = 'failed', error = 'Process terminated or orphaned across restart', ended_at = ?, last_heartbeat = ?
-          WHERE id = ?
-        `
-          )
-          .run(now, now, row.id);
+        // Fix finding 1: Double-check marker again before failing
+        this.checkCompletionMarker(row.id);
+        const recheck = this.db.prepare("SELECT status FROM durable_jobs WHERE id = ?").get(row.id) as { status: string };
+        if (recheck && recheck.status === "running") {
+          this.db
+            .prepare(
+              `
+            UPDATE durable_jobs SET status = 'failed', error = 'Process terminated without exit marker across restart', ended_at = ?, last_heartbeat = ?
+            WHERE id = ?
+          `
+            )
+            .run(now, now, row.id);
+        }
       } else {
         if (row.started_at && now - row.started_at > row.max_runtime_seconds) {
           try {
