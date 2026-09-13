@@ -27,10 +27,42 @@ export function resolveProjectEnvironment(workspaceRoot?: string): NodeJS.Proces
         versionStr = pkg.engines?.node || "";
       } catch {}
     }
+    const home = process.env.HOME || "";
+    const nvmAliasDir = join(home, ".nvm/alias");
+
+    const resolveNvmAlias = (alias: string): string => {
+      let cur = alias.toLowerCase().trim();
+      // Follow alias files up to 5 levels (e.g. lts/* -> lts/krypton -> v24.21.0)
+      for (let depth = 0; depth < 5; depth++) {
+        let candidatePath = "";
+        if (cur.startsWith("lts/")) {
+          candidatePath = join(nvmAliasDir, "lts", cur.slice(4));
+        } else if (cur === "lts" || cur === "lts/*") {
+          candidatePath = join(nvmAliasDir, "lts", "*");
+        } else {
+          candidatePath = join(nvmAliasDir, cur);
+        }
+        if (existsSync(candidatePath)) {
+          try {
+            const target = readFileSync(candidatePath, "utf8").trim();
+            if (target) {
+              cur = target;
+              continue;
+            }
+          } catch {}
+        }
+        break;
+      }
+      return cur;
+    };
 
     if (versionStr) {
-      const normalized = versionStr.toLowerCase().trim();
-      // Resolve known LTS aliases
+      let normalized = versionStr.toLowerCase().trim();
+      // If versionStr refers to an alias or LTS identifier, resolve it dynamically via NVM metadata
+      if (normalized.includes("lts") || !/^\d/.test(normalized)) {
+        normalized = resolveNvmAlias(normalized);
+      }
+      // Fallback known LTS names if NVM alias folder was not present
       if (normalized === "lts/*" || normalized === "lts" || normalized === "lts/jod") {
         targetMajor = 22;
       } else if (normalized === "lts/iron") {

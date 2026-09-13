@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DurableJobManager } from "./durable-jobs.js";
@@ -108,17 +108,42 @@ test("DurableJobManager: log pagination with maxLines preserves nextOffset", asy
 
 test("Runtime environment normalization and LTS alias discovery", () => {
   const tempWs = mkdtempSync(join(tmpdir(), "devspace-env-test-"));
+  const tempHome = mkdtempSync(join(tmpdir(), "devspace-home-test-"));
+  const origHome = process.env.HOME;
   try {
+    // Setup mock NVM structure
+    mkdirSync(join(tempHome, ".nvm/alias/lts"), { recursive: true });
+    mkdirSync(join(tempHome, ".nvm/versions/node/v22.23.2/bin"), { recursive: true });
+    mkdirSync(join(tempHome, ".nvm/versions/node/v20.18.0/bin"), { recursive: true });
+
+    writeFileSync(join(tempHome, ".nvm/alias/lts/*"), "lts/customnamed\n", "utf8");
+    writeFileSync(join(tempHome, ".nvm/alias/lts/customnamed"), "v20.18.0\n", "utf8");
+
+    process.env.HOME = tempHome;
+
+    // Test 1: Resolve dynamic alias through NVM metadata
     writeFileSync(join(tempWs, ".nvmrc"), "lts/*", "utf8");
     const env = resolveProjectEnvironment(tempWs);
     assert.ok(typeof env.PATH === "string");
-    assert.ok(env.SHELL);
+    assert.ok(env.PATH.includes("v20.18.0"));
+
+    // Test 2: Resolve named LTS alias
+    writeFileSync(join(tempWs, ".nvmrc"), "lts/customnamed", "utf8");
+    const envNamed = resolveProjectEnvironment(tempWs);
+    assert.ok(envNamed.PATH?.includes("v20.18.0"));
+
+    // Test 3: Standard version
+    writeFileSync(join(tempWs, ".nvmrc"), "22", "utf8");
+    const env22 = resolveProjectEnvironment(tempWs);
+    assert.ok(env22.PATH?.includes("v22.23.2"));
 
     const diag = getRuntimeDiagnostics(tempWs);
     assert.ok(diag.nodeVersion);
     assert.ok(diag.gitVersion === null || typeof diag.gitVersion === "string");
     assert.ok(diag.shell);
   } finally {
+    process.env.HOME = origHome;
     rmSync(tempWs, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
   }
 });
