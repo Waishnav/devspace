@@ -60,23 +60,31 @@ export function migrateDatabase(sqlite: Database.Database): void {
     `);
 
     const appliedRows = sqlite
-      .prepare("select version, name from devspace_schema_migrations order by version")
-      .all() as Array<{ version: number; name: string }>;
+      .prepare<[], { version: number; name: string }>(
+        "select version, name from devspace_schema_migrations order by version",
+      )
+      .all();
+
     const migrationsByVersion = new Map(migrations.map((migration) => [migration.version, migration]));
+
     for (const row of appliedRows) {
       const expected = migrationsByVersion.get(row.version);
+
       if (!expected) {
         throw new Error(
           `Database migration history is incompatible: version ${row.version} (${JSON.stringify(row.name)}) is unknown to this build.`,
         );
       }
+
       if (row.name !== expected.name) {
         throw new Error(
           `Database migration history is incompatible: version ${row.version} is recorded as ${JSON.stringify(row.name)}, but this build expects ${JSON.stringify(expected.name)}.`,
         );
       }
     }
+
     const applied = new Set(appliedRows.map((row) => row.version));
+
     const recordMigration = sqlite.prepare(
       "insert into devspace_schema_migrations (version, name, applied_at) values (?, ?, ?)",
     );
@@ -235,10 +243,12 @@ function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
 }
 
 function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
-  const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
-    name: string;
-  }>;
+  const columns = sqlite
+    .prepare<[], { name: string }>("pragma table_info(local_agent_sessions)")
+    .all();
+
   const names = new Set(columns.map((column) => column.name));
+
   if (names.has("effort")) {
     if (names.has("thinking")) {
       sqlite.exec(`
@@ -247,12 +257,16 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
         where effort is null and thinking is not null
       `);
     }
+
     return;
   }
+
   if (!names.has("thinking")) {
     addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
+
     return;
   }
+
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
@@ -260,6 +274,7 @@ function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
   const workspaceStateExists = sqlite
     .prepare("select 1 from sqlite_master where type = 'table' and name = 'workspace_sessions'")
     .get();
+
   if (!workspaceStateExists) return;
 
   addColumnIfMissing(sqlite, "workspace_sessions", "recovery_kind", "text");
@@ -295,7 +310,10 @@ function addColumnIfMissing(
   column: string,
   definition: string,
 ): void {
-  const columns = sqlite.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
+  const columns = sqlite
+    .prepare<[], { name: string }>(`pragma table_info(${table})`)
+    .all();
+
   if (columns.some((existingColumn) => existingColumn.name === column)) return;
 
   sqlite.exec(`alter table ${table} add column ${column} ${definition}`);

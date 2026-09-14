@@ -128,6 +128,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
     model: "gpt-default",
     effort: "medium",
   }] as const;
+
   const raw = resolveLocalAgentTarget("codex", profiles, undefined, undefined, providerDefaults);
   assert.equal(raw?.model, "gpt-default");
   assert.equal(raw?.effort, "medium");

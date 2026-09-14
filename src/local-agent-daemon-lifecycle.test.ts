@@ -13,6 +13,7 @@ import {
 } from "./local-agent-daemon-lifecycle.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agentd-lifecycle-test-"));
+
 try {
   const paths = localAgentDaemonPaths(join(root, "state"));
   ensureLocalAgentDaemonStateDir(paths.stateDir);
@@ -21,12 +22,12 @@ try {
   assert.equal(await readFile(paths.lockPath, "utf8"), `${process.pid}\n`);
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: Error) => error instanceof LocalAgentDaemonAlreadyRunningError,
   );
   await writeFile(paths.pidPath, "999999\n", { mode: 0o600 });
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: Error) => error instanceof LocalAgentDaemonAlreadyRunningError,
     "a stale diagnostic PID must not override the live lock owner",
   );
   assert.equal(ensureLocalAgentDaemonSecret(paths).length, 64);
@@ -44,7 +45,7 @@ try {
   await writeFile(paths.lockPath, "not-a-pid\n", { mode: 0o600 });
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: Error) => error instanceof LocalAgentDaemonAlreadyRunningError,
     "an undecodable lock must fail closed instead of being deleted by age",
   );
   assert.equal(await readFile(paths.lockPath, "utf8"), "not-a-pid\n");

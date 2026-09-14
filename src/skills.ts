@@ -30,6 +30,7 @@ export interface SkillReadResolution {
 }
 
 const SUBAGENTS_SKILL_NAME = "subagents";
+
 const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
 
 function bundledSkillsDir(): string {
@@ -47,9 +48,11 @@ function syncManagedSubagentsSkill(config: ServerConfig): string {
 
   if (existsSync(targetPath)) {
     const stat = lstatSync(targetPath);
+
     if (stat.isFile() && source === readFileSync(targetPath, "utf8")) {
       return targetPath;
     }
+
     if (stat.isDirectory()) {
       throw new Error(`Managed subagents skill path is a directory: ${targetPath}`);
     }
@@ -57,6 +60,7 @@ function syncManagedSubagentsSkill(config: ServerConfig): string {
 
   mkdirSync(dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.${process.pid}.tmp`;
+
   try {
     writeFileSync(tempPath, source, { mode: 0o644 });
     rmSync(targetPath, { force: true });
@@ -75,17 +79,21 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
   ];
+
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
   );
 
   const seen = new Set<string>();
+
   return [...defaultPaths, ...config.skillPaths]
-    .map((path) => resolveSkillPath(path, cwd))
-    .filter((path) => {
-      if (seen.has(path)) return false;
-      seen.add(path);
-      return true;
+    .flatMap((path) => {
+      const resolved = resolveSkillPath(path, cwd);
+
+      if (seen.has(resolved)) return [];
+      seen.add(resolved);
+
+      return [resolved];
     });
 }
 
@@ -108,13 +116,16 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   });
 
   const withoutSubagents = withoutSubagentsSkill(result);
+
   if (!config.subagents.enabled) return withoutSubagents;
 
   const managedDir = dirname(join(config.devspaceSkillsDir, SUBAGENTS_SKILL));
+
   const managed = loadSkillsFromDir({
     dir: managedDir,
     source: "devspace",
   }).skills.find((skill) => skill.name === SUBAGENTS_SKILL_NAME);
+
   if (!managed) {
     throw new Error("Managed subagents skill could not be loaded.");
   }
@@ -130,6 +141,7 @@ function withoutSubagentsSkill(result: LoadSkillsResult): LoadedSkills {
     skills: result.skills.filter((skill) => skill.name !== SUBAGENTS_SKILL_NAME),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
+
       return !(collision?.resourceType === "skill" && collision.name === SUBAGENTS_SKILL_NAME);
     }),
   };
@@ -143,6 +155,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const skillFilePath = resolve(skill.filePath);
+
     if (absolutePath === skillFilePath) {
       return { absolutePath, skill };
     }
@@ -150,6 +163,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const baseDir = resolve(skill.baseDir);
+
     if (!isPathInsideRoot(absolutePath, baseDir)) continue;
 
     return { absolutePath, skill };
@@ -163,6 +177,7 @@ export function formatPathForPrompt(path: string): string {
   const resolvedPath = resolve(path);
 
   if (resolvedPath === home) return "~";
+
   if (resolvedPath.startsWith(`${home}${sep}`)) {
     return `~/${resolvedPath.slice(home.length + 1).split(sep).join("/")}`;
   }

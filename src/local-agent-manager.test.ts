@@ -21,9 +21,13 @@ import { LocalAgentStore } from "./local-agent-store.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-manager-test-"));
+
 const directRoot = await mkdtemp(join(tmpdir(), "devspace-direct-agent-manager-test-"));
+
 const stateDir = join(root, "state");
+
 const scope = { workspaceId: "ws_test", workspaceRoot: root };
+
 const profile: LocalAgentProfile = {
   name: "reviewer",
   description: "Test reviewer",
@@ -32,12 +36,14 @@ const profile: LocalAgentProfile = {
   body: "Review only.",
   disabled: false,
 };
+
 const disabledProfile: LocalAgentProfile = {
   ...profile,
   name: "disabled-reviewer",
   filePath: join(root, "disabled-reviewer.md"),
   disabled: true,
 };
+
 const subagents: SubagentsConfig = {
   enabled: true,
   instructions: "on-demand",
@@ -58,15 +64,21 @@ class FakeRuntime implements LocalAgentRuntime {
     callbacks?: { onSessionId?: (id: string) => void | Promise<void> },
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.inputs.push(input);
+
     if (input.prompt.includes("early-fail")) {
       await callbacks?.onSessionId?.("thread_early");
+
       return Result.err(providerFailure("provider failed after session creation"));
     }
+
     if (input.prompt.includes("defect")) throw new TypeError("internal defect");
+
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
+
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
+
     return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_test",
@@ -95,12 +107,14 @@ class FakeRuntime implements LocalAgentRuntime {
 }
 
 const runtimes = new Map<string, FakeRuntime>();
+
 const driver: LocalAgentDriver = {
   provider: "codex",
   runtimeKey: (context: LocalAgentRuntimeContext) => context.agentId,
   createRuntime: async (context) => {
     const runtime = new FakeRuntime();
     runtimes.set(context.agentId, runtime);
+
     return Result.ok(runtime);
   },
 };
@@ -116,13 +130,16 @@ function providerFailure(message: string): AgentProviderExecutionError {
 }
 
 const store = new LocalAgentStore(stateDir);
+
 const stale = store.create({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
   profileName: "reviewer",
   provider: "codex",
 });
+
 const staleTurn = store.beginTurn(stale.id, { prompt: "interrupted turn" });
+
 store.update(stale.id, { latestResponse: "previous response" });
 
 const manager = new LocalAgentManager({
@@ -135,6 +152,7 @@ const manager = new LocalAgentManager({
 });
 
 const defectStore = new LocalAgentStore(join(root, "defect-state"));
+
 const defectManager = new LocalAgentManager({
   store: defectStore,
   drivers: [driver],
@@ -145,6 +163,7 @@ const defectManager = new LocalAgentManager({
   allowedRoots: [root],
   subagents,
 });
+
 await assert.rejects(
   defectManager.start({
     target: "reviewer",
@@ -152,8 +171,9 @@ await assert.rejects(
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }),
-  (error: unknown) => Panic.is(error) && error.cause instanceof TypeError,
+  (error: Error) => Panic.is(error) && error.cause instanceof TypeError,
 );
+
 await defectManager.close();
 
 const outside = await manager.start({
@@ -162,7 +182,9 @@ const outside = await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: join(tmpdir(), "outside"),
 });
+
 assert.equal(outside.isErr(), true);
+
 if (outside.isErr()) assert.equal(outside.error.code, "WORKSPACE_NOT_ALLOWED");
 
 const unknown = await manager.start({
@@ -171,7 +193,9 @@ const unknown = await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
+
 assert.equal(unknown.isErr(), true);
+
 if (unknown.isErr()) assert.equal(unknown.error.code, "UNKNOWN_TARGET");
 
 const disabled = await manager.start({
@@ -180,7 +204,9 @@ const disabled = await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
+
 assert.equal(disabled.isErr(), true);
+
 if (disabled.isErr()) assert.equal(disabled.error.code, "PROVIDER_DISABLED");
 
 const unconfigured = await manager.start({
@@ -189,7 +215,9 @@ const unconfigured = await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
+
 assert.equal(unconfigured.isErr(), true);
+
 if (unconfigured.isErr()) assert.equal(unconfigured.error.code, "PROVIDER_NOT_CONFIGURED");
 
 const disabledProvider = await manager.start({
@@ -198,7 +226,9 @@ const disabledProvider = await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
+
 assert.equal(disabledProvider.isErr(), true);
+
 if (disabledProvider.isErr()) assert.equal(disabledProvider.error.code, "PROVIDER_DISABLED");
 
 const previouslyCreatedDisabled = store.create({
@@ -207,24 +237,37 @@ const previouslyCreatedDisabled = store.create({
   profileName: disabledProfile.name,
   provider: "codex",
 });
+
 store.update(previouslyCreatedDisabled.id, { status: "idle" });
+
 const disabledContinuation = await manager.continue(previouslyCreatedDisabled.id, "inspect", {}, scope);
+
 assert.equal(disabledContinuation.isErr(), true);
+
 if (disabledContinuation.isErr()) assert.equal(disabledContinuation.error.code, "PROVIDER_DISABLED");
 
 assert.equal(getRecord(stale.id).status, "running");
 
 const mismatchedGet = manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root });
+
 assert.equal(mismatchedGet.isErr(), true);
+
 if (mismatchedGet.isErr()) assert.equal(mismatchedGet.error.code, "WORKSPACE_MISMATCH");
 
 unwrap(manager.reconcileActiveRuns());
+
 assert.equal(getRecord(stale.id).status, "error");
+
 assert.equal(getRecord(stale.id).latestResponse, "previous response");
+
 assert.equal(getRecord(stale.id).error, "DevSpace restarted while this agent turn was running.");
+
 assert.equal(getRecord(stale.id).errorCode, "DAEMON_UNAVAILABLE");
+
 assert.equal(getRecord(stale.id).errorRetryable, true);
+
 assert.equal(store.getTurnById(staleTurn.turn.id)?.status, "failed");
+
 assert.equal(store.getTurnById(staleTurn.turn.id)?.errorCode, "DAEMON_UNAVAILABLE");
 
 const first = unwrap(await manager.start({
@@ -233,21 +276,32 @@ const first = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 assert.equal(first.status, "running");
+
 assert.equal(first.model, "gpt-default");
+
 assert.equal(first.effort, "medium");
+
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
+
 const conflict = await manager.continue(first.id, "another prompt", {}, scope);
+
 assert.equal(conflict.isErr(), true);
+
 if (conflict.isErr()) {
   assert.equal(conflict.error.code, "AGENT_CONFLICT");
   assert.equal("agentId" in conflict.error ? conflict.error.agentId : undefined, first.id);
 }
 
 runtimes.get(first.id)!.release();
+
 await waitFor(() => getRecord(first.id).status === "idle");
+
 assert.equal(getRecord(first.id).providerSessionId, "thread_test");
+
 assert.match(getRecord(first.id).latestResponse ?? "", /Task:\nhold/);
+
 assert.deepEqual(
   store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
   [{ prompt: "hold", status: "completed" }],
@@ -257,10 +311,15 @@ const continued = unwrap(await manager.continue(first.id, "continue", {
   model: "gpt-run",
   effort: "high",
 }, scope));
+
 assert.equal(continued.status, "running");
+
 await waitFor(() => getRecord(first.id).status === "idle");
+
 assert.equal(getRecord(first.id).model, "gpt-run");
+
 assert.equal(getRecord(first.id).effort, "high");
+
 assert.deepEqual(
   store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
   [
@@ -275,8 +334,11 @@ const second = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => getRecord(second.id).status === "idle");
+
 assert.notEqual(first.id, second.id);
+
 assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
@@ -285,14 +347,23 @@ const failed = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => getRecord(failed.id).status === "error");
+
 assert.equal(getRecord(failed.id).error, "provider failed");
+
 assert.equal(getRecord(failed.id).errorCode, "PROVIDER_EXECUTION_ERROR");
+
 assert.equal(getRecord(failed.id).errorRetryable, false);
+
 assert.equal(store.getLatestTurn(failed.id)?.status, "failed");
+
 assert.equal(store.getLatestTurn(failed.id)?.error, "provider failed");
+
 const recovered = unwrap(await manager.continue(failed.id, "recovered", {}, scope));
+
 assert.equal(recovered.status, "running", "provider Err releases active-turn ownership");
+
 await waitFor(() => getRecord(failed.id).status === "idle");
 
 const earlyFailure = unwrap(await manager.start({
@@ -301,7 +372,9 @@ const earlyFailure = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => getRecord(earlyFailure.id).status === "error");
+
 assert.equal(getRecord(earlyFailure.id).providerSessionId, "thread_early");
 
 const waitingOne = unwrap(await manager.start({
@@ -310,24 +383,35 @@ const waitingOne = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 const waitingTwo = unwrap(await manager.start({
   target: "reviewer",
   prompt: "hold wait two",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => runtimes.get(waitingOne.id)?.inputs.length === 1);
+
 await waitFor(() => runtimes.get(waitingTwo.id)?.inputs.length === 1);
+
 let multiWaitSettled = false;
+
 const multiWait = manager.wait([waitingOne.id, waitingTwo.id, waitingOne.id], scope)
   .then((result) => {
     multiWaitSettled = true;
+
     return result;
   });
+
 runtimes.get(waitingOne.id)!.release();
+
 await waitFor(() => getRecord(waitingOne.id).status === "idle");
+
 assert.equal(multiWaitSettled, false, "multi-agent wait must remain pending until every turn finishes");
+
 runtimes.get(waitingTwo.id)!.release();
+
 assert.deepEqual(unwrap(await multiWait).map((result) => ({ id: result.id, status: result.status })), [
   { id: waitingOne.id, status: "completed" },
   { id: waitingTwo.id, status: "completed" },
@@ -339,7 +423,9 @@ const timedWaitAgent = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => runtimes.get(timedWaitAgent.id)?.inputs.length === 1);
+
 assert.deepEqual(unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id], scope, 5)), [
   {
     id: earlyFailure.id,
@@ -352,7 +438,9 @@ assert.deepEqual(unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id],
   },
   { id: timedWaitAgent.id, status: "running", wait: "timeout" },
 ]);
+
 runtimes.get(timedWaitAgent.id)!.release();
+
 await waitFor(() => getRecord(timedWaitAgent.id).status === "idle");
 
 const cancelledWaitAgent = unwrap(await manager.start({
@@ -361,17 +449,27 @@ const cancelledWaitAgent = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => runtimes.get(cancelledWaitAgent.id)?.inputs.length === 1);
+
 const waitAbort = new AbortController();
+
 const cancelledWait = manager.wait([cancelledWaitAgent.id], scope, undefined, waitAbort.signal);
+
 waitAbort.abort();
+
 assert.deepEqual(unwrap(await cancelledWait), [{ id: cancelledWaitAgent.id, status: "running" }]);
+
 assert.equal(getRecord(cancelledWaitAgent.id).status, "running", "cancelling a waiter must not stop its turn");
+
 runtimes.get(cancelledWaitAgent.id)!.release();
+
 await waitFor(() => getRecord(cancelledWaitAgent.id).status === "idle");
 
 const invalidWait = await manager.wait([waitingOne.id, "agt_missing"], scope, 5);
+
 assert.equal(invalidWait.isErr(), true);
+
 if (invalidWait.isErr()) assert.equal(invalidWait.error.code, "AGENT_NOT_FOUND");
 
 const wrongWorkspace = await manager.continue(
@@ -380,7 +478,9 @@ const wrongWorkspace = await manager.continue(
   {},
   { workspaceId: scope.workspaceId, workspaceRoot: join(root, "other") },
 );
+
 assert.equal(wrongWorkspace.isErr(), true);
+
 if (wrongWorkspace.isErr()) assert.equal(wrongWorkspace.error.code, "WORKSPACE_MISMATCH");
 
 const wrongWorkspaceId = await manager.continue(
@@ -389,7 +489,9 @@ const wrongWorkspaceId = await manager.continue(
   {},
   { workspaceId: "ws_other", workspaceRoot: root },
 );
+
 assert.equal(wrongWorkspaceId.isErr(), true);
+
 if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
 
 const directOutside = unwrap(await manager.start({
@@ -397,8 +499,11 @@ const directOutside = unwrap(await manager.start({
   prompt: "direct outside allowed roots",
   workspaceRoot: directRoot,
 }));
+
 await waitFor(() => unwrap(manager.get(directOutside.id, { workspaceRoot: directRoot })).status === "idle");
+
 assert.equal(directOutside.workspaceId, undefined);
+
 assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id), [
   directOutside.id,
 ]);
@@ -408,11 +513,17 @@ const direct = unwrap(await manager.start({
   prompt: "direct harness",
   workspaceRoot: root,
 }));
+
 await waitFor(() => unwrap(manager.get(direct.id, { workspaceRoot: root })).status === "idle");
+
 assert.equal(direct.workspaceId, undefined);
+
 assert.equal(unwrap(manager.get(first.id, { workspaceRoot: root })).id, first.id);
+
 const directWrongId = manager.get(direct.id, { workspaceId: "ws_other", workspaceRoot: root });
+
 assert.equal(directWrongId.isErr(), true);
+
 if (directWrongId.isErr()) assert.equal(directWrongId.error.code, "WORKSPACE_MISMATCH");
 
 const defect = unwrap(await manager.start({
@@ -421,8 +532,11 @@ const defect = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => getRecord(defect.id).status === "error");
+
 assert.equal(getRecord(defect.id).errorCode, "AGENT_INTERNAL_ERROR");
+
 assert.notEqual(getRecord(defect.id).errorCode, "PROVIDER_EXECUTION_ERROR");
 
 const shuttingDown = unwrap(await manager.start({
@@ -431,14 +545,21 @@ const shuttingDown = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
+
 await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);
+
 const closing = manager.close();
+
 await new Promise<void>((resolve) => setImmediate(resolve));
+
 assert.equal(runtimes.get(shuttingDown.id)?.closed, true);
+
 await closing;
 
 await manager.close();
+
 await rm(root, { recursive: true, force: true });
+
 await rm(directRoot, { recursive: true, force: true });
 
 function getRecord(id: string) {
@@ -447,13 +568,16 @@ function getRecord(id: string) {
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
+
   while (!check() && Date.now() < deadline) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+
   assert.equal(check(), true, "condition did not become true before timeout");
 }

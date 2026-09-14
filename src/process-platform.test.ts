@@ -22,6 +22,7 @@ assert.deepEqual(resolveShellCommand("echo ok", "linux", { SHELL: "/usr/bin/fish
 });
 
 const windowsCalls: string[] = [];
+
 terminateProcessTree(
   { pid: 42, kill: (signal) => (windowsCalls.push(`child:${signal}`), true) },
   "SIGTERM",
@@ -32,9 +33,11 @@ terminateProcessTree(
     killWindowsTree: (pid) => (windowsCalls.push(`tree:${pid}`), true),
   },
 );
+
 assert.deepEqual(windowsCalls, ["tree:42"]);
 
 const posixCalls: string[] = [];
+
 terminateProcessTree(
   { pid: 43, kill: (signal) => (posixCalls.push(`child:${signal}`), true) },
   "SIGINT",
@@ -45,9 +48,11 @@ terminateProcessTree(
     killWindowsTree: () => false,
   },
 );
+
 assert.deepEqual(posixCalls, ["group:43:SIGINT"]);
 
 const fallbackCalls: string[] = [];
+
 terminateProcessTree(
   { pid: 44, kill: (signal) => (fallbackCalls.push(`child:${signal}`), true) },
   "SIGTERM",
@@ -58,4 +63,5 @@ terminateProcessTree(
     killWindowsTree: () => false,
   },
 );
+
 assert.deepEqual(fallbackCalls, ["child:SIGTERM"]);

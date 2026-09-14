@@ -8,6 +8,7 @@ import {
   isLocalAgentProvider,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import { z } from "zod";
 
 export type AgentTargetErrorCode =
   | "UNKNOWN_TARGET"
@@ -49,14 +50,14 @@ export class AgentScopeError extends TaggedError("AgentScopeError")<{
   message: string;
 }>() {}
 
-interface AgentProviderErrorFields extends Record<string, unknown> {
+type AgentProviderErrorFields = {
   provider: LocalAgentProvider;
   agentId?: string;
   operation: string;
   retryable: boolean;
   cause?: unknown;
   message: string;
-}
+};
 
 export class AgentProviderUnavailableError extends TaggedError(
   "AgentProviderUnavailableError",
@@ -80,12 +81,12 @@ export type AgentProviderError =
   | AgentProviderProtocolError
   | AgentProviderExecutionError;
 
-interface AgentDaemonErrorFields extends Record<string, unknown> {
+type AgentDaemonErrorFields = {
   operation: string;
   retryable: boolean;
   cause?: unknown;
   message: string;
-}
+};
 
 export class AgentDaemonUnavailableError extends TaggedError(
   "AgentDaemonUnavailableError",
@@ -233,9 +234,11 @@ export function agentErrorFromPayload(payload: {
   target?: string;
 }): LocalAgentError | undefined {
   const retryable = payload.retryable ?? false;
+
   const provider = payload.provider && isLocalAgentProvider(payload.provider)
     ? payload.provider
     : undefined;
+
   switch (payload.code) {
     case "UNKNOWN_TARGET":
     case "AGENT_NOT_FOUND":
@@ -274,6 +277,7 @@ export function agentErrorFromPayload(payload: {
     case "PROVIDER_PROTOCOL_ERROR":
     case "PROVIDER_EXECUTION_ERROR": {
       if (!provider) return undefined;
+
       const fields = {
         provider,
         agentId: payload.agentId,
@@ -281,17 +285,22 @@ export function agentErrorFromPayload(payload: {
         retryable,
         message: payload.message,
       };
+
       if (payload.code === "PROVIDER_UNAVAILABLE") {
         return new AgentProviderUnavailableError({ code: payload.code, ...fields });
       }
+
       if (payload.code === "PROVIDER_CANCELLED") {
         return new AgentProviderCancelledError({ code: payload.code, ...fields });
       }
+
       if (payload.code === "PROVIDER_PROTOCOL_ERROR") {
         return new AgentProviderProtocolError({ code: payload.code, ...fields });
       }
+
       return new AgentProviderExecutionError({ code: payload.code, ...fields });
     }
+
     case "AGENT_STORE_ERROR":
       return new AgentStoreError(payload.operation ?? "request", undefined, payload.message);
     case "DAEMON_UNAVAILABLE":
@@ -369,8 +378,10 @@ export function providerErrorFromCause(input: {
   cause: unknown;
 }): AgentProviderError | undefined {
   if (isAgentProviderError(input.cause)) return input.cause;
+
   if (isLocalAgentError(input.cause)) return undefined;
   const unavailable = unavailableCauseKind(input.cause);
+
   if (unavailable) {
     return new AgentProviderUnavailableError({
       code: "PROVIDER_UNAVAILABLE",
@@ -382,7 +393,9 @@ export function providerErrorFromCause(input: {
       message: `${displayProvider(input.provider)} provider is unavailable.`,
     });
   }
+
   if (isProgrammerDefect(input.cause)) return undefined;
+
   if (isAbortError(input.cause)) {
     return new AgentProviderCancelledError({
       code: "PROVIDER_CANCELLED",
@@ -394,6 +407,7 @@ export function providerErrorFromCause(input: {
       message: `${displayProvider(input.provider)} agent turn was cancelled.`,
     });
   }
+
   return new AgentProviderExecutionError({
     code: "PROVIDER_EXECUTION_ERROR",
     provider: input.provider,
@@ -420,39 +434,50 @@ export async function captureAgentProviderResult<T>(input: {
       operation: input.operation,
       cause,
     });
+
     if (!error) throw cause;
+
     return Result.err(error);
   }
 }
 
-export function isProgrammerDefect(error: unknown): boolean {
-  if (unavailableCauseKind(error)) return false;
-  return error instanceof TypeError
-    || error instanceof ReferenceError
-    || error instanceof SyntaxError
-    || error instanceof RangeError
-    || (error instanceof Error && error.name === "AssertionError");
+export function isProgrammerDefect(cause: unknown): boolean {
+  if (unavailableCauseKind(cause)) return false;
+
+  return cause instanceof TypeError
+    || cause instanceof ReferenceError
+    || cause instanceof SyntaxError
+    || cause instanceof RangeError
+    || (cause instanceof Error && cause.name === "AssertionError");
 }
 
-function isAbortError(error: unknown): boolean {
-  return Boolean(
-    error
-      && typeof error === "object"
-      && "name" in error
-      && String((error as { name?: unknown }).name) === "AbortError",
-  );
+const causeDetailsSchema = z.object({
+  name: z.string().optional(),
+  code: z.string().optional(),
+  cause: z.unknown().optional(),
+});
+
+function isAbortError(cause: unknown): boolean {
+  const parsed = causeDetailsSchema.safeParse(cause);
+
+  return parsed.success && parsed.data.name === "AbortError";
 }
 
-function unavailableCauseKind(error: unknown): "permanent" | "transient" | undefined {
-  const seen = new Set<object>();
-  let current = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
-    seen.add(current);
-    const code = "code" in current ? String((current as { code?: unknown }).code) : "";
+function unavailableCauseKind(cause: unknown): "permanent" | "transient" | undefined {
+  let current = cause;
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    const parsed = causeDetailsSchema.safeParse(current);
+
+    if (!parsed.success) return undefined;
+    const { code } = parsed.data;
+
     if (code === "ENOENT") return "permanent";
+
     if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
-    current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+    current = parsed.data.cause;
   }
+
   return undefined;
 }
 
@@ -469,46 +494,60 @@ function displayProvider(provider: LocalAgentProvider): string {
 }
 
 function targetErrorPayload(error: AgentTargetError): AgentErrorPayload {
-  return {
+  const payload: AgentErrorPayload = {
     code: error.code,
     message: error.message,
     retryable: error.retryable,
     target: error.target,
-    ...(error.provider ? { provider: error.provider } : {}),
-    ...(error.operation ? { operation: error.operation } : {}),
   };
+
+  if (error.provider) payload.provider = error.provider;
+
+  if (error.operation) payload.operation = error.operation;
+
+  return payload;
 }
 
 function conflictErrorPayload(error: AgentConflictError): AgentErrorPayload {
-  return {
+  const payload: AgentErrorPayload = {
     code: error.code,
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
   };
+
+  if (error.agentId) payload.agentId = error.agentId;
+
+  return payload;
 }
 
 function scopeErrorPayload(error: AgentScopeError): AgentErrorPayload {
-  return {
+  const payload: AgentErrorPayload = {
     code: error.code,
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
-    ...(error.workspaceId ? { workspaceId: error.workspaceId } : {}),
   };
+
+  if (error.agentId) payload.agentId = error.agentId;
+
+  if (error.workspaceId) payload.workspaceId = error.workspaceId;
+
+  return payload;
 }
 
 function providerErrorPayload(error: AgentProviderError): AgentErrorPayload {
-  return {
+  const payload: AgentErrorPayload = {
     code: error.code,
     message: error.message,
     retryable: error.retryable,
     provider: error.provider,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
   };
+
+  if (error.agentId) payload.agentId = error.agentId;
+
+  return payload;
 }
 
 function daemonErrorPayload(error: AgentDaemonError): AgentErrorPayload {

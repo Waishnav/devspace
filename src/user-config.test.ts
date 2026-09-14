@@ -14,6 +14,9 @@ import {
   setDevspaceConfigValue,
   setDevspaceConfigValues,
 } from "./user-config.js";
+import { z } from "zod";
+
+const migrationChildResultSchema = z.object({ migrated: z.boolean() });
 
 withConfigDir((configDir, env) => {
   writeFileSync(join(configDir, "config.json"), JSON.stringify({
@@ -57,12 +60,20 @@ await withConfigDirAsync(async (configDir) => {
     migrateInChildProcess(configDir),
     migrateInChildProcess(configDir),
   ]);
+
   assert.equal(results.filter((result) => result.migrated).length, 1);
   assert.equal(results.filter((result) => !result.migrated).length, 1);
   assert.equal(existsSync(join(configDir, "config.json")), false);
   assert.equal(existsSync(join(configDir, "config.jsonc")), true);
   assert.equal(existsSync(join(configDir, "config.json.v1.0.bak")), true);
   assert.equal(loadDevspaceFiles({ DEVSPACE_CONFIG_DIR: configDir }).config.server.port, 8787);
+});
+
+await withConfigDirAsync(async (configDir) => {
+  await assert.rejects(
+    migrateInChildProcess(configDir, 'process.stdout.write("{}");'),
+    (error) => error instanceof z.ZodError,
+  );
 });
 
 withConfigDir((configDir, env) => {
@@ -126,9 +137,9 @@ withConfigDir((configDir, env) => {
 
   assert.throws(
     () => loadDevspaceFiles(env),
-    (error: unknown) => error instanceof Error
-      && error.message.includes(`backup already exists at ${backupPath}`)
-      && error.message.includes(`Move ${backupPath} out of the way, then run DevSpace again.`),
+    (cause: unknown) => cause instanceof Error
+      && cause.message.includes(`backup already exists at ${backupPath}`)
+      && cause.message.includes(`Move ${backupPath} out of the way, then run DevSpace again.`),
   );
 });
 
@@ -139,6 +150,7 @@ function withConfigDir(
 ): void {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
   const env = { DEVSPACE_CONFIG_DIR: configDir };
+
   try {
     test(configDir, env);
   } finally {
@@ -150,6 +162,7 @@ async function withConfigDirAsync(
   test: (configDir: string) => Promise<void>,
 ): Promise<void> {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
+
   try {
     await test(configDir);
   } finally {
@@ -159,9 +172,11 @@ async function withConfigDirAsync(
 
 async function migrateInChildProcess(
   configDir: string,
+  sourceOverride?: string,
 ): Promise<{ migrated: boolean }> {
   const moduleUrl = new URL("./user-config.ts", import.meta.url).href;
-  const source = [
+
+  const source = sourceOverride ?? [
     `import { loadDevspaceFiles } from ${JSON.stringify(moduleUrl)};`,
     "const files = loadDevspaceFiles();",
     "process.stdout.write(JSON.stringify({ migrated: files.migratedLegacyConfig }));",
@@ -176,6 +191,7 @@ async function migrateInChildProcess(
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
@@ -188,9 +204,15 @@ async function migrateInChildProcess(
     child.once("close", (code) => {
       if (code !== 0) {
         reject(new Error(`migration child exited with ${code}: ${stderr}`));
+
         return;
       }
-      resolve(JSON.parse(stdout) as { migrated: boolean });
+
+      try {
+        resolve(migrationChildResultSchema.parse(JSON.parse(stdout)));
+      } catch (cause) {
+        reject(cause);
+      }
     });
   });
 }

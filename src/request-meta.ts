@@ -1,14 +1,14 @@
-function metadataString(
-  meta: unknown,
-  key: string,
-): string | undefined {
-  if (typeof meta !== "object" || meta === null) return undefined;
-  const value = (meta as Record<string, unknown>)[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+import type { RequestMeta } from "@modelcontextprotocol/sdk/types.js";
+import * as z from "zod/v4";
+
+const requestMetaSchema = z
+  .object({ "openai/session": z.string().min(1).optional() })
+  .passthrough();
 
 export function conversationScopeIdFromRequestMeta(
-  meta: unknown,
+  meta: RequestMeta | undefined,
 ): string | undefined {
-  return metadataString(meta, "openai/session");
+  const parsed = requestMetaSchema.safeParse(meta);
+
+  return parsed.success ? parsed.data["openai/session"] : undefined;
 }

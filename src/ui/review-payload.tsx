@@ -51,13 +51,17 @@ function ReviewPayload({
   const patch = card.payload?.patch;
   const themeType: ThemeType = hostContext?.theme === "light" ? "light" : "dark";
   const files = useMemo(() => parseFiles(patch), [patch]);
-  const visibleFiles = typeof visibleFileCount === "number"
-    ? files.slice(0, visibleFileCount)
-    : files;
+
+  const visibleFiles = visibleFileCount === undefined
+    ? files
+    : files.slice(0, visibleFileCount);
+
   const [openFiles, setOpenFiles] = useState(() => new Set<string>());
 
   if (errorMessage) return <StatusLine message={errorMessage} tone="error" />;
+
   if (!patch) return <StatusLine message="Diff payload is not available." />;
+
   if (files.length === 0) return <StatusLine message="No diff hunks to review." />;
 
   const options = diffOptions(themeType);
@@ -81,6 +85,7 @@ function ReviewPayload({
           const key = fileDiff.cacheKey ?? `${fileDiff.prevName ?? ""}->${fileDiff.name}-${index}`;
           const stats = diffStats(fileDiff);
           const isOpen = openFiles.has(key);
+
           const changeKind = getRenderedFileChangeKind(
             card.files ?? [],
             {
@@ -90,6 +95,7 @@ function ReviewPayload({
             },
             index,
           );
+
           const pathDisplay = getRenderedFileChangePathDisplay(
             card.files ?? [],
             {
@@ -107,11 +113,13 @@ function ReviewPayload({
                 aria-expanded={isOpen}
                 onClick={() => {
                   const next = new Set(openFiles);
+
                   if (next.has(key)) {
                     next.delete(key);
                   } else {
                     next.add(key);
                   }
+
                   setOpenFiles(next);
                 }}
               >
@@ -179,17 +187,19 @@ function fileChangeSymbol(kind: FileChangeKind): string {
 
 function parseFiles(patch: string | undefined): FileDiffMetadata[] {
   if (!patch) return [];
+
   return parsePatchFiles(patch, "review", true).flatMap((parsedPatch) => parsedPatch.files);
 }
 
-function diffStats(fileDiff: FileDiffMetadata): { additions: number; removals: number } {
-  return fileDiff.hunks.reduce(
-    (stats, hunk) => ({
-      additions: stats.additions + hunk.additionLines,
-      removals: stats.removals + hunk.deletionLines,
-    }),
-    { additions: 0, removals: 0 },
-  );
+function diffStats(fileDiff: FileDiffMetadata) {
+  const stats = { additions: 0, removals: 0 };
+
+  for (const hunk of fileDiff.hunks) {
+    stats.additions += hunk.additionLines;
+    stats.removals += hunk.deletionLines;
+  }
+
+  return stats;
 }
 
 function diffOptions(themeType: ThemeType): FileDiffOptions<undefined> {

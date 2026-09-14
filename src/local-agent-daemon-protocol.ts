@@ -1,6 +1,6 @@
+import { z } from "zod";
 import type {
   LocalAgentRecord,
-  LocalAgentStatus,
   LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import type {
@@ -8,7 +8,6 @@ import type {
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
-import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
 
 export type LocalAgentDaemonMethod =
@@ -37,10 +36,7 @@ export type LocalAgentDaemonRequest =
   | AgentDaemonRequestBase<"daemon.stop", { ifIdle?: boolean }>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
 
-interface AgentDaemonRequestBase<
-  M extends LocalAgentDaemonMethod,
-  P,
-> {
+interface AgentDaemonRequestBase<M extends LocalAgentDaemonMethod, P> {
   requestId: string;
   protocolVersion: number;
   authToken: string;
@@ -89,6 +85,165 @@ export type LocalAgentDaemonResponse =
       error: LocalAgentDaemonErrorPayload;
     };
 
+const requiredTrimmedStringSchema = z.string().trim().min(1);
+
+const requiredContentStringSchema = z.string().refine((text) => text.trim().length > 0);
+
+const optionalTrimmedStringSchema = z.string().transform((text) => text.trim() || undefined).catch(undefined);
+
+const optionalContentStringSchema = z.string().transform((text) => text.trim() ? text : undefined).catch(undefined);
+
+const optionalBooleanSchema = z.boolean().optional().catch(undefined);
+
+const integerSchema = z.number().int().safe();
+
+const writeModeSchema = z.enum(["read_only", "allowed", "full_access"]).optional();
+
+const emptyParamsSchema = z.record(z.string(), z.never());
+
+const requestEnvelopeSchema = z.object({
+  requestId: requiredTrimmedStringSchema,
+  protocolVersion: integerSchema,
+  authToken: requiredTrimmedStringSchema,
+  method: requiredTrimmedStringSchema,
+  params: z.unknown().optional(),
+  configRevision: optionalTrimmedStringSchema,
+});
+
+const workspaceScopeSchema = z.object({
+  workspaceId: optionalTrimmedStringSchema,
+  workspaceRoot: requiredTrimmedStringSchema,
+});
+
+const startInputSchema = z.object({
+  target: requiredTrimmedStringSchema,
+  prompt: requiredContentStringSchema,
+  workspaceRoot: requiredTrimmedStringSchema,
+  workspaceId: optionalTrimmedStringSchema,
+  model: optionalTrimmedStringSchema,
+  effort: optionalTrimmedStringSchema,
+  writeMode: writeModeSchema,
+});
+
+const runOverridesSchema = z.object({
+  model: optionalTrimmedStringSchema,
+  effort: optionalTrimmedStringSchema,
+  writeMode: writeModeSchema,
+});
+
+const continueInputSchema = z.object({
+  id: requiredTrimmedStringSchema,
+  prompt: requiredContentStringSchema,
+  scope: workspaceScopeSchema,
+  overrides: runOverridesSchema.optional(),
+});
+
+const getInputSchema = z.object({
+  id: requiredTrimmedStringSchema,
+  scope: workspaceScopeSchema,
+});
+
+const waitParamsSchema = z.object({
+  ids: z.array(requiredTrimmedStringSchema),
+  scope: workspaceScopeSchema,
+  timeoutMs: z.number().int().min(0).max(2_147_483_647).optional(),
+});
+
+const stopParamsSchema = z.object({ ifIdle: z.boolean().optional() });
+
+const logsParamsSchema = z.object({ lines: z.number().int().min(1).max(10_000).optional() });
+
+const daemonErrorSchema = z.object({
+  code: requiredTrimmedStringSchema,
+  message: requiredTrimmedStringSchema,
+  retryable: optionalBooleanSchema,
+  provider: optionalTrimmedStringSchema,
+  agentId: optionalTrimmedStringSchema,
+  workspaceId: optionalTrimmedStringSchema,
+  operation: optionalTrimmedStringSchema,
+  target: optionalTrimmedStringSchema,
+});
+
+const daemonResponseSchema = z.discriminatedUnion("ok", [
+  z.object({
+    requestId: requiredTrimmedStringSchema,
+    protocolVersion: integerSchema,
+    ok: z.literal(true),
+    result: z.unknown(),
+  }),
+  z.object({
+    requestId: requiredTrimmedStringSchema,
+    protocolVersion: integerSchema,
+    ok: z.literal(false),
+    error: daemonErrorSchema,
+  }),
+]);
+
+const agentStatusSchema = z.enum(["starting", "running", "idle", "error", "stopped"]);
+
+const agentRecordSchema = z.object({
+  id: requiredTrimmedStringSchema,
+  workspaceId: optionalTrimmedStringSchema,
+  workspaceRoot: requiredTrimmedStringSchema,
+  profileName: requiredTrimmedStringSchema,
+  provider: requiredTrimmedStringSchema,
+  model: optionalTrimmedStringSchema,
+  effort: optionalTrimmedStringSchema,
+  providerSessionId: optionalTrimmedStringSchema,
+  status: agentStatusSchema,
+  latestResponse: z.string().optional(),
+  error: optionalContentStringSchema,
+  errorCode: optionalTrimmedStringSchema,
+  errorRetryable: optionalBooleanSchema,
+  createdAt: requiredTrimmedStringSchema,
+  updatedAt: requiredTrimmedStringSchema,
+});
+
+const waitErrorSchema = z.object({
+  code: requiredTrimmedStringSchema,
+  message: requiredContentStringSchema,
+  retryable: z.boolean().catch(false),
+});
+
+const waitResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    id: requiredTrimmedStringSchema,
+    status: z.literal("running"),
+    wait: z.literal("timeout").optional(),
+  }),
+  z.object({
+    id: requiredTrimmedStringSchema,
+    status: z.literal("completed"),
+    response: z.string().optional(),
+  }),
+  z.object({
+    id: requiredTrimmedStringSchema,
+    status: z.literal("failed"),
+    error: waitErrorSchema,
+  }),
+  z.object({
+    id: requiredTrimmedStringSchema,
+    status: z.literal("stopped"),
+    error: waitErrorSchema.optional(),
+  }),
+]);
+
+const daemonStatusSchema = z.object({
+  state: z.enum(["ready", "stopping"]),
+  protocolVersion: integerSchema,
+  pid: integerSchema,
+  endpoint: requiredTrimmedStringSchema,
+  startedAt: requiredTrimmedStringSchema,
+  activeTurns: integerSchema,
+  runtimeCount: integerSchema,
+  clientConnections: integerSchema,
+});
+
+const daemonHelloSchema = z.object({
+  status: daemonStatusSchema,
+  configMatches: z.boolean(),
+});
+
 export function encodeLocalAgentDaemonRequest(request: LocalAgentDaemonRequest): string {
   return `${JSON.stringify(request)}\n`;
 }
@@ -97,209 +252,158 @@ export function encodeLocalAgentDaemonResponse(response: LocalAgentDaemonRespons
   return `${JSON.stringify(response)}\n`;
 }
 
-export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonRequest {
-  const record = asRecord(value);
-  const requestId = requiredString(record?.requestId, "requestId");
-  const protocolVersion = requiredInteger(record?.protocolVersion, "protocolVersion");
-  const authToken = requiredString(record?.authToken, "authToken");
-  const method = requiredString(record?.method, "method") as LocalAgentDaemonMethod;
-  const params = record?.params;
+export function decodeLocalAgentDaemonRequest<T>(value: T): LocalAgentDaemonRequest {
+  const envelope = parseProtocolValue(
+    requestEnvelopeSchema,
+    value,
+    "INVALID_PARAMS",
+    "Daemon request is malformed.",
+  );
 
-  switch (method) {
-    case "hello":
-      return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeEmptyParams(params),
-        configRevision: optionalString(record?.configRevision),
+  const base = {
+    requestId: envelope.requestId,
+    protocolVersion: envelope.protocolVersion,
+    authToken: envelope.authToken,
+  };
+
+  switch (envelope.method) {
+    case "hello": {
+      const request: LocalAgentDaemonRequest = {
+        ...base,
+        method: "hello",
+        params: parseParams(emptyParamsSchema, envelope.params ?? {}),
       };
+
+      if (envelope.configRevision) request.configRevision = envelope.configRevision;
+
+      return request;
+    }
+
     case "daemon.status":
-      return { requestId, protocolVersion, authToken, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
+      return {
+        ...base,
+        method: "daemon.status",
+        params: parseParams(emptyParamsSchema, envelope.params ?? {}),
+      };
+
     case "daemon.stop":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeStopParams(params),
+        ...base,
+        method: "daemon.stop",
+        params: parseParams(stopParamsSchema, envelope.params ?? {}),
       };
+
     case "agent.start":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeStartInput(params),
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "agent.start",
+        params: parseParams(startInputSchema, envelope.params),
+      };
+
     case "agent.continue":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeContinueInput(params),
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "agent.continue",
+        params: parseParams(continueInputSchema, envelope.params),
+      };
+
     case "agent.get":
       return {
-        requestId,
-        protocolVersion,
-        method,
-        authToken,
-        params: {
-          id: requiredString(asRecord(params)?.id, "id"),
-          scope: decodeWorkspaceScope(asRecord(params)?.scope),
-        },
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "agent.get",
+        params: parseParams(getInputSchema, envelope.params),
+      };
+
     case "agent.list":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeListScope(params),
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "agent.list",
+        params: parseParams(workspaceScopeSchema, envelope.params),
+      };
+
     case "agent.wait":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeWaitParams(params),
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "agent.wait",
+        params: parseParams(waitParamsSchema, envelope.params),
+      };
+
     case "daemon.logs":
       return {
-        requestId,
-        protocolVersion,
-        authToken,
-        method,
-        params: decodeLogsParams(params),
-      } as LocalAgentDaemonRequest;
+        ...base,
+        method: "daemon.logs",
+        params: parseParams(logsParamsSchema, envelope.params ?? {}),
+      };
+
     default:
-      throw new LocalAgentDaemonProtocolError("UNKNOWN_METHOD", `Unknown daemon method: ${method}`);
+      throw new LocalAgentDaemonProtocolError(
+        "UNKNOWN_METHOD",
+        `Unknown daemon method: ${envelope.method}`,
+      );
   }
 }
 
-export function decodeLocalAgentDaemonResponse(value: unknown): LocalAgentDaemonResponse {
-  const record = asRecord(value);
-  const requestId = requiredString(record?.requestId, "requestId");
-  const protocolVersion = requiredInteger(record?.protocolVersion, "protocolVersion");
-  if (record?.ok === true) {
-    return { requestId, protocolVersion, ok: true, result: record.result };
-  }
-  if (record?.ok === false) {
-    const error = asRecord(record.error);
-    return {
-      requestId,
-      protocolVersion,
-      ok: false,
-      error: {
-        code: requiredString(error?.code, "error.code"),
-        message: requiredString(error?.message, "error.message"),
-        retryable: optionalBoolean(error?.retryable),
-        provider: optionalString(error?.provider),
-        agentId: optionalString(error?.agentId),
-        workspaceId: optionalString(error?.workspaceId),
-        operation: optionalString(error?.operation),
-        target: optionalString(error?.target),
-      },
-    };
-  }
-  throw new LocalAgentDaemonProtocolError("INVALID_RESPONSE", "Daemon returned an invalid response.");
+export function decodeLocalAgentDaemonResponse<T>(value: T): LocalAgentDaemonResponse {
+  return parseProtocolValue(
+    daemonResponseSchema,
+    value,
+    "INVALID_RESPONSE",
+    "Daemon returned an invalid response.",
+  );
 }
 
-export function decodeAgentRecord(value: unknown): LocalAgentRecord {
-  const record = asRecord(value);
-  const status = requiredString(record?.status, "status");
-  if (!isLocalAgentStatus(status)) throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent status.");
-  return {
-    id: requiredString(record?.id, "id"),
-    workspaceId: optionalString(record?.workspaceId),
-    workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
-    profileName: requiredString(record?.profileName, "profileName"),
-    provider: requiredString(record?.provider, "provider"),
-    model: optionalString(record?.model),
-    effort: optionalString(record?.effort),
-    providerSessionId: optionalString(record?.providerSessionId),
-    status,
-    latestResponse: typeof record?.latestResponse === "string" ? record.latestResponse : undefined,
-    error: optionalContentString(record?.error),
-    errorCode: optionalString(record?.errorCode),
-    errorRetryable: optionalBoolean(record?.errorRetryable),
-    createdAt: requiredString(record?.createdAt, "createdAt"),
-    updatedAt: requiredString(record?.updatedAt, "updatedAt"),
-  };
+export function decodeAgentRecord<T>(value: T): LocalAgentRecord {
+  return parseProtocolValue(
+    agentRecordSchema,
+    value,
+    "INVALID_RECORD",
+    "Daemon returned an invalid agent record.",
+  );
 }
 
-export function decodeAgentRecordList(value: unknown): LocalAgentRecord[] {
-  if (!Array.isArray(value)) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid agent list.");
-  return value.map(decodeAgentRecord);
+export function decodeAgentRecordList<T>(value: T): LocalAgentRecord[] {
+  return parseProtocolValue(
+    z.array(agentRecordSchema),
+    value,
+    "INVALID_RESULT",
+    "Daemon returned an invalid agent list.",
+  );
 }
 
-export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
-  if (!Array.isArray(value)) {
-    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid agent wait results.");
-  }
-  return value.map((entry): LocalAgentWaitResult => {
-    const record = asRecord(entry);
-    const id = requiredString(record?.id, "id");
-    const status = requiredString(record?.status, "status");
-    switch (status) {
-      case "running": {
-        const wait = optionalString(record?.wait);
-        if (wait !== undefined && wait !== "timeout") {
-          throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
-        }
-        return { id, status, ...(wait ? { wait } : {}) };
-      }
-      case "completed": {
-        const response = typeof record?.response === "string" ? record.response : undefined;
-        return { id, status, ...(response === undefined ? {} : { response }) };
-      }
-      case "failed":
-        return { id, status, error: decodeWaitError(record?.error) };
-      case "stopped":
-        return {
-          id,
-          status,
-          ...(record?.error === undefined ? {} : { error: decodeWaitError(record.error) }),
-        };
-      default:
-        throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
-    }
-  });
+export function decodeAgentWaitResults<T>(value: T): LocalAgentWaitResult[] {
+  return parseProtocolValue(
+    z.array(waitResultSchema),
+    value,
+    "INVALID_RESULT",
+    "Daemon returned invalid agent wait results.",
+  );
 }
 
-export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
-  const record = asRecord(value);
-  const state = requiredString(record?.state, "state");
-  if (state !== "ready" && state !== "stopping") {
-    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid status.");
-  }
-  return {
-    state,
-    protocolVersion: requiredInteger(record?.protocolVersion, "protocolVersion"),
-    pid: requiredInteger(record?.pid, "pid"),
-    endpoint: requiredString(record?.endpoint, "endpoint"),
-    startedAt: requiredString(record?.startedAt, "startedAt"),
-    activeTurns: requiredInteger(record?.activeTurns, "activeTurns"),
-    runtimeCount: requiredInteger(record?.runtimeCount, "runtimeCount"),
-    clientConnections: requiredInteger(record?.clientConnections, "clientConnections"),
-  };
+export function decodeDaemonStatus<T>(value: T): LocalAgentDaemonStatus {
+  return parseProtocolValue(
+    daemonStatusSchema,
+    value,
+    "INVALID_RESULT",
+    "Daemon returned an invalid status.",
+  );
 }
 
-export function decodeDaemonHello(value: unknown): LocalAgentDaemonHello {
-  const record = asRecord(value);
-  return {
-    status: decodeDaemonStatus(record?.status),
-    configMatches: requiredBoolean(record?.configMatches, "configMatches"),
-  };
+export function decodeDaemonHello<T>(value: T): LocalAgentDaemonHello {
+  return parseProtocolValue(
+    daemonHelloSchema,
+    value,
+    "INVALID_RESULT",
+    "Daemon returned an invalid hello response.",
+  );
 }
 
-export function decodeDaemonLogs(value: unknown): string {
-  if (typeof value !== "string") throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid logs.");
-  return value;
+export function decodeDaemonLogs<T>(value: T): string {
+  return parseProtocolValue(
+    z.string(),
+    value,
+    "INVALID_RESULT",
+    "Daemon returned invalid logs.",
+  );
 }
 
 export class LocalAgentDaemonProtocolError extends Error {
@@ -309,171 +413,23 @@ export class LocalAgentDaemonProtocolError extends Error {
   }
 }
 
-function decodeEmptyParams(value: unknown): Record<string, never> {
-  if (value === undefined) return {};
-  const record = asRecord(value);
-  if (!record || Object.keys(record).length > 0) {
-    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "This daemon method does not accept parameters.");
+function parseParams<TSchema extends z.ZodType, TValue>(schema: TSchema, value: TValue): z.output<TSchema> {
+  return parseProtocolValue(schema, value, "INVALID_PARAMS", "Daemon request parameters are invalid.");
+}
+
+function parseProtocolValue<TSchema extends z.ZodType, TValue>(
+  schema: TSchema,
+  value: TValue,
+  code: string,
+  message: string,
+): z.output<TSchema> {
+  const parsed = schema.safeParse(value);
+
+  if (!parsed.success) {
+    throw new LocalAgentDaemonProtocolError(code, message, { cause: parsed.error });
   }
-  return {};
-}
 
-function decodeStartInput(value: unknown): StartLocalAgentInput {
-  const record = asRecord(value);
-  return {
-    target: requiredString(record?.target, "target"),
-    prompt: requiredContentString(record?.prompt, "prompt"),
-    workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
-    workspaceId: optionalString(record?.workspaceId),
-    model: optionalString(record?.model),
-    effort: optionalString(record?.effort),
-    writeMode: decodeWriteMode(record?.writeMode),
-  };
-}
-
-function decodeContinueInput(value: unknown): { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides } {
-  const record = asRecord(value);
-  const overrides = asRecord(record?.overrides);
-  return {
-    id: requiredString(record?.id, "id"),
-    prompt: requiredContentString(record?.prompt, "prompt"),
-    scope: decodeWorkspaceScope(record?.scope),
-    ...(overrides ? { overrides: {
-      model: optionalString(overrides.model),
-      effort: optionalString(overrides.effort),
-      writeMode: decodeWriteMode(overrides.writeMode),
-    } } : {}),
-  };
-}
-
-function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
-  const record = asRecord(value);
-  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workspace scope is required.");
-  return {
-    workspaceId: optionalString(record.workspaceId),
-    workspaceRoot: requiredString(record.workspaceRoot, "scope.workspaceRoot"),
-  };
-}
-
-function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
-  return decodeWorkspaceScope(value);
-}
-
-function decodeStopParams(value: unknown): { ifIdle?: boolean } {
-  const record = asRecord(value);
-  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Daemon stop options must be an object.");
-  const ifIdle = optionalBoolean(record.ifIdle);
-  return ifIdle === undefined ? {} : { ifIdle };
-}
-
-function decodeWaitParams(value: unknown): {
-  ids: string[];
-  scope: LocalAgentWorkspaceScope;
-  timeoutMs?: number;
-} {
-  const record = asRecord(value);
-  if (!record) {
-    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Agent wait options must be an object.");
-  }
-  const ids = record?.ids;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "At least one subagent id is required.");
-  }
-  const timeoutMs = record.timeoutMs;
-  if (
-    timeoutMs !== undefined
-    && (typeof timeoutMs !== "number"
-      || !Number.isSafeInteger(timeoutMs)
-      || timeoutMs < 0
-      || timeoutMs > 2_147_483_647)
-  ) {
-    throw new LocalAgentDaemonProtocolError(
-      "INVALID_PARAMS",
-      "Wait timeout must be an integer between 0 and 2147483647 milliseconds.",
-    );
-  }
-  return {
-    ids: ids.map((id, index) => requiredString(id, `ids[${index}]`)),
-    scope: decodeWorkspaceScope(record.scope),
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  };
-}
-
-function decodeWaitError(value: unknown): { code: string; message: string; retryable: boolean } {
-  const record = asRecord(value);
-  return {
-    code: requiredString(record?.code, "error.code"),
-    message: requiredContentString(record?.message, "error.message"),
-    retryable: optionalBoolean(record?.retryable) ?? false,
-  };
-}
-
-function decodeLogsParams(value: unknown): { lines?: number } {
-  if (value === undefined) return {};
-  const record = asRecord(value);
-  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Log options must be an object.");
-  const lines = record.lines;
-  if (lines === undefined) return {};
-  if (typeof lines !== "number" || !Number.isInteger(lines) || lines < 1 || lines > 10_000) {
-    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Log lines must be an integer between 1 and 10000.");
-  }
-  return { lines };
-}
-
-function decodeWriteMode(value: unknown): LocalAgentWriteMode | undefined {
-  if (value === undefined) return undefined;
-  if (value === "read_only" || value === "allowed" || value === "full_access") return value;
-  throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Invalid write mode.");
-}
-
-function isLocalAgentStatus(value: string): value is LocalAgentStatus {
-  return value === "starting" || value === "running" || value === "idle" || value === "error" || value === "stopped";
-}
-
-function requiredString(value: unknown, field: string): string {
-  const result = optionalString(value);
-  if (!result) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Missing ${field}.`);
-  return result;
-}
-
-function requiredContentString(value: unknown, field: string): string {
-  const result = optionalContentString(value);
-  if (result === undefined) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Missing ${field}.`);
-  return result;
-}
-
-function requiredInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
-  }
-  return value;
-}
-
-function requiredBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
-  }
-  return value;
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
-function optionalContentString(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  return value;
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
+  return parsed.data;
 }
 
 export function supportedDaemonProtocolVersion(): number {

@@ -8,6 +8,7 @@ test("aggregate review opens when a patch is available", () => {
     files: [{ path: "src/a.ts", type: "change" as const }],
     payload: { patch: "diff --git a/src/a.ts b/src/a.ts" },
   };
+
   assert.equal(isExpandableCard(card), true);
 });
 

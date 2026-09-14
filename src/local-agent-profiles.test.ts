@@ -57,11 +57,41 @@ try {
       "",
     ].join("\n"),
   );
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "invalid-disabled.md"),
+    [
+      "---",
+      "name: invalid-disabled",
+      "description: Invalid disabled type.",
+      "provider: codex",
+      'disabled: "true"',
+      "---",
+      "",
+      "Must not load.",
+      "",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "invalid-model.md"),
+    [
+      "---",
+      "name: invalid-model",
+      "description: Invalid model type.",
+      "provider: codex",
+      "model:",
+      "  - gpt-5.4",
+      "---",
+      "",
+      "Must not load.",
+      "",
+    ].join("\n"),
+  );
 
   const enabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [workspaceRoot] },
     subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
+
   const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
 
   assert.equal(profiles.length, 1);
@@ -91,6 +121,7 @@ try {
     workspaces: { allowedRoots: [workspaceRoot] },
     subagents: { enabled: false, instructions: "on-demand", providers: [] },
   }));
+
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
 } finally {
   await rm(root, { recursive: true, force: true });

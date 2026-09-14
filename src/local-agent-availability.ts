@@ -30,6 +30,7 @@ function checkLocalAgentProviderAvailability(
   config?: SubagentsConfig,
 ): LocalAgentProviderAvailability {
   const providerEnv = config ? localAgentProviderEnvironment(config, provider, env) : env;
+
   switch (provider) {
     case "codex":
       return codexAvailability(providerEnv);
@@ -56,6 +57,7 @@ export function assertLocalAgentProviderAvailable(
   config?: SubagentsConfig,
 ): void {
   const availability = checkLocalAgentProviderAvailability(provider, env, config);
+
   if (availability.available) return;
   throw new Error(
     `${provider} provider is not available: ${availability.reason ?? "provider preflight failed"}`,
@@ -68,6 +70,7 @@ function packageAvailability(
 ): LocalAgentProviderAvailability {
   try {
     import.meta.resolve(packageName);
+
     return { name: provider, available: true };
   } catch {
     return {
@@ -80,6 +83,7 @@ function packageAvailability(
 
 function codexAvailability(env: NodeJS.ProcessEnv): LocalAgentProviderAvailability {
   const availability = commandAvailability("codex", env.CODEX_COMMAND ?? "codex", env);
+
   return availability.available
     ? {
         ...availability,
@@ -94,6 +98,7 @@ function commandAvailability(
   env: NodeJS.ProcessEnv,
 ): LocalAgentProviderAvailability {
   if (resolveExecutableCommand(command, env)) return { name: provider, available: true };
+
   return {
     name: provider,
     available: false,

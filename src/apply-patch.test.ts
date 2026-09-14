@@ -5,25 +5,38 @@ import { join } from "node:path";
 import { applyPatch, isSamePatchFile, parsePatch, replaceFile } from "./apply-patch.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-apply-patch-"));
+
 const replacement = join(root, "replacement.txt");
+
 const replacementTemporary = join(root, "replacement.tmp");
+
 await writeFile(replacement, "old\n");
+
 await writeFile(replacementTemporary, "new\n");
+
 await replaceFile(replacementTemporary, replacement, true, "win32");
+
 assert.equal(await readFile(replacement, "utf8"), "new\n");
 
 const sameIdentity = async (): Promise<{ dev: number; ino: number }> => ({ dev: 1, ino: 2 });
+
 const differentIdentity = async (path: string): Promise<{ dev: number; ino: number }> => ({
   dev: 1,
   ino: path.endsWith("foo.txt") ? 3 : 2,
 });
+
 assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/Foo.txt"), true);
+
 assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/foo.txt", sameIdentity), true);
+
 assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/bar.txt", sameIdentity), false);
+
 assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/foo.txt", differentIdentity), false);
 
 await writeFile(join(root, "alpha.txt"), "one\ntwo\nthree\n");
+
 await writeFile(join(root, "remove.txt"), "remove me\n");
+
 await writeFile(join(root, "windows.txt"), "first\r\nsecond\r\n");
 
 const result = await applyPatch(
@@ -53,16 +66,25 @@ assert.deepEqual(result.files, [
   { path: "windows.txt", operation: "update" },
   { path: "remove.txt", operation: "delete" },
 ]);
+
 assert.equal(result.additions, 4);
+
 assert.equal(result.removals, 3);
+
 assert.match(result.patch, /diff --git a\/alpha\.txt b\/alpha\.txt/);
+
 assert.match(result.patch, /-two\n\+changed/);
+
 assert.equal(await readFile(join(root, "nested/added.txt"), "utf8"), "new\nfile\n");
+
 assert.equal(await readFile(join(root, "alpha.txt"), "utf8"), "one\nchanged\nthree\n");
+
 assert.equal(await readFile(join(root, "windows.txt"), "utf8"), "first\r\nupdated\r\n");
+
 await assert.rejects(readFile(join(root, "remove.txt"), "utf8"), /ENOENT/);
 
 if (process.platform !== "win32") await chmod(join(root, "alpha.txt"), 0o755);
+
 const moveResult = await applyPatch(
   root,
   `*** Begin Patch
@@ -74,13 +96,17 @@ const moveResult = await applyPatch(
  changed
 *** End Patch`,
 );
+
 assert.deepEqual(moveResult.files, [
   { path: "moved/alpha.txt", previousPath: "alpha.txt", operation: "move" },
 ]);
+
 assert.equal(await readFile(join(root, "moved/alpha.txt"), "utf8"), "ONE\nchanged\nthree\n");
+
 if (process.platform !== "win32") {
   assert.notEqual((await stat(join(root, "moved/alpha.txt"))).mode & 0o111, 0);
 }
+
 await assert.rejects(readFile(join(root, "alpha.txt"), "utf8"), /ENOENT/);
 
 await assert.rejects(
@@ -95,7 +121,9 @@ await assert.rejects(
 );
 
 const outside = await mkdtemp(join(tmpdir(), "devspace-apply-patch-outside-"));
+
 await symlink(outside, join(root, "outside-link"), process.platform === "win32" ? "junction" : "dir");
+
 await assert.rejects(
   applyPatch(
     root,
@@ -119,6 +147,7 @@ await assert.rejects(
   ),
   /could not find hunk context/,
 );
+
 assert.equal(await readFile(join(root, "moved/alpha.txt"), "utf8"), "ONE\nchanged\nthree\n");
 
 await assert.rejects(
@@ -135,14 +164,18 @@ await assert.rejects(
   ),
   /could not find hunk context/,
 );
+
 await assert.rejects(readFile(join(root, "should-not-exist.txt"), "utf8"), /ENOENT/);
+
 assert.equal(await readFile(join(root, "moved/alpha.txt"), "utf8"), "ONE\nchanged\nthree\n");
 
 const splitHunkRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-split-hunk-"));
+
 await writeFile(
   join(splitHunkRoot, "long.txt"),
   Array.from({ length: 20 }, (_, index) => String(index + 1)).join("\n") + "\n",
 );
+
 const splitHunkResult = await applyPatch(
   splitHunkRoot,
   `*** Begin Patch
@@ -159,7 +192,9 @@ const splitHunkResult = await applyPatch(
  19
 *** End Patch`,
 );
+
 assert.equal(splitHunkResult.patch.match(/^@@ /gm)?.length, 2);
+
 assert.equal(
   await readFile(join(splitHunkRoot, "long.txt"), "utf8"),
   [
@@ -169,7 +204,9 @@ assert.equal(
 );
 
 const trailingSpaceRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-trailing-space-"));
+
 await writeFile(join(trailingSpaceRoot, "spaces.txt"), "old\n");
+
 const trailingSpaceResult = await applyPatch(
   trailingSpaceRoot,
   `*** Begin Patch
@@ -179,18 +216,24 @@ const trailingSpaceResult = await applyPatch(
 +new${"   "}
 *** End Patch`,
 );
+
 assert.equal(trailingSpaceResult.patch.endsWith("+new   "), true);
+
 assert.equal(await readFile(join(trailingSpaceRoot, "spaces.txt"), "utf8"), "new   \n");
 
 assert.throws(() => parsePatch("*** Begin Patch\n*** End Patch"), /contains no file actions/);
+
 assert.throws(() => parsePatch("*** Add File: bad.txt\n+x"), /missing .* marker/);
+
 assert.throws(
   () => parsePatch("*** Begin Patch\n*** Add File: empty.txt\n*** End Patch"),
   /has no content/,
 );
 
 const overwriteRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-overwrite-"));
+
 await writeFile(join(overwriteRoot, "duplicate.txt"), "old content\n");
+
 const overwriteResult = await applyPatch(
   overwriteRoot,
   `*** Begin Patch
@@ -198,13 +241,17 @@ const overwriteResult = await applyPatch(
 +new content
 *** End Patch`,
 );
+
 assert.deepEqual(overwriteResult.files, [
   { path: "duplicate.txt", operation: "update" },
 ]);
+
 assert.equal(await readFile(join(overwriteRoot, "duplicate.txt"), "utf8"), "new content\n");
 
 await writeFile(join(overwriteRoot, "source.txt"), "from\n");
+
 await writeFile(join(overwriteRoot, "destination.txt"), "existing\n");
+
 await applyPatch(
   overwriteRoot,
   `*** Begin Patch
@@ -215,11 +262,15 @@ await applyPatch(
 +new
 *** End Patch`,
 );
+
 assert.equal(await readFile(join(overwriteRoot, "destination.txt"), "utf8"), "new\n");
+
 await assert.rejects(readFile(join(overwriteRoot, "source.txt"), "utf8"), /ENOENT/);
 
 const noNewlineRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-newline-"));
+
 await writeFile(join(noNewlineRoot, "no-newline.txt"), "old");
+
 await applyPatch(
   noNewlineRoot,
   `*** Begin Patch
@@ -229,10 +280,13 @@ await applyPatch(
 +new
 *** End Patch`,
 );
+
 assert.equal(await readFile(join(noNewlineRoot, "no-newline.txt"), "utf8"), "new\n");
 
 const eofRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-eof-"));
+
 await writeFile(join(eofRoot, "tail.txt"), "first\nsecond\n");
+
 await applyPatch(
   eofRoot,
   `*** Begin Patch
@@ -244,7 +298,9 @@ await applyPatch(
 *** End of File
 *** End Patch`,
 );
+
 assert.equal(await readFile(join(eofRoot, "tail.txt"), "utf8"), "first\nsecond updated\n");
+
 await assert.rejects(
   applyPatch(
     eofRoot,
@@ -260,7 +316,9 @@ await assert.rejects(
 );
 
 const lenientRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-lenient-"));
+
 await writeFile(join(lenientRoot, "file.txt"), "one\n");
+
 await applyPatch(
   lenientRoot,
   `<<'EOF'
@@ -272,6 +330,7 @@ await applyPatch(
  *** End Patch
 EOF`,
 );
+
 assert.equal(await readFile(join(lenientRoot, "file.txt"), "utf8"), "two\n");
 
 await applyPatch(
@@ -283,6 +342,7 @@ await applyPatch(
 +three
 *** End Patch`,
 );
+
 assert.equal(await readFile(join(lenientRoot, "file.txt"), "utf8"), "two\nthree\n");
 
 await assert.rejects(
@@ -297,6 +357,7 @@ await assert.rejects(
 );
 
 await writeFile(join(lenientRoot, "binary.dat"), Buffer.from([0, 159, 146, 150]));
+
 await assert.rejects(
   applyPatch(
     lenientRoot,

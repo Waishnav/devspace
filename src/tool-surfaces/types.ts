@@ -58,14 +58,21 @@ export interface DiffStats {
   removals: number;
 }
 
-export interface ToolDefinitionMeta extends Record<string, unknown> {
-  ui: {
-    resourceUri: string;
-    visibility: ["model"];
-  };
+export interface ToolUiDefinitionMeta {
+  resourceUri: string;
+  visibility: ["model"];
 }
 
-export type EmptyToolDefinitionMeta = Record<string, unknown> & {
+export type ToolDefinitionMetaValue =
+  | string
+  | ToolUiDefinitionMeta
+  | undefined;
+
+export type ToolDefinitionMeta = {
+  ui: ToolUiDefinitionMeta;
+} & Record<string, ToolDefinitionMetaValue>;
+
+export type EmptyToolDefinitionMeta = Record<string, string | undefined> & {
   "ui/resourceUri"?: string;
 };
 

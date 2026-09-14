@@ -4,6 +4,7 @@ import {
   type SubagentsConfig,
 } from "./local-agent-config.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { JSONType } from "zod";
 import {
   AcpLocalAgentDriver,
   resolveAcpCommand,
@@ -43,12 +44,15 @@ export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
   const env = options.env ?? process.env;
+
   const providerEnv = (provider: LocalAgentProvider) => options.subagents
     ? localAgentProviderEnvironment(options.subagents, provider, env)
     : env;
+
   const providerEnvOverrides = (provider: LocalAgentProvider) => options.subagents
     ? localAgentProviderEnvironmentOverrides(options.subagents, provider)
     : {};
+
   return [
     new CodexLocalAgentDriver(providerEnv("codex")),
     new ClaudeLocalAgentDriver(options.claudeQueryFactory, providerEnv("claude")),
@@ -60,7 +64,7 @@ export function createLocalAgentDrivers(
   ];
 }
 
-export function extractLocalAgentResponseText(value: unknown): string {
+export function extractLocalAgentResponseText(value: JSONType): string {
   return extractOpenCodeFinalResponse(value) || extractPiFinalResponse(value);
 }
 

@@ -85,6 +85,7 @@ export async function createManagedWorktree(input: {
 
   try {
     const sourceStats = await stat(sourcePath);
+
     if (!sourceStats.isDirectory()) {
       throw new GitWorktreeError(
         "GIT_REPOSITORY_NOT_FOUND",
@@ -103,6 +104,7 @@ export async function createManagedWorktree(input: {
   const baseRef = input.baseRef ?? "HEAD";
   const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
   const dirtySource = (await git(["status", "--porcelain=v1"], sourceRoot)).trim().length > 0;
+
   const worktreePath = managedWorktreePath({
     worktreeRoot: input.config.worktreeRoot,
     repoRoot: sourceRoot,
@@ -147,10 +149,12 @@ export async function cleanupManagedWorktrees(input: {
   };
 
   const staleSessions = input.store.listStaleManagedWorktrees(input.staleBefore);
+
   if (staleSessions.isErr()) return staleSessions;
 
   for (const session of staleSessions.value) {
     const cleaned = await cleanupManagedWorktree({ ...input, session });
+
     if (cleaned.isErr()) {
       result.failed.push({
         workspaceId: session.id,
@@ -181,6 +185,7 @@ export async function restoreManagedWorktree(input: {
   allowedRoots: string[];
 }): Promise<BetterResult<void, ManagedWorktreeError>> {
   const { session } = input;
+
   if (session.mode !== "worktree" || !session.managed || !session.sourceRoot) {
     return Result.err(worktreeError(
       session.id,
@@ -189,14 +194,17 @@ export async function restoreManagedWorktree(input: {
       `Workspace ${session.id} is not a recoverable managed worktree.`,
     ));
   }
+
   const sourceRootPath = session.sourceRoot;
 
   const recoveryRef = managedWorktreeRecoveryRef(session.id);
+
   const restoreRef = session.recoveryKind === "stash"
     ? `${recoveryRef}^1`
     : session.recoveryKind === "head"
       ? recoveryRef
       : session.baseSha;
+
   if (!restoreRef) {
     return Result.err(worktreeError(
       session.id,
@@ -208,6 +216,7 @@ export async function restoreManagedWorktree(input: {
 
   return captureManagedWorktreeResult(session.id, "restore", async () => {
     const worktreePath = assertAllowedPath(session.root, [input.worktreeRoot]);
+
     if (await isDirectory(worktreePath)) {
       throw new Error(`Cannot restore workspace ${session.id} because its worktree path already exists.`);
     }
@@ -216,9 +225,11 @@ export async function restoreManagedWorktree(input: {
     await mkdir(input.worktreeRoot, { recursive: true });
 
     let created = false;
+
     try {
       await git(["worktree", "add", "--detach", worktreePath, restoreRef], sourceRoot);
       created = true;
+
       if (session.recoveryKind === "stash") {
         await git(["stash", "apply", "--index", recoveryRef], worktreePath);
       }
@@ -233,6 +244,7 @@ export async function restoreManagedWorktree(input: {
           );
         }
       }
+
       throw cause;
     }
   }, "WORKTREE_RESTORE_FAILED");
@@ -244,6 +256,7 @@ export async function discardRestoredManagedWorktree(input: {
   allowedRoots: string[];
 }): Promise<BetterResult<void, ManagedWorktreeError>> {
   const { session } = input;
+
   if (!session.sourceRoot) {
     return Result.err(worktreeError(
       session.id,
@@ -252,10 +265,12 @@ export async function discardRestoredManagedWorktree(input: {
       `Stored managed worktree is missing sourceRoot: ${session.id}`,
     ));
   }
+
   const sourceRootPath = session.sourceRoot;
 
   return captureManagedWorktreeResult(session.id, "discard", async () => {
     const worktreePath = assertAllowedPath(session.root, [input.worktreeRoot]);
+
     if (!(await isDirectory(worktreePath))) return;
 
     const sourceRoot = await assertCleanupSourceRootAllowed(sourceRootPath, input.allowedRoots);
@@ -282,19 +297,23 @@ async function cleanupManagedWorktree(input: {
 
   const prepared = await captureManagedWorktreeResult(session.id, "prune", async () => {
     const worktreePath = assertAllowedPath(session.root, [input.worktreeRoot]);
+
     if (!(await isDirectory(worktreePath))) {
       return { kind: "missing" } as const;
     }
+
     if (!session.sourceRoot) {
       throw new Error(`Stored managed worktree is missing sourceRoot: ${session.id}`);
     }
 
     const sourceRoot = await assertCleanupSourceRootAllowed(session.sourceRoot, input.allowedRoots);
     await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
+
     const status = await git(
       ["status", "--porcelain=v1", "--untracked-files=normal", "--ignored=no"],
       worktreePath,
     );
+
     if (status.split("\n").some((line) => line.startsWith("?? "))) {
       return { kind: "skipped" } as const;
     }
@@ -303,14 +322,17 @@ async function cleanupManagedWorktree(input: {
     const headSha = (await git(["rev-parse", "HEAD"], worktreePath)).trim();
     let recoverySha: string | undefined;
     let recoveryKind: WorkspaceRecoveryKind | undefined;
+
     if (hasTrackedChanges) {
       recoverySha = (await git(
         ["stash", "create", `DevSpace recovery ${session.id}`],
         worktreePath,
       )).trim();
+
       if (!recoverySha) {
         throw new Error(`Git could not snapshot tracked changes for ${session.id}.`);
       }
+
       recoveryKind = "stash";
     } else if (!session.baseSha || headSha !== session.baseSha) {
       recoverySha = headSha;
@@ -318,6 +340,7 @@ async function cleanupManagedWorktree(input: {
     }
 
     const recoveryRef = recoverySha ? managedWorktreeRecoveryRef(session.id) : undefined;
+
     if (recoveryRef && recoverySha) {
       await git(["update-ref", recoveryRef, recoverySha], sourceRoot);
     }
@@ -325,21 +348,26 @@ async function cleanupManagedWorktree(input: {
     // Revalidate immediately before the only destructive filesystem operation.
     await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
     await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+
     return {
       kind: "removed",
       entry: { workspaceId: session.id, recoveryRef, recoverySha },
       recoveryKind,
     } as const;
   });
+
   if (prepared.isErr()) return prepared;
 
   if (prepared.value.kind === "missing") {
     const deleted = input.store.deleteSession(session.id);
+
     return deleted.isErr() ? deleted : Result.ok(prepared.value);
   }
+
   if (prepared.value.kind === "skipped") return Result.ok(prepared.value);
 
   const markedPruned = input.store.markSessionPruned(session.id, prepared.value.recoveryKind);
+
   if (markedPruned.isOk()) {
     return Result.ok({ kind: "removed", entry: prepared.value.entry });
   }
@@ -349,11 +377,13 @@ async function cleanupManagedWorktree(input: {
     worktreeRoot: input.worktreeRoot,
     allowedRoots: input.allowedRoots,
   });
+
   if (restored.isErr()) {
     const markedAfterRestoreFailure = input.store.markSessionPruned(
       session.id,
       prepared.value.recoveryKind,
     );
+
     return Result.err(worktreeError(
       session.id,
       "WORKTREE_RESTORE_FAILED",
@@ -368,6 +398,7 @@ async function cleanupManagedWorktree(input: {
       },
     ));
   }
+
   return Result.err(markedPruned.error);
 }
 
@@ -391,6 +422,7 @@ async function captureManagedWorktreeResult<T>(
     return Result.ok(await run());
   } catch (cause) {
     if (isProgrammerDefect(cause)) throw cause;
+
     return Result.err(worktreeError(
       workspaceId,
       code,
@@ -401,12 +433,12 @@ async function captureManagedWorktreeResult<T>(
   }
 }
 
-function isProgrammerDefect(error: unknown): boolean {
-  return error instanceof TypeError
-    || error instanceof ReferenceError
-    || error instanceof SyntaxError
-    || error instanceof RangeError
-    || (error instanceof Error && error.name === "AssertionError");
+function isProgrammerDefect(cause: unknown): boolean {
+  return cause instanceof TypeError
+    || cause instanceof ReferenceError
+    || cause instanceof SyntaxError
+    || cause instanceof RangeError
+    || (cause instanceof Error && cause.name === "AssertionError");
 }
 
 export function managedWorktreeRecoveryRef(workspaceId: string): string {
@@ -415,9 +447,11 @@ export function managedWorktreeRecoveryRef(workspaceId: string): string {
 
 async function assertManagedWorktreePath(worktreePath: string, worktreeRoot: string): Promise<void> {
   const entry = await lstat(worktreePath);
+
   if (entry.isSymbolicLink()) {
     throw new Error(`Managed worktree path was replaced by a symbolic link: ${worktreePath}`);
   }
+
   if (!entry.isDirectory()) {
     throw new Error(`Managed worktree path is not a directory: ${worktreePath}`);
   }
@@ -426,6 +460,7 @@ async function assertManagedWorktreePath(worktreePath: string, worktreeRoot: str
     realpath(worktreePath),
     realpath(worktreeRoot),
   ]);
+
   if (!isPathInsideRoot(canonicalPath, canonicalRoot)) {
     throw new Error(`Managed worktree resolves outside the configured worktree root: ${worktreePath}`);
   }
@@ -434,8 +469,10 @@ async function assertManagedWorktreePath(worktreePath: string, worktreeRoot: str
 async function assertCleanupSourceRootAllowed(sourceRoot: string, allowedRoots: string[]): Promise<string> {
   const logicalRoot = assertAllowedPath(sourceRoot, allowedRoots);
   const canonicalSourceRoot = await realpath(logicalRoot);
+
   for (const allowedRoot of allowedRoots) {
     const canonicalAllowedRoot = await realpath(allowedRoot).catch(() => undefined);
+
     if (canonicalAllowedRoot && isPathInsideRoot(canonicalSourceRoot, canonicalAllowedRoot)) {
       return canonicalSourceRoot;
     }
@@ -447,6 +484,7 @@ async function assertCleanupSourceRootAllowed(sourceRoot: string, allowedRoots: 
 async function resolveGitRoot(path: string, allowedRoots: string[]): Promise<string> {
   try {
     const output = await git(["rev-parse", "--show-toplevel"], path);
+
     return await assertGitRootAllowed(output.trim(), allowedRoots);
   } catch (error) {
     if (isGitUnavailable(error)) {
@@ -458,7 +496,7 @@ async function resolveGitRoot(path: string, allowedRoots: string[]): Promise<str
 
     throw new GitWorktreeError(
       "GIT_REPOSITORY_NOT_FOUND",
-      `Cannot open workspace in worktree mode because this path is not inside a Git repository: ${path}. Use mode=\"checkout\" to work directly in this directory, or initialize Git and create an initial commit first.`,
+      `Cannot open workspace in worktree mode because this path is not inside a Git repository: ${path}. Use mode="checkout" to work directly in this directory, or initialize Git and create an initial commit first.`,
     );
   }
 }
@@ -468,13 +506,16 @@ async function assertGitRootAllowed(gitRoot: string, allowedRoots: string[]): Pr
     return assertAllowedPath(gitRoot, allowedRoots);
   } catch {
     const canonicalGitRoot = await realpath(gitRoot);
+
     for (const allowedRoot of allowedRoots) {
       const canonicalAllowedRoot = await realpath(allowedRoot).catch(() => undefined);
+
       if (!canonicalAllowedRoot || !isPathInsideRoot(canonicalGitRoot, canonicalAllowedRoot)) {
         continue;
       }
 
       const logicalGitRoot = resolve(allowedRoot, relative(canonicalAllowedRoot, canonicalGitRoot));
+
       return assertAllowedPath(logicalGitRoot, allowedRoots);
     }
 
@@ -485,7 +526,7 @@ async function assertGitRootAllowed(gitRoot: string, allowedRoots: string[]): Pr
 async function resolveBaseCommit(sourceRoot: string, baseRef: string): Promise<string> {
   try {
     return (await git(["rev-parse", "--verify", `${baseRef}^{commit}`], sourceRoot)).trim();
-  } catch (error) {
+  } catch {
     if (baseRef === "HEAD") {
       throw new GitWorktreeError(
         "GIT_REPOSITORY_HAS_NO_COMMITS",
@@ -503,6 +544,7 @@ async function resolveBaseCommit(sourceRoot: string, baseRef: string): Promise<s
 function managedWorktreePath(input: { worktreeRoot: string; repoRoot: string }): string {
   const repoName = sanitizePathSegment(basename(input.repoRoot)) || "repo";
   const worktreeId = randomBytes(4).toString("hex");
+
   return join(input.worktreeRoot, `${repoName}-${worktreeId}`);
 }
 
@@ -517,9 +559,10 @@ async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    if (isNodeError(error) && error.code === "ENOENT") {
       return false;
     }
+
     throw error;
   }
 }
@@ -530,26 +573,28 @@ async function git(args: string[], cwd: string): Promise<string> {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
     });
+
     return stdout;
   } catch (error) {
     if (isGitUnavailable(error)) throw error;
 
-    const stderr = typeof error === "object" && error && "stderr" in error
-      ? String((error as { stderr?: unknown }).stderr ?? "").trim()
+    const stderr = error instanceof Error && "stderr" in error
+      ? String(error.stderr ?? "").trim()
       : "";
-    const stdout = typeof error === "object" && error && "stdout" in error
-      ? String((error as { stdout?: unknown }).stdout ?? "").trim()
+
+    const stdout = error instanceof Error && "stdout" in error
+      ? String(error.stdout ?? "").trim()
       : "";
+
     const details = stderr || stdout || (error instanceof Error ? error.message : String(error));
     throw new Error(details);
   }
 }
 
-function isGitUnavailable(error: unknown): boolean {
-  return Boolean(
-    typeof error === "object" &&
-      error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT",
-  );
+function isGitUnavailable(cause: unknown): boolean {
+  return isNodeError(cause) && cause.code === "ENOENT";
+}
+
+function isNodeError(cause: unknown): cause is NodeJS.ErrnoException {
+  return cause instanceof Error && "code" in cause;
 }

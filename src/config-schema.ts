@@ -2,6 +2,7 @@ import * as z from "zod/v4";
 import { subagentsConfigSchema } from "./local-agent-config.js";
 
 export const DEVSPACE_CONFIG_VERSION = 1 as const;
+
 export const DEVSPACE_CONFIG_SCHEMA_URL =
   "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json";
 
@@ -56,6 +57,7 @@ const oauthConfigSchema = z.object({
   scopes: z.array(z.string().trim().min(1)).min(1).default(["devspace"]),
   allowedResourceUrls: z.array(z.string().trim().url().refine((value) => {
     const url = URL.parse(value);
+
     return url !== null && (url.protocol === "https:"
       || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)));
   }, "Resource URLs must use HTTPS, or HTTP on localhost, 127.0.0.1, or [::1]")
@@ -88,14 +90,16 @@ export const devspaceConfigSchema = z.object({
 }).strict();
 
 export type DevspaceConfig = z.output<typeof devspaceConfigSchema>;
+
 export type DevspaceConfigInput = z.input<typeof devspaceConfigSchema>;
+
 export type ToolMode = DevspaceConfig["tools"]["mode"];
 
 export function defaultDevspaceConfig(): DevspaceConfig {
   return devspaceConfigSchema.parse({ configVersion: DEVSPACE_CONFIG_VERSION });
 }
 
-export function devspaceConfigJsonSchema(): object {
+export function devspaceConfigJsonSchema() {
   return {
     $id: DEVSPACE_CONFIG_SCHEMA_URL,
     title: "DevSpace configuration",

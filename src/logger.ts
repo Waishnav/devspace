@@ -1,6 +1,8 @@
 import type { Request } from "express";
+import type { JSONType } from "zod";
 
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
+
 export type LogFormat = "json" | "pretty";
 
 export interface LoggingConfig {
@@ -13,7 +15,9 @@ export interface LoggingConfig {
   trustProxy: boolean;
 }
 
-type LogFields = Record<string, unknown>;
+type LogValue = JSONType | undefined;
+
+type LogFields = Record<string, LogValue>;
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
   silent: 0,
@@ -43,6 +47,7 @@ export function logEvent(
   };
 
   const line = config.format === "pretty" ? formatPretty(entry) : JSON.stringify(entry);
+
   if (level === "error") {
     console.error(line);
   } else if (level === "warn") {
@@ -55,9 +60,11 @@ export function logEvent(
 export function requestIp(req: Request, trustProxy: boolean): string | undefined {
   if (trustProxy) {
     const cfConnectingIp = firstHeaderValue(req.header("cf-connecting-ip"));
+
     if (cfConnectingIp) return cfConnectingIp;
 
     const forwardedFor = firstHeaderValue(req.header("x-forwarded-for"));
+
     if (forwardedFor) return forwardedFor;
   }
 
@@ -70,6 +77,7 @@ export function requestPath(req: Request): string {
 
 export function commandPreview(command: string): string {
   const normalized = command.replace(/\s+/g, " ").trim();
+
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
@@ -81,6 +89,7 @@ function formatPretty(entry: LogFields): string {
   const ts = String(entry.ts);
   const level = String(entry.level).toUpperCase();
   const event = String(entry.event);
+
   const rest = Object.entries(entry)
     .filter(([key, value]) => !["ts", "level", "event"].includes(key) && value !== undefined)
     .map(([key, value]) => `${key}=${formatPrettyValue(value)}`)
@@ -89,7 +98,6 @@ function formatPretty(entry: LogFields): string {
   return rest ? `${ts} ${level} ${event} ${rest}` : `${ts} ${level} ${event}`;
 }
 
-function formatPrettyValue(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
-  return JSON.stringify(value);
+function formatPrettyValue(value: LogValue): string {
+  return JSON.stringify(value) ?? "undefined";
 }

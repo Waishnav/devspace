@@ -9,7 +9,9 @@ import {
   type ToolWidgetDescriptorMeta,
 } from "./types.js";
 
-export function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
+type ToolOutputFields = Parameters<typeof z.object>[0];
+
+export function resultOutputSchema(extra: ToolOutputFields = {}) {
   return {
     result: z
       .string()
@@ -59,6 +61,7 @@ export async function runLoggedToolOperation<T>(
       success: true,
       durationMs: Math.round(performance.now() - startedAt),
     });
+
     return result;
   } catch (error) {
     logToolCall(config, {
@@ -73,16 +76,15 @@ export async function runLoggedToolOperation<T>(
 
 export function contentText(content: ToolContent[]): string {
   return content
-    .filter(
-      (item): item is { type: "text"; text: string } => item.type === "text",
-    )
-    .map((item) => item.text)
+    .flatMap((item) => (item.type === "text" ? [item.text] : []))
     .join("\n");
 }
 
 function toolErrorPreview(content: ToolContent[]): string | undefined {
   const text = contentText(content).replace(/\s+/g, " ").trim();
+
   if (!text) return undefined;
+
   return text.length > 240 ? `${text.slice(0, 237)}...` : text;
 }
 
@@ -112,6 +114,7 @@ export function countDiffStats(diff: string | undefined): DiffStats {
 
   for (const line of diff.split("\n")) {
     if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+
     if (line.startsWith("-") && !line.startsWith("---")) removals++;
   }
 

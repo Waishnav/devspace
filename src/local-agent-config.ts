@@ -9,7 +9,7 @@ const environmentSchema = z.record(
   z.string(),
 );
 
-const providerShape = {
+const providerFields = {
   enabled: z.boolean(),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
@@ -22,15 +22,28 @@ const commandSchema = z.string()
   .min(1)
   .optional();
 
+const providerRevisionSchema = z.object({
+  id: z.enum(["codex", "claude", "cursor", "copilot", "grok", "opencode", "pi"]),
+  enabled: z.boolean(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
+  command: z.string().optional(),
+  env: environmentSchema.optional(),
+}).strict();
+
+type ProviderEnvironment = z.output<typeof environmentSchema>;
+
+type ProviderRevision = z.output<typeof providerRevisionSchema>;
+
 const providerSchema = z.discriminatedUnion("id", [
   z.object({
     id: z.enum(["codex", "claude", "cursor", "copilot", "grok"]),
-    ...providerShape,
+    ...providerFields,
     command: commandSchema,
   }).strict(),
   z.object({
     id: z.enum(["opencode", "pi"]),
-    ...providerShape,
+    ...providerFields,
   }).strict(),
 ]);
 
@@ -40,6 +53,7 @@ export const subagentsConfigSchema = z.object({
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
   const seen = new Set<LocalAgentProvider>();
+
   for (const [index, provider] of value.providers.entries()) {
     if (seen.has(provider.id)) {
       context.addIssue({
@@ -48,6 +62,7 @@ export const subagentsConfigSchema = z.object({
         message: `Duplicate subagent provider: ${provider.id}`,
       });
     }
+
     seen.add(provider.id);
   }
 });
@@ -58,7 +73,9 @@ export const storedSubagentsConfigSchema = z.union([
 ]);
 
 export type SubagentProviderConfig = z.infer<typeof providerSchema>;
+
 export type SubagentsConfig = z.infer<typeof subagentsConfigSchema>;
+
 export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 
 export function subagentProviderConfig(
@@ -83,15 +100,17 @@ export function localAgentProviderEnvironment(
   const providerConfig = subagentProviderConfig(config, provider);
   const env = { ...inherited, ...providerConfig?.env };
   const commandVariable = providerCommandVariable(provider);
-  const command = providerConfig && "command" in providerConfig ? providerConfig.command : undefined;
+  const command = providerConfig ? configuredProviderCommand(providerConfig) : undefined;
+
   if (commandVariable && command) env[commandVariable] = command;
+
   return env;
 }
 
 export function localAgentProviderEnvironmentOverrides(
   config: SubagentsConfig,
   provider: LocalAgentProvider,
-): Record<string, string> {
+): NodeJS.ProcessEnv {
   return { ...subagentProviderConfig(config, provider)?.env };
 }
 
@@ -111,21 +130,34 @@ export function providerCommandVariable(provider: LocalAgentProvider): string | 
 export function localAgentProviderConfigRevision(config: SubagentsConfig): string {
   const providers = [...config.providers]
     .sort((left, right) => left.id.localeCompare(right.id))
-    .map((provider) => ({
-      id: provider.id,
-      enabled: provider.enabled,
-      ...(provider.model ? { model: provider.model } : {}),
-      ...(provider.effort ? { effort: provider.effort } : {}),
-      ...("command" in provider && provider.command ? { command: provider.command } : {}),
-      ...(provider.env && Object.keys(provider.env).length > 0
-        ? {
-            env: Object.fromEntries(
-              Object.entries(provider.env).sort(([left], [right]) => left.localeCompare(right)),
-            ),
-          }
-        : {}),
-    }));
+    .map(providerRevision);
+
   return createHash("sha256")
     .update(JSON.stringify({ enabled: config.enabled, providers }))
     .digest("hex");
+}
+
+function configuredProviderCommand(provider: SubagentProviderConfig): string | undefined {
+  return "command" in provider ? provider.command : undefined;
+}
+
+function providerRevision(provider: SubagentProviderConfig): ProviderRevision {
+  return providerRevisionSchema.parse({
+    id: provider.id,
+    enabled: provider.enabled,
+    model: provider.model || undefined,
+    effort: provider.effort || undefined,
+    command: configuredProviderCommand(provider) || undefined,
+    env: sortedProviderEnvironment(provider.env),
+  });
+}
+
+function sortedProviderEnvironment(
+  environment: ProviderEnvironment | undefined,
+): ProviderEnvironment | undefined {
+  if (environment === undefined || Object.keys(environment).length === 0) return undefined;
+
+  return Object.fromEntries(
+    Object.entries(environment).sort(([left], [right]) => left.localeCompare(right)),
+  );
 }

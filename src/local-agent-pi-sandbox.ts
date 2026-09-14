@@ -18,7 +18,7 @@ import {
   createWriteTool,
   type BashOperations,
   type EditOperations,
-  type ExtensionFactory,
+  type ExtensionAPI,
   type FindOperations,
   type GrepOperations,
   type LsOperations,
@@ -39,6 +39,35 @@ interface PiSandboxSessionState {
   modeRef: PiSandboxModeRef;
   acquired: boolean;
 }
+
+export interface PiSandboxSessionHandle {
+  readonly sessionId: string;
+}
+
+type DynamicTool<T extends { execute: (...args: any[]) => any }> = Omit<T, "execute"> & {
+  execute: (...args: Parameters<T["execute"]>) => ReturnType<T["execute"]>;
+};
+
+type NamedPiSandboxTool<Name extends string, Tool extends { execute: (...args: any[]) => any }> =
+  DynamicTool<Tool> & { name: Name };
+
+export type PiSandboxTool =
+  | NamedPiSandboxTool<"read", ReturnType<typeof createReadTool>>
+  | NamedPiSandboxTool<"write", ReturnType<typeof createWriteTool>>
+  | NamedPiSandboxTool<"edit", ReturnType<typeof createEditTool>>
+  | NamedPiSandboxTool<"grep", ReturnType<typeof createGrepTool>>
+  | NamedPiSandboxTool<"find", ReturnType<typeof createFindTool>>
+  | NamedPiSandboxTool<"ls", ReturnType<typeof createLsTool>>
+  | NamedPiSandboxTool<"bash", ReturnType<typeof createBashTool>>;
+
+export interface PiSandboxExtensionApi {
+  registerTool(tool: PiSandboxTool): void;
+}
+
+type PiSandboxExtensionFactory = {
+  (pi: ExtensionAPI): void;
+  (pi: PiSandboxExtensionApi): void;
+};
 
 const PI_NETWORK_ALLOWLIST = [
   "npmjs.org",
@@ -67,12 +96,18 @@ const PI_NETWORK_ALLOWLIST = [
 // explicitly allowed here; the agent can report that limitation to the user.
 
 let sandboxInitialization: Promise<void> | undefined;
+
 let windowsSandboxWorkspace: string | undefined;
+
 let windowsSandboxQueue = Promise.resolve();
+
 let sandboxSessionCount = 0;
+
 let sandboxCommandCount = 0;
+
 const sandboxCommandWaiters = new Set<() => void>();
-const sessionStates = new WeakMap<object, PiSandboxSessionState>();
+
+const sessionStates = new WeakMap<PiSandboxSessionHandle, PiSandboxSessionState>();
 
 export function createPiSandboxModeRef(value: PiSandboxWriteMode): PiSandboxModeRef {
   return { value };
@@ -82,47 +117,51 @@ export function createPiSandboxExtension(
   workspace: string,
   modeRef: PiSandboxModeRef,
   env: NodeJS.ProcessEnv = {},
-): ExtensionFactory {
-  return (pi) => {
+): PiSandboxExtensionFactory {
+  return (pi: ExtensionAPI | PiSandboxExtensionApi) => {
     const localRead = createReadTool(workspace);
     const restrictedRead = createReadTool(workspace, { operations: createReadOperations(workspace) });
-    pi.registerTool(dynamicTool(localRead, restrictedRead, modeRef));
+    pi.registerTool(dynamicTool("read", localRead, restrictedRead, modeRef));
 
     const localWrite = createWriteTool(workspace);
     const restrictedWrite = createWriteTool(workspace, { operations: createWriteOperations(workspace) });
-    pi.registerTool(dynamicTool(localWrite, restrictedWrite, modeRef, true));
+    pi.registerTool(dynamicTool("write", localWrite, restrictedWrite, modeRef, true));
 
     const localEdit = createEditTool(workspace);
     const restrictedEdit = createEditTool(workspace, { operations: createEditOperations(workspace) });
-    pi.registerTool(dynamicTool(localEdit, restrictedEdit, modeRef, true));
+    pi.registerTool(dynamicTool("edit", localEdit, restrictedEdit, modeRef, true));
 
     const localGrep = createGrepTool(workspace);
     const restrictedGrep = createGrepTool(workspace, { operations: createGrepOperations(workspace) });
-    pi.registerTool(dynamicTool(localGrep, restrictedGrep, modeRef));
+    pi.registerTool(dynamicTool("grep", localGrep, restrictedGrep, modeRef));
 
     const localFind = createFindTool(workspace);
     const restrictedFind = createFindTool(workspace, { operations: createFindOperations(workspace) });
-    pi.registerTool(dynamicTool(localFind, restrictedFind, modeRef));
+    pi.registerTool(dynamicTool("find", localFind, restrictedFind, modeRef));
 
     const localLs = createLsTool(workspace);
     const restrictedLs = createLsTool(workspace, { operations: createLsOperations(workspace) });
-    pi.registerTool(dynamicTool(localLs, restrictedLs, modeRef));
+    pi.registerTool(dynamicTool("ls", localLs, restrictedLs, modeRef));
 
     const withProviderEnv = (context: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => ({
       ...context,
       env: { ...context.env, ...env },
     });
+
     const localBash = createBashTool(workspace, { spawnHook: withProviderEnv });
+
     const restrictedBash = createBashTool(workspace, {
       operations: createSandboxedBashOperations(),
       spawnHook: withProviderEnv,
     });
-    pi.registerTool(dynamicTool(localBash, restrictedBash, modeRef, true));
+
+    pi.registerTool(dynamicTool("bash", localBash, restrictedBash, modeRef, true));
   };
 }
 
 export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig {
   const resolvedWorkspace = workspace ? resolveWorkspace(workspace) : undefined;
+
   return {
     network: {
       allowedDomains: [...PI_NETWORK_ALLOWLIST],
@@ -141,7 +180,7 @@ export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig 
 }
 
 export async function registerPiSandboxSession(
-  session: object,
+  session: PiSandboxSessionHandle,
   workspace: string,
   modeRef: PiSandboxModeRef,
   writeMode: PiSandboxWriteMode,
@@ -151,36 +190,45 @@ export async function registerPiSandboxSession(
     modeRef,
     acquired: false,
   };
+
   sessionStates.set(session, state);
+
   if (writeMode !== "full_access") {
     await acquirePiSandbox(state);
   }
 }
 
 export async function updatePiSandboxSession(
-  session: object,
+  session: PiSandboxSessionHandle,
   workspace: string,
   writeMode: PiSandboxWriteMode,
 ): Promise<void> {
   const state = sessionStates.get(session);
+
   if (!state) return;
   state.workspace = resolveWorkspace(workspace);
   state.modeRef.value = writeMode;
+
   if (writeMode !== "full_access" && !state.acquired) {
     await acquirePiSandbox(state);
   }
 }
 
-export async function releasePiSandboxSession(session: object): Promise<void> {
+export async function releasePiSandboxSession(session: PiSandboxSessionHandle): Promise<void> {
   const state = sessionStates.get(session);
+
   if (!state) return;
   sessionStates.delete(session);
+
   if (!state.acquired) return;
   state.acquired = false;
   sandboxSessionCount = Math.max(0, sandboxSessionCount - 1);
+
   if (sandboxSessionCount !== 0) return;
   await waitForSandboxCommands();
+
   if (sandboxSessionCount !== 0) return;
+
   const reset = async (): Promise<void> => {
     try {
       await SandboxManager.reset();
@@ -189,25 +237,31 @@ export async function releasePiSandboxSession(session: object): Promise<void> {
       windowsSandboxWorkspace = undefined;
     }
   };
+
   if (process.platform === "win32") await enqueueWindowsSandbox(reset);
   else await reset();
 }
 
-function dynamicTool<T extends { execute: (...args: any[]) => any }>(
+function dynamicTool<Name extends string, T extends { execute: (...args: any[]) => any }>(
+  name: Name,
   unrestricted: T,
   restricted: T,
   modeRef: PiSandboxModeRef,
   writeCapable = false,
-): T {
+): DynamicTool<T> & { name: Name } {
+  const execute = (...args: Parameters<T["execute"]>): ReturnType<T["execute"]> => {
+    if (writeCapable && modeRef.value === "read_only") {
+      throw new Error("Pi read-only mode does not allow write-capable tools.");
+    }
+
+    return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
+  };
+
   return {
     ...restricted,
-    execute: (...args: Parameters<T["execute"]>) => {
-      if (writeCapable && modeRef.value === "read_only") {
-        throw new Error("Pi read-only mode does not allow write-capable tools.");
-      }
-      return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
-    },
-  } as T;
+    name,
+    execute,
+  };
 }
 
 function createReadOperations(workspace: string): ReadOperations {
@@ -246,6 +300,7 @@ function createFindOperations(workspace: string): FindOperations {
     exists: async (path) => {
       try {
         await access(await assertPiWorkspacePath(path, workspace));
+
         return true;
       } catch {
         return false;
@@ -259,19 +314,25 @@ function createFindOperations(workspace: string): FindOperations {
 
       const visit = async (directory: string): Promise<void> => {
         if (results.length >= options.limit) return;
+
         for (const entry of await readdir(directory, { withFileTypes: true })) {
           if (entry.isSymbolicLink()) continue;
+
           if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
           const absolutePath = join(directory, entry.name);
           const relativePath = relative(searchRoot, absolutePath).split("\\").join("/");
           const candidate = pattern.includes("/") ? relativePath : basename(relativePath);
+
           if (matcher.test(candidate)) results.push(absolutePath);
+
           if (entry.isDirectory()) await visit(absolutePath);
+
           if (results.length >= options.limit) return;
         }
       };
 
       await visit(searchRoot);
+
       return results;
     },
   };
@@ -282,6 +343,7 @@ function createLsOperations(workspace: string): LsOperations {
     exists: async (path) => {
       try {
         await access(await assertPiWorkspacePath(path, workspace));
+
         return true;
       } catch {
         return false;
@@ -298,10 +360,13 @@ function createSandboxedBashOperations(): BashOperations {
       if (process.platform === "win32") {
         return enqueueWindowsSandbox(async () => {
           await ensureWindowsSandbox(cwd);
+
           return runSandboxedCommand(command, cwd, options);
         });
       }
+
       await ensureSandboxInitialized();
+
       return runSandboxedCommand(command, cwd, options);
     }),
   };
@@ -311,6 +376,7 @@ async function acquirePiSandbox(state: PiSandboxSessionState): Promise<void> {
   if (state.acquired) return;
   state.acquired = true;
   sandboxSessionCount += 1;
+
   try {
     if (process.platform === "win32") {
       // Windows sandbox-runtime has process-global policy state. Serialize
@@ -331,21 +397,26 @@ async function ensureSandboxInitialized(): Promise<void> {
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(`Pi allowed mode requires a sandbox, but ${process.platform} is not supported by sandbox-runtime.`);
   }
+
   if (!sandboxInitialization) {
     sandboxInitialization = SandboxManager.initialize(createPiSandboxConfig()).catch((error) => {
       sandboxInitialization = undefined;
       throw new Error(`Pi allowed mode could not initialize its sandbox: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
+
   await sandboxInitialization;
 }
 
 async function ensureWindowsSandbox(workspace: string): Promise<void> {
   const resolvedWorkspace = resolveWorkspace(workspace);
+
   if (windowsSandboxWorkspace === resolvedWorkspace && sandboxInitialization) {
     await sandboxInitialization;
+
     return;
   }
+
   if (sandboxInitialization) {
     try {
       await SandboxManager.reset();
@@ -354,6 +425,7 @@ async function ensureWindowsSandbox(workspace: string): Promise<void> {
       windowsSandboxWorkspace = undefined;
     }
   }
+
   sandboxInitialization = SandboxManager.initialize(createPiSandboxConfig(resolvedWorkspace)).catch((error) => {
     sandboxInitialization = undefined;
     windowsSandboxWorkspace = undefined;
@@ -366,6 +438,7 @@ async function ensureWindowsSandbox(workspace: string): Promise<void> {
 function enqueueWindowsSandbox<T>(operation: () => Promise<T>): Promise<T> {
   const next = windowsSandboxQueue.then(operation, operation);
   windowsSandboxQueue = next.then(() => undefined, () => undefined);
+
   return next;
 }
 
@@ -376,9 +449,11 @@ async function runSandboxedCommand(
 ): Promise<{ exitCode: number | null }> {
   if (options.signal?.aborted) throw new Error("aborted");
   const workspace = resolveWorkspace(cwd);
+
   const customConfig: Partial<SandboxRuntimeConfig> = {
     filesystem: createPiSandboxFilesystem(workspace),
   };
+
   const wrapped = await SandboxManager.wrapWithSandboxArgv(
     command,
     undefined,
@@ -386,6 +461,7 @@ async function runSandboxedCommand(
     options.signal,
     workspace,
   );
+
   try {
     return await spawnSandboxedCommand(wrapped.argv, wrapped.env, workspace, options);
   } finally {
@@ -400,7 +476,9 @@ function spawnSandboxedCommand(
   options: Parameters<BashOperations["exec"]>[2],
 ): Promise<{ exitCode: number | null }> {
   const [executable, ...args] = argv;
+
   if (!executable) throw new Error("sandbox-runtime returned an empty command");
+
   return new Promise((resolveResult, reject) => {
     const child = spawn(executable, args, {
       cwd,
@@ -410,26 +488,32 @@ function spawnSandboxedCommand(
       shell: false,
       windowsHide: true,
     });
+
     let timedOut = false;
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
     const detached = process.platform !== "win32";
+
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
+
       if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       callback();
     };
+
     const kill = () => terminateProcessTree(child, "SIGKILL", detached);
     const onAbort = () => kill();
     options.signal?.addEventListener("abort", onAbort, { once: true });
+
     if (options.timeout !== undefined && options.timeout > 0) {
       timer = setTimeout(() => {
         timedOut = true;
         kill();
       }, options.timeout * 1000);
     }
+
     child.stdout?.on("data", options.onData);
     child.stderr?.on("data", options.onData);
     child.once("error", (error) => finish(() => reject(error)));
@@ -454,6 +538,7 @@ function createPiSandboxFilesystem(workspace: string): FilesystemConfig {
 
 function protectedHomePaths(): string[] {
   const home = homedir();
+
   return [
     join(home, ".ssh"),
     join(home, ".aws"),
@@ -472,18 +557,23 @@ async function assertPiWorkspacePath(
   const resolvedWorkspace = resolveWorkspace(workspace);
   const absolutePath = resolve(path);
   const { boundaryPath, suffix } = await resolveExistingBoundary(absolutePath);
+
   if (!isPathInsideRoot(boundaryPath, resolvedWorkspace)) {
     assertAllowedPath(boundaryPath, [resolvedWorkspace]);
   }
+
   const operationPath = suffix ? resolve(boundaryPath, suffix) : boundaryPath;
+
   if (!isPathInsideRoot(operationPath, resolvedWorkspace)) {
     assertAllowedPath(operationPath, [resolvedWorkspace]);
   }
+
   return operationPath;
 }
 
 async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: string; suffix: string }> {
   let candidate = path;
+
   for (;;) {
     try {
       return {
@@ -492,6 +582,7 @@ async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: st
       };
     } catch {
       const parent = dirname(candidate);
+
       if (parent === candidate) return { boundaryPath: candidate, suffix: relative(candidate, path) };
       candidate = parent;
     }
@@ -500,10 +591,12 @@ async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: st
 
 async function withSandboxCommand<T>(operation: () => Promise<T>): Promise<T> {
   sandboxCommandCount += 1;
+
   try {
     return await operation();
   } finally {
     sandboxCommandCount = Math.max(0, sandboxCommandCount - 1);
+
     if (sandboxCommandCount === 0) {
       for (const resolveWaiter of sandboxCommandWaiters) resolveWaiter();
       sandboxCommandWaiters.clear();
@@ -513,22 +606,28 @@ async function withSandboxCommand<T>(operation: () => Promise<T>): Promise<T> {
 
 function waitForSandboxCommands(): Promise<void> {
   if (sandboxCommandCount === 0) return Promise.resolve();
+
   return new Promise((resolveWaiter) => sandboxCommandWaiters.add(resolveWaiter));
 }
 
 function resolveWorkspace(workspace: string): string {
   const absolute = resolve(workspace);
+
   if (!existsSync(absolute)) throw new Error(`Pi workspace does not exist: ${workspace}`);
+
   return realpathSync(absolute);
 }
 
 function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
   let source = "^";
+
   for (let index = 0; index < normalized.length; index += 1) {
     const character = normalized[index];
+
     if (character === "*" && normalized[index + 1] === "*") {
       index += 1;
+
       if (normalized[index + 1] === "/") {
         index += 1;
         source += "(?:.*/)?";
@@ -543,5 +642,6 @@ function globToRegExp(pattern: string): RegExp {
       source += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
     }
   }
+
   return new RegExp(`${source}$`);
 }

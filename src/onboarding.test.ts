@@ -11,6 +11,7 @@ for (const [selections, expected] of [
 ] as const) {
   assert.equal(resolveOnboardingUsage(selections), expected);
 }
+
 assert.throws(() => resolveOnboardingUsage([]), /Choose ChatGPT, Coding Agents, or both/);
 
 assert.deepEqual(
@@ -43,6 +44,7 @@ const configured = {
     { id: "claude" as const, enabled: true, model: "sonnet" },
   ],
 };
+
 assert.deepEqual(
   updateOnboardingSubagentsConfig(configured, ["claude"]),
   {

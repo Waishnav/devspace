@@ -15,9 +15,13 @@ import { toAgentErrorPayload } from "./local-agent-errors.js";
 const cachedContext = { agentId: "agt_test", provider: "codex" as const, workspaceRoot: "/tmp/project" };
 
 assert.equal(parseCodexVersion("codex-cli 0.9.1"), "0.9.1");
+
 assert.equal(sandboxFor("read_only"), "read-only");
+
 assert.equal(sandboxFor("allowed"), "workspace-write");
+
 assert.equal(sandboxFor("full_access"), "danger-full-access");
+
 assert.equal(
   codexCommandEnvironment({ CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "test", PATH: "/tmp/bin" }).CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
   undefined,
@@ -85,9 +89,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   await chmod(command, 0o700);
 
   const runtime = new CodexAppServerRuntime({ command, env: process.env });
+
   try {
     await runtime.initialize();
     let callbackSessionId: string | undefined;
+
     const firstResult = await runtime.run({
       prompt: "first",
       workspaceRoot: "/tmp/project",
@@ -95,15 +101,20 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       model: "gpt-5.4",
       effort: "high",
     }, { onSessionId: (id) => { callbackSessionId = id; } });
+
     assert.equal(firstResult.isOk(), true);
+
     if (firstResult.isErr()) throw firstResult.error;
     const first = firstResult.value;
+
     const resumedResult = await runtime.run({
       prompt: "resumed",
       workspaceRoot: "/tmp/project",
       providerSessionId: first.providerSessionId ?? undefined,
     });
+
     assert.equal(resumedResult.isOk(), true);
+
     if (resumedResult.isErr()) throw resumedResult.error;
     const resumed = resumedResult.value;
     assert.equal(first.providerSessionId, "thread_new");
@@ -111,23 +122,29 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(first.finalResponse, "fake response 1");
     assert.equal(resumed.providerSessionId, "thread_new");
     assert.equal(resumed.finalResponse, "fake response 2");
+
     const failed = await runtime.run({
       prompt: "fail",
       workspaceRoot: "/tmp/project",
       providerSessionId: first.providerSessionId ?? undefined,
     });
+
     assert.equal(failed.isErr(), true);
+
     if (failed.isErr()) {
       assert.equal(failed.error.code, "PROVIDER_EXECUTION_ERROR");
       assert.equal(failed.error.provider, "codex");
       assert.equal(failed.error.retryable, false);
     }
+
     const protocolFailure = await runtime.run({
       prompt: "empty",
       workspaceRoot: "/tmp/project",
       providerSessionId: first.providerSessionId ?? undefined,
     });
+
     assert.equal(protocolFailure.isErr(), true);
+
     if (protocolFailure.isErr()) {
       assert.equal(protocolFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
       assert.equal(protocolFailure.error.provider, "codex");
@@ -135,13 +152,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       assert.ok(protocolFailure.error.cause, "provider protocol cause remains available internally");
       assert.equal("cause" in toAgentErrorPayload(protocolFailure.error), false);
     }
+
     const policy = await runtime.run({
       prompt: "policy",
       workspaceRoot: "/tmp/project",
       writeMode: "allowed",
       providerSessionId: first.providerSessionId ?? undefined,
     });
+
     assert.equal(policy.isOk(), true);
+
     if (policy.isErr()) throw policy.error;
     assert.deepEqual(JSON.parse(policy.value.finalResponse), { type: "workspaceWrite", networkAccess: true });
     await runtime.releaseSession("thread_new");
@@ -153,7 +173,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 }
 
 const unavailable = await new CodexLocalAgentDriver({}, () => undefined).createRuntime(cachedContext);
+
 assert.equal(unavailable.isErr(), true);
+
 if (unavailable.isErr()) {
   assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
   assert.equal(unavailable.error.retryable, false);

@@ -36,7 +36,9 @@ function randomToken(): string {
 function safeEquals(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
+
   if (left.byteLength !== right.byteLength) return false;
+
   return timingSafeEqual(left, right);
 }
 
@@ -58,9 +60,11 @@ function formHtml(params: {
 }): string {
   const scopeText = params.scopes.length > 0 ? params.scopes.join(" ") : "devspace";
   const resourceText = params.resource?.href ?? "DevSpace MCP endpoint";
+
   const error = params.error
     ? `<p class="error">${htmlEscape(params.error)}</p>`
     : "";
+
   const hiddenFields = Object.entries(params.fields)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
     .map(([name, value]) => `        <input type="hidden" name="${htmlEscape(name)}" value="${htmlEscape(value)}" />`)
@@ -140,6 +144,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     if (!params.resource || !this.isResourceAllowed(params.resource)) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
+
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
       throw new InvalidRequestError("Requested scope is not supported");
     }
@@ -154,10 +159,12 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
           fields: authorizationFormFields(client, params),
         }),
       );
+
       return;
     }
 
     const providedToken = String(res.req.body?.owner_token ?? "");
+
     if (!safeEquals(providedToken, this.config.ownerToken)) {
       res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
       res.send(
@@ -169,6 +176,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
           fields: authorizationFormFields(client, params),
         }),
       );
+
       return;
     }
 
@@ -181,6 +189,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 
     const redirectUrl = new URL(params.redirectUri);
     redirectUrl.searchParams.set("code", code);
+
     if (params.state !== undefined) redirectUrl.searchParams.set("state", params.state);
     res.redirect(302, redirectUrl.href);
   }
@@ -190,6 +199,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     authorizationCode: string,
   ): Promise<string> {
     const record = this.validCodeRecord(client, authorizationCode);
+
     return record.params.codeChallenge;
   }
 
@@ -201,14 +211,17 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     resource?: URL,
   ): Promise<OAuthTokens> {
     const record = this.validCodeRecord(client, authorizationCode);
+
     if (redirectUri && redirectUri !== record.params.redirectUri) {
       throw new InvalidGrantError("redirect_uri does not match the authorization request");
     }
+
     if (resource && (!record.params.resource || !sameResource(resource, record.params.resource))) {
       throw new InvalidGrantError("Invalid resource");
     }
 
     this.codes.delete(authorizationCode);
+
     return this.issueTokens(client.client_id, record.params.scopes ?? this.config.scopes, record.params.resource);
   }
 
@@ -220,18 +233,23 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   ): Promise<OAuthTokens> {
     const refreshTokenHash = hashToken(refreshToken);
     const record = this.oauthStore.getRefreshToken(refreshTokenHash);
+
     if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidGrantError("Invalid refresh token");
     }
+
     const recordedResource = record.resource ? new URL(record.resource) : undefined;
+
     if (!recordedResource || !this.isResourceAllowed(recordedResource)) {
       throw new InvalidGrantError("Invalid resource");
     }
+
     if (resource && !sameResource(resource, recordedResource)) {
       throw new InvalidGrantError("Invalid resource");
     }
 
     const requestedScopes = scopes ?? record.scopes;
+
     if (!requestedScopes.every((scope) => record.scopes.includes(scope))) {
       throw new AccessDeniedError("Refresh token cannot grant requested scopes");
     }
@@ -246,6 +264,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const record = this.oauthStore.getAccessToken(hashToken(token));
+
     if (!record || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidTokenError("Invalid or expired access token");
     }
@@ -281,9 +300,11 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     authorizationCode: string,
   ): AuthorizationCodeRecord {
     const record = this.codes.get(authorizationCode);
+
     if (!record || record.clientId !== client.client_id || record.expiresAtMs < Date.now()) {
       throw new InvalidGrantError("Invalid authorization code");
     }
+
     return record;
   }
 
@@ -318,6 +339,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       },
       consumedRefreshTokenHash,
     );
+
     if (!saved) {
       throw new InvalidGrantError("Invalid refresh token");
     }
@@ -335,7 +357,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 function authorizationFormFields(
   client: OAuthClientInformationFull,
   params: AuthorizationParams,
-): Record<string, string | undefined> {
+) {
   return {
     response_type: "code",
     client_id: client.client_id,

@@ -21,6 +21,7 @@ test("workspace store lists only stale managed worktrees", async (t) => {
     sourceRoot: "/tmp/repo",
     managed: true,
   });
+
   store.createSession({
     id: "ws_checkout",
     root: "/tmp/repo",
@@ -69,5 +70,6 @@ test("pruned worktree sessions retain recovery state and can be reactivated", as
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }

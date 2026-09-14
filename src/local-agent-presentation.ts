@@ -54,22 +54,34 @@ export type AgentObservationOutput =
 export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTargetCatalogOutput {
   return {
     targets: [
-      ...catalog.providers
-        .filter((provider) => provider.usable)
-        .map((provider): AgentTargetOutput => ({
+      ...catalog.providers.flatMap((provider): AgentTargetOutput[] => {
+        if (!provider.usable) return [];
+
+        const target: AgentTargetOutput = {
           name: provider.id,
           kind: "provider",
-          ...(provider.model ? { model: provider.model } : {}),
-          ...(provider.effort ? { effort: provider.effort } : {}),
-        })),
-      ...catalog.profiles.map((profile): AgentTargetOutput => ({
-        name: profile.name,
-        kind: "profile",
-        provider: profile.provider,
-        description: profile.description,
-        ...(profile.model ? { model: profile.model } : {}),
-        ...(profile.effort ? { effort: profile.effort } : {}),
-      })),
+        };
+
+        if (provider.model) target.model = provider.model;
+
+        if (provider.effort) target.effort = provider.effort;
+
+        return [target];
+      }),
+      ...catalog.profiles.map((profile): AgentTargetOutput => {
+        const target: AgentTargetOutput = {
+          name: profile.name,
+          kind: "profile",
+          provider: profile.provider,
+          description: profile.description,
+        };
+
+        if (profile.model) target.model = profile.model;
+
+        if (profile.effort) target.effort = profile.effort;
+
+        return target;
+      }),
     ],
   };
 }
@@ -84,20 +96,29 @@ export function presentAgentSummary(record: LocalAgentRecord): AgentSummaryOutpu
 
 export function presentAgentObservation(record: LocalAgentRecord): AgentObservationOutput {
   const receipt = presentAgentReceipt(record);
+
   switch (receipt.status) {
     case "completed":
+      if (record.latestResponse === undefined) {
+        return { id: receipt.id, status: "completed" };
+      }
+
       return {
-        ...receipt,
+        id: receipt.id,
         status: "completed",
-        ...(record.latestResponse === undefined ? {} : { response: record.latestResponse }),
+        response: record.latestResponse,
       };
     case "failed":
       return { ...receipt, status: "failed", error: presentAgentFailure(record) };
     case "stopped":
+      if (!hasAgentFailure(record)) {
+        return { id: receipt.id, status: "stopped" };
+      }
+
       return {
-        ...receipt,
+        id: receipt.id,
         status: "stopped",
-        ...(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : {}),
+        error: presentAgentFailure(record),
       };
     case "running":
       return { id: receipt.id, status: "running" };
@@ -107,9 +128,11 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
 export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): string {
   return catalog.targets.map((target) => {
     const settings = xmlAttributes({ model: target.model, effort: target.effort });
+
     if (target.kind === "provider") {
       return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
+
     return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
   }).join("\n");
 }
@@ -126,24 +149,29 @@ export function formatAgentObservation(observation: AgentObservationOutput): str
   if (observation.status === "running" && observation.wait) {
     return `<agent id="${escapeXmlAttribute(observation.id)}" status="running" wait="${observation.wait}"/>`;
   }
+
   if (observation.status === "completed" && observation.response !== undefined) {
     return `<agent id="${escapeXmlAttribute(observation.id)}" status="completed">${escapeXmlText(observation.response)}</agent>`;
   }
+
   if ((observation.status === "failed" || observation.status === "stopped") && observation.error) {
     return `<agent id="${escapeXmlAttribute(observation.id)}" status="${observation.status}" code="${escapeXmlAttribute(observation.error.code)}" retryable="${observation.error.retryable}">${escapeXmlText(observation.error.message)}</agent>`;
   }
+
   return formatAgentReceipt(observation);
 }
 
 export function formatAgentCommandError(error: AgentCommandErrorOutput): string {
   const agentId = error.agentId ? ` agent-id="${escapeXmlAttribute(error.agentId)}"` : "";
+
   return `<error code="${escapeXmlAttribute(error.code)}" retryable="${error.retryable ?? false}"${agentId}>${escapeXmlText(error.message)}</error>`;
 }
 
 function xmlAttributes(values: Record<string, string | undefined>): string {
   return Object.entries(values)
-    .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([name, value]) => ` ${name}="${escapeXmlAttribute(value)}"`)
+    .flatMap(([name, value]) => value === undefined
+      ? []
+      : [` ${name}="${escapeXmlAttribute(value)}"`])
     .join("");
 }
 
@@ -156,11 +184,32 @@ function escapeXmlText(value: string): string {
 }
 
 function escapeXml(value: string): string {
-  return value
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
+  return replaceInvalidXmlCharacters(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function replaceInvalidXmlCharacters(value: string): string {
+  let sanitized = "";
+
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    sanitized += codePoint !== undefined && isInvalidXmlCodePoint(codePoint)
+      ? "\uFFFD"
+      : character;
+  }
+
+  return sanitized;
+}
+
+function isInvalidXmlCodePoint(codePoint: number): boolean {
+  return codePoint <= 0x08
+    || codePoint === 0x0B
+    || codePoint === 0x0C
+    || (codePoint >= 0x0E && codePoint <= 0x1F)
+    || codePoint === 0xFFFE
+    || codePoint === 0xFFFF;
 }
 
 function presentAgentStatus(status: LocalAgentStatus): AgentCommandStatus {

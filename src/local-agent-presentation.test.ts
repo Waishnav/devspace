@@ -27,6 +27,7 @@ assert.deepEqual(presentAgentReceipt({ ...record, status: "starting" }), {
   id: "agt_test",
   status: "running",
 });
+
 assert.deepEqual(presentAgentSummary({ ...record, status: "idle" }), {
   id: "agt_test",
   status: "completed",
@@ -38,6 +39,7 @@ const completed = presentAgentObservation({
   status: "idle",
   latestResponse: "Found one issue.",
 });
+
 assert.deepEqual(completed, {
   id: "agt_test",
   status: "completed",
@@ -52,6 +54,7 @@ const failed = presentAgentObservation({
   errorCode: "PROVIDER_EXECUTION_ERROR",
   errorRetryable: true,
 });
+
 assert.deepEqual(failed, {
   id: "agt_test",
   status: "failed",
@@ -82,7 +85,9 @@ const catalog: LocalAgentCatalog = {
     effort: "high",
   }],
 };
+
 const targetCatalog = presentAgentTargetCatalog(catalog);
+
 assert.deepEqual(targetCatalog, {
   targets: [
     { name: "codex", kind: "provider", model: "gpt-5.4", effort: "high" },

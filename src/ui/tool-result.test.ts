@@ -21,11 +21,41 @@ test("workspace cards can be rebuilt from structured content without result meta
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "open_workspace");
   assert.equal(decoded.card.workspaceId, "ws_1");
   assert.equal(decoded.card.summary?.skills, 1);
   assert.equal(decoded.card.summary?.agentsFiles, 1);
+});
+
+test("legacy camelCase structured results remain decodable", () => {
+  const workspace = decodeToolResult({
+    content: [],
+    structuredContent: {
+      workspaceId: "legacy_ws",
+      root: "/tmp/project",
+      mode: "checkout",
+      agentsFiles: [{ path: "AGENTS.md", content: "instructions" }],
+    },
+  });
+
+  assert.equal(workspace.kind, "card");
+
+  const review = decodeToolResult({
+    content: [],
+    structuredContent: {
+      workspaceId: "legacy_ws",
+      reviewRef: "a".repeat(40),
+      result: "Changed 1 file (+1 -0).",
+    },
+  });
+
+  assert.deepEqual(review, {
+    kind: "review-reference",
+    workspaceId: "legacy_ws",
+    reviewRef: "a".repeat(40),
+  });
 });
 
 test("review results use rich metadata when the host provides it", () => {
@@ -47,6 +77,7 @@ test("review results use rich metadata when the host provides it", () => {
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "show_changes");
   assert.equal(decoded.card.files?.[0]?.path, "new.txt");
@@ -94,15 +125,23 @@ test("older review results can reload from their structured patch", () => {
     structuredContent: {
       result: "Changed 1 file (+1 -0).",
       summary: { files: 1, additions: 1, removals: 0 },
-      files: [{ path: "new.txt", type: "new", additions: 1, removals: 0 }],
+      files: [{
+        path: "new.txt",
+        previous_path: "old.txt",
+        type: "rename-changed",
+        additions: 1,
+        removals: 0,
+      }],
       patch: "diff --git a/new.txt b/new.txt",
     },
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "show_changes");
   assert.equal(decoded.card.files?.[0]?.path, "new.txt");
+  assert.equal(decoded.card.files?.[0]?.previousPath, "old.txt");
   assert.equal(decoded.card.payload?.patch, "diff --git a/new.txt b/new.txt");
 });
 
@@ -112,6 +151,7 @@ test("ChatGPT globals restore structured output and hidden MCP result metadata t
     structuredContent: { stale: true },
     _meta: { card: { workspaceId: "ws_1", payload: { patch: "patch" } } },
   };
+
   const restored = toolResultFromChatGptGlobals({
     toolOutput: {
       workspace_id: "ws_1",

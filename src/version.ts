@@ -1,10 +1,8 @@
 import { createRequire } from "node:module";
+import { z } from "zod";
 
 const require = createRequire(import.meta.url);
-const packageJson = require("../package.json") as { version?: unknown };
 
-if (typeof packageJson.version !== "string" || !packageJson.version) {
-  throw new Error("DevSpace package version is missing.");
-}
+const packageJson = z.object({ version: z.string().min(1) }).parse(require("../package.json"));
 
 export const DEVSPACE_VERSION = packageJson.version;

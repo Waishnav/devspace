@@ -1,6 +1,7 @@
 import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName = "open_workspace" | "show_changes";
+
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
 export type ReviewFileType =
@@ -9,6 +10,20 @@ export type ReviewFileType =
   | "rename-changed"
   | "new"
   | "deleted";
+
+export type ToolResultSummaryValue = string | number | boolean | null | undefined;
+
+export interface ToolResultSummary {
+  [key: string]: ToolResultSummaryValue;
+  files?: number;
+  additions?: number;
+  removals?: number;
+  agentsFiles?: number;
+  availableAgentsFiles?: number;
+  skills?: number;
+  agentProviders?: number;
+  agents?: number;
+}
 
 export interface ToolResultCard {
   tool: ToolName;
@@ -30,7 +45,7 @@ export interface ToolResultCard {
   review?:
     | { available: true }
     | { available: false; reason: string };
-  summary?: Record<string, unknown>;
+  summary?: ToolResultSummary;
   files?: Array<{
     path?: string;
     previousPath?: string;
@@ -68,11 +83,12 @@ export interface ToolResultCard {
 }
 
 export function summaryNumber(
-  summary: Record<string, unknown> | undefined,
+  summary: ToolResultSummary | undefined,
   key: string,
 ): number | undefined {
   const value = summary?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+  return Number.isFinite(value) ? Number(value) : undefined;
 }
 
 export function isExpandableCard(card: ToolResultCard): boolean {

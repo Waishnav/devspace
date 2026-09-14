@@ -11,6 +11,7 @@ import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 
 const execFileAsync = promisify(execFile);
+
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
 test("worktrees prune removes only managed worktrees unused for three days", async (t) => {
@@ -82,17 +83,20 @@ test("worktrees prune removes only managed worktrees unused for three days", asy
 
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+
   return stdout.trim();
 }
 
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
+
     return true;
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return false;
     }
+
     throw error;
   }
 }

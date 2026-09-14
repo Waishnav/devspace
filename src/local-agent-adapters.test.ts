@@ -9,6 +9,7 @@ import {
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
+
 assert.deepEqual(
   resolveAcpModelConfigUpdate({
     sessionId: "session_model_1",

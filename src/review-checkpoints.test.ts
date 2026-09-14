@@ -30,11 +30,14 @@ test("initialization reports whether aggregate review is available", async (t) =
     await manager.initializeWorkspace({ workspaceId: "ws_git", root: gitRoot }),
     { available: true },
   );
+
   const unavailable = await manager.initializeWorkspace({
     workspaceId: "ws_plain",
     root: plainRoot,
   });
+
   assert.equal(unavailable.available, false);
+
   if (!unavailable.available) assert.match(unavailable.reason, /git repository/i);
 });
 
@@ -51,6 +54,7 @@ test("show_changes reports and advances the last-shown checkpoint", async (t) =>
     root,
     markReviewed: false,
   });
+
   assert.deepEqual(unreviewed.files.map((file) => file.path).sort(), ["README.md", "new.txt"]);
   assert.equal(unreviewed.summary.additions, 2);
   assert.match(unreviewed.patch, /world/);
@@ -60,6 +64,7 @@ test("show_changes reports and advances the last-shown checkpoint", async (t) =>
     root,
     markReviewed: true,
   });
+
   assert.equal(markedReviewed.summary.files, 2);
   assert.match(markedReviewed.reviewRef, /^[0-9a-f]{40,64}$/);
 
@@ -68,6 +73,7 @@ test("show_changes reports and advances the last-shown checkpoint", async (t) =>
     root,
     reviewRef: markedReviewed.reviewRef,
   });
+
   assert.deepEqual(restored.summary, markedReviewed.summary);
   assert.deepEqual(restored.files, markedReviewed.files);
   assert.equal(restored.patch, markedReviewed.patch);
@@ -90,11 +96,13 @@ test("historical review refs survive later reviews and manager restarts", async 
   assert.notEqual(first.reviewRef, second.reviewRef);
 
   const restarted = createReviewCheckpointManager();
+
   const restoredFirst = await restarted.reviewByRef({
     workspaceId: "ws_history",
     root,
     reviewRef: first.reviewRef,
   });
+
   assert.deepEqual(restoredFirst.summary, first.summary);
   assert.equal(restoredFirst.patch, first.patch);
   assert.match(restoredFirst.patch, /\+first/);
@@ -134,6 +142,7 @@ test("review checkpoints survive a manager restart", async (t) => {
     root,
     markReviewed: false,
   });
+
   assert.deepEqual(afterRestart.files.map((file) => file.path), ["later.txt"]);
   assert.match(afterRestart.patch, /after restart/);
   assert.doesNotMatch(afterRestart.patch, /world/);
@@ -147,14 +156,17 @@ test("concurrent initialization produces one usable checkpoint state", async (t)
     manager.initializeWorkspace({ workspaceId: "ws_concurrent", root }),
     manager.reviewChanges({ workspaceId: "ws_concurrent", root, markReviewed: false }),
   ]);
+
   assert.equal(concurrentReview.summary.files, 0);
 
   await writeFile(join(root, "later.txt"), "visible after initialization\n");
+
   const afterInitialization = await manager.reviewChanges({
     workspaceId: "ws_concurrent",
     root,
     markReviewed: false,
   });
+
   assert.deepEqual(afterInitialization.files.map((file) => file.path), ["later.txt"]);
 });
 
@@ -174,6 +186,7 @@ test("a missing last-shown checkpoint falls back after restart and can be re-est
     root,
     markReviewed: false,
   });
+
   assert.equal(fallback.summary.files, 1);
   assert.match(fallback.patch, /changed/);
 
@@ -182,6 +195,7 @@ test("a missing last-shown checkpoint falls back after restart and can be re-est
     root,
     markReviewed: true,
   });
+
   assert.equal(reestablished.summary.files, 1);
 
   const afterReestablished = await restartedManager.reviewChanges({
@@ -189,6 +203,7 @@ test("a missing last-shown checkpoint falls back after restart and can be re-est
     root,
     markReviewed: false,
   });
+
   assert.equal(afterReestablished.summary.files, 0);
 });
 
@@ -209,11 +224,13 @@ test("a checkpoint workspace rejects a different root without changing its state
   );
 
   await writeFile(join(root, "only-first-root.txt"), "first root\n");
+
   const review = await manager.reviewChanges({
     workspaceId: "ws_root_mismatch",
     root,
     markReviewed: false,
   });
+
   assert.deepEqual(review.files.map((file) => file.path), ["only-first-root.txt"]);
 });
 
@@ -233,6 +250,7 @@ test("a concurrent review rejects a different root after initialization", async 
 
   assert.equal(initialization.status, "fulfilled");
   assert.equal(review.status, "rejected");
+
   if (review.status === "rejected") {
     assert.match(String(review.reason), /workspace root mismatch/);
   }
@@ -257,6 +275,7 @@ test("an unborn repository becomes reviewable after its first commit", async (t)
     root,
     markReviewed: false,
   });
+
   assert.equal(afterFirstCommit.summary.files, 0);
   assert.equal(afterFirstCommit.patch, "");
 });
@@ -270,6 +289,7 @@ async function committedRepository(t: TestContext): Promise<string> {
   await writeFile(join(root, "README.md"), "hello\n");
   await git(root, ["add", "README.md"]);
   await git(root, ["commit", "-m", "Initial commit"]);
+
   return root;
 }
 
@@ -279,6 +299,7 @@ async function unbornRepository(t: TestContext): Promise<string> {
   await git(root, ["init"]);
   await git(root, ["config", "user.email", "devspace@example.com"]);
   await git(root, ["config", "user.name", "DevSpace Test"]);
+
   return root;
 }
 

@@ -12,7 +12,9 @@ import {
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-skills-test-"));
+
 const originalHome = process.env.HOME;
+
 const originalUserProfile = process.env.USERPROFILE;
 
 try {
@@ -162,11 +164,13 @@ try {
   );
 
   const configDir = join(root, ".devspace");
+
   const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     server: { port: 1 },
     workspaces: { allowedRoots: [projectRoot] },
     skills: { agentDir, paths: [explicitSkills], enabled: false },
   }));
+
   assert.deepEqual(loadWorkspaceSkills(disabledConfig, projectRoot).skills, []);
 
   const config = loadConfig(writeTestDevspaceConfig(configDir, {
@@ -177,6 +181,7 @@ try {
       paths: [explicitSkills, "~/.claude/skills", "./.claude/skills"],
     },
   }));
+
   const loaded = loadWorkspaceSkills(config, projectRoot);
   assert.equal(loaded.skills.some((skill) => skill.name === "agent-global-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "agent-project-skill"), true);
@@ -207,12 +212,14 @@ try {
       "# Stale subagents skill",
     ].join("\n"),
   );
+
   const experimentalConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     server: { port: 1 },
     workspaces: { allowedRoots: [projectRoot] },
     skills: { agentDir },
     subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
+
   const experimentalSkills = loadWorkspaceSkills(experimentalConfig, projectRoot).skills;
   const managedSubagents = experimentalSkills.find((skill) => skill.name === "subagents");
   assert.ok(managedSubagents);
@@ -230,6 +237,7 @@ try {
     workspaces: { allowedRoots: [projectRoot] },
     skills: { agentDir, paths: [explicitSkills, "./.agents/skills"] },
   }));
+
   assert.equal(
     effectiveSkillPaths(duplicateConfig, projectRoot).filter((path) => path === projectAgentsSkills).length,
     1,
@@ -240,6 +248,7 @@ try {
     workspaces: { allowedRoots: [projectRoot] },
     skills: { agentDir, paths: [explicitSkills, join(projectRoot, ".pi", "skills")] },
   }));
+
   assert.equal(
     loadWorkspaceSkills(legacyPiConfig, projectRoot).skills.some((skill) => skill.name === "project-skill"),
     true,
@@ -258,6 +267,7 @@ try {
 } finally {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
+
   if (originalUserProfile === undefined) delete process.env.USERPROFILE;
   else process.env.USERPROFILE = originalUserProfile;
   await rm(root, { recursive: true, force: true });

@@ -12,7 +12,6 @@ import {
   type ToolRegistrationContext,
 } from "./types.js";
 import {
-  contentText,
   resultOutputSchema,
   runLoggedToolOperation,
   textBlock,
@@ -43,12 +42,13 @@ function processResult(snapshot: ProcessSnapshot): string {
     : snapshot.signal
       ? `Process exited after signal ${snapshot.signal}.`
       : `Process exited with code ${snapshot.exitCode ?? "unknown"}.`;
+
   return snapshot.output
     ? `${snapshot.output.replace(/\n$/, "")}\n${status}`
     : status;
 }
 
-function processOutputSchema(): z.ZodRawShape {
+function processOutputSchema(): Parameters<typeof z.object>[0] {
   return resultOutputSchema({
     session_id: z.number().optional(),
     running: z.boolean(),
@@ -62,6 +62,7 @@ function processOutputSchema(): z.ZodRawShape {
 function processToolResponse(snapshot: ProcessSnapshot) {
   const result = processResult(snapshot);
   const content = [textBlock(result)];
+
   return {
     content,
     structuredContent: {
@@ -109,15 +110,18 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
     async ({ workspace_id, patch }) => {
       const startedAt = performance.now();
       const workspaceId = workspace_id;
+
       const applied = await runLoggedToolOperation(
         config,
         { tool: "apply_patch", workspaceId },
         startedAt,
         async () => {
           const workspace = await workspaces.getWorkspace(workspaceId);
+
           return applyPatch(workspace.root, patch);
         },
       );
+
       const paths = applied.files.map((file) => file.path).join(", ");
       const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
       const content = [textBlock(result)];
@@ -211,6 +215,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       const workingDirectory = working_directory;
       const yieldTimeMs = yield_time_ms;
       const maxOutputTokens = max_output_tokens;
+
       const snapshot = await runLoggedToolOperation(
         config,
         {
@@ -223,10 +228,12 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         startedAt,
         async () => {
           const workspace = await workspaces.getWorkspace(workspaceId);
+
           const cwd = workspaces.resolveWorkingDirectory(
             workspace,
             workingDirectory,
           );
+
           return processSessions.start({
             workspaceId,
             command: cmd,
@@ -312,12 +319,14 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       const sessionId = session_id;
       const yieldTimeMs = yield_time_ms;
       const maxOutputTokens = max_output_tokens;
+
       const snapshot = await runLoggedToolOperation(
         config,
         { tool: "write_stdin", workspaceId },
         startedAt,
         async () => {
           await workspaces.getWorkspace(workspaceId);
+
           return processSessions.write({
             workspaceId,
             sessionId,

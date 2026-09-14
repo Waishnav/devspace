@@ -29,12 +29,19 @@ const ARTIFACT_WRITE_ANNOTATIONS = {
   idempotentHint: false,
   openWorldHint: true,
 };
+
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+
 const DIRECTORY_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | NO_FOLLOW;
+
 const PARTIAL_PREFIX = ".devspace-download-";
+
 const PARTIAL_SUFFIX = ".partial";
+
 const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
+
 const MAX_STALE_PARTIAL_CLEANUP = 32;
+
 const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux"]);
 
 const openAIFileReferenceInputSchema = z.strictObject({
@@ -46,6 +53,36 @@ const openAIFileReferenceInputSchema = z.strictObject({
   size: z.number().int().nonnegative().nullable().optional(),
 });
 
+const incomingFileDownloadSchema = z.object({
+  download_url: z.string(),
+});
+
+const incomingStreamChunkSchema = z.union([
+  z.string(),
+  z.instanceof(Uint8Array),
+]);
+
+type ArtifactInputValue =
+  | null
+  | undefined
+  | boolean
+  | number
+  | bigint
+  | string
+  | symbol
+  | (() => void)
+  | Buffer
+  | readonly ArtifactInputValue[]
+  | { readonly [key: string]: ArtifactInputValue };
+
+type IncomingStreamChunk = z.infer<typeof incomingStreamChunkSchema>;
+
+interface ArtifactToolInput {
+  file?: ArtifactInputValue;
+  workspace_id?: string | null;
+  path?: string | null;
+}
+
 export interface ArtifactToolRegistrationOptions {
   config: ServerConfig;
   workspaces: WorkspaceRegistry;
@@ -53,7 +90,7 @@ export interface ArtifactToolRegistrationOptions {
 }
 
 export interface DownloadIncomingArtifactInput {
-  file: unknown;
+  file: ArtifactInputValue;
   workspaceId: string;
   path: string;
 }
@@ -118,6 +155,7 @@ export function registerArtifactTools(
     },
     async (input) => executeArtifactTool(config, input, async () => {
       const workspace = await workspaces.getWorkspace(input.workspace_id);
+
       const downloaded = await downloadIncomingArtifact({
         registry: incomingRegistry,
         workspaceId: workspace.id,
@@ -126,6 +164,7 @@ export function registerArtifactTools(
         file: input.file,
         path: input.path,
       });
+
       return {
         publicResult: { path: downloaded.path },
         logResult: downloaded,
@@ -154,7 +193,7 @@ export async function downloadIncomingArtifact({
   workspaceId: string;
   workspaceRoot: string;
   maxFileBytes: number;
-  file: unknown;
+  file: ArtifactInputValue;
   path: string;
   publishLink?: typeof link;
 }): Promise<DownloadIncomingArtifactResult> {
@@ -164,12 +203,14 @@ export async function downloadIncomingArtifact({
       "Native file download requires descriptor-anchored directory operations on this platform.",
     );
   }
+
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new ArtifactError(
       "artifact_limit_invalid",
       "Artifact file-size limit must be a positive integer.",
     );
   }
+
   if (!workspaceId) {
     throw new ArtifactError(
       "artifact_workspace_invalid",
@@ -215,14 +256,24 @@ export async function downloadIncomingArtifact({
 
     const hash = createHash("sha256");
     let size = 0;
+
     for await (const value of opened.stream) {
+      if (!isIncomingStreamChunk(value)) {
+        throw new ArtifactError(
+          "invalid_incoming_artifact_chunk",
+          "Incoming artifact stream yielded a value that is not bytes or text.",
+        );
+      }
+
       const chunk = incomingStreamChunk(value);
+
       if (size + chunk.length > maxFileBytes) {
         throw new ArtifactError(
           "artifact_file_too_large",
           "Native file exceeds the configured per-file limit.",
         );
       }
+
       await writeAll(handle, chunk, size);
       hash.update(chunk);
       size += chunk.length;
@@ -237,6 +288,7 @@ export async function downloadIncomingArtifact({
 
     await handle.sync();
     const writtenEntry = await handle.stat();
+
     if (!writtenEntry.isFile() || writtenEntry.size !== size) {
       throw new ArtifactError(
         "artifact_write_integrity_failed",
@@ -245,6 +297,7 @@ export async function downloadIncomingArtifact({
     }
 
     const partialEntry = await lstat(partialPath);
+
     if (
       partialEntry.isSymbolicLink()
       || !partialEntry.isFile()
@@ -279,6 +332,7 @@ export async function downloadIncomingArtifact({
     throw error;
   } finally {
     await handle?.close().catch(() => undefined);
+
     if (partialPath) await unlink(partialPath).catch(() => undefined);
     await destinationDirectory?.close().catch(() => undefined);
     await workspaceHandle?.close().catch(() => undefined);
@@ -286,28 +340,38 @@ export async function downloadIncomingArtifact({
 }
 
 export function artifactToolLogFields(
-  input: Record<string, unknown>,
-): Record<string, unknown> {
+  input: ArtifactToolInput,
+): ArtifactToolLogFields {
   return {
     fileProvided: input.file !== undefined,
-    fileReferenceShape: describeIncomingArtifactValue(input.file),
+    fileReference: describeIncomingArtifactValue(input.file),
     downloadUrlHostname: incomingFileDownloadHostname(input.file),
-    workspaceId: input.workspace_id,
-    path: input.path,
+    workspaceId: input.workspace_id == null ? undefined : String(input.workspace_id),
+    path: input.path == null ? undefined : String(input.path),
   };
+}
+
+interface ArtifactToolLogFields {
+  fileProvided: boolean;
+  fileReference: ReturnType<typeof describeIncomingArtifactValue>;
+  downloadUrlHostname?: string;
+  workspaceId?: string;
+  path?: string;
 }
 
 async function executeArtifactTool(
   config: ServerConfig,
-  input: Record<string, unknown>,
+  input: ArtifactToolInput,
   operation: () => Promise<{
     publicResult: { path: string };
     logResult: DownloadIncomingArtifactResult;
   }>,
 ) {
   const startedAt = performance.now();
+
   try {
     const { publicResult, logResult } = await operation();
+
     if (config.logging.toolCalls) {
       logEvent(config.logging, "info", "artifact_tool_call", {
         tool: "download_artifact",
@@ -319,6 +383,7 @@ async function executeArtifactTool(
         durationMs: Math.round(performance.now() - startedAt),
       });
     }
+
     return artifactToolResponse(publicResult);
   } catch (error) {
     if (config.logging.toolCalls) {
@@ -330,6 +395,7 @@ async function executeArtifactTool(
         durationMs: Math.round(performance.now() - startedAt),
       });
     }
+
     throw error;
   }
 }
@@ -347,12 +413,15 @@ async function openDirectoryNoFollow(
   message: string,
 ): Promise<FileHandle> {
   let handle: FileHandle | undefined;
+
   try {
     handle = await open(path, DIRECTORY_FLAGS);
     await assertDirectoryHandle(handle);
+
     return handle;
   } catch (error) {
     await handle?.close().catch(() => undefined);
+
     if (error instanceof ArtifactError) throw error;
     throw new ArtifactError(code, message);
   }
@@ -360,6 +429,7 @@ async function openDirectoryNoFollow(
 
 async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
   const entry = await handle.stat();
+
   if (!entry.isDirectory()) {
     throw new ArtifactError(
       "artifact_directory_unsafe",
@@ -378,6 +448,7 @@ function descriptorDirectoryPath(handle: FileHandle): string {
 
 function normalizeArtifactDestination(value: string): ArtifactDestination {
   const rawParts = value.split(sep);
+
   if (
     !value
     || value.includes("\u0000")
@@ -392,6 +463,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   const normalized = normalize(value);
+
   if (
     normalized === "."
     || normalized === ".."
@@ -405,6 +477,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
 
   const parts = normalized.split(sep);
   const name = parts.at(-1);
+
   if (!name || name === "." || name === "..") {
     throw new ArtifactError(
       "artifact_destination_invalid",
@@ -434,6 +507,7 @@ async function prepareDestinationDirectory(
         parentAnchor,
         part,
       );
+
       openedHandles.push(child);
       parentHandle = child;
       parentAnchor = descriptorDirectoryPath(child);
@@ -452,6 +526,7 @@ async function prepareDestinationDirectory(
     for (const handle of openedHandles.reverse()) {
       await handle.close().catch(() => undefined);
     }
+
     throw error;
   }
 }
@@ -463,6 +538,7 @@ async function ensureWorkspaceChildDirectory(
 ): Promise<FileHandle> {
   await assertDirectoryHandle(parentHandle);
   const path = join(parentAnchor, name);
+
   try {
     await mkdir(path, { mode: 0o755 });
   } catch (error) {
@@ -486,6 +562,7 @@ async function publishDestination(
 ): Promise<void> {
   await assertDirectoryHandle(directory.handle);
   const candidate = join(directory.anchorPath, filename);
+
   try {
     await publishLink(partialPath, candidate);
     assertPublishedArtifactEntry(await lstat(candidate), writtenEntry);
@@ -496,6 +573,7 @@ async function publishDestination(
         "Artifact destination already exists.",
       );
     }
+
     // Once the destination path exists, never unlink it during failure cleanup.
     // Another process may have replaced that path after publication, and a
     // path-based verification followed by unlink would introduce another race.
@@ -528,8 +606,10 @@ async function cleanupStalePartials(
   const entries = await readdir(directory.anchorPath, { withFileTypes: true });
   let inspected = 0;
   const cutoff = Date.now() - STALE_PARTIAL_AGE_MS;
+
   for (const entry of entries) {
     if (inspected >= MAX_STALE_PARTIAL_CLEANUP) break;
+
     if (
       !entry.name.startsWith(PARTIAL_PREFIX)
       || !entry.name.endsWith(PARTIAL_SUFFIX)
@@ -538,6 +618,7 @@ async function cleanupStalePartials(
 
     const path = join(directory.anchorPath, entry.name);
     const metadata = await lstatOrUndefined(path);
+
     if (
       !metadata
       || metadata.isSymbolicLink()
@@ -555,6 +636,7 @@ async function writeAll(
   position: number,
 ): Promise<void> {
   let offset = 0;
+
   while (offset < buffer.length) {
     const { bytesWritten } = await handle.write(
       buffer,
@@ -562,40 +644,44 @@ async function writeAll(
       buffer.length - offset,
       position + offset,
     );
+
     if (bytesWritten <= 0) {
       throw new ArtifactError(
         "artifact_short_write",
         "Native file was not fully written.",
       );
     }
+
     offset += bytesWritten;
   }
 }
 
-function incomingFileDownloadHostname(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const rawUrl = (value as Record<string, unknown>).download_url;
-  if (typeof rawUrl !== "string") return undefined;
+function incomingFileDownloadHostname(value: ArtifactInputValue): string | undefined {
+  const parsed = incomingFileDownloadSchema.safeParse(value);
+
+  if (!parsed.success) return undefined;
+
   try {
-    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    const hostname = new URL(parsed.data.download_url).hostname.toLowerCase();
+
     return hostname.length > 0 && hostname.length <= 253 ? hostname : undefined;
   } catch {
     return undefined;
   }
 }
 
-function incomingStreamChunk(value: unknown): Buffer {
+function isIncomingStreamChunk(value: unknown): value is IncomingStreamChunk {
+  return incomingStreamChunkSchema.safeParse(value).success;
+}
+
+function incomingStreamChunk(value: IncomingStreamChunk): Buffer {
   if (Buffer.isBuffer(value)) return value;
-  if (typeof value === "string") return Buffer.from(value);
+
   if (value instanceof Uint8Array) {
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
   }
-  throw new ArtifactError(
-    "invalid_incoming_artifact_chunk",
-    "Incoming artifact stream yielded a value that is not bytes or text.",
-  );
+
+  return Buffer.from(value);
 }
 
 async function lstatOrUndefined(path: string) {

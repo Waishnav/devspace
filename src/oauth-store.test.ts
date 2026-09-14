@@ -7,8 +7,10 @@ import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/
 import { databasePath, openDatabase } from "./db/client.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
+import { z } from "zod";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
+
 const oauthConfig = {
   ownerToken: "test-owner-token-that-is-long-enough",
   accessTokenTtlSeconds: 3600,
@@ -17,9 +19,14 @@ const oauthConfig = {
   allowedResourceUrls: ["https://tunnel.example.com/v1/mcp/tunnel_123"],
   allowedRedirectHosts: ["chatgpt.com"],
 };
+
 const mcpUrl = new URL("https://agent.example.com/mcp");
+
 const tunnelUrl = new URL(oauthConfig.allowedResourceUrls[0]!);
+
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
+
+const tokenHashListSchema = z.array(z.string());
 
 try {
   await testDatabaseConfiguration(join(root, "database-configuration"));
@@ -34,6 +41,7 @@ try {
 
 async function testDatabaseConfiguration(stateDir: string): Promise<void> {
   const database = openDatabase(stateDir);
+
   try {
     assert.equal(database.sqlite.pragma("journal_mode", { simple: true }), "wal");
     assert.equal(database.sqlite.pragma("synchronous", { simple: true }), 1);
@@ -43,6 +51,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
     const migrations = database.sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
       .all();
+
     assert.deepEqual(migrations, [
       { version: 1, name: "workspace-state" },
       { version: 2, name: "oauth-state" },
@@ -68,6 +77,7 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   const refreshToken = "refresh-token-example";
   const firstStore = new SqliteOAuthStore(stateDir);
   const firstClients = new SqliteOAuthClientsStore(firstStore, oauthConfig.allowedRedirectHosts);
+
   const client = firstClients.registerClient({
     redirect_uris: [redirectUri],
     client_name: "ChatGPT",
@@ -92,15 +102,22 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   firstStore.close();
 
   const database = openDatabase(stateDir);
+
   try {
-    const accessHashes = database.sqlite
-      .prepare("select token_hash from oauth_access_tokens")
-      .pluck()
-      .all() as string[];
-    const refreshHashes = database.sqlite
-      .prepare("select token_hash from oauth_refresh_tokens")
-      .pluck()
-      .all() as string[];
+    const accessHashes = tokenHashListSchema.parse(
+      database.sqlite
+        .prepare("select token_hash from oauth_access_tokens")
+        .pluck()
+        .all(),
+    );
+
+    const refreshHashes = tokenHashListSchema.parse(
+      database.sqlite
+        .prepare("select token_hash from oauth_refresh_tokens")
+        .pluck()
+        .all(),
+    );
+
     assert.deepEqual(accessHashes, [hashToken(accessToken)]);
     assert.deepEqual(refreshHashes, [hashToken(refreshToken)]);
     assert.equal(accessHashes.includes(accessToken), false);
@@ -110,6 +127,7 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   }
 
   const restoredStore = new SqliteOAuthStore(stateDir);
+
   try {
     const restoredClient = restoredStore.getClient(client.client_id);
     assert.equal(restoredClient?.client_id, client.client_id);
@@ -122,9 +140,11 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
 
 function testExpiredTokenCleanup(stateDir: string): void {
   const store = new SqliteOAuthStore(stateDir);
+
   const client = new SqliteOAuthClientsStore(store, oauthConfig.allowedRedirectHosts).registerClient({
     redirect_uris: [redirectUri],
   });
+
   const expiredAt = Math.floor(Date.now() / 1000) - 1;
   store.saveTokenPair({
     accessTokenHash: "expired-access-hash",
@@ -135,6 +155,7 @@ function testExpiredTokenCleanup(stateDir: string): void {
   store.close();
 
   const reopened = new SqliteOAuthStore(stateDir);
+
   try {
     assert.equal(reopened.getAccessToken("expired-access-hash"), undefined);
     assert.equal(reopened.getRefreshToken("expired-refresh-hash"), undefined);
@@ -145,10 +166,12 @@ function testExpiredTokenCleanup(stateDir: string): void {
 
 function testTransactionalTokenRotation(stateDir: string): void {
   const store = new SqliteOAuthStore(stateDir);
+
   try {
     const client = new SqliteOAuthClientsStore(store, oauthConfig.allowedRedirectHosts).registerClient({
       redirect_uris: [redirectUri],
     });
+
     const expiresAt = Math.floor(Date.now() / 1000) + 3600;
     store.saveRefreshToken("old-refresh-hash", {
       clientId: client.client_id,
@@ -198,10 +221,12 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
   assert.equal(firstProvider.isResourceAllowed(tunnelUrl), true);
   assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}/session`)), false);
   assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}?other=1`)), false);
+
   const client = await firstProvider.clientsStore.registerClient?.({
     redirect_uris: [redirectUri],
     client_name: "ChatGPT",
   });
+
   assert.ok(client);
 
   const code = "code-test-123";
@@ -219,6 +244,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
     firstProvider.exchangeAuthorizationCode(client, code, undefined, redirectUri, mcpUrl),
     InvalidGrantError,
   );
+
   const issued = await firstProvider.exchangeAuthorizationCode(
     client,
     code,
@@ -226,12 +252,14 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
     redirectUri,
     tunnelUrl,
   );
+
   assert.ok(issued.refresh_token);
   firstProvider.close();
 
   const removedAliasProvider = new SingleUserOAuthProvider(
     { ...oauthConfig, allowedResourceUrls: [] }, mcpUrl, stateDir,
   );
+
   try {
     for (const resource of [undefined, tunnelUrl, mcpUrl]) {
       await assert.rejects(
@@ -244,6 +272,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
   }
 
   const secondProvider = new SingleUserOAuthProvider(oauthConfig, mcpUrl, stateDir);
+
   try {
     const verified = await secondProvider.verifyAccessToken(issued.access_token);
     assert.equal(verified.clientId, client.client_id);
@@ -260,6 +289,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
       ["devspace"],
       tunnelUrl,
     );
+
     assert.ok(refreshed.refresh_token);
     assert.notEqual(refreshed.access_token, issued.access_token);
 
@@ -288,14 +318,17 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
 async function testRefreshResourcePolicy(stateDir: string): Promise<void> {
   const store = new SqliteOAuthStore(stateDir);
   const client = store.registerClient({ redirect_uris: [redirectUri] }, oauthConfig.allowedRedirectHosts);
+
   for (const [token, resource] of [["canonical", mcpUrl.href], ["missing", undefined]] as const) {
     store.saveRefreshToken(hashToken(token), {
       clientId: client.client_id, scopes: ["devspace"],
       expiresAt: Math.floor(Date.now() / 1000) + 3600, resource,
     });
   }
+
   store.close();
   const provider = new SingleUserOAuthProvider({ ...oauthConfig, allowedResourceUrls: [] }, mcpUrl, stateDir);
+
   try {
     await assert.rejects(provider.exchangeRefreshToken(client, "missing"), InvalidGrantError);
     const tokens = await provider.exchangeRefreshToken(client, "canonical");

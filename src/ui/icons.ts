@@ -14,6 +14,7 @@ import {
   createElement,
   type IconNode,
 } from "lucide";
+import { z } from "zod";
 
 export const toolIcons = {
   agents: Bot,
@@ -66,12 +67,15 @@ const providerLogos = {
 
 export type ProviderLogoTheme = "light" | "dark";
 
+const providerLogoNameSchema = z.enum(["codex", "claude", "cursor", "copilot", "grok", "opencode", "pi"]);
+
 export function getProviderLogo(
   name: string,
   theme: ProviderLogoTheme = "dark",
 ): string | undefined {
-  const normalizedName = name.trim().toLowerCase() as keyof typeof providerLogos;
-  return providerLogos[normalizedName]?.[theme];
+  const normalizedName = providerLogoNameSchema.safeParse(name.trim().toLowerCase());
+
+  return normalizedName.success ? providerLogos[normalizedName.data][theme] : undefined;
 }
 
 export function renderIcon(icon: ToolIcon, className = "icon-svg"): SVGElement {

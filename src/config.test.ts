@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { writeDevspaceAuth, writeDevspaceConfig } from "./user-config.js";
 
 const configDir = mkdtempSync(join(tmpdir(), "devspace-config-test-"));
+
 const env = {
   DEVSPACE_CONFIG_DIR: configDir,
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
@@ -126,6 +127,7 @@ try {
 }
 
 const missingAuthDir = mkdtempSync(join(tmpdir(), "devspace-config-no-auth-test-"));
+
 try {
   assert.throws(
     () => loadConfig({ DEVSPACE_CONFIG_DIR: missingAuthDir }),

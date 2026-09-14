@@ -1,5 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, resolve, sep } from "node:path";
+import { z } from "zod";
+
+const packageInfoSchema = z.object({ name: z.string().optional() });
 
 export function removeDevspaceNodeModulesBinFromPath(pathValue: string): string {
   return pathValue
@@ -10,15 +13,18 @@ export function removeDevspaceNodeModulesBinFromPath(pathValue: string): string 
 
 function isDevspaceNodeModulesBin(pathEntry: string): boolean {
   const resolvedEntry = resolve(pathEntry);
+
   if (!resolvedEntry.endsWith(`${sep}node_modules${sep}.bin`)) {
     return false;
   }
 
   const packageJson = resolve(resolvedEntry, "..", "..", "package.json");
+
   if (!existsSync(packageJson)) return false;
 
   try {
-    const packageInfo = JSON.parse(readFileSync(packageJson, "utf8")) as { name?: unknown };
+    const packageInfo = packageInfoSchema.parse(JSON.parse(readFileSync(packageJson, "utf8")));
+
     return packageInfo.name === "@waishnav/devspace";
   } catch {
     return false;

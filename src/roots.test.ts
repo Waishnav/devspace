@@ -6,8 +6,11 @@ import { assertAllowedPath, expandHomePath, resolveAllowedPath } from "./roots.j
 const home = homedir();
 
 assert.equal(expandHomePath("~"), home);
+
 assert.equal(expandHomePath("~/personal/devspace"), resolve(home, "personal", "devspace"));
+
 assert.equal(expandHomePath("~user/project"), "~user/project");
+
 assert.equal(expandHomePath("$HOME/project"), "$HOME/project");
 
 assert.equal(

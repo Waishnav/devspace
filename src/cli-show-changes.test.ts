@@ -8,19 +8,37 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { z } from "zod";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
+
 const require = createRequire(import.meta.url);
+
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
+
 const repoRoot = dirname(packageJsonPath);
-const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-  bin: { devspace: string };
-};
+
+const packageJson = z.object({
+  bin: z.object({ devspace: z.string() }),
+}).parse(JSON.parse(readFileSync(packageJsonPath, "utf8")));
+
+const execFileFailureSchema = z.object({ stderr: z.string() });
+
+const showChangesOutputSchema = z.object({
+  reviewRef: z.string(),
+  patch: z.string(),
+});
+
+function parseExecFileFailure(cause: unknown): { stderr: string } {
+  return execFileFailureSchema.parse(cause);
+}
+
 // This verifies the compiled entrypoint declared for the installed `devspace`
 // command. npm's package-install shim itself is outside this focused test.
 const cliPath = join(repoRoot, packageJson.bin.devspace);
+
 const tscPath = require.resolve("typescript/bin/tsc");
 
 test("show-changes prints a Git-backed historical review", async (t) => {
@@ -44,11 +62,14 @@ test("show-changes prints a Git-backed historical review", async (t) => {
   const review = await manager.reviewChanges({ workspaceId: "ws_cli", root: project });
 
   const configDir = join(root, ".devspace");
+
   const env = writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [project] },
     storage: { stateDir: join(root, ".state") },
   });
+
   const cliArgs = [cliPath, "show-changes", review.reviewRef];
+
   const plain = await execFileAsync("node", cliArgs, {
     cwd: project,
     env: {
@@ -59,6 +80,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     },
     encoding: "utf8",
   });
+
   assert.match(plain.stdout, /\+review me/);
 
   const json = await execFileAsync("node", [...cliArgs, "--json"], {
@@ -71,10 +93,9 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     },
     encoding: "utf8",
   });
-  const parsed = JSON.parse(json.stdout) as {
-    reviewRef: string;
-    patch: string;
-  };
+
+  const parsed = showChangesOutputSchema.parse(JSON.parse(json.stdout));
+
   assert.equal(parsed.reviewRef, review.reviewRef);
   assert.equal(parsed.patch, review.patch);
 
@@ -82,6 +103,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     cwd: project,
     encoding: "utf8",
   })).stdout.trim();
+
   await assert.rejects(
     execFileAsync("node", [cliPath, "show-changes", head], {
       cwd: project,
@@ -93,11 +115,12 @@ test("show-changes prints a Git-backed historical review", async (t) => {
       },
       encoding: "utf8",
     }),
-    (error: unknown) => {
+    (cause: unknown) => {
       assert.match(
-        (error as { stderr?: string }).stderr ?? "",
+        parseExecFileFailure(cause).stderr,
         /Unknown DevSpace review reference/,
       );
+
       return true;
     },
   );

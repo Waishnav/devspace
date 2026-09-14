@@ -23,8 +23,11 @@ const request = decodeLocalAgentDaemonRequest({
     writeMode: "read_only",
   },
 });
+
 assert.equal(request.method, "agent.start");
+
 if (request.method !== "agent.start") throw new Error("expected agent.start request");
+
 assert.equal(request.params.writeMode, "read_only");
 
 const whitespaceRequest = decodeLocalAgentDaemonRequest({
@@ -39,7 +42,9 @@ const whitespaceRequest = decodeLocalAgentDaemonRequest({
     workspaceRoot: "/tmp/project",
   },
 });
+
 if (whitespaceRequest.method !== "agent.start") throw new Error("expected agent.start request");
+
 assert.equal(whitespaceRequest.params.prompt, "  keep prompt whitespace  \n");
 
 const directRequest = decodeLocalAgentDaemonRequest({
@@ -53,7 +58,9 @@ const directRequest = decodeLocalAgentDaemonRequest({
     workspaceRoot: "/tmp/project",
   },
 });
+
 if (directRequest.method !== "agent.start") throw new Error("expected agent.start request");
+
 assert.equal(directRequest.params.workspaceId, undefined);
 
 const helloRequest = decodeLocalAgentDaemonRequest({
@@ -64,9 +71,13 @@ const helloRequest = decodeLocalAgentDaemonRequest({
   params: {},
   configRevision: "provider-config-revision",
 });
+
 assert.equal(helloRequest.method, "hello");
+
 if (helloRequest.method !== "hello") throw new Error("expected hello request");
+
 assert.equal(helloRequest.configRevision, "provider-config-revision");
+
 const conditionalStop = decodeLocalAgentDaemonRequest({
   requestId: "req_stop",
   protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -74,9 +85,24 @@ const conditionalStop = decodeLocalAgentDaemonRequest({
   method: "daemon.stop",
   params: { ifIdle: true },
 });
+
 assert.equal(conditionalStop.method, "daemon.stop");
+
 if (conditionalStop.method !== "daemon.stop") throw new Error("expected daemon.stop request");
+
 assert.equal(conditionalStop.params.ifIdle, true);
+
+assert.throws(
+  () => decodeLocalAgentDaemonRequest({
+    requestId: "req_stop_invalid_if_idle",
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    authToken: "test-secret",
+    method: "daemon.stop",
+    params: { ifIdle: "true" },
+  }),
+  (error: Error) => error instanceof LocalAgentDaemonProtocolError && error.code === "INVALID_PARAMS",
+);
+
 assert.deepEqual(decodeDaemonHello({
   status: {
     state: "ready",
@@ -111,7 +137,7 @@ assert.throws(
     method: "agent.start",
     params: { target: "reviewer", prompt: "" },
   }),
-  (error: unknown) => error instanceof LocalAgentDaemonProtocolError && error.code === "INVALID_PARAMS",
+  (error: Error) => error instanceof LocalAgentDaemonProtocolError && error.code === "INVALID_PARAMS",
 );
 
 const record = decodeAgentRecord({
@@ -125,12 +151,17 @@ const record = decodeAgentRecord({
   createdAt: "now",
   updatedAt: "now",
 });
+
 assert.equal(record.id, "agt_1234");
+
 assert.equal(record.latestResponse, "  response whitespace  \n");
+
 assert.equal(decodeAgentRecord({ ...record, latestResponse: "" }).latestResponse, "");
+
 assert.equal(decodeAgentRecord({ ...record, latestResponse: "  \n" }).latestResponse, "  \n");
 
 const directRecord = decodeAgentRecord({ ...record, workspaceId: undefined });
+
 assert.equal(directRecord.workspaceId, undefined);
 
 const response = decodeLocalAgentDaemonResponse({
@@ -139,6 +170,7 @@ const response = decodeLocalAgentDaemonResponse({
   ok: true,
   result: record,
 });
+
 assert.equal(response.ok, true);
 
 const errorResponse = decodeLocalAgentDaemonResponse(JSON.parse(encodeLocalAgentDaemonResponse({
@@ -154,7 +186,9 @@ const errorResponse = decodeLocalAgentDaemonResponse(JSON.parse(encodeLocalAgent
     operation: "create_runtime",
   },
 }))) ;
+
 assert.equal(errorResponse.ok, false);
+
 if (!errorResponse.ok) {
   assert.equal(errorResponse.error.code, "PROVIDER_UNAVAILABLE");
   assert.equal(errorResponse.error.retryable, false);
@@ -176,7 +210,9 @@ const failedRecord = decodeAgentRecord({
   createdAt: "now",
   updatedAt: "now",
 });
+
 assert.equal(failedRecord.errorCode, "DAEMON_TIMEOUT");
+
 assert.equal(failedRecord.errorRetryable, true);
 
 const waitRequest = decodeLocalAgentDaemonRequest({
@@ -190,10 +226,29 @@ const waitRequest = decodeLocalAgentDaemonRequest({
     timeoutMs: 5_000,
   },
 });
+
 assert.equal(waitRequest.method, "agent.wait");
+
 if (waitRequest.method !== "agent.wait") throw new Error("expected agent.wait request");
+
 assert.deepEqual(waitRequest.params.ids, ["agt_one", "agt_two"]);
+
 assert.equal(waitRequest.params.timeoutMs, 5_000);
+
+const emptyWaitRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_wait_empty",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "agent.wait",
+  params: {
+    ids: [],
+    scope: { workspaceId: "ws_test", workspaceRoot: "/tmp/project" },
+  },
+});
+
+if (emptyWaitRequest.method !== "agent.wait") throw new Error("expected agent.wait request");
+
+assert.deepEqual(emptyWaitRequest.params.ids, []);
 
 assert.deepEqual(decodeAgentWaitResults([
   { id: "agt_one", status: "completed", response: "Done." },

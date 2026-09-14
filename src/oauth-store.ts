@@ -1,8 +1,25 @@
 import { randomUUID } from "node:crypto";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import { InvalidRequestError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
+import {
+  OAuthClientInformationFullSchema,
+  type OAuthClientInformationFull,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
+import * as z from "zod/v4";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
+
+interface OAuthClientRow {
+  client_json: string;
+}
+
+interface OAuthTokenRow {
+  client_id: string;
+  scopes_json: string;
+  expires_at: number;
+  resource: string | null;
+}
+
+const persistedScopesSchema = z.array(z.string());
 
 export interface PersistedAccessTokenRecord {
   clientId: string;
@@ -27,6 +44,7 @@ export interface PersistedTokenPair {
 
 function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boolean {
   let parsed: URL;
+
   try {
     parsed = new URL(redirectUri);
   } catch {
@@ -34,6 +52,7 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   }
 
   if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return true;
+
   return allowedHosts.includes(parsed.hostname);
 }
 
@@ -47,10 +66,10 @@ export class SqliteOAuthStore {
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
     const row = this.database.sqlite
-      .prepare("select client_json from oauth_clients where client_id = ?")
-      .get(clientId) as { client_json: string } | undefined;
+      .prepare<[string], OAuthClientRow>("select client_json from oauth_clients where client_id = ?")
+      .get(clientId);
 
-    return row ? (JSON.parse(row.client_json) as OAuthClientInformationFull) : undefined;
+    return row ? OAuthClientInformationFullSchema.parse(JSON.parse(row.client_json)) : undefined;
   }
 
   registerClient(
@@ -62,6 +81,7 @@ export class SqliteOAuthStore {
     }
 
     const now = Math.floor(Date.now() / 1000);
+
     const registered: OAuthClientInformationFull = {
       ...client,
       client_id: `devspace-${randomUUID()}`,
@@ -100,17 +120,10 @@ export class SqliteOAuthStore {
 
   getAccessToken(tokenHash: string): PersistedAccessTokenRecord | undefined {
     const row = this.database.sqlite
-      .prepare(
+      .prepare<[string], OAuthTokenRow>(
         "select client_id, scopes_json, expires_at, resource from oauth_access_tokens where token_hash = ?",
       )
-      .get(tokenHash) as
-      | {
-          client_id: string;
-          scopes_json: string;
-          expires_at: number;
-          resource: string | null;
-        }
-      | undefined;
+      .get(tokenHash);
 
     return row ? rowToAccessTokenRecord(row) : undefined;
   }
@@ -145,11 +158,13 @@ export class SqliteOAuthStore {
         const result = this.database.sqlite
           .prepare("delete from oauth_refresh_tokens where token_hash = ?")
           .run(consumedRefreshTokenHash);
+
         if (result.changes !== 1) return false;
       }
 
       this.saveAccessToken(pair.accessTokenHash, pair.accessToken);
       this.saveRefreshToken(pair.refreshTokenHash, pair.refreshToken);
+
       return true;
     });
 
@@ -158,17 +173,10 @@ export class SqliteOAuthStore {
 
   getRefreshToken(tokenHash: string): PersistedRefreshTokenRecord | undefined {
     const row = this.database.sqlite
-      .prepare(
+      .prepare<[string], OAuthTokenRow>(
         "select client_id, scopes_json, expires_at, resource from oauth_refresh_tokens where token_hash = ?",
       )
-      .get(tokenHash) as
-      | {
-          client_id: string;
-          scopes_json: string;
-          expires_at: number;
-          resource: string | null;
-        }
-      | undefined;
+      .get(tokenHash);
 
     return row ? rowToRefreshTokenRecord(row) : undefined;
   }
@@ -204,29 +212,19 @@ export class SqliteOAuthClientsStore implements OAuthRegisteredClientsStore {
   }
 }
 
-function rowToAccessTokenRecord(row: {
-  client_id: string;
-  scopes_json: string;
-  expires_at: number;
-  resource: string | null;
-}): PersistedAccessTokenRecord {
+function rowToAccessTokenRecord(row: OAuthTokenRow): PersistedAccessTokenRecord {
   return {
     clientId: row.client_id,
-    scopes: JSON.parse(row.scopes_json) as string[],
+    scopes: persistedScopesSchema.parse(JSON.parse(row.scopes_json)),
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,
   };
 }
 
-function rowToRefreshTokenRecord(row: {
-  client_id: string;
-  scopes_json: string;
-  expires_at: number;
-  resource: string | null;
-}): PersistedRefreshTokenRecord {
+function rowToRefreshTokenRecord(row: OAuthTokenRow): PersistedRefreshTokenRecord {
   return {
     clientId: row.client_id,
-    scopes: JSON.parse(row.scopes_json) as string[],
+    scopes: persistedScopesSchema.parse(JSON.parse(row.scopes_json)),
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,
   };

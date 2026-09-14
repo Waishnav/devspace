@@ -8,6 +8,8 @@ import {
   createPiSandboxConfig,
   createPiSandboxExtension,
   createPiSandboxModeRef,
+  type PiSandboxExtensionApi,
+  type PiSandboxTool,
   registerPiSandboxSession,
   releasePiSandboxSession,
 } from "./local-agent-pi-sandbox.js";
@@ -15,48 +17,48 @@ import {
 {
   const workspace = await mkdtemp(join(tmpdir(), "devspace-pi-env-test-"));
   const modeRef = createPiSandboxModeRef("full_access");
-  const tools = new Map<string, { execute: (...args: any[]) => Promise<unknown> }>();
+  const { api, tools } = testToolCollector();
+
   try {
     createPiSandboxExtension(workspace, modeRef, {
       ...process.env,
       DEVSPACE_PI_ENV_TEST: "provider-env",
-    })({
-      registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<unknown> }) =>
-        tools.set(tool.name, tool),
-    } as never);
-    const bash = tools.get("bash");
+    })(api);
+    const bash = tools.bash;
     assert.ok(bash);
-    const result = await bash.execute("provider-env-test", { command: "printf %s \"$DEVSPACE_PI_ENV_TEST\"" }) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    assert.equal(result.content[0]?.text, "provider-env");
+
+    const result = await bash.execute("provider-env-test", { command: "printf %s \"$DEVSPACE_PI_ENV_TEST\"" });
+
+    const [content] = result.content;
+    assert.equal(content?.type, "text");
+
+    if (content?.type === "text") assert.equal(content.text, "provider-env");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
 }
 
 const dependencies = await SandboxManager.checkDependenciesAsync();
+
 if (process.env.DEVSPACE_REQUIRE_PI_SANDBOX === "1") {
   assert.equal(SandboxManager.isSupportedPlatform(), true, "Pi sandbox integration is required on this CI lane");
   assert.deepEqual(dependencies.errors, [], "Pi sandbox dependencies must be available on this CI lane");
 }
+
 if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
   const root = await mkdtemp(join(tmpdir(), "devspace-pi-sandbox-test-"));
   const workspace = join(root, "workspace");
   mkdirSync(workspace);
   const outside = join(root, "outside.txt");
-  const session = {};
+  const session = { sessionId: "sandbox-test" };
   const modeRef = createPiSandboxModeRef("allowed");
-  const tools = new Map<string, { execute: (...args: any[]) => Promise<unknown> }>();
+  const { api, tools } = testToolCollector();
 
   try {
-    createPiSandboxExtension(workspace, modeRef)({
-      registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<unknown> }) =>
-        tools.set(tool.name, tool),
-    } as never);
+    createPiSandboxExtension(workspace, modeRef)(api);
     await registerPiSandboxSession(session, workspace, modeRef, "allowed");
 
-    const bash = tools.get("bash");
+    const bash = tools.bash;
     assert.ok(bash, "Pi sandbox extension registers a bash tool");
     await bash.execute("bash-inside-write-test", {
       command: `touch '${join(workspace, "inside.txt")}'`,
@@ -74,7 +76,7 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
     );
     assert.equal(existsSync(outside), false, "sandboxed Pi bash cannot write outside the workspace");
 
-    const read = tools.get("read");
+    const read = tools.read;
     assert.ok(read, "Pi sandbox extension registers a read tool");
     await assert.rejects(
       read.execute("read-test", { path: outside }),
@@ -92,7 +94,7 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
       "restricted Pi reads must resolve symlinks before enforcing the workspace boundary",
     );
 
-    const write = tools.get("write");
+    const write = tools.write;
     assert.ok(write, "Pi sandbox extension registers a write tool");
     modeRef.value = "read_only";
     assert.throws(
@@ -120,4 +122,43 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
   }
 } else {
   console.log("Pi sandbox integration test skipped: sandbox-runtime dependencies are unavailable.");
+}
+
+type TestBashTool = Extract<PiSandboxTool, { name: "bash" }>;
+
+type TestReadTool = Extract<PiSandboxTool, { name: "read" }>;
+
+type TestWriteTool = Extract<PiSandboxTool, { name: "write" }>;
+
+interface TestTools {
+  bash?: TestBashTool;
+  read?: TestReadTool;
+  write?: TestWriteTool;
+}
+
+interface TestToolCollector {
+  api: PiSandboxExtensionApi;
+  tools: TestTools;
+}
+
+function testToolCollector(): TestToolCollector {
+  const tools: TestTools = {};
+
+  const api: PiSandboxExtensionApi = {
+    registerTool(tool: PiSandboxTool) {
+      switch (tool.name) {
+        case "bash":
+          tools.bash = tool;
+          break;
+        case "read":
+          tools.read = tool;
+          break;
+        case "write":
+          tools.write = tool;
+          break;
+      }
+    },
+  };
+
+  return { api, tools };
 }

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import { writeTestDevspaceConfig } from "../src/test-support/config.test.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -13,6 +14,7 @@ testPackedPackageLaunchers();
 function testPackedPackageLaunchers(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-packed-bin-test-"));
   const installRoot = join(root, "install");
+
   try {
     mkdirSync(installRoot, { recursive: true });
     execFileSync(npmExecutable(), ["pack", "--silent", "--pack-destination", root], {
@@ -40,16 +42,22 @@ function testPackedPackageLaunchers(): void {
     });
 
     const configRoot = join(root, "config");
+
     const env = writeTestDevspaceConfig(configRoot, {
       storage: { stateDir: join(root, "state") },
       workspaces: { allowedRoots: [root], worktreeRoot: join(root, "worktrees") },
       skills: { agentDir: join(root, "agents") },
     });
+
     const cliOutput = execInstalledBin(installRoot, "devspace", ["config", "get"], {
       ...process.env,
       ...env,
     });
-    const config = JSON.parse(cliOutput) as { tools?: { mode?: string } };
+
+    const config = z.object({
+      tools: z.object({ mode: z.string().optional() }).optional(),
+    }).parse(JSON.parse(cliOutput));
+
     assert.equal(config.tools?.mode, "codex");
 
     execInstalledBin(installRoot, "devspace-agentd", [], {
@@ -79,6 +87,7 @@ function execInstalledBin(
     ".bin",
     process.platform === "win32" ? `${name}.cmd` : name,
   );
+
   return execFileSync(executable, args, {
     encoding: "utf8",
     env,

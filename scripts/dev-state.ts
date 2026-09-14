@@ -18,12 +18,14 @@ import { databasePath } from "../src/db/client.js";
 import { expandHomePath } from "../src/roots.js";
 
 const checkoutRoot = resolve(process.cwd());
+
 const devRoot = join(checkoutRoot, ".devspace-dev");
 
 export async function seedDevState({ reset = false }: { reset?: boolean } = {}): Promise<void> {
   const sourceConfigDir = resolve(
     expandHomePath(process.env.DEVSPACE_CONFIG_DIR ?? join(homedir(), ".devspace")),
   );
+
   if (isWithin(devRoot, sourceConfigDir)) {
     throw new Error("Refusing to seed development state from this checkout's own .devspace-dev directory.");
   }
@@ -39,7 +41,6 @@ export async function seedDevState({ reset = false }: { reset?: boolean } = {}):
   const stagingRoot = `${devRoot}.staging-${process.pid}-${Date.now()}`;
   const stagingConfigDir = join(stagingRoot, "config");
   const stagingStateDir = join(stagingRoot, "state");
-  const devConfigDir = join(devRoot, "config");
   const devStateDir = join(devRoot, "state");
 
   try {
@@ -53,10 +54,12 @@ export async function seedDevState({ reset = false }: { reset?: boolean } = {}):
         stateDir: devStateDir,
       },
     };
+
     const localConfigPath = join(stagingConfigDir, "config.jsonc");
     await writeFile(localConfigPath, `${JSON.stringify(localConfig, null, 2)}\n`, { mode: 0o600 });
 
     const sourceAuthPath = join(sourceConfigDir, "auth.json");
+
     if (existsSync(sourceAuthPath)) {
       const localAuthPath = join(stagingConfigDir, "auth.json");
       await cp(sourceAuthPath, localAuthPath);
@@ -67,6 +70,7 @@ export async function seedDevState({ reset = false }: { reset?: boolean } = {}):
 
     for (const directory of ["skills", "agents"] as const) {
       const sourceDirectory = join(sourceConfigDir, directory);
+
       if (existsSync(sourceDirectory)) {
         await cp(sourceDirectory, join(stagingConfigDir, directory), { recursive: true });
       }
@@ -87,22 +91,26 @@ export async function seedDevState({ reset = false }: { reset?: boolean } = {}):
 async function promoteStagedState(stagingRoot: string, reset: boolean): Promise<void> {
   if (!reset || !existsSync(devRoot)) {
     await rename(stagingRoot, devRoot);
+
     return;
   }
 
   const previousRoot = `${devRoot}.previous-${process.pid}-${Date.now()}`;
   await rename(devRoot, previousRoot);
+
   try {
     await rename(stagingRoot, devRoot);
   } catch (error) {
     await rename(previousRoot, devRoot);
     throw error;
   }
+
   await rm(previousRoot, { recursive: true, force: true });
 }
 
 function isWithin(parent: string, candidate: string): boolean {
   const pathFromParent = relative(parent, candidate);
+
   return pathFromParent === ""
     || (pathFromParent !== ".."
       && !pathFromParent.startsWith(`..${sep}`)
@@ -111,19 +119,24 @@ function isWithin(parent: string, candidate: string): boolean {
 
 async function readSourceConfig(configDir: string): Promise<{ config: DevspaceConfig }> {
   const configPath = join(configDir, "config.jsonc");
+
   if (existsSync(configPath)) {
     const source = await readFile(configPath, "utf8");
     const errors: ParseError[] = [];
     const value = parse(source, errors, { allowTrailingComma: true });
+
     if (errors.length > 0) {
       throw new Error(`Unable to parse ${configPath}.`);
     }
+
     return { config: devspaceConfigSchema.parse(value) };
   }
 
   const legacyPath = join(configDir, "config.json");
+
   if (existsSync(legacyPath)) {
-    const value = JSON.parse(await readFile(legacyPath, "utf8")) as unknown;
+    const value = JSON.parse(await readFile(legacyPath, "utf8"));
+
     return { config: migrateLegacyConfig(value) };
   }
 
@@ -133,6 +146,7 @@ async function readSourceConfig(configDir: string): Promise<{ config: DevspaceCo
 async function backupDatabase(sourcePath: string, destinationPath: string): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true });
   const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
+
   try {
     await source.backup(destinationPath);
     await chmod(destinationPath, 0o600);
@@ -143,14 +157,19 @@ async function backupDatabase(sourcePath: string, destinationPath: string): Prom
 
 async function main(): Promise<void> {
   const command = process.argv[2];
+
   if (command === "seed") {
     await seedDevState();
+
     return;
   }
+
   if (command === "reset") {
     await seedDevState({ reset: true });
+
     return;
   }
+
   throw new Error("Usage: dev-state <seed|reset>");
 }
 

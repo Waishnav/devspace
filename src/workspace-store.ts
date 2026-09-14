@@ -9,7 +9,9 @@ import {
 } from "./db/schema.js";
 
 export type WorkspaceMode = "checkout" | "worktree";
+
 export type WorkspaceStatus = "active" | "inactive" | "pruned";
+
 export type WorkspaceRecoveryKind = "head" | "stash";
 
 export class WorkspaceStoreError extends TaggedError("WorkspaceStoreError")<{
@@ -101,6 +103,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
     managed?: boolean;
   }): WorkspaceSession {
     const now = new Date().toISOString();
+
     const session: WorkspaceSession = {
       id: input.id,
       root: input.root,
@@ -197,6 +200,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
           ),
         )
         .run();
+
       return result.changes > 0;
     }, id);
   }
@@ -213,6 +217,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
           ),
         )
         .run();
+
       return result.changes > 0;
     }, id);
   }
@@ -250,6 +255,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
     workspaceSessionId: string;
   }): WorkspaceConversationBinding {
     const now = new Date().toISOString();
+
     const row = this.database.db
       .insert(workspaceConversationBindings)
       .values({
@@ -371,14 +377,15 @@ function workspaceStoreResult<T>(
     return Result.ok(run());
   } catch (cause) {
     if (isProgrammerDefect(cause)) throw cause;
+
     return Result.err(new WorkspaceStoreError(operation, cause, workspaceId));
   }
 }
 
-function isProgrammerDefect(error: unknown): boolean {
-  return error instanceof TypeError
-    || error instanceof ReferenceError
-    || error instanceof SyntaxError
-    || error instanceof RangeError
-    || (error instanceof Error && error.name === "AssertionError");
+function isProgrammerDefect(cause: unknown): boolean {
+  return cause instanceof TypeError
+    || cause instanceof ReferenceError
+    || cause instanceof SyntaxError
+    || cause instanceof RangeError
+    || (cause instanceof Error && cause.name === "AssertionError");
 }

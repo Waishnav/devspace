@@ -1,4 +1,5 @@
 import {
+  AgentProviderCancelledError,
   AgentProviderExecutionError,
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
@@ -6,6 +7,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { Options, Query, SDKMessage, Settings } from "@anthropic-ai/claude-agent-sdk";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -15,8 +17,13 @@ import type {
   LocalAgentRuntimeContext,
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
+import { z } from "zod";
 
-type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
+type ClaudePermissionMode = NonNullable<Options["permissionMode"]>;
+
+const claudeEffortLevelSchema = z.enum(["low", "medium", "high", "xhigh"]);
+
+type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
   // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
@@ -25,17 +32,32 @@ const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
   "Bash",
 ] as const;
 
-
-export interface ClaudeQueryLike extends AsyncIterable<unknown> {
-  close(): void;
-  setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
-  applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
-  setModel?(model?: string): Promise<void>;
+export interface ClaudeResultMessage {
+  type: "result";
+  session_id?: string;
+  subtype?: string;
+  is_error?: boolean;
+  result?: string;
+  errors?: string[];
+  error?: string;
+  message?: string;
 }
+
+interface ClaudeNonResultMessage {
+  type: Exclude<SDKMessage["type"], "result">;
+  session_id?: string;
+}
+
+export type ClaudeQueryMessage = ClaudeResultMessage | ClaudeNonResultMessage;
+
+export interface ClaudeQueryLike
+  extends Pick<Query, "close" | "setPermissionMode" | "applyFlagSettings">,
+    Partial<Pick<Query, "setModel">>,
+    AsyncIterable<ClaudeQueryMessage> {}
 
 export interface ClaudeQueryFactoryInput {
   context: LocalAgentRuntimeContext;
-  options: Record<string, unknown>;
+  options: Options;
   prompt: AsyncIterable<ClaudeUserMessage>;
 }
 
@@ -54,6 +76,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   push(value: T): void {
     if (this.closed) throw new Error("Claude input stream is closed.");
     const waiter = this.waiters.shift();
+
     if (waiter) waiter.resolve({ done: false, value });
     else this.values.push(value);
   }
@@ -61,6 +84,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+
     while (this.waiters.length > 0) this.waiters.shift()!.resolve({ done: true, value: undefined });
   }
 
@@ -70,15 +94,18 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
 
   next(): Promise<IteratorResult<T>> {
     const value = this.values.shift();
+
     if (value !== undefined) return Promise.resolve({ done: false, value });
+
     if (this.closed) return Promise.resolve({ done: true, value: undefined });
+
     return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 }
 
 export class ClaudeQueryRuntime implements LocalAgentRuntime {
   readonly provider: LocalAgentProvider = "claude";
-  private readonly iterator: AsyncIterator<unknown>;
+  private readonly iterator: AsyncIterator<ClaudeQueryMessage>;
   private alive = true;
   private closed = false;
   private providerSessionId?: string;
@@ -106,30 +133,39 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             message: "Claude runtime is not running.",
           });
         }
+
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
         const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
+
         if (input.effort) {
+          const effort = parseClaudeEffortLevel(input.effort);
+
           Object.assign(flagSettings, {
             alwaysThinkingEnabled: true,
-            effortLevel: input.effort,
+            effortLevel: effort,
           });
         }
+
         await this.query.applyFlagSettings(flagSettings);
         await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
-        if (input.model && this.query.setModel) await this.query.setModel(input.model);
+
+        if (input.model) await this.query.setModel?.(input.model);
         this.inputQueue.push({
           type: "user",
           message: { role: "user", content: input.prompt },
           parent_tool_use_id: null,
         });
 
-        const items: unknown[] = [];
+        const items: ClaudeQueryMessage[] = [];
+
         for (;;) {
-          let next: IteratorResult<unknown>;
+          let next: IteratorResult<ClaudeQueryMessage>;
+
           try {
             next = await this.iterator.next();
           } catch (error) {
             this.alive = false;
+
             if (isProgrammerDefect(error)) throw error;
             throw new AgentProviderUnavailableError({
               code: "PROVIDER_UNAVAILABLE",
@@ -140,6 +176,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query stream failed.",
             });
           }
+
           if (next.done) {
             this.alive = false;
             throw new AgentProviderProtocolError({
@@ -150,19 +187,23 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query ended before returning a result.",
             });
           }
+
           const message = next.value;
           items.push(message);
-          const record = asRecord(message);
-          if (typeof record?.session_id === "string") {
+
+          if (message.session_id !== undefined) {
             const previousSessionId = this.providerSessionId;
-            this.providerSessionId = record.session_id;
+            this.providerSessionId = message.session_id;
+
             if (previousSessionId !== this.providerSessionId) {
               await callbacks?.onSessionId?.(this.providerSessionId);
             }
           }
-          if (record?.type !== "result") continue;
 
-          const resultError = claudeResultError(record);
+          if (!isClaudeResultMessage(message)) continue;
+
+          const resultError = claudeResultError(message);
+
           if (resultError) {
             throw new AgentProviderExecutionError({
               code: "PROVIDER_EXECUTION_ERROR",
@@ -173,7 +214,9 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude agent turn failed.",
             });
           }
-          const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+
+          const finalResponse = directString(message.result) ?? "";
+
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
               code: "PROVIDER_PROTOCOL_ERROR",
@@ -183,6 +226,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude did not return a final assistant response.",
             });
           }
+
           return {
             provider: this.provider,
             providerSessionId: this.providerSessionId ?? null,
@@ -222,6 +266,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
     const authority = context.writeMode === "full_access" ? "full_access" : "restricted";
+
     return `claude:${context.agentId}:${authority}`;
   }
 
@@ -232,6 +277,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+
         const input: LocalAgentRunInput = {
           prompt: "",
           workspaceRoot: context.workspaceRoot,
@@ -240,11 +286,19 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
           model: context.model,
           effort: context.effort,
         };
-        const query = await this.factory({
-          context,
-          options: claudeQueryOptions(context, input, this.env),
-          prompt: inputQueue,
-        });
+
+        let query: ClaudeQueryLike;
+
+        try {
+          query = await this.factory({
+            context,
+            options: claudeQueryOptions(context, input, this.env),
+            prompt: inputQueue,
+          });
+        } catch (error) {
+          throwClaudeCancellation("create_runtime", error);
+        }
+
         return new ClaudeQueryRuntime(query, inputQueue, context);
       },
     });
@@ -256,37 +310,46 @@ async function defaultClaudeQueryFactory({
   prompt,
 }: ClaudeQueryFactoryInput): Promise<ClaudeQueryLike> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
-  return query({
-    prompt,
-    options: options as never,
-  }) as unknown as ClaudeQueryLike;
+
+  return query({ prompt, options });
 }
 
 export function claudeQueryOptions(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
   env: NodeJS.ProcessEnv = process.env,
-): Record<string, unknown> {
+): Options {
   const executable = env.CLAUDE_COMMAND;
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
-  return {
+
+  const options: Options = {
     cwd: input.workspaceRoot,
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : {}),
-    ...(context.providerSessionId ? { resume: context.providerSessionId } : {}),
     permissionMode,
-    // Restricted runtimes stay warm across read_only/allowed turns. Keep the
-    // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
-      ? {}
-      : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
     sandbox: authority.sandbox,
     settings: authority.settings,
-    ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
     env: claudeCommandEnvironment(env),
-    ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
   };
+
+  if (input.model) options.model = input.model;
+
+  if (input.effort) {
+    const effort = parseClaudeEffortLevel(input.effort);
+
+    options.thinking = { type: "adaptive" };
+
+    options.effort = effort;
+  }
+
+  if (context.providerSessionId) options.resume = context.providerSessionId;
+
+  if (input.writeMode !== "full_access") options.allowedTools = [...CLAUDE_WORKSPACE_ALLOWED_TOOLS];
+
+  if (input.writeMode === "full_access") options.allowDangerouslySkipPermissions = true;
+
+  if (executable) options.pathToClaudeCodeExecutable = executable;
+
+  return options;
 }
 
 export function claudePermissionMode(
@@ -304,33 +367,41 @@ export function claudePermissionMode(
 export function claudeAuthoritySettings(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): Record<string, unknown> {
+): Settings {
   return claudeAuthorityOptions(workspaceRoot, writeMode).settings;
+}
+
+interface ClaudeAuthorityOptions {
+  sandbox: NonNullable<Options["sandbox"]>;
+  settings: Settings;
 }
 
 function claudeAuthorityOptions(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): { sandbox: Record<string, unknown>; settings: Record<string, unknown> } {
+): ClaudeAuthorityOptions {
   if (writeMode === "full_access") {
     const sandbox = {
       enabled: false,
       allowUnsandboxedCommands: true,
     };
+
     return {
       sandbox,
       settings: {
         permissions: { defaultMode: "bypassPermissions" },
         sandbox,
       },
-    };
+    } satisfies ClaudeAuthorityOptions;
   }
 
   const allowed = writeMode !== "read_only";
-  const permissions = {
+
+  const permissions: NonNullable<Settings["permissions"]> = {
     defaultMode: "dontAsk",
     deny: allowed ? [] : ["Bash", "Edit"],
   };
+
   const sandbox = {
     enabled: true,
     failIfUnavailable: true,
@@ -341,11 +412,13 @@ function claudeAuthorityOptions(
       denyWrite: allowed ? [] : [workspaceRoot],
     },
   };
-  return { sandbox, settings: { permissions, sandbox } };
+
+  return { sandbox, settings: { permissions, sandbox } } satisfies ClaudeAuthorityOptions;
 }
 
 export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
+
   for (const key of [
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -354,19 +427,24 @@ export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.Process
   ]) {
     delete next[key];
   }
+
   return next;
 }
 
-export function claudeResultError(record: Record<string, unknown>): string | undefined {
-  const subtype = typeof record.subtype === "string" ? record.subtype : undefined;
+export function claudeResultError(record: ClaudeResultMessage): string | undefined {
+  const subtype = record.subtype;
   const isError = record.is_error === true || subtype?.startsWith("error");
+
   if (!isError) return undefined;
+
   const message =
+    firstNonEmpty(record.errors) ??
     directString(record.error) ??
     directString(record.message) ??
     directString(record.result) ??
     subtype ??
     "Claude returned an error result.";
+
   return `Claude returned an error result: ${message}`;
 }
 
@@ -376,12 +454,43 @@ export interface ClaudeUserMessage {
   parent_tool_use_id: null;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function parseClaudeEffortLevel(value: string): ClaudeEffortLevel {
+  return claudeEffortLevelSchema.parse(value);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+function firstNonEmpty(values: string[] | undefined): string | undefined {
+  for (const value of values ?? []) {
+    const result = directString(value);
+
+    if (result) return result;
+  }
+
+  return undefined;
+}
+
+function directString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+
+  return trimmed || undefined;
+}
+
+function isClaudeResultMessage(message: ClaudeQueryMessage): message is ClaudeResultMessage {
+  return message.type === "result";
+}
+
+function throwClaudeCancellation(operation: string, cause: unknown): never {
+  if (!isClaudeAbortError(cause)) throw cause;
+
+  throw new AgentProviderCancelledError({
+    code: "PROVIDER_CANCELLED",
+    provider: "claude",
+    operation,
+    retryable: false,
+    cause,
+    message: "Claude agent operation was cancelled.",
+  });
+}
+
+function isClaudeAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === "AbortError";
 }

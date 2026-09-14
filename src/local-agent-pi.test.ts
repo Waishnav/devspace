@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import type { AgentSessionEvent, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import {
+  extractPiFinalResponse,
+  extractPiProviderError,
   PiLocalAgentDriver,
   type PiSessionFactory,
   type PiSessionLike,
@@ -8,33 +9,52 @@ import {
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
+type FakePiModel = { id: string };
+
+type FakePiMessage = { role: "assistant"; content: Array<{ type: "text"; text: string }> };
+
 class FakePiSession implements PiSessionLike {
   readonly sessionId = "pi_session_1";
-  readonly messages: any[] = [];
-  readonly modelRegistry = { find: () => ({ id: "model" }) } as unknown as PiSessionLike["modelRegistry"];
-  private readonly listeners = new Set<AgentSessionEventListener>();
+  readonly messages: FakePiMessage[] = [];
+  private readonly listeners = new Set<Parameters<PiSessionLike["subscribe"]>[0]>();
   disposeCount = 0;
-  model?: unknown;
-  effort?: unknown;
+  model?: FakePiModel;
+  effort?: "low" | "medium" | "high";
   activeTools: string[] = [];
   toolHistory: string[][] = [];
 
+  constructor(private readonly modelFound = true) {}
+
+  messageCount(): number {
+    return this.messages.length;
+  }
+
+  messagesSince(index: number): FakePiMessage[] {
+    return this.messages.slice(index);
+  }
+
   async prompt(text: string): Promise<void> {
-    const message = {
+    const message: FakePiMessage = {
       role: "assistant",
       content: [{ type: "text", text: `response:${text}` }],
     };
+
     this.messages.push(message);
-    for (const listener of this.listeners) listener({ type: "agent_end" } as AgentSessionEvent);
+
+    for (const listener of this.listeners) listener({ messages: [message] });
   }
 
-  subscribe(listener: AgentSessionEventListener): () => void {
+  subscribe(listener: Parameters<PiSessionLike["subscribe"]>[0]): () => void {
     this.listeners.add(listener);
+
     return () => this.listeners.delete(listener);
   }
 
-  async setModel(model: any): Promise<void> {
-    this.model = model;
+  async setModel(_reference: string): Promise<boolean> {
+    if (!this.modelFound) return false;
+    this.model = { id: "model" };
+
+    return true;
   }
 
   setActiveToolsByName(toolNames: string[]): void {
@@ -42,7 +62,8 @@ class FakePiSession implements PiSessionLike {
     this.toolHistory.push([...toolNames]);
   }
 
-  setThinkingLevel(level: any): void {
+  setThinkingLevel(level: Parameters<PiSessionLike["setThinkingLevel"]>[0]): void {
+    if (level === "off" || level === "minimal" || level === "xhigh") return;
     this.effort = level;
   }
 
@@ -52,22 +73,30 @@ class FakePiSession implements PiSessionLike {
 }
 
 const contexts: LocalAgentRuntimeContext[] = [];
+
 const sessions: FakePiSession[] = [];
+
 let factoryEnv: NodeJS.ProcessEnv | undefined;
+
 const factory: PiSessionFactory = async (context, _input, env) => {
   contexts.push(context);
   factoryEnv = env;
   const session = new FakePiSession();
   sessions.push(session);
+
   return session;
 };
+
 const driver = new PiLocalAgentDriver(factory, { HARNESS_ENV: "pi" });
+
 const pool = new LocalAgentRuntimePool();
+
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_pi",
   provider: "pi",
   workspaceRoot: "/tmp/project",
 };
+
 const sessionIds: string[] = [];
 
 const first = await pool.run(driver, context, {
@@ -79,33 +108,49 @@ const first = await pool.run(driver, context, {
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
 });
+
 assert.equal(factoryEnv?.HARNESS_ENV, "pi");
+
 const second = await pool.run(driver, context, {
   prompt: "second",
   workspaceRoot: "/tmp/project",
   writeMode: "allowed",
 });
+
 await pool.run(driver, context, {
   prompt: "third",
   workspaceRoot: "/tmp/project",
   writeMode: "full_access",
 });
+
 await pool.run(driver, context, {
   prompt: "fourth",
   workspaceRoot: "/tmp/project",
   writeMode: "read_only",
 });
+
 assert.equal(contexts.length, 1, "one warm Pi session serves successive turns");
+
 assert.equal(first.isOk(), true);
+
 assert.equal(second.isOk(), true);
+
 if (first.isErr()) throw first.error;
+
 if (second.isErr()) throw second.error;
+
 assert.equal(first.value.providerSessionId, "pi_session_1");
+
 assert.equal(second.value.finalResponse, "response:second");
+
 assert.deepEqual(sessions[0]?.model, { id: "model" });
+
 assert.equal(sessions[0]?.effort, "high");
+
 assert.deepEqual(sessionIds, ["pi_session_1"]);
+
 assert.deepEqual(sessions[0]?.activeTools, ["read", "grep", "find", "ls"]);
+
 assert.deepEqual(sessions[0]?.toolHistory, [
   ["read", "grep", "find", "ls"],
   ["read", "grep", "find", "ls", "edit", "write", "bash"],
@@ -119,9 +164,11 @@ await pool.run(driver, { ...context, providerSessionId: "pi_session_1" }, {
   providerSessionId: "pi_session_1",
   writeMode: "allowed",
 });
+
 assert.deepEqual(sessions[0]?.activeTools, ["read", "grep", "find", "ls", "edit", "write", "bash"]);
 
 await pool.evictIdle(Date.now() + 10 * 60_000);
+
 assert.equal(sessions[0]?.disposeCount, 1, "idle eviction disposes the in-process session");
 
 await pool.run(driver, { ...context, providerSessionId: "pi_session_1" }, {
@@ -129,26 +176,45 @@ await pool.run(driver, { ...context, providerSessionId: "pi_session_1" }, {
   workspaceRoot: "/tmp/project",
   providerSessionId: "pi_session_1",
 });
+
 assert.equal(contexts.length, 2, "cold continuation creates a new AgentSession");
+
 assert.equal(contexts[1]?.providerSessionId, "pi_session_1");
+
 assert.deepEqual(sessions[1]?.activeTools, ["read", "grep", "find", "ls", "edit", "write", "bash"]);
+
 await pool.close();
 
-const missingModelSession = new FakePiSession();
-Object.defineProperty(missingModelSession, "modelRegistry", { value: { find: () => undefined } });
+const missingModelSession = new FakePiSession(false);
+
 const missingModelDriver = new PiLocalAgentDriver(async () => missingModelSession);
+
 const missingModelRuntime = await missingModelDriver.createRuntime(context);
+
 assert.equal(missingModelRuntime.isOk(), true);
+
 if (missingModelRuntime.isErr()) throw missingModelRuntime.error;
+
 const missingModel = await missingModelRuntime.value.run({
   prompt: "inspect",
   workspaceRoot: "/tmp/project",
   model: "provider/missing-model",
 });
+
 assert.equal(missingModel.isErr(), true);
+
 if (missingModel.isErr()) {
   assert.equal(missingModel.error.code, "PROVIDER_PROTOCOL_ERROR");
   assert.equal(missingModel.error.retryable, false);
   assert.match(missingModel.error.message, /provider\/missing-model/);
 }
+
 await missingModelRuntime.value.close();
+
+const malformedMessages = JSON.parse('{"messages":[{"role":"assistant"}]}');
+
+assert.equal(extractPiFinalResponse(malformedMessages), "");
+
+const malformedError = JSON.parse('{"errorMessage":{"message":"failed"}}');
+
+assert.equal(extractPiProviderError(malformedError), "");

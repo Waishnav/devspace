@@ -3,7 +3,9 @@ import { join, resolve } from "node:path";
 import spawn from "cross-spawn";
 
 const checkoutRoot = resolve(process.cwd());
+
 const configDir = join(checkoutRoot, ".devspace-dev", "config");
+
 const hasConfig = existsSync(join(configDir, "config.jsonc")) || existsSync(join(configDir, "config.json"));
 
 if (!hasConfig) {
@@ -26,8 +28,10 @@ if (!hasConfig) {
   child.on("exit", (code, signal) => {
     if (signal) {
       process.kill(process.pid, signal);
+
       return;
     }
+
     process.exitCode = code ?? 1;
   });
 }

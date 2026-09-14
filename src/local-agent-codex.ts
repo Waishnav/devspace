@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { z, type JSONType } from "zod";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -31,14 +32,18 @@ export type CodexCommandResolver = (env: NodeJS.ProcessEnv) => ResolvedCodexComm
 export function codexCommandEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+
   if (env.CODEX_COMMAND) return next;
+
   if (next.PATH) next.PATH = removeDevspaceNodeModulesBinFromPath(next.PATH);
+
   return next;
 }
 
 export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): ResolvedCodexCommand | undefined {
   const command = env.CODEX_COMMAND ?? "codex";
   const probeEnv = codexCommandEnvironment(env);
+
   for (const candidate of commandCandidates(command, probeEnv)) {
     const result = spawnSync(candidate, ["--version"], {
       encoding: "utf8",
@@ -47,11 +52,16 @@ export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): Resol
       timeout: 5_000,
       shell: usesWindowsCommandShell(candidate),
     });
+
     const code = result.error && "code" in result.error ? result.error.code : undefined;
+
     if (code === "ENOENT") continue;
+
     if (result.error || result.status !== 0) continue;
+
     return { executable: candidate, version: parseCodexVersion(result.stdout) };
   }
+
   return undefined;
 }
 
@@ -66,11 +76,13 @@ export function isCodexAppServerSupported(
     timeout: 5_000,
     shell: usesWindowsCommandShell(command),
   });
+
   return result.error === undefined && result.status === 0;
 }
 
 export function parseCodexVersion(output: string | undefined): string | undefined {
   const match = output?.trim().match(/v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/);
+
   return match?.[1];
 }
 
@@ -130,11 +142,18 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex app-server is not running.",
           });
         }
+
         const threadResponse = await this.rpc.request(
           input.providerSessionId ? "thread/resume" : "thread/start",
           threadParams(input),
         );
-        const threadId = readString(asRecord(threadResponse)?.thread, "id");
+
+        const parsedThreadResponse = codexThreadResponseSchema.safeParse(threadResponse);
+
+        const threadId = parsedThreadResponse.success
+          ? parsedThreadResponse.data.thread.id
+          : undefined;
+
         if (!threadId) {
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
@@ -149,6 +168,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         await callbacks?.onSessionId?.(threadId);
         const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
+
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
             code: "PROVIDER_EXECUTION_ERROR",
@@ -159,6 +179,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex agent turn failed.",
           });
         }
+
         if (!parsed.finalResponse.trim()) {
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
@@ -169,6 +190,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex did not return a final assistant response.",
           });
         }
+
         return {
           provider: this.provider,
           providerSessionId: threadId,
@@ -181,6 +203,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
 
   async releaseSession(providerSessionId: string): Promise<void> {
     if (!this.alive) return;
+
     try {
       await this.rpc.request("thread/unsubscribe", { threadId: providerSessionId });
     } catch {
@@ -197,14 +220,18 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
     this.closePromise = (async () => {
       this.alive = false;
       this.rpc.fail(new Error("codex app-server closed."));
+
       if (!this.child.stdin.destroyed) this.child.stdin.end();
+
       if (this.child.exitCode === null) {
         terminateProcessTree(this.child, "SIGTERM", process.platform !== "win32");
+
         if (!await waitForProcessExit(this.child, 1_000)) {
           terminateProcessTree(this.child, "SIGKILL", process.platform !== "win32");
         }
       }
     })();
+
     return this.closePromise;
   }
 }
@@ -214,16 +241,20 @@ async function waitForProcessExit(
   timeoutMs: number,
 ): Promise<boolean> {
   if (child.exitCode !== null) return true;
+
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       child.removeListener("exit", onExit);
       resolve(false);
     }, timeoutMs);
+
     timer.unref();
+
     const onExit = () => {
       clearTimeout(timer);
       resolve(true);
     };
+
     child.once("exit", onExit);
   });
 }
@@ -244,6 +275,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
     const command = this.resolveCommand();
     const executable = command?.executable ?? this.env.CODEX_COMMAND ?? "codex";
     const codexHome = resolve(this.env.CODEX_HOME ?? join(homedir(), ".codex"));
+
     return `codex:${executable}:${codexHome}`;
   }
 
@@ -253,6 +285,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const command = this.resolveCommand();
+
         if (!command) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -262,6 +295,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
             message: "Codex executable was not found.",
           });
         }
+
         if (!isCodexAppServerSupported(command.executable, this.env)) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -271,13 +305,16 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
             message: "Installed Codex does not support app-server.",
           });
         }
+
         const runtime = new CodexAppServerRuntime({
           command: command.executable,
           env: codexCommandEnvironment(this.env),
           version: command.version,
         });
+
         try {
           await runtime.initialize();
+
           return runtime;
         } catch (cause) {
           await runtime.close();
@@ -299,35 +336,123 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
       this.resolvedCommand = this.commandResolver(this.env);
       this.commandResolved = true;
     }
+
     return this.resolvedCommand;
   }
 }
 
 const MAX_TURN_ITEMS = 10_000;
+
 const MAX_STDERR_BYTES = 32 * 1024;
+
+const codexInboundMessageSchema = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  method: z.string().optional(),
+  params: z.json().optional(),
+  result: z.json().optional(),
+  error: z.json().optional(),
+});
+
+const codexTurnSchema = z.object({
+  id: z.string().optional(),
+  status: z.string().optional(),
+  items: z.array(z.json()).optional(),
+  error: z.object({ message: z.string().optional() }).optional(),
+});
+
+const codexEventParamsSchema = z.object({
+  threadId: z.string().optional(),
+  turnId: z.string().optional(),
+  item: z.json().optional(),
+  turn: codexTurnSchema.optional(),
+});
+
+const codexThreadResponseSchema = z.object({
+  thread: z.object({ id: z.string() }),
+});
+
+const codexTurnResponseSchema = z.object({
+  turn: z.object({ id: z.string() }),
+});
+
+const codexAgentMessageSchema = z.object({
+  type: z.enum(["agentMessage", "agent_message"]),
+  text: z.string(),
+});
+
+const codexProtocolErrorSchema = z.object({
+  code: z.union([z.string(), z.number()]).optional(),
+  message: z.string().trim().min(1).optional(),
+});
+
+type CodexEventParams = z.infer<typeof codexEventParamsSchema>;
+
+interface CodexInitializeParams {
+  clientInfo: { name: string; title: string; version: string };
+  capabilities: object;
+}
+
+interface CodexThreadParams {
+  threadId?: string;
+  cwd: string;
+  approvalPolicy: "never";
+  sandbox: string;
+  model?: string;
+}
+
+type CodexSandboxPolicy =
+  | { type: "readOnly" }
+  | { type: "workspaceWrite"; networkAccess: true }
+  | { type: "dangerFullAccess" };
+
+interface CodexTurnParams {
+  threadId: string;
+  input: Array<{ type: "text"; text: string }>;
+  approvalPolicy: "never";
+  sandboxPolicy: CodexSandboxPolicy;
+  model?: string;
+  effort?: string;
+}
+
+interface CodexThreadIdParams {
+  threadId: string;
+}
+
+type CodexRpcParams = CodexInitializeParams | CodexThreadParams | CodexTurnParams | CodexThreadIdParams;
 
 interface CodexEvent {
   method: string;
-  params?: unknown;
+  params: CodexEventParams;
 }
 
 interface CodexTurnResult {
   event: CodexEvent;
-  items: unknown[];
+  items: JSONType[];
 }
 
 interface CodexTurnAccumulator {
   threadId: string;
   turnId?: string;
-  items: unknown[];
+  items: JSONType[];
   completed?: CodexEvent;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
 }
 
+interface ParsedCodexTurn {
+  finalResponse: string;
+  items: JSONType[];
+  failure?: string;
+}
+
+type CodexOutboundMessage =
+  | { id: string; method: string; params?: CodexRpcParams }
+  | { method: string; params?: CodexRpcParams }
+  | { id: string | number; error: { code: number; message: string } };
+
 class CodexAppServerRpc {
   private readonly pending = new Map<string, {
-    resolve: (value: unknown) => void;
+    resolve: (value: JSONType | undefined) => void;
     reject: (error: Error) => void;
   }>();
   private readonly turns = new Map<string, CodexTurnAccumulator>();
@@ -347,39 +472,54 @@ class CodexAppServerRpc {
     });
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: CodexRpcParams): Promise<JSONType | undefined> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     const id = String(this.nextId++);
+
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.write({ id, method, ...(params === undefined ? {} : { params }) });
+      const message: CodexOutboundMessage = { id, method };
+
+      if (params !== undefined) message.params = params;
+      this.write(message);
     });
   }
 
-  notify(method: string, params?: unknown): void {
-    this.write({ method, ...(params === undefined ? {} : { params }) });
+  notify(method: string, params?: CodexRpcParams): void {
+    const message: CodexOutboundMessage = { method };
+
+    if (params !== undefined) message.params = params;
+    this.write(message);
   }
 
-  async runTurn(threadId: string, params: unknown): Promise<CodexTurnResult> {
+  async runTurn(threadId: string, params: CodexTurnParams): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
+
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
     let rejectTurn!: (error: Error) => void;
+
     const completion = new Promise<CodexTurnResult>((resolve, reject) => {
       resolveTurn = resolve;
       rejectTurn = reject;
     });
+
     const turn: CodexTurnAccumulator = {
       threadId,
       items: [],
       resolve: resolveTurn,
       reject: rejectTurn,
     };
+
     this.turns.set(threadId, turn);
+
     try {
       const response = await this.request("turn/start", params);
-      turn.turnId = readString(asRecord(response)?.turn, "id");
+      const parsedResponse = codexTurnResponseSchema.safeParse(response);
+      turn.turnId = parsedResponse.success ? parsedResponse.data.turn.id : undefined;
+
       if (turn.completed) return { event: turn.completed, items: turn.items };
+
       return await completion;
     } finally {
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
@@ -389,13 +529,15 @@ class CodexAppServerRpc {
   fail(error: Error): void {
     if (this.fatalError) return;
     this.fatalError = new Error(`${error.message}${this.stderr.trim() ? `\n${this.stderr.trim()}` : ""}${this.version ? `\ncodex version: ${this.version}` : ""}`);
+
     for (const pending of this.pending.values()) pending.reject(this.fatalError);
+
     for (const turn of this.turns.values()) turn.reject(this.fatalError);
     this.pending.clear();
     this.turns.clear();
   }
 
-  private write(message: Record<string, unknown>): void {
+  private write(message: CodexOutboundMessage): void {
     if (this.fatalError) throw this.fatalError;
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
@@ -404,73 +546,104 @@ class CodexAppServerRpc {
     this.buffer += line;
     const trimmed = this.buffer.trim();
     this.buffer = "";
+
     if (!trimmed) return;
-    let message: Record<string, unknown>;
+    let message: z.infer<typeof codexInboundMessageSchema>;
+
     try {
-      message = JSON.parse(trimmed) as Record<string, unknown>;
+      const parsed = codexInboundMessageSchema.safeParse(JSON.parse(trimmed));
+
+      if (!parsed.success) {
+        this.fail(new Error("codex app-server emitted malformed JSON-RPC."));
+
+        return;
+      }
+
+      message = parsed.data;
     } catch {
       this.fail(new Error("codex app-server emitted malformed JSON."));
+
       return;
     }
-    const id = typeof message.id === "string" || typeof message.id === "number" ? String(message.id) : undefined;
-    const method = typeof message.method === "string" ? message.method : undefined;
+
+    const id = message.id === undefined ? undefined : String(message.id);
+    const method = message.method;
+
     if (id && !method) {
       const pending = this.pending.get(id);
+
       if (!pending) return;
       this.pending.delete(id);
+
       if (message.error !== undefined) pending.reject(new Error(protocolErrorText(message.error)));
       else pending.resolve(message.result);
+
       return;
     }
+
     if (id && method) {
-      this.write({ id: message.id, error: { code: -32601, message: `Unsupported app-server request: ${method}` } });
+      this.write({ id: message.id ?? id, error: { code: -32601, message: `Unsupported app-server request: ${method}` } });
+
       return;
     }
+
     if (!method) return;
-    const event = { method, params: message.params };
+    const event = { method, params: parseCodexEventParams(message.params) };
     const turn = this.findTurn(event);
+
     if (!turn) return;
-    const params = asRecord(event.params);
-    if (params?.item !== undefined) {
+    const params = event.params;
+
+    if (params.item !== undefined) {
       turn.items.push(params.item);
+
       if (turn.items.length > MAX_TURN_ITEMS) turn.items.shift();
     }
+
     if (event.method !== "turn/completed" || !turnMatchesEvent(turn, event)) return;
     turn.completed = event;
     turn.resolve({ event, items: turn.items.slice() });
   }
 
   private findTurn(event: CodexEvent): CodexTurnAccumulator | undefined {
-    const params = asRecord(event.params);
-    const threadId = typeof params?.threadId === "string" ? params.threadId : undefined;
-    const turnId = typeof params?.turnId === "string"
-      ? params.turnId
-      : readString(asRecord(params?.turn), "id");
+    const { threadId } = event.params;
+    const turnId = event.params.turnId ?? event.params.turn?.id;
+
     if (threadId) return this.turns.get(threadId);
+
     if (!turnId) return undefined;
+
     return Array.from(this.turns.values()).find((turn) => turn.turnId === turnId);
   }
 }
 
-function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
-  return {
-    ...(input.providerSessionId ? { threadId: input.providerSessionId } : {}),
+function threadParams(input: LocalAgentRunInput): CodexThreadParams {
+  const params: CodexThreadParams = {
     cwd: input.workspaceRoot,
     approvalPolicy: "never",
     sandbox: sandboxFor(input.writeMode),
-    ...(input.model ? { model: input.model } : {}),
   };
+
+  if (input.providerSessionId) params.threadId = input.providerSessionId;
+
+  if (input.model) params.model = input.model;
+
+  return params;
 }
 
-function turnParams(input: LocalAgentRunInput, threadId: string): Record<string, unknown> {
-  return {
+function turnParams(input: LocalAgentRunInput, threadId: string): CodexTurnParams {
+  const params: CodexTurnParams = {
     threadId,
     input: [{ type: "text", text: input.prompt }],
     approvalPolicy: "never",
     sandboxPolicy: sandboxPolicyFor(input.writeMode),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
   };
+
+  if (input.model) params.model = input.model;
+
+  if (input.effort) params.effort = input.effort;
+
+  return params;
 }
 
 export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
@@ -482,7 +655,7 @@ export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
   }
 }
 
-function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string | boolean> {
+function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): CodexSandboxPolicy {
   switch (writeMode) {
     case "allowed": return { type: "workspaceWrite", networkAccess: true };
     case "full_access": return { type: "dangerFullAccess" };
@@ -491,27 +664,23 @@ function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<st
   }
 }
 
-function parseCompletedTurn(params: unknown, items: unknown[]): {
-  finalResponse: string;
-  items: unknown[];
-  failure?: string;
-} {
-  const turn = asRecord(asRecord(params)?.turn);
-  const completedItems = (Array.isArray(turn?.items) ? turn.items : items).slice(-MAX_TURN_ITEMS);
+function parseCompletedTurn(params: CodexEventParams, items: JSONType[]): ParsedCodexTurn {
+  const turn = params.turn;
+  const completedItems = (turn?.items ?? items).slice(-MAX_TURN_ITEMS);
   let finalResponse = "";
+
   for (const item of completedItems) {
-    const record = asRecord(item);
-    if (!record) continue;
-    const type = record.type;
-    if ((type === "agentMessage" || type === "agent_message") && typeof record.text === "string") {
-      finalResponse = record.text;
-    }
+    const parsed = codexAgentMessageSchema.safeParse(item);
+
+    if (parsed.success) finalResponse = parsed.data.text;
   }
+
   const status = turn?.status;
-  const error = asRecord(turn?.error);
+
   const failure = status === "failed"
-    ? directString(error?.message) ?? "Codex turn failed."
+    ? turn?.error?.message?.trim() || "Codex turn failed."
     : undefined;
+
   return { finalResponse, items: completedItems, failure };
 }
 
@@ -526,10 +695,13 @@ export function codexAppServerError(message: string, version?: string, stderr?: 
 function commandCandidates(command: string, env: NodeJS.ProcessEnv): string[] {
   if (command.includes("/") || command.includes("\\") || /\.(?:cmd|bat|exe|com)$/i.test(command)) return [command];
   const path = env.PATH;
+
   if (!path) return [command];
+
   const extensions = process.platform === "win32"
     ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
     : [""];
+
   return path.split(delimiter)
     .filter(Boolean)
     .flatMap((directory) => extensions.map((extension) => resolve(directory, `${command}${extension}`)));
@@ -540,46 +712,40 @@ function usesWindowsCommandShell(command: string): boolean {
 }
 
 function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolean {
-  const params = asRecord(event.params);
-  const eventThreadId = typeof params?.threadId === "string" ? params.threadId : undefined;
-  const eventTurnId = typeof params?.turnId === "string"
-    ? params.turnId
-    : readString(asRecord(params?.turn), "id");
+  const eventThreadId = event.params.threadId;
+  const eventTurnId = event.params.turnId ?? event.params.turn?.id;
+
   if (eventThreadId && eventThreadId !== turn.threadId) return false;
+
   if (turn.turnId && eventTurnId && turn.turnId !== eventTurnId) return false;
+
   return eventThreadId === turn.threadId || Boolean(turn.turnId && eventTurnId === turn.turnId);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+function parseCodexEventParams(value: JSONType | undefined): CodexEventParams {
+  const parsed = codexEventParamsSchema.safeParse(value ?? {});
+
+  return parsed.success ? parsed.data : {};
 }
 
-function readString(value: unknown, key: string): string | undefined {
-  const result = asRecord(value)?.[key];
-  return typeof result === "string" ? result : undefined;
-}
+function protocolErrorText(value: JSONType): string {
+  const parsed = codexProtocolErrorSchema.safeParse(value);
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
+  if (!parsed.success || !parsed.data.message) return String(value);
+  const { message, code } = parsed.data;
 
-function protocolErrorText(value: unknown): string {
-  const record = asRecord(value);
-  if (!record) return String(value);
-  const message = directString(record.message);
-  const code = record.code;
   return message ? `codex app-server${code === undefined ? "" : ` ${String(code)}`}: ${message}` : String(value);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function appendTail(value: string, chunk: string, maxBytes: number): string {
   const next = value + chunk;
+
   if (Buffer.byteLength(next, "utf8") <= maxBytes) return next;
   const bytes = Buffer.from(next, "utf8");
+
   return bytes.subarray(bytes.length - maxBytes).toString("utf8");
 }
