@@ -257,15 +257,15 @@ export function registerDurableJobTools(context: ToolRegistrationContext): void 
     {
       title: "Wait for Durable Job",
       description:
-        "Wait up to a short bounded timeout (default 30 seconds, max 60 seconds) for a durable job to complete. If the job completes within the timeout, returns the final status; otherwise returns the current running status so the client can continue polling without timing out the MCP request.",
+        "Wait up to a short bounded timeout (default 25 seconds, max 45 seconds) for a durable job to complete. If the job completes within the timeout, returns the final status along with tail logs (verdict / summary) in one turn; otherwise returns the running status so the client can continue polling without timing out the MCP request.",
       inputSchema: {
         job_id: z.string().describe("Durable job ID returned by job_start."),
         timeout_seconds: z
           .number()
           .positive()
-          .max(60)
+          .max(45)
           .optional()
-          .describe("Seconds to wait before returning. Defaults to 30, max 60."),
+          .describe("Seconds to wait before returning. Defaults to 25, max 45 to prevent client HTTP/SSE timeout dropouts."),
       },
       outputSchema: {
         result: z.string(),
@@ -277,8 +277,8 @@ export function registerDurableJobTools(context: ToolRegistrationContext): void 
         openWorldHint: false,
       },
     },
-    async ({ job_id, timeout_seconds = 30 }) => {
-      const maxWaitMs = Math.min(Math.max(1, timeout_seconds), 60) * 1000;
+    async ({ job_id, timeout_seconds = 25 }) => {
+      const maxWaitMs = Math.min(Math.max(1, timeout_seconds), 45) * 1000;
       const pollIntervalMs = 500;
       const startTime = Date.now();
 
@@ -292,9 +292,11 @@ export function registerDurableJobTools(context: ToolRegistrationContext): void 
           };
         }
         if (record.status !== "running") {
+          const logs = jobManager.readLogs(job_id, { tail: true, maxBytes: 8192 });
+          const summary = `Job ${job_id} finished with status: ${record.status}${record.exitCode !== null ? ` (exit code: ${record.exitCode})` : ""}.\n\n--- Output Tail ---\n${logs.content || "(no output)"}`;
           return {
-            content: [{ type: "text", text: `Job ${job_id} finished with status: ${record.status}` }],
-            structuredContent: { result: JSON.stringify(record, null, 2) },
+            content: [{ type: "text", text: summary }],
+            structuredContent: { result: JSON.stringify({ ...record, tailLogs: logs.content }, null, 2) },
           };
         }
         await new Promise((r) => setTimeout(r, pollIntervalMs));
