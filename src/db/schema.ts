@@ -56,6 +56,30 @@ export const workspaceConversationBindings = sqliteTable(
   ],
 );
 
+export const workspaceToolCalls = sqliteTable(
+  "workspace_tool_calls",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    workspaceSessionId: text("workspace_session_id").references(() => workspaceSessions.id, {
+      onDelete: "cascade",
+    }),
+    conversationScopeId: text("conversation_scope_id"),
+    requestId: text("request_id"),
+    toolName: text("tool_name").notNull(),
+    argumentsJson: text("arguments_json").notNull(),
+    resultJson: text("result_json"),
+    errorJson: text("error_json"),
+    startedAt: text("started_at").notNull(),
+    completedAt: text("completed_at"),
+    durationMs: integer("duration_ms"),
+    reviewRef: text("review_ref"),
+  },
+  (table) => [
+    index("workspace_tool_calls_workspace_idx").on(table.workspaceSessionId, table.id),
+    index("workspace_tool_calls_review_ref_idx").on(table.workspaceSessionId, table.reviewRef),
+  ],
+);
+
 export const oauthClients = sqliteTable(
   "oauth_clients",
   {
@@ -123,5 +147,7 @@ export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
 export type WorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferSelect;
 export type NewWorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferInsert;
+export type WorkspaceToolCallRow = typeof workspaceToolCalls.$inferSelect;
+export type NewWorkspaceToolCallRow = typeof workspaceToolCalls.$inferInsert;
 export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
 export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;
