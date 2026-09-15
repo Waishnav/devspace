@@ -324,7 +324,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
 }
 
 export function processLogFields(result: ProcessSnapshot): Partial<ToolLogFields> {
-  const success = result.running || result.exitCode === 0;
+  const success = result.running || (!result.signal && result.exitCode === 0);
   const termination = result.signal
     ? `Process terminated by signal ${result.signal}.`
     : `Process exited with code ${result.exitCode ?? "unknown"}.`;
