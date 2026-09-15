@@ -21,6 +21,7 @@ import {
   resultOutputSchema,
   textBlock,
 } from "./shared.js";
+import { registerDurableJobTools } from "./jobs.js";
 
 const CLAUDE_INSTRUCTIONS = `Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
 
@@ -33,6 +34,7 @@ export function claudeInstructions({
 
 export function registerClaudeTools(context: ToolRegistrationContext): void {
   registerClaudeMutationTools(context);
+  registerDurableJobTools(context);
   registerShellTool(context);
 }
 
