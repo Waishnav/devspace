@@ -270,6 +270,29 @@ test("a broken HEAD is not treated as an unborn repository", async (t) => {
   assert.equal(availability.available, false);
 });
 
+test("an unborn review baseline survives the first user commit", async (t) => {
+  const root = await unbornRepository(t);
+  await writeFile(join(root, "existing.txt"), "present at open\n");
+  const manager = createReviewCheckpointManager();
+
+  await manager.initializeWorkspace({ workspaceId: "ws_first_commit", root });
+  await writeFile(join(root, "before-first-commit.txt"), "reviewed before commit\n");
+  await manager.reviewChanges({ workspaceId: "ws_first_commit", root });
+
+  await git(root, ["add", "-A"]);
+  await git(root, ["commit", "-m", "Initial commit"]);
+  await writeFile(join(root, "after-first-commit.txt"), "created after commit\n");
+
+  const review = await manager.reviewChanges({
+    workspaceId: "ws_first_commit",
+    root,
+    markReviewed: false,
+  });
+  assert.deepEqual(review.files.map((file) => file.path), ["after-first-commit.txt"]);
+  assert.match(review.patch, /created after commit/);
+  assert.doesNotMatch(review.patch, /reviewed before commit/);
+});
+
 async function committedRepository(t: TestContext): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "devspace-review-checkpoints-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
