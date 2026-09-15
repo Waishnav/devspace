@@ -259,6 +259,17 @@ test("an unborn repository is reviewable without creating a HEAD commit", async 
   assert.match(review.patch, /new file/);
 });
 
+test("a broken HEAD is not treated as an unborn repository", async (t) => {
+  const root = await committedRepository(t);
+  const head = await gitOutput(root, ["rev-parse", "HEAD"]);
+  await rm(join(root, ".git", "objects", head.slice(0, 2), head.slice(2)));
+  const manager = createReviewCheckpointManager();
+
+  const availability = await manager.initializeWorkspace({ workspaceId: "ws_broken_head", root });
+
+  assert.equal(availability.available, false);
+});
+
 async function committedRepository(t: TestContext): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "devspace-review-checkpoints-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
