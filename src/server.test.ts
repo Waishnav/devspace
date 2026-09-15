@@ -186,6 +186,39 @@ test("open_workspace reports aggregate review availability", async (t) => {
   assert.deepEqual(gitReview, { available: true });
 });
 
+test("show_changes reviews an unborn repository through the MCP tool surface", async (t) => {
+  const context = await fixture(t, { uiEnabled: false });
+  await git(context.project, ["init"]);
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "unborn-review"));
+  const workspaceId = opened.workspace_id;
+  assert.equal(typeof workspaceId, "string");
+  assert.deepEqual(opened.review, { available: true });
+
+  await writeFile(join(context.project, "created-after-open.txt"), "new file\n");
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+  });
+  const card = responseCard(review);
+
+  assert.deepEqual(card.files, [
+    {
+      path: "created-after-open.txt",
+      type: "new",
+      additions: 1,
+      removals: 0,
+    },
+  ]);
+  assert.match(
+    ((card.payload as { patch?: string } | undefined)?.patch) ?? "",
+    /new file/,
+  );
+  await assert.rejects(() => execFileAsync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
+    cwd: context.project,
+  }));
+});
+
 test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
   const context = await fixture(t, { git: true, uiEnabled: false });
   const opened = structuredContent(
