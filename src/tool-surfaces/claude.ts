@@ -15,7 +15,6 @@ import {
 } from "./types.js";
 import {
   contentText,
-  countDiffStats,
   logFailedToolResponse,
   logToolCall,
   resultOutputSchema,
@@ -118,9 +117,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
           )
           .min(1),
       },
-      outputSchema: resultOutputSchema({
-        status: z.literal("applied"),
-      }),
+      outputSchema: resultOutputSchema(),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, edits, ...input }) => {
@@ -151,10 +148,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
         return response;
       }
 
-      const stats = countDiffStats(
-        response.details?.patch ?? response.details?.diff,
-      );
-      const editResultText = `Edited ${input.path} (+${stats.additions} -${stats.removals}).`;
+      const editResultText = `Edited ${input.path}.`;
       const editContent = [textBlock(editResultText)];
       logToolCall(config, {
         tool: toolNames.edit,
@@ -167,7 +161,6 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       return {
         content: editContent,
         structuredContent: {
-          status: "applied",
           result: contentText(editContent),
         },
       };

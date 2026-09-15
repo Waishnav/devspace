@@ -84,6 +84,103 @@ test("Codex process tools bound model-facing yield windows to 12 seconds", async
   }
 });
 
+test("Codex process tools keep model-facing inputs minimal", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const tools = await context.client.listTools();
+  const execTool = tools.tools.find(({ name }) => name === "exec_command");
+  const stdinTool = tools.tools.find(({ name }) => name === "write_stdin");
+  const execProperties = execTool?.inputSchema?.properties ?? {};
+  const stdinProperties = stdinTool?.inputSchema?.properties ?? {};
+
+  assert.ok("workdir" in execProperties);
+  assert.equal("working_directory" in execProperties, false);
+  assert.equal("columns" in execProperties, false);
+  assert.equal("rows" in execProperties, false);
+  assert.equal("columns" in stdinProperties, false);
+  assert.equal("rows" in stdinProperties, false);
+
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "codex-workdir"),
+  ).workspace_id;
+  assert.equal(typeof workspaceId, "string");
+  await mkdir(join(context.project, "nested"));
+
+  const result = structuredContent(await context.client.callTool({
+    name: "exec_command",
+    arguments: {
+      workspace_id: workspaceId,
+      cmd: `${JSON.stringify(process.execPath)} -e "process.stdout.write(process.cwd())"`,
+      workdir: "nested",
+    },
+  }));
+  assert.match(result.output as string, /nested/i);
+});
+
+test("Codex process results expose only actionable process state", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const tools = await context.client.listTools();
+  const execTool = tools.tools.find(({ name }) => name === "exec_command");
+  const outputProperties = execTool?.outputSchema?.properties ?? {};
+
+  assert.ok("output" in outputProperties);
+  assert.ok("wall_time_seconds" in outputProperties);
+  assert.ok("session_id" in outputProperties);
+  assert.ok("exit_code" in outputProperties);
+  assert.ok("signal" in outputProperties);
+  assert.ok("original_token_count" in outputProperties);
+  assert.equal("result" in outputProperties, false);
+  assert.equal("running" in outputProperties, false);
+  assert.equal("wall_time_ms" in outputProperties, false);
+  assert.equal("output_truncated" in outputProperties, false);
+
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "codex-output"),
+  ).workspace_id;
+  assert.equal(typeof workspaceId, "string");
+
+  const response = await context.client.callTool({
+    name: "exec_command",
+    arguments: {
+      workspace_id: workspaceId,
+      cmd: "printf hello",
+    },
+  });
+  const result = structuredContent(response);
+  assert.equal(result.output, "hello");
+  assert.equal(result.exit_code, 0);
+  assert.equal(typeof result.wall_time_seconds, "number");
+  assert.equal("session_id" in result, false);
+  assert.equal("running" in result, false);
+  assert.equal("output_truncated" in result, false);
+  const content = response.content as Array<{ type: string; text?: string }> | undefined;
+  assert.match(content?.find((block) => block.type === "text")?.text ?? "", /Output:\nhello/);
+});
+
+test("apply_patch returns only a concise acknowledgement", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const tools = await context.client.listTools();
+  const tool = tools.tools.find(({ name }) => name === "apply_patch");
+  const outputProperties = tool?.outputSchema?.properties ?? {};
+
+  assert.deepEqual(Object.keys(outputProperties).sort(), ["result"]);
+
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "codex-patch"),
+  ).workspace_id;
+  assert.equal(typeof workspaceId, "string");
+
+  const response = structuredContent(await context.client.callTool({
+    name: "apply_patch",
+    arguments: {
+      workspace_id: workspaceId,
+      patch: "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch",
+    },
+  }));
+  assert.deepEqual(Object.keys(response), ["result"]);
+  assert.match(response.result as string, /A note\.txt/);
+  assert.equal(await readFile(join(context.project, "note.txt"), "utf8"), "hello\n");
+});
+
 test("Claude edit and bash tools accept snake_case runtime inputs", async (t) => {
   const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
   const workspaceId = structuredContent(
@@ -103,6 +200,8 @@ test("Claude edit and bash tools accept snake_case runtime inputs", async (t) =>
     },
   });
   assert.equal(edited.isError, undefined);
+  assert.deepEqual(Object.keys(structuredContent(edited)), ["result"]);
+  assert.equal(structuredContent(edited).result, "Edited note.txt.");
   assert.equal(await readFile(join(context.project, "note.txt"), "utf8"), "after\n");
 
   const shell = structuredContent(await context.client.callTool({
@@ -175,15 +274,17 @@ test("UI metadata is limited to workspace and aggregate review", async (t) => {
   }
 });
 
-test("open_workspace reports aggregate review availability", async (t) => {
+test("open_workspace only reports review state when review is unavailable", async (t) => {
   const plain = await fixture(t);
   const gitWorkspace = await fixture(t, { git: true });
 
-  const plainReview = structuredContent(await callOpen(plain.client, plain.project, "plain")).review;
-  const gitReview = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git")).review;
+  const plainResult = structuredContent(await callOpen(plain.client, plain.project, "plain"));
+  const gitResult = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git"));
 
-  assert.equal((plainReview as { available: boolean }).available, false);
-  assert.deepEqual(gitReview, { available: true });
+  assert.equal(typeof plainResult.review_unavailable, "string");
+  assert.equal("review" in plainResult, false);
+  assert.equal("review_unavailable" in gitResult, false);
+  assert.equal("review" in gitResult, false);
 });
 
 test("show_changes reviews an unborn repository through the MCP tool surface", async (t) => {
@@ -329,17 +430,22 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.equal(outputProperties && "workspaceId" in outputProperties, false);
   assert.equal(outputProperties && "workspaceReused" in outputProperties, false);
   assert.equal(outputProperties && "includeBootstrapContext" in outputProperties, false);
+  assert.equal(outputProperties && "skill_diagnostics" in outputProperties, false);
+  assert.equal(outputProperties && "source_root" in outputProperties, false);
+  assert.equal(outputProperties && "worktree" in outputProperties, false);
+  assert.equal(outputProperties && "review" in outputProperties, false);
+  assert.ok(outputProperties && "review_unavailable" in outputProperties);
   const providerSchema = outputProperties?.agent_providers as {
     items?: { properties?: Record<string, unknown> };
   } | undefined;
-  assert.ok(providerSchema?.items?.properties?.note);
+  assert.equal(providerSchema?.items?.properties && "note" in providerSchema.items.properties, false);
 
   const firstStructured = structuredContent(first);
   assert.equal(typeof firstStructured.workspace_id, "string");
   assert.equal("workspaceId" in firstStructured, false);
   assert.equal(firstStructured.workspace_id, structuredContent(repeated).workspace_id);
   assert.ok(Array.isArray(firstStructured.agents_files));
-  assert.ok(Array.isArray(firstStructured.available_agents_files));
+  assert.equal(firstStructured.available_agents_files, undefined);
   assert.ok(Array.isArray(firstStructured.skills));
   assert.ok(Array.isArray(firstStructured.agent_providers));
   assert.equal(
@@ -347,11 +453,11 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
     "codex",
   );
   assert.equal(
-    (firstStructured.agent_providers as Array<Record<string, unknown>>)[0]?.note,
-    providerNote,
+    "note" in (firstStructured.agent_providers as Array<Record<string, unknown>>)[0]!,
+    false,
   );
   assert.ok(Array.isArray(firstStructured.agents));
-  assert.ok(Array.isArray(firstStructured.skill_diagnostics));
+  assert.equal("skill_diagnostics" in firstStructured, false);
   assert.equal("workspaceReused" in firstStructured, false);
   assert.equal("includeBootstrapContext" in firstStructured, false);
 
@@ -365,7 +471,7 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.equal(repeatedStructured.skills, undefined);
   assert.equal(repeatedStructured.agent_providers, undefined);
   assert.equal(repeatedStructured.agents, undefined);
-  assert.equal(repeatedStructured.skill_diagnostics, undefined);
+  assert.equal("skill_diagnostics" in repeatedStructured, false);
   assert.equal("workspaceReused" in repeatedStructured, false);
   assert.equal("includeBootstrapContext" in repeatedStructured, false);
 
@@ -390,8 +496,8 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   });
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  assert.deepEqual(unavailable.agent_providers, []);
-  assert.deepEqual(unavailable.agents, []);
+  assert.equal(unavailable.agent_providers, undefined);
+  assert.equal(unavailable.agents, undefined);
 
   available = true;
   const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
@@ -450,7 +556,7 @@ test("open_workspace preloads subagent instructions when configured", async (t) 
   });
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  const skills = opened.skills as Array<Record<string, unknown>>;
+  const skills = (opened.skills ?? []) as Array<Record<string, unknown>>;
   assert.equal(skills.some((skill) => skill.name === "subagents"), false);
   assert.match(String(opened.instruction), /# DevSpace subagents/);
 });

@@ -154,12 +154,10 @@ function formatAvailableAgentProvider(provider: {
   id: string;
   model?: string;
   effort?: string;
-  note?: string;
 }): string {
   const details = [
     provider.model ? `model ${provider.model}` : undefined,
     provider.effort ? `effort ${provider.effort}` : undefined,
-    provider.note,
   ].filter(Boolean).join(", ");
   return `${provider.id}${details ? ` (${details})` : ""}`;
 }
@@ -187,7 +185,6 @@ const workspaceLocalAgentProviderOutputSchema = z.object({
   id: z.string(),
   model: z.string().optional(),
   effort: z.string().optional(),
-  note: z.string().optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({
@@ -409,30 +406,13 @@ function registerMcpSurface(
         workspace_id: z.string(),
         root: z.string(),
         mode: z.enum(["checkout", "worktree"]),
-        source_root: z.string().optional(),
-        worktree: z
-          .object({
-            path: z.string(),
-            base_ref: z.string(),
-            base_sha: z.string(),
-            dirty_source: z.boolean(),
-            detached: z.boolean(),
-            managed: z.boolean(),
-          })
-          .optional(),
+        source_dirty: z.literal(true).optional(),
         agents_files: z.array(workspaceAgentsFileOutputSchema).optional(),
         available_agents_files: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
         skills: z.array(workspaceSkillOutputSchema).optional(),
         agent_providers: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
         agents: z.array(workspaceLocalAgentOutputSchema).optional(),
-        skill_diagnostics: z.array(z.unknown()).optional(),
-        review: z.discriminatedUnion("available", [
-          z.object({ available: z.literal(true) }),
-          z.object({
-            available: z.literal(false),
-            reason: z.string(),
-          }),
-        ]),
+        review_unavailable: z.string().optional(),
         instruction: z.string(),
       },
       ...workspaceAppDescriptorMeta(config),
@@ -491,7 +471,9 @@ function registerMcpSurface(
         path: formatAgentsPath(file.path, workspace.root),
       }));
       const visibleSkills = includeBootstrapContext ? cardSkills : [];
-      const visibleAgentProviders = includeBootstrapContext ? cardAgentProviders : [];
+      const visibleAgentProviders = includeBootstrapContext
+        ? cardAgentProviders.map(({ note: _note, ...provider }) => provider)
+        : [];
       const visibleAgents = includeBootstrapContext ? cardAgents : [];
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
@@ -502,10 +484,10 @@ function registerMcpSurface(
         ? [
             `Workspace already open as ${workspace.id}.`,
             "Continue with this workspace_id.",
-            "Keep following the project instructions, nested instruction files, skills, agent profiles, and diagnostics already provided for this workspace.",
+            "Keep following the project instructions, nested instruction files, skills, and agent profiles already provided for this workspace.",
           ].join("\n\n")
         : workspace.mode === "worktree"
-          ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
+          ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, and agent profiles returned for it."
           : cardInstruction;
       const instruction = preloadedSubagentInstructions && includeBootstrapContext
         ? [
@@ -525,6 +507,10 @@ function registerMcpSurface(
                 : `Opened workspace ${workspace.id}.`,
             `Root: ${workspace.root}`,
             `Mode: ${workspace.mode}`,
+            workspace.worktree?.dirtySource
+              ? "Source checkout has uncommitted changes that are not part of this worktree."
+              : undefined,
+            review.available ? undefined : `Change review unavailable: ${review.reason}`,
             loadedAgentsFiles.length > 0
               ? `Loaded project instructions: ${loadedAgentsFiles.map((file) => file.path).join(", ")}`
               : undefined,
@@ -585,26 +571,19 @@ function registerMcpSurface(
           workspace_id: workspace.id,
           root: workspace.root,
           mode: workspace.mode,
-          source_root: workspace.sourceRoot,
-          worktree: workspace.worktree
-            ? {
-                path: workspace.worktree.path,
-                base_ref: workspace.worktree.baseRef,
-                base_sha: workspace.worktree.baseSha,
-                dirty_source: workspace.worktree.dirtySource,
-                detached: workspace.worktree.detached,
-                managed: workspace.worktree.managed,
-              }
-            : undefined,
-          review,
+          ...(workspace.worktree?.dirtySource ? { source_dirty: true as const } : {}),
+          ...(!review.available ? { review_unavailable: review.reason } : {}),
           ...(includeBootstrapContext
             ? {
-                agents_files: loadedAgentsFiles,
-                available_agents_files: availableAgentsFileOutputs,
-                skills: visibleSkills,
-                agent_providers: visibleAgentProviders,
-                agents: visibleAgents,
-                skill_diagnostics: workspace.skillDiagnostics,
+                ...(loadedAgentsFiles.length > 0 ? { agents_files: loadedAgentsFiles } : {}),
+                ...(availableAgentsFileOutputs.length > 0
+                  ? { available_agents_files: availableAgentsFileOutputs }
+                  : {}),
+                ...(visibleSkills.length > 0 ? { skills: visibleSkills } : {}),
+                ...(visibleAgentProviders.length > 0
+                  ? { agent_providers: visibleAgentProviders }
+                  : {}),
+                ...(visibleAgents.length > 0 ? { agents: visibleAgents } : {}),
               }
             : {}),
           instruction,
