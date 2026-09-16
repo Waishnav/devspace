@@ -12,6 +12,14 @@ assert.deepEqual(basic, {
   args: { value: 42 },
   host: ["undefined", "undefined", "undefined", "undefined", "undefined"],
 });
+assert.deepEqual(await runWorkflowScript({
+  source: `return [
+    Function("return typeof process")(),
+    Function("return typeof globalThis.__hostCall")(),
+    agent.constructor("return typeof globalThis.__emit")(),
+  ];`,
+  onAgent: () => null,
+}), ["undefined", "undefined", "undefined"], "dynamic code cannot recover host capabilities");
 assert.equal(await runWorkflowScript({
   source: `try { await import("node:fs"); return false; } catch { return true; }`,
   onAgent: () => null,
@@ -22,6 +30,15 @@ assert.deepEqual(await runWorkflowScript({
   source: `return { own: Object.hasOwn(args, "__proto__"), polluted: ({}).polluted ?? null };`,
   args: prototypeArgs,
   onAgent: () => null,
+}), { own: true, polluted: null });
+
+const prototypeResult = JSON.parse('{"__proto__":{"polluted":true}}') as unknown;
+assert.deepEqual(await runWorkflowScript({
+  source: `
+    const value = await agent("proto", { target: "worker" });
+    return { own: Object.hasOwn(value, "__proto__"), polluted: ({}).polluted ?? null };
+  `,
+  onAgent: () => prototypeResult,
 }), { own: true, polluted: null });
 
 const calls: Array<{ prompt: string; target: string }> = [];
@@ -60,11 +77,11 @@ assert.deepEqual(parallel, [
 const pipeline = await runWorkflowScript({
   source: `
     return pipeline([2, 3],
-      async (value, item, index) => value * 2 + index,
+      async (value, item, index) => await agent(String(value * 2 + index), { target: "worker" }),
       async (value, item, index) => ({ value, item, index }),
     );
   `,
-  onAgent: () => null,
+  onAgent: (prompt) => Number(prompt),
 });
 assert.deepEqual(pipeline, [
   { status: "completed", value: { value: 4, item: 2, index: 0 } },
@@ -211,6 +228,41 @@ await assert.rejects(
     onAgent: () => null,
   }),
   (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_RESULT_LIMIT",
+);
+
+await assert.rejects(
+  runWorkflowScript({
+    source: `return () => "not JSON";`,
+    onAgent: () => null,
+  }),
+  (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
+);
+
+await assert.rejects(
+  runWorkflowScript({
+    source: `const value = {}; value.self = value; return value;`,
+    onAgent: () => null,
+  }),
+  (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
+);
+
+await assert.rejects(
+  runWorkflowScript({
+    source: "return 1;".repeat(20),
+    limits: { maxSourceBytes: 32 },
+    onAgent: () => null,
+  }),
+  (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
+);
+
+await assert.rejects(
+  runWorkflowScript({
+    source: `return args;`,
+    args: "x".repeat(100),
+    limits: { maxArgsBytes: 32 },
+    onAgent: () => null,
+  }),
+  (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
 );
 
 await assert.rejects(

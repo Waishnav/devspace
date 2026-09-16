@@ -29,6 +29,7 @@ let context: QuickJSContext | undefined;
 let runtime: QuickJSRuntime | undefined;
 let jsonObject: QuickJSHandle | undefined;
 let jsonParse: QuickJSHandle | undefined;
+let jsonStringify: QuickJSHandle | undefined;
 let limits: WorkflowRunnerLimits | undefined;
 let deadline = 0;
 let nextCallId = 1;
@@ -74,6 +75,7 @@ async function run(message: RunMessage): Promise<void> {
     context = runtime.newContext();
     jsonObject = context.getProp(context.global, "JSON");
     jsonParse = context.getProp(jsonObject, "parse");
+    jsonStringify = context.getProp(jsonObject, "stringify");
     exposeHostFunctions(context);
 
     const evaluation = context.evalCode(workflowProgram(message), "workflow.js");
@@ -97,9 +99,8 @@ async function run(message: RunMessage): Promise<void> {
     if (pending.size > 0) await new Promise<void>((resolve) => { resolvePending = resolve; });
     if (fatalError) return fail(fatalError, true);
 
-    const value = context.dump(result.value);
+    const encoded = encodeGuestJson(context, result.value, "Workflow result");
     result.value.dispose();
-    const encoded = encodeJson(value, "Workflow result");
     if (Buffer.byteLength(encoded, "utf8") > limits.maxResultBytes) {
       return fail({ code: "WORKFLOW_RESULT_LIMIT", message: `Workflow result exceeds the ${limits.maxResultBytes}-byte limit.` }, true);
     }
@@ -127,8 +128,7 @@ function exposeHostFunctions(vm: QuickJSContext): void {
       }
       const kind = vm.getString(kindHandle);
       if (kind !== "agent" && kind !== "workflow") throw new Error("Unknown workflow host call.");
-      const payload = vm.dump(payloadHandle);
-      const encoded = encodeJson(payload, "Workflow host call");
+      const encoded = encodeGuestJson(vm, payloadHandle, "Workflow host call");
       if (Buffer.byteLength(encoded, "utf8") > limits.maxArgsBytes) {
         const error = {
           code: "WORKFLOW_SIZE_LIMIT",
@@ -156,8 +156,7 @@ function exposeHostFunctions(vm: QuickJSContext): void {
   const emit = vm.newFunction("__emit", (typeHandle, dataHandle) => {
     if (!limits) throw new Error("Workflow limits are unavailable.");
     const eventType = vm.getString(typeHandle);
-    const data = vm.dump(dataHandle);
-    const encoded = encodeJson(data, "Workflow event");
+    const encoded = encodeGuestJson(vm, dataHandle, "Workflow event");
     logEntries += 1;
     logBytes += Buffer.byteLength(encoded, "utf8") + eventType.length;
     if (logEntries > limits.maxLogEntries || logBytes > limits.maxLogBytes) {
@@ -295,6 +294,26 @@ function valueHandle(vm: QuickJSContext, value: unknown) {
   return result.value;
 }
 
+function encodeGuestJson(vm: QuickJSContext, value: QuickJSHandle, label: string): string {
+  if (!jsonObject || !jsonStringify) throw new Error("Workflow JSON serializer is unavailable.");
+  const result = vm.callFunction(jsonStringify, jsonObject, value);
+  if (result.error) {
+    const error = quickJsError(result.error);
+    result.error.dispose();
+    throw Object.assign(new TypeError(`${label} must be JSON: ${error.message}`), {
+      code: "WORKFLOW_INVALID_JSON",
+    });
+  }
+  try {
+    if (vm.typeof(result.value) !== "string") {
+      throw Object.assign(new TypeError(`${label} must be JSON.`), { code: "WORKFLOW_INVALID_JSON" });
+    }
+    return vm.getString(result.value);
+  } finally {
+    result.value.dispose();
+  }
+}
+
 function reject(deferred: QuickJSDeferredPromise, error: ErrorPayload): void {
   if (!context) return;
   const handle = context.newError(error.message);
@@ -379,8 +398,10 @@ function cleanup(): void {
   for (const deferred of pending.values()) deferred.dispose();
   pending.clear();
   jsonParse?.dispose();
+  jsonStringify?.dispose();
   jsonObject?.dispose();
   jsonParse = undefined;
+  jsonStringify = undefined;
   jsonObject = undefined;
   try { context?.dispose(); } catch { /* The process is disposable. */ }
   try { runtime?.dispose(); } catch { /* The process is disposable. */ }
