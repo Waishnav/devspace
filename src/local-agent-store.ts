@@ -5,6 +5,7 @@ import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 import type { LocalAgentTurnEvent, LocalAgentTurnEventBody } from "./local-agent-events.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
+import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped";
@@ -18,6 +19,7 @@ export interface LocalAgentRecord {
   driver: LocalAgentDriverKind;
   model?: string;
   effort?: string;
+  writeMode: LocalAgentWriteMode;
   providerSessionId?: string;
   status: LocalAgentStatus;
   latestResponse?: string;
@@ -31,6 +33,7 @@ export interface LocalAgentRecord {
 }
 
 export interface CreateLocalAgentRecordInput {
+  id?: string;
   workspaceId?: string;
   workspaceRoot: string;
   profileName: string;
@@ -38,7 +41,16 @@ export interface CreateLocalAgentRecordInput {
   driver: LocalAgentDriverKind;
   model?: string;
   effort?: string;
+  writeMode?: LocalAgentWriteMode;
+  dispatchSignature?: string;
 }
+
+export interface CreatedLocalAgentRecord {
+  record: LocalAgentRecord;
+  created: boolean;
+}
+
+export class LocalAgentDispatchConflictError extends Error {}
 
 export interface LocalAgentTurnRecord {
   /** Store row identity; never leaves the daemon. */
@@ -62,6 +74,7 @@ export interface BeginLocalAgentTurnInput {
   prompt: string;
   model?: string;
   effort?: string;
+  writeMode?: LocalAgentWriteMode;
 }
 
 export type FinishLocalAgentTurnInput =
@@ -93,6 +106,8 @@ interface LocalAgentRow {
   driver: LocalAgentDriverKind;
   model: string | null;
   effort: string | null;
+  write_mode: string;
+  dispatch_signature: string | null;
   provider_session_id: string | null;
   status: string;
   latest_response: string | null;
@@ -177,67 +192,90 @@ export class LocalAgentStore {
   }
 
   create(input: CreateLocalAgentRecordInput): LocalAgentRecord {
-    const now = new Date().toISOString();
-    const record: LocalAgentRecord = {
-      id: `agt_${randomUUID().replaceAll("-", "").slice(0, 8)}`,
-      workspaceId: input.workspaceId,
-      workspaceRoot: resolve(input.workspaceRoot),
-      profileName: input.profileName,
-      providerInstanceId: input.providerInstanceId,
-      driver: input.driver,
-      model: input.model,
-      effort: input.effort,
-      status: "starting",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.database.sqlite
-      .prepare(
-        `insert into local_agent_sessions (
-          id,
-          workspace_id,
-          workspace_root,
-          profile_name,
-          provider_instance_id,
-          driver,
-          model,
-          effort,
-          status,
-          created_at,
-          updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
-        record.workspaceId ?? null,
-        record.workspaceRoot,
-        record.profileName,
-        record.providerInstanceId,
-        record.driver,
-        record.model ?? null,
-        record.effort ?? null,
-        record.status,
-        record.createdAt,
-        record.updatedAt,
-      );
-
-    return record;
+    return this.createDispatch(input).record;
   }
 
-  createResult(input: CreateLocalAgentRecordInput): BetterResult<LocalAgentRecord, AgentStoreError> {
-    return storeResult("create", () => this.create(input));
+  private createDispatch(input: CreateLocalAgentRecordInput): CreatedLocalAgentRecord {
+    return this.database.sqlite.transaction(() => {
+      const id = input.id ?? `agt_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      validateAgentId(id);
+      const existing = this.getRowById(id);
+      if (existing) {
+        const record = rowToLocalAgentRecord(existing);
+        validateDispatchIdentity(record, input, existing.dispatch_signature);
+        return { record, created: false };
+      }
+      const now = new Date().toISOString();
+      const record: LocalAgentRecord = {
+        id,
+        workspaceId: input.workspaceId,
+        workspaceRoot: resolve(input.workspaceRoot),
+        profileName: input.profileName,
+        providerInstanceId: input.providerInstanceId,
+        driver: input.driver,
+        model: input.model,
+        effort: input.effort,
+        writeMode: input.writeMode ?? "allowed",
+        status: "starting",
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      this.database.sqlite
+        .prepare(
+          `insert into local_agent_sessions (
+            id,
+            workspace_id,
+            workspace_root,
+            profile_name,
+            provider_instance_id,
+            driver,
+            model,
+            effort,
+            write_mode,
+            dispatch_signature,
+            status,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          record.id,
+          record.workspaceId ?? null,
+          record.workspaceRoot,
+          record.profileName,
+          record.providerInstanceId,
+          record.driver,
+          record.model ?? null,
+          record.effort ?? null,
+          record.writeMode,
+          input.dispatchSignature ?? null,
+          record.status,
+          record.createdAt,
+          record.updatedAt,
+        );
+
+      return { record, created: true };
+    }).immediate();
+  }
+
+  createResult(input: CreateLocalAgentRecordInput): BetterResult<CreatedLocalAgentRecord, AgentStoreError> {
+    return storeResult("create", () => this.createDispatch(input));
   }
 
   getById(id: string): LocalAgentRecord | undefined {
-    const exact = this.database.sqlite
+    const exact = this.getRowById(id);
+    return exact ? rowToLocalAgentRecord(exact) : undefined;
+  }
+
+  private getRowById(id: string): LocalAgentRow | undefined {
+    return this.database.sqlite
       .prepare(
         `select * from local_agent_sessions
          where id = ?
          limit 1`,
       )
       .get(id) as LocalAgentRow | undefined;
-    return exact ? rowToLocalAgentRecord(exact) : undefined;
   }
 
   getByIdResult(id: string): BetterResult<LocalAgentRecord | undefined, AgentStoreError> {
@@ -272,6 +310,7 @@ export class LocalAgentStore {
           driver = ?,
           model = ?,
           effort = ?,
+          write_mode = ?,
           provider_session_id = ?,
           status = ?,
           latest_response = ?,
@@ -291,6 +330,7 @@ export class LocalAgentStore {
         updated.driver,
         updated.model ?? null,
         updated.effort ?? null,
+        updated.writeMode,
         updated.providerSessionId ?? null,
         updated.status,
         updated.latestResponse ?? null,
@@ -324,6 +364,7 @@ export class LocalAgentStore {
         status: "running",
         model: input.model,
         effort: input.effort,
+        writeMode: input.writeMode ?? current.writeMode,
         latestResponse: undefined,
         error: undefined,
         errorCode: undefined,
@@ -572,6 +613,7 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     driver: row.driver,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
+    writeMode: readWriteMode(row.write_mode),
     providerSessionId: row.provider_session_id ?? undefined,
     status: readStatus(row.status),
     latestResponse: row.latest_response ?? undefined,
@@ -635,4 +677,51 @@ function readStatus(status: string): LocalAgentStatus {
     return status;
   }
   return "error";
+}
+
+function readWriteMode(value: string): LocalAgentWriteMode {
+  if (value === "read_only" || value === "allowed" || value === "full_access") return value;
+  throw new Error(`Invalid stored local agent write mode: ${value}`);
+}
+
+function validateAgentId(id: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) {
+    throw new Error("Subagent id must be 1-128 characters using letters, numbers, '.', '_', ':' or '-'.");
+  }
+}
+
+function validateDispatchIdentity(
+  existing: LocalAgentRecord,
+  input: CreateLocalAgentRecordInput,
+  storedSignature: string | null,
+): void {
+  const expected = {
+    workspaceId: input.workspaceId,
+    workspaceRoot: resolve(input.workspaceRoot),
+    profileName: input.profileName,
+    providerInstanceId: input.providerInstanceId,
+    driver: input.driver,
+  };
+  for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
+    if (existing[key] !== expected[key]) {
+      throw new LocalAgentDispatchConflictError(
+        `Subagent id ${existing.id} is already owned by a different dispatch.`,
+      );
+    }
+  }
+  if (storedSignature !== (input.dispatchSignature ?? null)) {
+    throw new LocalAgentDispatchConflictError(
+      `Subagent id ${existing.id} is already owned by a different dispatch.`,
+    );
+  }
+  if (storedSignature !== null) return;
+  if (
+    existing.model !== input.model
+    || existing.effort !== input.effort
+    || existing.writeMode !== (input.writeMode ?? "allowed")
+  ) {
+    throw new LocalAgentDispatchConflictError(
+      `Subagent id ${existing.id} is already owned by a different dispatch.`,
+    );
+  }
 }

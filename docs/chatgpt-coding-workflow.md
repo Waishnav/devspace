@@ -124,6 +124,9 @@ managed path `~/.devspace/skills/subagents/SKILL.md`. That copy is refreshed
 from the installed DevSpace package and wins over other skills named
 `subagents`.
 
+DevSpace also synchronizes `~/.devspace/skills/workflows/SKILL.md` for persisted
+multi-agent workflows submitted with `devspace workflow`.
+
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
 `open_workspace` exposes a compact catalog with profile names, descriptions,

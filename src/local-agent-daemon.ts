@@ -47,6 +47,7 @@ import type {
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import { WorkflowError, type WorkflowCall, type WorkflowEvent, type WorkflowRun, type WorkflowRunInput } from "./workflow-types.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
@@ -77,9 +78,23 @@ export interface LocalAgentDaemonManager {
   readonly runtimeCount: number;
 }
 
+export interface LocalAgentDaemonWorkflowManager {
+  run(input: WorkflowRunInput): Promise<WorkflowRun>;
+  get(id: string, scope: LocalAgentWorkspaceScope): WorkflowRun;
+  list(scope: LocalAgentWorkspaceScope): WorkflowRun[];
+  wait(id: string, scope: LocalAgentWorkspaceScope, timeoutMs?: number, signal?: AbortSignal): Promise<WorkflowRun>;
+  calls(id: string, scope: LocalAgentWorkspaceScope): WorkflowCall[];
+  call(id: string, index: number, scope: LocalAgentWorkspaceScope): WorkflowCall;
+  events(id: string, scope: LocalAgentWorkspaceScope, after?: number): WorkflowEvent[];
+  cancel(id: string, scope: LocalAgentWorkspaceScope): Promise<WorkflowRun>;
+  close(): Promise<void>;
+  readonly activeRunCount: number;
+}
+
 export interface LocalAgentDaemonOptions {
   stateDir: string;
   manager: LocalAgentDaemonManager;
+  workflows?: LocalAgentDaemonWorkflowManager;
   configRevision: string;
   idleShutdownMs?: number;
   idleCheckIntervalMs?: number;
@@ -94,6 +109,7 @@ export interface LocalAgentDaemonOptions {
 export class LocalAgentDaemon {
   readonly paths: LocalAgentDaemonPaths;
   private readonly manager: LocalAgentDaemonManager;
+  private readonly workflows?: LocalAgentDaemonWorkflowManager;
   private readonly configRevision: string;
   private readonly lock: LocalAgentDaemonLock;
   private readonly idleShutdownMs: number;
@@ -118,6 +134,7 @@ export class LocalAgentDaemon {
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
     this.manager = options.manager;
+    this.workflows = options.workflows;
     this.configRevision = options.configRevision;
     this.lock = new LocalAgentDaemonLock(this.paths);
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
@@ -188,6 +205,7 @@ export class LocalAgentDaemon {
       endpoint: this.paths.endpoint,
       startedAt: this.startedAt,
       activeTurns: this.manager.activeTurnCount,
+      activeWorkflows: this.workflows?.activeRunCount ?? 0,
       runtimeCount: this.manager.runtimeCount,
       clientConnections: this.sockets.size,
     };
@@ -206,10 +224,11 @@ export class LocalAgentDaemon {
       });
       for (const socket of this.sockets) socket.destroy();
       this.sockets.clear();
-      const [serverResult, managerResult] = await Promise.allSettled([
-        withTimeout(closeServer(this.server), this.shutdownTimeoutMs, "daemon socket shutdown"),
-        withTimeout(this.manager.close(), this.shutdownTimeoutMs, "daemon manager shutdown"),
-      ]);
+      const serverResult = await settled(withTimeout(closeServer(this.server), this.shutdownTimeoutMs, "daemon socket shutdown"));
+      const workflowResult = this.workflows
+        ? await settled(withTimeout(this.workflows.close(), this.shutdownTimeoutMs, "workflow manager shutdown"))
+        : undefined;
+      const managerResult = await settled(withTimeout(this.manager.close(), this.shutdownTimeoutMs, "daemon manager shutdown"));
       if (serverResult.status === "rejected") {
         writeLocalAgentDaemonLog(this.paths, "warn", "daemon_socket_close_failed", {
           error: errorMessage(serverResult.reason),
@@ -218,6 +237,11 @@ export class LocalAgentDaemon {
       if (managerResult.status === "rejected") {
         writeLocalAgentDaemonLog(this.paths, "warn", "daemon_manager_close_failed", {
           error: errorMessage(managerResult.reason),
+        });
+      }
+      if (workflowResult?.status === "rejected") {
+        writeLocalAgentDaemonLog(this.paths, "warn", "workflow_manager_close_failed", {
+          error: errorMessage(workflowResult.reason),
         });
       }
       removeLocalAgentDaemonFiles(this.paths);
@@ -359,12 +383,33 @@ export class LocalAgentDaemon {
           turnId: request.params.turnId,
           afterSeq: request.params.afterSeq,
         }));
+      case "workflow.run":
+        return this.runWorkflowRequest(() => this.requireWorkflows().run(request.params));
+      case "workflow.get":
+        return this.requireWorkflows().get(request.params.id, request.params.scope);
+      case "workflow.list":
+        return this.requireWorkflows().list(request.params);
+      case "workflow.wait":
+        return this.requireWorkflows().wait(
+          request.params.id,
+          request.params.scope,
+          request.params.timeoutMs,
+          signal,
+        );
+      case "workflow.calls":
+        return this.requireWorkflows().calls(request.params.id, request.params.scope);
+      case "workflow.call":
+        return this.requireWorkflows().call(request.params.id, request.params.index, request.params.scope);
+      case "workflow.events":
+        return this.requireWorkflows().events(request.params.id, request.params.scope, request.params.after);
+      case "workflow.cancel":
+        return this.runWorkflowRequest(() => this.requireWorkflows().cancel(request.params.id, request.params.scope));
       case "daemon.status":
         return this.status();
       case "daemon.stop":
         if (request.params.ifIdle) {
           this.accepting = false;
-          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0) {
+          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0 || (this.workflows?.activeRunCount ?? 0) > 0) {
             this.accepting = true;
             throw new AgentDaemonUnavailableError({
               code: "DAEMON_UNAVAILABLE",
@@ -393,6 +438,20 @@ export class LocalAgentDaemon {
     }
   }
 
+  private async runWorkflowRequest<T>(operation: () => Promise<T>): Promise<T> {
+    this.activeTurnRequests += 1;
+    try {
+      return await operation();
+    } finally {
+      this.activeTurnRequests -= 1;
+    }
+  }
+
+  private requireWorkflows(): LocalAgentDaemonWorkflowManager {
+    if (!this.workflows) throw new WorkflowError("WORKFLOWS_UNAVAILABLE", "Workflows are unavailable in this daemon.");
+    return this.workflows;
+  }
+
   private writeError(socket: Socket, requestId: string, error: LocalAgentDaemonErrorPayload): void {
     socket.end(encodeLocalAgentDaemonResponse({
       requestId,
@@ -411,7 +470,8 @@ export class LocalAgentDaemon {
 
   private async maintainIdle(): Promise<void> {
     await this.manager.evictIdle(this.now());
-    if (this.stopping || this.manager.activeTurnCount > 0 || this.manager.runtimeCount > 0 || this.sockets.size > 0) {
+    if (this.stopping || this.manager.activeTurnCount > 0 || this.manager.runtimeCount > 0
+      || (this.workflows?.activeRunCount ?? 0) > 0 || this.sockets.size > 0) {
       this.idleSince = undefined;
       return;
     }
@@ -463,6 +523,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation:
   }
 }
 
+async function settled<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  try {
+    return { status: "fulfilled", value: await promise };
+  } catch (reason) {
+    return { status: "rejected", reason };
+  }
+}
+
 function safeEqual(actual: string, expected: string): boolean {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
@@ -504,6 +572,9 @@ function errorMessage(error: unknown): string {
 }
 
 function daemonErrorPayload(error: unknown): LocalAgentDaemonErrorPayload {
+  if (error instanceof WorkflowError) {
+    return { code: error.code, message: error.message, retryable: error.retryable };
+  }
   if (isLocalAgentError(error)) return toAgentErrorPayload(error);
   if (error instanceof LocalAgentDaemonProtocolError) {
     if (error.code === "PROTOCOL_MISMATCH") {

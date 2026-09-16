@@ -19,6 +19,7 @@ const record: LocalAgentRecord = {
   driver: "codex",
   model: "gpt-5.4",
   effort: "high",
+  writeMode: "allowed",
   providerSessionId: "provider_private",
   status: "running",
   latestResponse: "previous response",

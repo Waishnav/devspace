@@ -115,9 +115,9 @@ DevSpace discovers standard Agent Skills from `~/.agents/skills`, project
 are resolved from the active workspace.
 
 When Subagents are enabled for MCP workspaces, DevSpace keeps its bundled
-`subagents` skill synchronized at `~/.devspace/skills/subagents/SKILL.md`.
-That managed copy is the authoritative `subagents` skill for DevSpace and is
-refreshed when the packaged skill changes.
+`subagents` and `workflows` skills synchronized under `~/.devspace/skills/`.
+Those managed copies are authoritative for DevSpace and are refreshed when the
+packaged skills change.
 
 Subagent providers are explicit. Omitted providers are disabled:
 
