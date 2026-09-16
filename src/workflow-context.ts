@@ -17,6 +17,8 @@ export async function workflowContextHash(root: string): Promise<string | undefi
   try {
     const head = await exec("git", ["rev-parse", "HEAD"], { cwd: root, timeout: 5_000 });
     hash.update(JSON.stringify({ head: head.stdout }));
+    const staged = await exec("git", ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"], { cwd: root, timeout: 5_000 });
+    hash.update(JSON.stringify({ staged: staged.stdout }));
     async function visit(path: string, relative: string): Promise<void> {
       if (++count > 20_000) throw new Error("context too large");
       const stat = await lstat(path);

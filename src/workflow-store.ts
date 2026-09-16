@@ -9,7 +9,7 @@ export class WorkflowStore {
   close(): void { this.database.close(); }
 
   create(run: WorkflowSnapshot): void {
-    this.database.sqlite.prepare("insert into workflow_runs values (?, ?, ?, ?)")
+    this.database.sqlite.prepare("insert into workflow_runs (id, workspace_root, workspace_id, record_json) values (?, ?, ?, ?)")
       .run(run.id, run.workspaceRoot, run.workspaceId ?? null, JSON.stringify(run));
   }
   get(id: string): WorkflowSnapshot | undefined {
@@ -32,7 +32,7 @@ export class WorkflowStore {
   addCall(call: WorkflowCall): void {
     this.database.sqlite.transaction(() => {
       const run = this.get(call.runId)!;
-      this.database.sqlite.prepare("insert into workflow_calls values (?, ?, ?, ?)")
+      this.database.sqlite.prepare("insert into workflow_calls (run_id, call_index, agent_id, record_json) values (?, ?, ?, ?)")
         .run(call.runId, call.index, call.agentId, JSON.stringify(call));
       run.callCount++;
       run.updatedAt = new Date().toISOString();

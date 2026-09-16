@@ -25,6 +25,11 @@ assert.deepEqual(
   parseWorkflowScript(`export const meta = { "name": "quoted" }; return 1;`).meta,
   { name: "quoted", concurrency: 4 },
 );
+const commented = parseWorkflowScript(`// @ts-check
+/* workflow metadata */
+export const meta = { name: "commented" }; return 1;`);
+assert.equal(commented.meta.name, "commented");
+assert.equal(commented.body.trim(), "return 1;");
 assert.throws(
   () => parseWorkflowScript("export const meta = { name: getName() }; return 1;"),
   /must be strings or numbers/,

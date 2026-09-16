@@ -44,6 +44,7 @@ interface ActiveRun {
   workspaces: Map<string, Promise<LocalAgentWorkspaceScope>>;
   previous: WorkflowCall[];
   replayPrefix: boolean;
+  unconfirmedStops: boolean;
 }
 
 /** Owns execution; host-authored JavaScript owns the workflow decisions. */
@@ -105,6 +106,7 @@ export class WorkflowManager {
     const active: ActiveRun = {
       run, controller: new AbortController(), pending: new Set(), preparing: Promise.resolve(),
       calls: 0, dispatches: 0, nested: 0, eventBytes: 0, slots: new Slots(run.concurrency), workspaces: new Map(), previous: previousCalls, replayPrefix: true,
+      unconfirmedStops: false,
       done: Promise.resolve(),
     };
     this.active.set(run.id, active);
@@ -198,6 +200,7 @@ export class WorkflowManager {
           try { this.options.store.update(run.id, { status: "stopping" }); } catch { /* Still stop children if persistence is unavailable. */ }
         }
         await Promise.allSettled([...active.pending]);
+        if (active.unconfirmedStops) return;
         const error = failure ? workflowFailure(failure) : undefined;
         this.options.store.update(run.id, {
           status: error ? (error.code === "WORKFLOW_CANCELLED" ? "cancelled" : "failed") : "completed",
@@ -350,7 +353,7 @@ export class WorkflowManager {
       try {
         const current = this.options.agents.getTurn(call.agentId, call);
         if (current.isErr()) {
-          if (current.error.code === "AGENT_NOT_FOUND" && call.turnId === undefined) return;
+          if (current.error.code === "AGENT_NOT_FOUND") return;
           uncertainty = current.error;
         } else {
           if (!current.value || current.value.status !== "running") return;
@@ -368,6 +371,10 @@ export class WorkflowManager {
         this.options.store.updateCall(call.runId, call.index, { error: workflowFailure(error) });
       } catch { /* Keep ownership in memory until persistence returns or the daemon restarts. */ }
       // Admission remains closed while confirmation is unavailable; cancellation is not completion.
+      if (!this.accepting) {
+        active.unconfirmedStops = true;
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
   }

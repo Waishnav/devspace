@@ -597,7 +597,8 @@ function isObservationRequest(
 ): boolean {
   return method === "agent.get" || method === "agent.list" || method === "agent.wait" || method === "agent.events"
     || method === "workflow.get" || method === "workflow.list" || method === "workflow.wait"
-    || method === "workflow.calls" || method === "workflow.call" || method === "workflow.events";
+    || method === "workflow.calls" || method === "workflow.call" || method === "workflow.events"
+    || method === "workflow.cancel";
 }
 
 export function createLocalAgentClient(

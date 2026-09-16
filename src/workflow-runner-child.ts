@@ -39,7 +39,6 @@ let logEntries = 0;
 let shuttingDown = false;
 const parentPid = process.ppid;
 const pending = new Map<number, QuickJSDeferredPromise>();
-let resolvePending: (() => void) | undefined;
 
 process.once("disconnect", () => {
   if (!shuttingDown) process.exit(1);
@@ -96,7 +95,9 @@ async function run(message: RunMessage): Promise<void> {
       result.error.dispose();
       return fail(classifyExecutionError(error));
     }
-    if (pending.size > 0) await new Promise<void>((resolve) => { resolvePending = resolve; });
+    if (pending.size > 0) {
+      return fail({ code: "UNAWAITED_CALLS", message: "Workflow returned while host calls were still pending. Await all calls before returning." });
+    }
     if (fatalError) return fail(fatalError, true);
 
     const encoded = encodeGuestJson(context, result.value, "Workflow result");
@@ -177,10 +178,6 @@ function receiveHostResult(message: HostResultMessage): void {
   const deferred = pending.get(message.id);
   if (!deferred) return;
   pending.delete(message.id);
-  if (pending.size === 0) {
-    resolvePending?.();
-    resolvePending = undefined;
-  }
   let failed = false;
   try {
     if (message.ok) {

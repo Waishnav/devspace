@@ -477,10 +477,12 @@ try {
 
 const staleActiveStateDir = join(root, "sa");
 const staleActiveManager = new FakeManager();
+const staleActiveWorkflows = new FakeWorkflows();
 const staleActiveDaemon = new LocalAgentDaemon({
   stateDir: staleActiveStateDir,
   configRevision: "old-provider-config",
   manager: staleActiveManager,
+  workflows: staleActiveWorkflows,
   idleShutdownMs: 60_000,
 });
 let staleActiveSpawns = 0;
@@ -507,6 +509,7 @@ try {
   assert.deepEqual(unwrap(await staleActiveClient.wait([record.id], staleScope, 0)), [
     { id: record.id, status: "running" },
   ]);
+  assert.equal(unwrap(await staleActiveClient.cancelWorkflow(workflowRun.id, staleScope)).status, "cancelled");
   const blockedStart = await staleActiveClient.run({
     target: "reviewer",
     prompt: "must use current provider config",

@@ -15,7 +15,8 @@ import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import type { WorkflowRun } from "./workflow-types.js";
 
 const execFileAsync = promisify(execFile);
-const root = await mkdtemp(join(tmpdir(), "devspace-workflow-cli-test-"));
+// macOS limits the complete Unix socket path to 104 bytes.
+const root = await mkdtemp(join(tmpdir(), "ds-wf-"));
 const configDir = join(root, "config");
 const stateDir = join(root, "state");
 const workspaceDirectory = join(root, "project");
@@ -32,7 +33,7 @@ const run: WorkflowRun = {
   id: "wfl_test",
   workspaceId: "ws_test",
   workspaceRoot,
-  name: "review",
+  name: "\u001b[31mreview\u001b[0m",
   status: "running",
   writeMode: "read_only",
   concurrency: 2,
@@ -106,6 +107,19 @@ try {
     source: "return agent('Review this', { target: 'reviewer' });\n",
     args: { base: "main" },
   });
+  const status = await execFileAsync("node", [
+    "--import", "tsx", "src/cli.ts", "workflow", "status", run.id,
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ...env,
+      DEVSPACE_WORKSPACE_ID: "ws_test",
+      DEVSPACE_WORKSPACE_ROOT: workspaceRoot,
+    },
+  });
+  assert.equal(status.stdout.includes("\u001b"), false);
+  assert.match(status.stdout, /name="\\u001b\[31mreview\\u001b\[0m"/);
 } finally {
   await new Promise<void>((resolve) => daemon.close(() => resolve()));
   await rm(root, { recursive: true, force: true });

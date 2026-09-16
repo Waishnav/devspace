@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Result } from "better-result";
-import { AgentProviderCancelledError } from "./local-agent-errors.js";
+import { AgentConflictError, AgentProviderCancelledError } from "./local-agent-errors.js";
 import { LocalAgentManager } from "./local-agent-manager.js";
-import { LocalAgentStore } from "./local-agent-store.js";
+import { LocalAgentStore, type LocalAgentTurnRecord } from "./local-agent-store.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import type { LocalAgentRunInput, LocalAgentRuntime } from "./local-agent-runtime.js";
 import { WorkflowManager } from "./workflow-manager.js";
@@ -170,6 +170,20 @@ test("resume reuses only compatible read-only prefix and rejects changed context
   } finally { await f.close(); }
 });
 
+test("resume rejects staged Git state changes even when worktree files are unchanged", async () => {
+  const f = await fixture(async () => null);
+  try {
+    await writeFile(join(f.root, "staged.txt"), "same content");
+    const first = await f.workflows.run({ ...f.scope, source: "return null;" });
+    await f.workflows.wait(first.id, f.scope);
+    execFileSync("git", ["add", "staged.txt"], { cwd: f.root });
+    await assert.rejects(
+      f.workflows.run({ ...f.scope, resume: first.id }),
+      (error: unknown) => error instanceof WorkflowError && error.code === "RECOVERY_CONTEXT_CHANGED",
+    );
+  } finally { await f.close(); }
+});
+
 test("nested workflow shares capacity at concurrency one and cannot recursively nest", async () => {
   const f = await fixture();
   try {
@@ -234,6 +248,45 @@ test("parallel unnamed isolated calls receive distinct worktrees", async () => {
     const calls = f.workflows.calls(run.id, f.scope);
     assert.equal(new Set(calls.map((call) => call.workspaceRoot)).size, 2);
   } finally { await f.close(); }
+});
+
+test("shutdown stops retrying unconfirmed provider cancellation and preserves recovery state", async () => {
+  const f = await fixture(async ({ onAgent }) => await onAgent("hold", { target: "codex" }) as string);
+  const originalGetTurn = f.agents.getTurn.bind(f.agents);
+  const originalCancel = f.agents.cancel.bind(f.agents);
+  let close: Promise<void> | undefined;
+  try {
+    const run = await f.workflows.run({ ...f.scope, source: "return null;" });
+    await until(() => f.inputs.length === 1);
+    await until(() => f.workflows.calls(run.id, f.scope)[0]?.turnId !== undefined);
+    const call = f.workflows.call(run.id, 0, f.scope);
+    const runningTurn: LocalAgentTurnRecord = {
+      id: call.turnId!, agentId: call.agentId, prompt: call.prompt, status: "running", createdAt: "now",
+    };
+    f.agents.getTurn = () => Result.ok(runningTurn);
+    f.agents.cancel = async () => Result.err(new AgentConflictError({
+      code: "AGENT_CONFLICT", agentId: call.agentId, operation: "cancel", retryable: true,
+      message: "Provider cancellation is unavailable.",
+    }));
+    close = f.workflows.close();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      close,
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("workflow close timed out")), 2_000); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    const reopened = new WorkflowStore(join(f.dir, "state"));
+    try {
+      assert.equal(reopened.get(run.id)?.status, "stopping");
+      assert.equal(reopened.get(run.id)?.error?.code, "RECOVERY_REQUIRED");
+    } finally { reopened.close(); }
+  } finally {
+    f.agents.getTurn = originalGetTurn;
+    f.agents.cancel = originalCancel;
+    f.release();
+    await close?.catch(() => {});
+    await f.agents.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
 });
 
 async function until(check: () => boolean): Promise<void> {

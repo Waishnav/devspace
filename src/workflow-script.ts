@@ -10,7 +10,7 @@ export interface ParsedWorkflowScript {
 }
 
 const DEFAULT_META: WorkflowScriptMeta = { name: "workflow", concurrency: 4 };
-const META_PREFIX = /^\s*export\s+const\s+meta\s*=/;
+const META_PREFIX = /^(?:(?:\s+)|(?:\/\/[^\r\n]*(?:\r\n?|\n|$))|(?:\/\*[\s\S]*?\*\/))*export\s+const\s+meta\s*=/;
 
 /** Parse the optional, data-only metadata declaration without executing workflow code. */
 export function parseWorkflowScript(source: string): ParsedWorkflowScript {

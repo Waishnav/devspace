@@ -145,15 +145,15 @@ await assert.rejects(
 
 let finishDetached!: () => void;
 const detachedCall = new Promise<void>((resolve) => { finishDetached = resolve; });
-let detachedSettled = false;
 const detached = runWorkflowScript({
   source: `agent("detached", { target: "worker" }); return "done";`,
   onAgent: async () => { await detachedCall; return null; },
-}).then((value) => { detachedSettled = true; return value; });
-await delay(25);
-assert.equal(detachedSettled, false, "the runner waits for detached host calls before completing");
+});
+await assert.rejects(
+  detached,
+  (error: unknown) => error instanceof WorkflowError && error.code === "UNAWAITED_CALLS",
+);
 finishDetached();
-assert.equal(await detached, "done");
 
 const largeAgentResult = "x".repeat(240 * 1024);
 assert.equal(await runWorkflowScript({

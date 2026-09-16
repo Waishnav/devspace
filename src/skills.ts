@@ -49,7 +49,7 @@ function syncManagedSkill(config: ServerConfig, name: typeof MANAGED_SKILL_NAMES
       return targetPath;
     }
     if (stat.isDirectory()) {
-      throw new Error(`Managed subagents skill path is a directory: ${targetPath}`);
+      throw new Error(`Managed ${name} skill path is a directory: ${targetPath}`);
     }
   }
 
