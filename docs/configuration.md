@@ -79,6 +79,21 @@ Omitted sections and keys use the defaults shown above. An empty
 `workspaces.allowedRoots` uses the current working directory. Unknown keys are
 rejected so spelling mistakes cannot silently alter behavior.
 
+### Reverse proxies and tunnels
+
+When `server.host` is `127.0.0.1`, `localhost`, or `::1`, DevSpace automatically
+trusts only loopback reverse proxies. This is the normal topology for Tailscale
+Serve/Funnel, Cloudflare Tunnel, and similar local tunnel agents, and allows
+their forwarded client IP headers to work with OAuth rate limiting without
+trusting arbitrary remote proxies.
+
+Leave `server.trustProxy` set to `false` for that topology. Set it to `true`
+only when DevSpace is intentionally behind a trusted non-loopback proxy; that
+explicit setting tells Express to trust forwarded proxy information generally.
+
+DevSpace keeps HTTP connections open for five minutes so a tunnel can safely
+reuse them between MCP calls instead of racing Node's short default timeout.
+
 `oauth.allowedResourceUrls` accepts exact alternate MCP resource URLs for
 clients that connect through a resource alias, such as a secure MCP tunnel.
 The normal `server.publicBaseUrl` `/mcp` resource remains allowed automatically.

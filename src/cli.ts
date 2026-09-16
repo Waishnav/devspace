@@ -324,7 +324,7 @@ async function serve(): Promise<void> {
 
   const config = loadConfig();
   await runStartupWorktreeCleanup(config);
-  const { createServer } = await import("./server.js");
+  const { configureHttpServer, createServer } = await import("./server.js");
   const { app, close, localAgentProviders } = createServer(config);
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(`devspace listening on http://${config.host}:${config.port}/mcp`);
@@ -338,6 +338,7 @@ async function serve(): Promise<void> {
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
+  configureHttpServer(httpServer);
 
   let shuttingDown = false;
   const shutdown = async () => {
