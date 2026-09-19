@@ -47,6 +47,11 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 9,
+    name: "workspace-tool-calls",
+    up: migrateWorkspaceToolCalls,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -286,6 +291,34 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
 
     create index if not exists local_agent_turns_status_idx
       on local_agent_turns(status);
+  `);
+}
+
+function migrateWorkspaceToolCalls(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workspace_tool_calls (
+      id integer primary key autoincrement,
+      workspace_session_id text,
+      conversation_scope_id text,
+      request_id text,
+      tool_name text not null,
+      arguments_json text not null,
+      result_json text,
+      error_json text,
+      started_at text not null,
+      completed_at text,
+      duration_ms integer,
+      review_ref text,
+      foreign key (workspace_session_id)
+        references workspace_sessions(id)
+        on delete cascade
+    );
+
+    create index if not exists workspace_tool_calls_workspace_idx
+      on workspace_tool_calls(workspace_session_id, id desc);
+
+    create index if not exists workspace_tool_calls_review_ref_idx
+      on workspace_tool_calls(workspace_session_id, review_ref);
   `);
 }
 
