@@ -50,6 +50,7 @@ interface AcpConnectionLike {
   agent: {
     request(method: string, params?: unknown): Promise<unknown>;
   };
+  cancel?(params: { sessionId: string }): Promise<void>;
   close(error?: unknown): void;
   closed: Promise<void>;
 }
@@ -128,6 +129,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       provider: this.provider,
       operation: "run",
       run: async (): Promise<LocalAgentRunResult> => {
+        input.signal?.throwIfAborted();
         if (!this.isAlive()) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -138,6 +140,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           });
         }
         const sessionId = await this.openSession(input, callbacks);
+        input.signal?.throwIfAborted();
         if (this.activeSessions.has(sessionId)) {
           throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
         }
@@ -161,14 +164,45 @@ export class AcpRuntime implements LocalAgentRuntime {
           : undefined;
         try {
           queue.values.length = 0;
+          let cancellation: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+          const cancelPrompt = () => {
+            cancellation ??= Promise.resolve().then(async () => {
+              if (!this.connection.cancel) throw new Error(`${this.provider} ACP cancellation is unavailable.`);
+              await this.connection.cancel({ sessionId });
+            }).then(
+              () => ({ ok: true as const }),
+              (error: unknown) => ({ ok: false as const, error }),
+            );
+          };
+          input.signal?.addEventListener("abort", cancelPrompt, { once: true });
+          if (input.signal?.aborted) cancelPrompt();
           const standardResponse = this.connection.agent.request("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: input.prompt }],
             ...(promptId ? { _meta: { promptId, requestId: promptId } } : {}),
           });
-          const response = completion
-            ? await Promise.race([standardResponse, completion])
-            : await standardResponse;
+          let response: unknown;
+          try {
+            try {
+              response = completion
+                ? await Promise.race([standardResponse, completion])
+                : await standardResponse;
+            } catch (error) {
+              if (input.signal?.aborted && cancellation) {
+                const outcome = await cancellation;
+                if (!outcome.ok) throw outcome.error;
+                throw abortError();
+              }
+              throw error;
+            }
+            if (input.signal?.aborted && cancellation) {
+              const outcome = await cancellation;
+              if (!outcome.ok) throw outcome.error;
+              throw abortError();
+            }
+          } finally {
+            input.signal?.removeEventListener("abort", cancelPrompt);
+          }
           if (completion && isGrokPromptCompletion(response)) {
             await yieldToAcpQueue();
           } else if (promptId) {
@@ -406,6 +440,10 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.promptSequence += 1;
     return `devspace-grok-prompt-${this.promptSequence}`;
   }
+}
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export class AcpLocalAgentDriver implements LocalAgentDriver {

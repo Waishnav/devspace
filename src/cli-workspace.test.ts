@@ -45,6 +45,33 @@ try {
     workspaceRoot: resolve(nestedRoot),
   });
 
+  let managedChecks = 0;
+  assert.deepEqual(resolveCliWorkspaceContext([repositoryRoot], {
+    DEVSPACE_WORKSPACE_ID: "ws_managed",
+    DEVSPACE_WORKSPACE_ROOT: plainRoot,
+  }, nestedRoot, (workspaceRoot, workspaceId) => {
+    managedChecks += 1;
+    return workspaceId === "ws_managed" && workspaceRoot === plainRoot;
+  }), {
+    workspaceId: "ws_managed",
+    workspaceRoot: plainRoot,
+  });
+  assert.equal(managedChecks, 1);
+
+  resolveCliWorkspaceContext([repositoryRoot], {
+    DEVSPACE_WORKSPACE_ROOT: plainRoot,
+  }, nestedRoot, () => {
+    throw new Error("managed authorization must require an explicit workspace id");
+  });
+
+  assert.throws(
+    () => resolveCliWorkspaceContext([repositoryRoot], {
+      DEVSPACE_WORKSPACE_ID: "ws_wrong",
+      DEVSPACE_WORKSPACE_ROOT: plainRoot,
+    }, nestedRoot, () => false),
+    /outside allowed roots/,
+  );
+
   if (process.platform !== "win32") {
     const repositoryAlias = join(root, "repository-alias");
     symlinkSync(repositoryRoot, repositoryAlias, "dir");

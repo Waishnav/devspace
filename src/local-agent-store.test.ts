@@ -23,9 +23,37 @@ try {
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
+  assert.equal(created.writeMode, "allowed");
   assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");
   assert.equal(store.getById(created.id.slice(0, 7)), undefined);
+
+  const ownedDispatch = store.create({
+    id: "workflow-dispatch-store",
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    provider: "codex",
+    writeMode: "read_only",
+  });
+  assert.equal(ownedDispatch.id, "workflow-dispatch-store");
+  assert.equal(ownedDispatch.writeMode, "read_only");
+  assert.equal(store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    provider: "codex",
+    writeMode: "read_only",
+  }).id, ownedDispatch.id);
+  assert.throws(() => store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "other"),
+    profileName: "reviewer",
+    provider: "codex",
+    writeMode: "read_only",
+  }), /different dispatch/);
 
   const updated = store.update(created.id, {
     status: "error",

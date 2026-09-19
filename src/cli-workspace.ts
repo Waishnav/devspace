@@ -13,6 +13,7 @@ export function resolveCliWorkspaceContext(
   allowedRoots: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
+  authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean,
 ): CliWorkspaceContext {
   const workspaceId = env.DEVSPACE_WORKSPACE_ID?.trim() || undefined;
   const injectedRoot = workspaceId ? env.DEVSPACE_WORKSPACE_ROOT?.trim() : undefined;
@@ -21,11 +22,17 @@ export function resolveCliWorkspaceContext(
   );
 
   if (!workspaceId) return { workspaceId, workspaceRoot: candidate };
-
-  return {
-    workspaceId,
-    workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
-  };
+  try {
+    return {
+      workspaceId,
+      workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
+    };
+  } catch (error) {
+    if (authorizeManagedWorkspace?.(candidate, workspaceId)) {
+      return { workspaceId, workspaceRoot: candidate };
+    }
+    throw error;
+  }
 }
 
 function canonicalizePath(path: string): string {

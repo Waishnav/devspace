@@ -56,6 +56,8 @@ import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { logEvent } from "./logger.js";
 import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
+import { runWorkflowCommand } from "./workflow-cli.js";
+import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
 
 type Command =
   | "serve"
@@ -64,6 +66,7 @@ type Command =
   | "config"
   | "worktrees"
   | "agents"
+  | "workflow"
   | "show-changes"
   | "help"
   | "version";
@@ -96,6 +99,11 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "workflow": {
+      const { args: commandArgs, json } = extractJsonOption(args);
+      await runWorkflowCommand(commandArgs, json);
+      return;
+    }
     case "show-changes":
       await runShowChanges(args);
       return;
@@ -116,6 +124,7 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "config"
     || command === "worktrees"
     || command === "agents"
+    || command === "workflow"
     || command === "show-changes"
   ) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
@@ -498,6 +507,7 @@ function printHelp(): void {
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents daemon <status|stop|logs>",
+      "  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]",
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
@@ -561,10 +571,19 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   }
 }
 
+function resolveAgentCliWorkspaceContext(config: ServerConfig) {
+  return resolveCliWorkspaceContext(
+    config.allowedRoots,
+    process.env,
+    process.cwd(),
+    (root, id) => isManagedWorkflowWorkspace(config, root, id),
+  );
+}
+
 async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
   if (args.length > 0) throw new Error("Usage: devspace agents targets [--json]");
   const config = loadConfig();
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
   const providers = buildLocalAgentProviderStatuses(
     config.subagents,
@@ -580,7 +599,7 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
   if (args.length > 0) throw new Error("Usage: devspace agents ls [--json]");
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const result = await client.list(resolveCliWorkspaceContext(config.allowedRoots));
+  const result = await client.list(resolveAgentCliWorkspaceContext(config));
   const agents = presentAgentWorkflowResult(result, json);
   if (!agents) return;
 
@@ -596,7 +615,7 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
 async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
   const config = loadConfig();
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const client = createLocalAgentClient(config);
   const result = await client.start({
     target: parsed.target,
@@ -620,7 +639,7 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentContinueArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     effort: parsed.effort,
@@ -641,7 +660,7 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
 
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const initial = await client.get(id, scope);
   const record = presentAgentWorkflowResult(initial, json);
   if (!record) return;
@@ -655,7 +674,7 @@ async function runAgentsWait(args: string[], json: boolean): Promise<void> {
   const { ids, timeoutMs } = parseAgentsWaitArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const results = presentAgentWorkflowResult(await client.wait(ids, scope, timeoutMs), json);
   if (!results) return;
   if (json) {

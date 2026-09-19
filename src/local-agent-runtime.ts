@@ -13,6 +13,7 @@ export interface LocalAgentRunInput {
   effort?: string;
   modelOverrideRequested?: boolean;
   effortOverrideRequested?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface LocalAgentRunResult {

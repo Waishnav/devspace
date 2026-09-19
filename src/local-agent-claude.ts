@@ -28,6 +28,7 @@ const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
 
 export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
+  interrupt(): Promise<unknown>;
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
   applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
   setModel?(model?: string): Promise<void>;
@@ -97,6 +98,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
       provider: "claude",
       operation: "run",
       run: async (): Promise<LocalAgentRunResult> => {
+        input.signal?.throwIfAborted();
         if (!this.isAlive()) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -117,6 +119,14 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         await this.query.applyFlagSettings(flagSettings);
         await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
+        input.signal?.throwIfAborted();
+        let interrupt: Promise<boolean> | undefined;
+        const onAbort = () => {
+          interrupt ??= Promise.resolve()
+            .then(() => this.query.interrupt())
+            .then(() => true, () => false);
+        };
+        input.signal?.addEventListener("abort", onAbort, { once: true });
         this.inputQueue.push({
           type: "user",
           message: { role: "user", content: input.prompt },
@@ -124,71 +134,79 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         });
 
         const items: unknown[] = [];
-        for (;;) {
-          let next: IteratorResult<unknown>;
-          try {
-            next = await this.iterator.next();
-          } catch (error) {
-            this.alive = false;
-            if (isProgrammerDefect(error)) throw error;
-            throw new AgentProviderUnavailableError({
-              code: "PROVIDER_UNAVAILABLE",
-              provider: "claude",
-              operation: "run",
-              retryable: true,
-              cause: error,
-              message: "Claude query stream failed.",
-            });
-          }
-          if (next.done) {
-            this.alive = false;
-            throw new AgentProviderProtocolError({
-              code: "PROVIDER_PROTOCOL_ERROR",
-              provider: "claude",
-              operation: "run",
-              retryable: true,
-              message: "Claude query ended before returning a result.",
-            });
-          }
-          const message = next.value;
-          items.push(message);
-          const record = asRecord(message);
-          if (typeof record?.session_id === "string") {
-            const previousSessionId = this.providerSessionId;
-            this.providerSessionId = record.session_id;
-            if (previousSessionId !== this.providerSessionId) {
-              await callbacks?.onSessionId?.(this.providerSessionId);
+        try {
+          for (;;) {
+            let next: IteratorResult<unknown>;
+            try {
+              next = await this.iterator.next();
+            } catch (error) {
+              if (input.signal?.aborted && (await interrupt)) throw abortError();
+              this.alive = false;
+              if (isProgrammerDefect(error)) throw error;
+              throw new AgentProviderUnavailableError({
+                code: "PROVIDER_UNAVAILABLE",
+                provider: "claude",
+                operation: "run",
+                retryable: true,
+                cause: error,
+                message: "Claude query stream failed.",
+              });
             }
-          }
-          if (record?.type !== "result") continue;
+            if (input.signal?.aborted && (await interrupt)) throw abortError();
+            if (next.done) {
+              this.alive = false;
+              throw new AgentProviderProtocolError({
+                code: "PROVIDER_PROTOCOL_ERROR",
+                provider: "claude",
+                operation: "run",
+                retryable: true,
+                message: "Claude query ended before returning a result.",
+              });
+            }
+            const message = next.value;
+            items.push(message);
+            const record = asRecord(message);
+            if (typeof record?.session_id === "string") {
+              const previousSessionId = this.providerSessionId;
+              this.providerSessionId = record.session_id;
+              if (previousSessionId !== this.providerSessionId) {
+                await callbacks?.onSessionId?.(this.providerSessionId);
+              }
+            }
+            if (record?.type !== "result") continue;
 
-          const resultError = claudeResultError(record);
-          if (resultError) {
-            throw new AgentProviderExecutionError({
-              code: "PROVIDER_EXECUTION_ERROR",
-              provider: "claude",
-              operation: "run",
-              retryable: false,
-              cause: new Error(resultError),
-              message: "Claude agent turn failed.",
-            });
+            const resultError = claudeResultError(record);
+            if (resultError) {
+              throw new AgentProviderExecutionError({
+                code: "PROVIDER_EXECUTION_ERROR",
+                provider: "claude",
+                operation: "run",
+                retryable: false,
+                cause: new Error(resultError),
+                message: "Claude agent turn failed.",
+              });
+            }
+            const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+            if (!finalResponse) {
+              throw new AgentProviderProtocolError({
+                code: "PROVIDER_PROTOCOL_ERROR",
+                provider: "claude",
+                operation: "run",
+                retryable: false,
+                message: "Claude did not return a final assistant response.",
+              });
+            }
+            if (input.signal?.aborted && (await interrupt)) throw abortError();
+            return {
+              provider: this.provider,
+              providerSessionId: this.providerSessionId ?? null,
+              finalResponse,
+              items,
+            };
           }
-          const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
-          if (!finalResponse) {
-            throw new AgentProviderProtocolError({
-              code: "PROVIDER_PROTOCOL_ERROR",
-              provider: "claude",
-              operation: "run",
-              retryable: false,
-              message: "Claude did not return a final assistant response.",
-            });
-          }
-          return {
-            provider: this.provider,
-            providerSessionId: this.providerSessionId ?? null,
-            finalResponse,
-            items,
-          };
+        } finally {
+          input.signal?.removeEventListener("abort", onAbort);
+          if (input.signal?.aborted) await interrupt;
         }
       },
     });
@@ -209,6 +227,10 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
     this.inputQueue.close();
     this.query.close();
   }
+}
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export class ClaudeLocalAgentDriver implements LocalAgentDriver {

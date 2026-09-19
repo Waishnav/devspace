@@ -224,6 +224,9 @@ try {
     await readFile(join(devspaceSkills, "subagents", "SKILL.md"), "utf8"),
     /# DevSpace subagents/,
   );
+  const managedWorkflows = experimentalSkills.find((skill) => skill.name === "workflows");
+  assert.ok(managedWorkflows);
+  assert.equal(managedWorkflows.filePath, join(devspaceSkills, "workflows", "SKILL.md"));
 
   const duplicateConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     server: { port: 1 },

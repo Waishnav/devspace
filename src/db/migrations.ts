@@ -47,6 +47,43 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 9,
+    name: "local-agent-authority",
+    up: (sqlite) => {
+      addColumnIfMissing(sqlite, "local_agent_sessions", "write_mode", "text not null default 'allowed'");
+      addColumnIfMissing(sqlite, "local_agent_sessions", "dispatch_signature", "text");
+    },
+  },
+  {
+    version: 10,
+    name: "dynamic-workflows",
+    up: (sqlite) => sqlite.exec(`
+      create table workflow_runs (
+        id text primary key,
+        workspace_root text not null,
+        workspace_id text,
+        record_json text not null
+      );
+      create index workflow_runs_workspace_idx on workflow_runs(workspace_root, workspace_id);
+      create table workflow_calls (
+        run_id text not null references workflow_runs(id),
+        call_index integer not null,
+        agent_id text not null,
+        record_json text not null,
+        primary key (run_id, call_index)
+      );
+      create index workflow_calls_agent_idx on workflow_calls(agent_id);
+      create table workflow_events (
+        sequence integer primary key autoincrement,
+        run_id text not null references workflow_runs(id),
+        type text not null,
+        data_json text not null,
+        created_at text not null
+      );
+      create index workflow_events_run_idx on workflow_events(run_id, sequence);
+    `),
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {

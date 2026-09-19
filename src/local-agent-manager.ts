@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentConflictError,
+  AgentProviderCancelledError,
   AgentScopeError,
   AgentStoreError,
   AgentTargetError,
@@ -19,6 +21,7 @@ import {
 } from "./local-agent-targets.js";
 import {
   type LocalAgentRecord,
+  LocalAgentDispatchConflictError,
   type LocalAgentStore,
   type LocalAgentTurnRecord,
   type LocalAgentWorkspaceScope,
@@ -38,6 +41,7 @@ import {
 } from "./local-agent-config.js";
 
 export interface StartLocalAgentInput {
+  agentId?: string;
   target: string;
   prompt: string;
   workspaceRoot: string;
@@ -64,6 +68,7 @@ export interface LocalAgentManagerOptions {
   loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   agentDir?: string;
   allowedRoots?: readonly string[];
+  authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean;
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
 }
@@ -73,6 +78,7 @@ export type AgentContinueError = AgentStartError;
 export type AgentLookupError = AgentTargetError | AgentScopeError | AgentStoreError;
 export type AgentListError = AgentScopeError | AgentStoreError;
 export type AgentWaitError = AgentLookupError;
+export type AgentCancelError = AgentLookupError | AgentConflictError;
 
 export type LocalAgentWaitResult =
   | { id: string; status: "running"; wait?: "timeout" }
@@ -83,6 +89,7 @@ export type LocalAgentWaitResult =
 interface ActiveLocalAgentTurn {
   turnId: number;
   completion: Promise<void>;
+  controller: AbortController;
 }
 
 /**
@@ -97,6 +104,7 @@ export class LocalAgentManager {
   private readonly loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   private readonly agentDir?: string;
   private readonly allowedRoots?: readonly string[];
+  private readonly authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean;
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
@@ -110,6 +118,7 @@ export class LocalAgentManager {
     this.loadProfiles = options.loadProfiles;
     this.agentDir = options.agentDir;
     this.allowedRoots = options.allowedRoots;
+    this.authorizeManagedWorkspace = options.authorizeManagedWorkspace;
     this.logger = options.logger;
     this.subagents = options.subagents;
   }
@@ -154,15 +163,28 @@ export class LocalAgentManager {
       }
       yield* manager.providerEnabledResult(target.provider, target.name, "start");
       yield* manager.driverResult(target.provider, "start");
-      const record = yield* manager.store.createResult({
+      const createdResult = manager.store.createResult({
+        id: input.agentId,
         workspaceId: input.workspaceId,
         workspaceRoot,
         profileName: target.name,
         provider: target.provider,
         model: target.model,
         effort: target.effort,
+        writeMode: input.writeMode ?? "allowed",
+        dispatchSignature: dispatchSignature(input, workspaceRoot, target.model, target.effort),
       });
-      return manager.begin(record, input.prompt, {
+      if (
+        createdResult.isErr()
+        && createdResult.error.cause instanceof LocalAgentDispatchConflictError
+      ) {
+        return Result.err(dispatchConflict(input.agentId ?? "unknown"));
+      }
+      const created = yield* createdResult;
+      if (!created.created) {
+        return Result.ok(created.record);
+      }
+      return manager.begin(created.record, input.prompt, {
         model: target.model,
         effort: target.effort,
         writeMode: input.writeMode,
@@ -182,6 +204,7 @@ export class LocalAgentManager {
       const record = yield* manager.store.getByIdResult(agentId);
       if (!record) return Result.err(agentNotFound(agentId));
       yield* manager.agentWorkspaceResult(record, scope, "continue");
+      yield* manager.writeModeResult(record, overrides.writeMode);
       const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
       yield* manager.profileForRecordResult(record, profiles);
       yield* manager.providerEnabledResult(record.provider, record.profileName, "continue");
@@ -210,6 +233,55 @@ export class LocalAgentManager {
         workspaceRoot,
       })
     ));
+  }
+
+  getTurn(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): BetterResult<LocalAgentTurnRecord | undefined, AgentLookupError> {
+    const agent = this.get(agentId, scope);
+    if (agent.isErr()) return agent;
+    return this.store.getLatestTurnResult(agentId);
+  }
+
+  async cancel(
+    agentId: string,
+    turnId: number,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentTurnRecord, AgentCancelError>> {
+    const agent = this.get(agentId, scope);
+    if (agent.isErr()) return agent;
+    const stored = this.store.getTurnByIdResult(turnId);
+    if (stored.isErr()) return stored;
+    if (!stored.value || stored.value.agentId !== agentId) {
+      return Result.err(new AgentConflictError({
+        code: "AGENT_CONFLICT",
+        agentId,
+        operation: "cancel",
+        retryable: false,
+        message: `Turn ${turnId} does not belong to subagent ${agentId}.`,
+      }));
+    }
+    if (stored.value.status !== "running") return Result.ok(stored.value);
+    const active = this.activeTurns.get(agentId);
+    if (!active || active.turnId !== turnId) {
+      return Result.err(new AgentStoreError(
+        "cancel",
+        new Error(`Turn ${turnId} is not active.`),
+        `Running turn state is unavailable for subagent ${agentId}.`,
+      ));
+    }
+    active.controller.abort();
+    await active.completion;
+    const completed = this.store.getTurnByIdResult(turnId);
+    if (completed.isErr()) return completed;
+    if (!completed.value) {
+      return Result.err(new AgentStoreError(
+        "cancel",
+        new Error(`Turn ${turnId} disappeared after cancellation.`),
+      ));
+    }
+    return Result.ok(completed.value);
   }
 
   async wait(
@@ -310,14 +382,16 @@ export class LocalAgentManager {
       prompt,
       model: overrides.model ?? record.model,
       effort: overrides.effort ?? record.effort,
+      writeMode: overrides.writeMode ?? record.writeMode,
     });
     if (begun.isErr()) return begun;
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
+    const controller = new AbortController();
     const turn = Promise.resolve().then(() => (
-      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId)
+      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId, controller.signal)
     ));
-    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn });
+    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn, controller });
     void turn.catch(() => undefined);
     return Result.ok(begun.value.agent);
   }
@@ -328,6 +402,7 @@ export class LocalAgentManager {
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -336,6 +411,10 @@ export class LocalAgentManager {
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
     });
     try {
+      if (signal?.aborted) {
+        this.persistRunCancellation(record, turnId, startedAt);
+        return;
+      }
       const authorized = this.authorizeWorkspace(record.workspaceRoot, workspaceId, "run");
       if (authorized.isErr()) {
         this.persistRunError(record, turnId, authorized.error, startedAt);
@@ -346,6 +425,10 @@ export class LocalAgentManager {
         ? record
         : { ...record, workspaceRoot };
       const profiles = await this.loadProfilesResult(workspaceRoot, record.profileName);
+      if (signal?.aborted) {
+        this.persistRunCancellation(record, turnId, startedAt);
+        return;
+      }
       if (profiles.isErr()) {
         this.persistRunError(record, turnId, profiles.error, startedAt);
         return;
@@ -355,7 +438,7 @@ export class LocalAgentManager {
         this.persistRunError(record, turnId, profile.error, startedAt);
         return;
       }
-      const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides);
+      const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides, signal);
       if (input.isErr()) {
         this.persistRunError(record, turnId, input.error, startedAt);
         return;
@@ -386,6 +469,10 @@ export class LocalAgentManager {
       };
       const result = await this.pool.run(driver.value, context, input.value, callbacks);
       if (result.isErr()) {
+        if (AgentProviderCancelledError.is(result.error)) {
+          this.persistRunCancellation(record, turnId, startedAt);
+          return;
+        }
         this.persistRunError(record, turnId, result.error, startedAt);
         return;
       }
@@ -427,7 +514,7 @@ export class LocalAgentManager {
       });
       throw error;
     } finally {
-      this.activeTurns.delete(record.id);
+      if (this.activeTurns.get(record.id)?.turnId === turnId) this.activeTurns.delete(record.id);
     }
   }
 
@@ -455,11 +542,31 @@ export class LocalAgentManager {
     });
   }
 
+  private persistRunCancellation(
+    record: LocalAgentRecord,
+    turnId: number,
+    startedAt: number,
+  ): void {
+    const persisted = this.store.finishTurnResult(record.id, turnId, {
+      status: "stopped",
+      error: "Subagent turn was cancelled.",
+      errorCode: "PROVIDER_CANCELLED",
+      errorRetryable: false,
+    });
+    this.log("info", "agent_run_cancelled", {
+      provider: record.provider,
+      agentId: record.id,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      persistenceFailed: persisted.isErr(),
+    });
+  }
+
   private buildRunInputResult(
     record: LocalAgentRecord,
     profile: LocalAgentProfile | undefined,
     prompt: string,
     overrides: RunOverrides,
+    signal?: AbortSignal,
   ): BetterResult<LocalAgentRunInput, AgentTargetError> {
     const isRawProvider = record.profileName === record.provider;
     if (!profile && !isRawProvider) {
@@ -477,11 +584,12 @@ export class LocalAgentManager {
       prompt: fullPrompt,
       workspaceRoot: record.workspaceRoot,
       providerSessionId: record.providerSessionId,
-      writeMode: overrides.writeMode ?? "allowed",
+      writeMode: overrides.writeMode ?? record.writeMode,
       model: record.model ?? profile?.model,
       effort: record.effort ?? profile?.effort,
       modelOverrideRequested: overrides.model !== undefined,
       effortOverrideRequested: overrides.effort !== undefined,
+      signal,
     });
   }
 
@@ -557,6 +665,22 @@ export class LocalAgentManager {
     }));
   }
 
+  private writeModeResult(
+    record: LocalAgentRecord,
+    requested: LocalAgentWriteMode | undefined,
+  ): BetterResult<void, AgentConflictError> {
+    if (!requested || writeModeRank(requested) <= writeModeRank(record.writeMode)) {
+      return Result.ok(undefined);
+    }
+    return Result.err(new AgentConflictError({
+      code: "AGENT_CONFLICT",
+      agentId: record.id,
+      operation: "continue",
+      retryable: false,
+      message: `Subagent ${record.id} cannot expand write authority from ${record.writeMode} to ${requested}.`,
+    }));
+  }
+
   private acceptingResult(
     operation: string,
     agentId?: string,
@@ -581,6 +705,13 @@ export class LocalAgentManager {
     try {
       return Result.ok(assertAllowedPath(normalized, [...this.allowedRoots]));
     } catch (cause) {
+      if (workspaceId) {
+        try {
+          if (this.authorizeManagedWorkspace?.(normalized, workspaceId)) return Result.ok(normalized);
+        } catch {
+          // Preserve the original containment failure below.
+        }
+      }
       return Result.err(new AgentScopeError({
         code: "WORKSPACE_NOT_ALLOWED",
         operation,
@@ -663,6 +794,42 @@ function agentNotFound(agentId: string): AgentTargetError {
     retryable: false,
     message: `Unknown subagent id: ${agentId}.`,
   });
+}
+
+function dispatchConflict(agentId: string): AgentConflictError {
+  return new AgentConflictError({
+    code: "AGENT_CONFLICT",
+    agentId,
+    operation: "start",
+    retryable: false,
+    message: `Subagent id ${agentId} is already owned by a different dispatch.`,
+  });
+}
+
+function writeModeRank(writeMode: LocalAgentWriteMode): number {
+  switch (writeMode) {
+    case "read_only": return 0;
+    case "allowed": return 1;
+    case "full_access": return 2;
+  }
+}
+
+function dispatchSignature(
+  input: StartLocalAgentInput,
+  workspaceRoot: string,
+  model: string | undefined,
+  effort: string | undefined,
+): string | undefined {
+  if (!input.agentId) return undefined;
+  return createHash("sha256").update(JSON.stringify([
+    input.workspaceId ?? null,
+    workspaceRoot,
+    input.target,
+    input.prompt,
+    model ?? null,
+    effort ?? null,
+    input.writeMode ?? "allowed",
+  ])).digest("hex");
 }
 
 function unique(values: readonly string[]): string[] {

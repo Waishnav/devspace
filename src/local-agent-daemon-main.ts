@@ -11,6 +11,9 @@ import { LocalAgentManager } from "./local-agent-manager.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 import { localAgentProviderConfigRevision } from "./local-agent-config.js";
+import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
+import { WorkflowManager } from "./workflow-manager.js";
+import { WorkflowStore } from "./workflow-store.js";
 
 const config = loadConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -30,14 +33,30 @@ const manager = new LocalAgentManager({
   allowedRoots: config.allowedRoots,
   logger: log,
   subagents: config.subagents,
+  authorizeManagedWorkspace: (workspaceRoot, workspaceId) => isManagedWorkflowWorkspace(
+    config,
+    workspaceRoot,
+    workspaceId,
+  ),
+});
+const workflowStore = new WorkflowStore(paths.stateDir);
+const workflows = new WorkflowManager({
+  store: workflowStore,
+  agents: manager,
+  loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
+  subagents: config.subagents,
+  allowedRoots: config.allowedRoots,
+  config,
 });
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
+  workflows,
   configRevision: localAgentProviderConfigRevision(config.subagents),
   onLockAcquired: () => {
     const reconciled = manager.reconcileActiveRuns();
     if (reconciled.isErr()) throw reconciled.error;
+    workflows.reconcile();
   },
   onClosed: () => { if (!shuttingDown) process.exit(0); },
   idleShutdownMs: parseIdleShutdownMs(process.env.DEVSPACE_AGENTD_IDLE_TIMEOUT_MS),
@@ -51,6 +70,7 @@ const shutdown = () => {
     log("error", "daemon_forced_shutdown", {
       activeTurns: manager.activeTurnCount,
       runtimeCount: manager.runtimeCount,
+      activeWorkflows: workflows.activeRunCount,
     });
     // Active records intentionally remain durable. The next daemon startup
     // reconciles them to error while preserving provider continuation data.
@@ -66,10 +86,12 @@ try {
   await daemon.start();
 } catch (error) {
   if (error instanceof LocalAgentDaemonAlreadyRunningError) {
+    await workflows.close();
     await manager.close();
     process.exit(0);
   }
   log("error", "daemon_start_failed", { error: error instanceof Error ? error.message : String(error) });
+  await workflows.close();
   await manager.close();
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

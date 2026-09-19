@@ -98,6 +98,8 @@ export const localAgentSessions = sqliteTable(
     workspaceId: text("workspace_id"),
     workspaceRoot: text("workspace_root").notNull(),
     profileName: text("profile_name").notNull(),
+    writeMode: text("write_mode").notNull().default("allowed"),
+    dispatchSignature: text("dispatch_signature"),
     provider: text("provider").notNull(),
     model: text("model"),
     effort: text("effort"),

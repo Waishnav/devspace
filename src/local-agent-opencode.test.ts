@@ -224,6 +224,92 @@ if (timedOutPrompt.isErr()) {
 }
 await timeoutRuntime.close();
 
+let abortCalls = 0;
+let abortInput: unknown;
+let markCancellationPromptEntered!: () => void;
+const cancellationPromptEntered = new Promise<void>((resolve) => { markCancellationPromptEntered = resolve; });
+const cancellationClient = {
+  global: { async health() { return { data: { healthy: true } }; } },
+  session: {
+    async create() { return { data: { id: "session_cancel" } }; },
+    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      markCancellationPromptEntered();
+      return new Promise<never>((_resolve, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    },
+    async abort(input: unknown) { abortCalls += 1; abortInput = input; return { data: true }; },
+  },
+} as unknown as OpencodeClientLike;
+let cancellationServerCloses = 0;
+const cancellationRuntime = new OpencodeRuntime(
+  cancellationClient,
+  { close: () => { cancellationServerCloses += 1; } },
+  10_000,
+);
+const cancellationController = new AbortController();
+const cancelledPrompt = cancellationRuntime.run({
+  prompt: "cancel",
+  workspaceRoot: "/tmp/project",
+  signal: cancellationController.signal,
+});
+await cancellationPromptEntered;
+cancellationController.abort();
+const cancelledPromptResult = await cancelledPrompt;
+assert.equal(cancelledPromptResult.isErr(), true);
+if (cancelledPromptResult.isErr()) assert.equal(cancelledPromptResult.error.code, "PROVIDER_CANCELLED");
+assert.equal(abortCalls, 1);
+assert.deepEqual(abortInput, { sessionID: "session_cancel", directory: "/tmp/project" });
+assert.equal(cancellationServerCloses, 0, "turn cancellation keeps the shared OpenCode server alive");
+await cancellationRuntime.close();
+
+let finishUncancelledPrompt!: () => void;
+let markUncancelledPromptEntered!: () => void;
+const uncancelledPromptEntered = new Promise<void>((resolve) => { markUncancelledPromptEntered = resolve; });
+const uncancelledPrompt = new Promise<void>((resolve) => { finishUncancelledPrompt = resolve; });
+const failedCancellationClient = {
+  global: { async health() { return { data: { healthy: true } }; } },
+  session: {
+    async create() { return { data: { id: "session_cancel_failure" } }; },
+    async prompt() {
+      markUncancelledPromptEntered();
+      await uncancelledPrompt;
+      return {
+        data: {
+          info: { role: "assistant" },
+          parts: [{ type: "text", text: "finished naturally" }],
+        },
+      };
+    },
+    async abort() { throw new Error("abort rejected"); },
+  },
+} as unknown as OpencodeClientLike;
+const failedCancellationRuntime = new OpencodeRuntime(
+  failedCancellationClient,
+  { close: () => undefined },
+  10_000,
+);
+const failedCancellationController = new AbortController();
+const naturallyCompletedPrompt = failedCancellationRuntime.run({
+  prompt: "cancel fails",
+  workspaceRoot: "/tmp/project",
+  signal: failedCancellationController.signal,
+});
+await uncancelledPromptEntered;
+failedCancellationController.abort();
+finishUncancelledPrompt();
+const naturallyCompletedResult = await naturallyCompletedPrompt;
+assert.equal(naturallyCompletedResult.isErr(), true, "failed native abort is surfaced after the prompt settles");
+if (naturallyCompletedResult.isErr()) {
+  assert.equal(naturallyCompletedResult.error.code, "PROVIDER_EXECUTION_ERROR");
+}
+assert.equal(failedCancellationRuntime.isAlive(), true, "failed turn abort keeps the shared runtime alive");
+await failedCancellationRuntime.close();
+
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
 assert.deepEqual(opencodePermissionFor("allowed"), {

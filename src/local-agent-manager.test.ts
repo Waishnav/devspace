@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentManager } from "./local-agent-manager.js";
 import {
+  AgentProviderCancelledError,
   AgentProviderExecutionError,
   type AgentProviderError,
 } from "./local-agent-errors.js";
@@ -65,7 +66,19 @@ class FakeRuntime implements LocalAgentRuntime {
     if (input.prompt.includes("defect")) throw new TypeError("internal defect");
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
     if (input.prompt.includes("hold")) {
-      await new Promise<void>((resolve) => { this.releaseHold = resolve; });
+      await new Promise<void>((resolve) => {
+        this.releaseHold = resolve;
+        input.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      if (input.signal?.aborted && !input.prompt.includes("ignore cancel")) {
+        return Result.err(new AgentProviderCancelledError({
+          code: "PROVIDER_CANCELLED",
+          provider: "codex",
+          operation: "run",
+          retryable: false,
+          message: "cancelled",
+        }));
+      }
     }
     return Result.ok({
       provider: this.provider,
@@ -131,6 +144,9 @@ const manager = new LocalAgentManager({
   pool: new LocalAgentRuntimePool(),
   loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
+  authorizeManagedWorkspace: (workspaceRoot, workspaceId) => (
+    workspaceId === "ws_managed" && workspaceRoot === directRoot
+  ),
   subagents,
 });
 
@@ -156,6 +172,38 @@ await assert.rejects(
 );
 await defectManager.close();
 
+let releaseQueuedProfiles!: () => void;
+const queuedProfiles = new Promise<void>((resolve) => { releaseQueuedProfiles = resolve; });
+let queuedProfileLoads = 0;
+const queuedStore = new LocalAgentStore(join(root, "queued-state"));
+const queuedManager = new LocalAgentManager({
+  store: queuedStore,
+  drivers: [driver],
+  pool: new LocalAgentRuntimePool(),
+  loadProfiles: async () => {
+    queuedProfileLoads += 1;
+    if (queuedProfileLoads === 2) await queuedProfiles;
+    return [profile];
+  },
+  allowedRoots: [root],
+  subagents,
+});
+const queued = unwrap(await queuedManager.start({
+  agentId: "workflow-queued-cancel",
+  target: "reviewer",
+  prompt: "must not reach the provider",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => queuedProfileLoads === 2);
+const queuedTurn = unwrap(queuedManager.getTurn(queued.id, scope));
+assert.ok(queuedTurn);
+const queuedCancellation = queuedManager.cancel(queued.id, queuedTurn.id, scope);
+releaseQueuedProfiles();
+assert.equal(unwrap(await queuedCancellation).status, "stopped");
+assert.equal(runtimes.has(queued.id), false, "queued cancellation never launches the provider runtime");
+await queuedManager.close();
+
 const outside = await manager.start({
   target: "reviewer",
   prompt: "outside",
@@ -164,6 +212,17 @@ const outside = await manager.start({
 });
 assert.equal(outside.isErr(), true);
 if (outside.isErr()) assert.equal(outside.error.code, "WORKSPACE_NOT_ALLOWED");
+
+const managed = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "managed worktree",
+  workspaceId: "ws_managed",
+  workspaceRoot: directRoot,
+}));
+await waitFor(() => unwrap(manager.get(managed.id, {
+  workspaceId: "ws_managed",
+  workspaceRoot: directRoot,
+})).status === "idle");
 
 const unknown = await manager.start({
   target: "missing",
@@ -236,6 +295,7 @@ const first = unwrap(await manager.start({
 assert.equal(first.status, "running");
 assert.equal(first.model, "gpt-default");
 assert.equal(first.effort, "medium");
+assert.equal(first.writeMode, "allowed");
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
 const conflict = await manager.continue(first.id, "another prompt", {}, scope);
 assert.equal(conflict.isErr(), true);
@@ -253,6 +313,73 @@ assert.deepEqual(
   [{ prompt: "hold", status: "completed" }],
 );
 
+const duplicateId = "workflow-dispatch-1";
+const duplicateInput = {
+  agentId: duplicateId,
+  target: "reviewer",
+  prompt: "hold duplicate",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+  writeMode: "read_only" as const,
+};
+const [duplicate, simultaneousRetry] = await Promise.all([
+  manager.start(duplicateInput).then(unwrap),
+  manager.start(duplicateInput).then(unwrap),
+]);
+assert.equal(simultaneousRetry.id, duplicate.id);
+await waitFor(() => runtimes.get(duplicate.id)?.inputs.length === 1);
+const duplicateRetry = unwrap(await manager.start({
+  ...duplicateInput,
+}));
+assert.equal(duplicateRetry.id, duplicate.id);
+assert.equal(runtimes.get(duplicate.id)?.inputs.length, 1);
+const mismatchedDuplicate = await manager.start({
+  ...duplicateInput,
+  prompt: "different prompt",
+});
+assert.equal(mismatchedDuplicate.isErr(), true);
+if (mismatchedDuplicate.isErr()) assert.equal(mismatchedDuplicate.error.code, "AGENT_CONFLICT");
+const reconfiguredDuplicate = await manager.start({
+  ...duplicateInput,
+  model: "gpt-other",
+});
+assert.equal(reconfiguredDuplicate.isErr(), true);
+if (reconfiguredDuplicate.isErr()) assert.equal(reconfiguredDuplicate.error.code, "AGENT_CONFLICT");
+const duplicateTurn = unwrap(manager.getTurn(duplicate.id, scope));
+assert.ok(duplicateTurn);
+const wrongTurnOwner = await manager.cancel(first.id, duplicateTurn.id, scope);
+assert.equal(wrongTurnOwner.isErr(), true);
+if (wrongTurnOwner.isErr()) assert.equal(wrongTurnOwner.error.code, "AGENT_CONFLICT");
+assert.equal(getRecord(duplicate.id).status, "running", "a caller cannot cancel another agent's turn");
+const cancelledDuplicate = unwrap(await manager.cancel(duplicate.id, duplicateTurn.id, scope));
+assert.equal(cancelledDuplicate.status, "stopped");
+assert.equal(cancelledDuplicate.errorCode, "PROVIDER_CANCELLED");
+assert.equal(getRecord(duplicate.id).status, "stopped");
+assert.equal(unwrap(await manager.cancel(duplicate.id, duplicateTurn.id, scope)).status, "stopped");
+assert.equal(runtimes.get(first.id)?.closed, false, "cancelling one turn does not close another runtime");
+
+const authorityUpgrade = await manager.continue(duplicate.id, "expand authority", {
+  writeMode: "allowed",
+}, scope);
+assert.equal(authorityUpgrade.isErr(), true);
+if (authorityUpgrade.isErr()) assert.equal(authorityUpgrade.error.code, "AGENT_CONFLICT");
+
+const unconfirmedCancellation = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "hold ignore cancel",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(unconfirmedCancellation.id)?.inputs.length === 1);
+const unconfirmedTurn = unwrap(manager.getTurn(unconfirmedCancellation.id, scope));
+assert.ok(unconfirmedTurn);
+const unconfirmedResult = unwrap(await manager.cancel(
+  unconfirmedCancellation.id,
+  unconfirmedTurn.id,
+  scope,
+));
+assert.equal(unconfirmedResult.status, "completed", "unconfirmed cancellation cannot persist stopped");
+
 const continued = unwrap(await manager.continue(first.id, "continue", {
   model: "gpt-run",
   effort: "high",
@@ -261,13 +388,44 @@ assert.equal(continued.status, "running");
 await waitFor(() => getRecord(first.id).status === "idle");
 assert.equal(getRecord(first.id).model, "gpt-run");
 assert.equal(getRecord(first.id).effort, "high");
+const reduced = unwrap(await manager.continue(first.id, "reduce authority", {
+  writeMode: "read_only",
+}, scope));
+assert.equal(reduced.writeMode, "read_only");
+await waitFor(() => getRecord(first.id).status === "idle");
+assert.equal(getRecord(first.id).writeMode, "read_only", "authority reductions persist across continuations");
+const restoreAuthority = await manager.continue(first.id, "restore authority", {
+  writeMode: "allowed",
+}, scope);
+assert.equal(restoreAuthority.isErr(), true);
+if (restoreAuthority.isErr()) assert.equal(restoreAuthority.error.code, "AGENT_CONFLICT");
 assert.deepEqual(
   store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
   [
     { prompt: "hold", status: "completed" },
     { prompt: "continue", status: "completed" },
+    { prompt: "reduce authority", status: "completed" },
   ],
 );
+
+const mutableDispatchInput = {
+  agentId: "workflow-sticky-dispatch",
+  target: "reviewer",
+  prompt: "stable dispatch",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+  writeMode: "allowed" as const,
+};
+const mutableDispatch = unwrap(await manager.start(mutableDispatchInput));
+await waitFor(() => getRecord(mutableDispatch.id).status === "idle");
+unwrap(await manager.continue(mutableDispatch.id, "reduce stable dispatch", {
+  writeMode: "read_only",
+}, scope));
+await waitFor(() => getRecord(mutableDispatch.id).status === "idle");
+const retriedMutableDispatch = unwrap(await manager.start(mutableDispatchInput));
+assert.equal(retriedMutableDispatch.id, mutableDispatch.id);
+assert.equal(retriedMutableDispatch.writeMode, "read_only");
+assert.equal(store.listTurns(mutableDispatch.id).length, 2, "an idempotent retry never redispatches");
 
 const second = unwrap(await manager.start({
   target: "reviewer",
@@ -277,7 +435,8 @@ const second = unwrap(await manager.start({
 }));
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
-assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
+assert.equal(runtimes.has(first.id), true);
+assert.equal(runtimes.has(second.id), true, "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
   target: "reviewer",
@@ -399,9 +558,10 @@ const directOutside = unwrap(await manager.start({
 }));
 await waitFor(() => unwrap(manager.get(directOutside.id, { workspaceRoot: directRoot })).status === "idle");
 assert.equal(directOutside.workspaceId, undefined);
-assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id), [
+assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id).sort(), [
   directOutside.id,
-]);
+  managed.id,
+].sort());
 
 const direct = unwrap(await manager.start({
   target: "reviewer",

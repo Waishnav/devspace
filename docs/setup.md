@@ -76,8 +76,8 @@ These commands do not require `devspace serve`.
 
 This Coding Agent installation is separate from ChatGPT MCP usage. For MCP
 workspaces with Subagents enabled, DevSpace manages its own copy at
-`~/.devspace/skills/subagents/SKILL.md`; users do not install that copy
-manually.
+`~/.devspace/skills/subagents/SKILL.md` and its bundled workflow skill at
+`~/.devspace/skills/workflows/SKILL.md`; users do not install those copies manually.
 
 ### Connect ChatGPT
 

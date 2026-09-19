@@ -28,6 +28,11 @@ import {
   decodeDaemonLogs,
   decodeDaemonStatus,
   decodeLocalAgentDaemonResponse,
+  decodeWorkflowCall,
+  decodeWorkflowCallList,
+  decodeWorkflowEventList,
+  decodeWorkflowRun,
+  decodeWorkflowRunList,
   encodeLocalAgentDaemonRequest,
   LocalAgentDaemonProtocolError,
   type LocalAgentDaemonErrorPayload,
@@ -56,6 +61,13 @@ import type {
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { devspaceConfigDir } from "./user-config.js";
+import {
+  WorkflowError,
+  type WorkflowCall,
+  type WorkflowEvent,
+  type WorkflowRun,
+  type WorkflowRunInput,
+} from "./workflow-types.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -67,6 +79,7 @@ type RequestError<M extends LocalAgentDaemonRequest["method"]> =
       : M extends "agent.get" ? AgentLookupError | AgentDaemonError
         : M extends "agent.list" ? AgentListError | AgentDaemonError
           : M extends "agent.wait" ? AgentWaitError | AgentDaemonError
+            : M extends `workflow.${string}` ? WorkflowError | AgentDaemonError
           : AgentDaemonError;
 
 export interface LocalAgentClientOptions {
@@ -158,6 +171,71 @@ export class LocalAgentClient {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     }, transportTimeoutMs);
     return decodeRequestResult(result, "agent.wait", decodeAgentWaitResults);
+  }
+
+  async runWorkflow(
+    input: WorkflowRunInput,
+  ): Promise<BetterResult<WorkflowRun, WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.run", input);
+    return decodeRequestResult(result, "workflow.run", decodeWorkflowRun);
+  }
+
+  async getWorkflow(
+    id: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<WorkflowRun, WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.get", { id, scope });
+    return decodeRequestResult(result, "workflow.get", decodeWorkflowRun);
+  }
+
+  async listWorkflows(
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<WorkflowRun[], WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.list", scope);
+    return decodeRequestResult(result, "workflow.list", decodeWorkflowRunList);
+  }
+
+  async waitWorkflow(
+    id: string,
+    scope: LocalAgentWorkspaceScope,
+    timeoutMs = 60_000,
+  ): Promise<BetterResult<WorkflowRun, WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.wait", { id, scope, timeoutMs }, timeoutMs + this.requestTimeoutMs);
+    return decodeRequestResult(result, "workflow.wait", decodeWorkflowRun);
+  }
+
+  async workflowCalls(
+    id: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<WorkflowCall[], WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.calls", { id, scope });
+    return decodeRequestResult(result, "workflow.calls", decodeWorkflowCallList);
+  }
+
+  async workflowCall(
+    id: string,
+    index: number,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<WorkflowCall, WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.call", { id, index, scope });
+    return decodeRequestResult(result, "workflow.call", decodeWorkflowCall);
+  }
+
+  async workflowEvents(
+    id: string,
+    scope: LocalAgentWorkspaceScope,
+    after = 0,
+  ): Promise<BetterResult<WorkflowEvent[], WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.events", { id, scope, after });
+    return decodeRequestResult(result, "workflow.events", decodeWorkflowEventList);
+  }
+
+  async cancelWorkflow(
+    id: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<WorkflowRun, WorkflowError | AgentDaemonError>> {
+    const result = await this.request("workflow.cancel", { id, scope });
+    return decodeRequestResult(result, "workflow.cancel", decodeWorkflowRun);
   }
 
   async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
@@ -272,7 +350,7 @@ export class LocalAgentClient {
     const decoded = decodeValue(response.value.result, "hello", decodeDaemonHello);
     if (decoded.isErr()) return decoded;
     if (!decoded.value.configMatches) {
-      if (allowStaleBusyConfig && decoded.value.status.activeTurns > 0) {
+      if (allowStaleBusyConfig && daemonBusy(decoded.value.status)) {
         return Result.ok(decoded.value.status);
       }
       return this.replaceIdleChangedDaemon(authToken.value, decoded.value.status);
@@ -288,11 +366,11 @@ export class LocalAgentClient {
       code: "DAEMON_CONFIG_CHANGED",
       operation: "startup",
       retryable: true,
-      message: status.activeTurns > 0
+      message: daemonBusy(status)
         ? "The local agent daemon is running active turns with an older provider configuration. Retry after they finish."
         : "The local agent daemon is using an older provider configuration.",
     });
-    if (status.activeTurns > 0) return Result.err(changed);
+    if (daemonBusy(status)) return Result.err(changed);
     return this.stopIdleDaemon(authToken, LOCAL_AGENT_DAEMON_PROTOCOL_VERSION, status, changed);
   }
 
@@ -312,7 +390,7 @@ export class LocalAgentClient {
     if (statusResponse.isErr() || !statusResponse.value.ok) return Result.err(mismatch);
     const status = decodeValue(statusResponse.value.result, "hello", decodeDaemonStatus);
     if (status.isErr()) return status;
-    if (status.value.activeTurns > 0) {
+    if (daemonBusy(status.value)) {
       return Result.err(new AgentDaemonProtocolMismatchError({
         code: "DAEMON_PROTOCOL_MISMATCH",
         operation: "startup",
@@ -403,7 +481,9 @@ export class LocalAgentClient {
     } as LocalAgentDaemonRequest, timeoutMs ?? undefined);
     if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
     if (!response.value.ok) {
-      const error = decodeRemoteError(response.value.error, method);
+      const error = isWorkflowMethod(method)
+        ? decodeWorkflowRemoteError(response.value.error)
+        : decodeRemoteError(response.value.error, method);
       if (!isRequestError(method, error)) {
         return Result.err(new AgentDaemonInvalidResponseError({
           code: "DAEMON_INVALID_RESPONSE",
@@ -491,8 +571,11 @@ export class LocalAgentClient {
 
 function isObservationRequest(
   method: LocalAgentDaemonRequest["method"],
-): method is "agent.get" | "agent.list" | "agent.wait" {
-  return method === "agent.get" || method === "agent.list" || method === "agent.wait";
+): boolean {
+  return method === "agent.get" || method === "agent.list" || method === "agent.wait"
+    || method === "workflow.get" || method === "workflow.list" || method === "workflow.wait"
+    || method === "workflow.calls" || method === "workflow.call" || method === "workflow.events"
+    || method === "workflow.cancel";
 }
 
 export function createLocalAgentClient(
@@ -621,7 +704,7 @@ async function sendRequest(
   });
 }
 
-function decodeRequestResult<T, E extends LocalAgentError>(
+function decodeRequestResult<T, E>(
   result: BetterResult<unknown, E>,
   operation: string,
   decode: (value: unknown) => T,
@@ -661,10 +744,24 @@ function decodeRemoteError(
   });
 }
 
+function decodeWorkflowRemoteError(payload: LocalAgentDaemonErrorPayload): LocalAgentError | WorkflowError {
+  const decoded = agentErrorFromPayload(payload);
+  return decoded && isAgentDaemonError(decoded)
+    ? decoded
+    : new WorkflowError(payload.code, payload.message, payload.retryable ?? false);
+}
+
+type WorkflowDaemonMethod = Extract<LocalAgentDaemonRequest["method"], `workflow.${string}`>;
+
+function isWorkflowMethod(method: LocalAgentDaemonRequest["method"]): method is WorkflowDaemonMethod {
+  return method.startsWith("workflow.");
+}
+
 function isRequestError(
   method: LocalAgentDaemonRequest["method"],
-  error: LocalAgentError,
+  error: LocalAgentError | WorkflowError,
 ): boolean {
+  if (error instanceof WorkflowError) return method.startsWith("workflow.");
   const category = matchError(error, {
     AgentTargetError: () => "target" as const,
     AgentConflictError: () => "conflict" as const,
@@ -697,12 +794,25 @@ function isRequestError(
       return category === "target" || category === "scope" || category === "store";
     case "agent.list":
       return category === "scope" || category === "store";
+    case "workflow.run":
+    case "workflow.get":
+    case "workflow.list":
+    case "workflow.wait":
+    case "workflow.calls":
+    case "workflow.call":
+    case "workflow.events":
+    case "workflow.cancel":
+      return false;
     case "hello":
     case "daemon.status":
     case "daemon.stop":
     case "daemon.logs":
       return false;
   }
+}
+
+function daemonBusy(status: LocalAgentDaemonStatus): boolean {
+  return status.activeTurns > 0 || (status.activeWorkflows ?? 0) > 0;
 }
 
 function delay(ms: number): Promise<void> {

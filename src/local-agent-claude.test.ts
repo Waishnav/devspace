@@ -41,6 +41,8 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
     this.closeCount += 1;
   }
 
+  async interrupt(): Promise<void> {}
+
   async setPermissionMode(mode: string): Promise<void> {
     this.permissionModes.push(mode);
   }
@@ -176,6 +178,46 @@ await runtime.close();
 await runtime.close();
 assert.equal(query?.closeCount, 1);
 
+let releaseInterruptedQuery!: () => void;
+let markInterruptibleQueryReady!: () => void;
+const interruptibleQueryReady = new Promise<void>((resolve) => { markInterruptibleQueryReady = resolve; });
+const interruptedQuery = new Promise<void>((resolve) => { releaseInterruptedQuery = resolve; });
+let interruptCalls = 0;
+class InterruptibleClaudeQuery extends FakeClaudeQuery {
+  override async next(): Promise<IteratorResult<unknown>> {
+    const result = await super.next();
+    markInterruptibleQueryReady();
+    await interruptedQuery;
+    return result;
+  }
+
+  override async interrupt(): Promise<void> {
+    interruptCalls += 1;
+    releaseInterruptedQuery();
+  }
+}
+const interruptibleRuntimeResult = await new ClaudeLocalAgentDriver(({ prompt }) => (
+  new InterruptibleClaudeQuery(prompt)
+)).createRuntime(context);
+assert.equal(interruptibleRuntimeResult.isOk(), true);
+if (interruptibleRuntimeResult.isErr()) throw interruptibleRuntimeResult.error;
+const claudeController = new AbortController();
+const interruptedClaudeTurn = interruptibleRuntimeResult.value.run({
+  prompt: "cancel",
+  workspaceRoot: "/tmp/project",
+  signal: claudeController.signal,
+});
+await interruptibleQueryReady;
+claudeController.abort();
+const interruptedClaudeResult = await interruptedClaudeTurn;
+assert.equal(interruptedClaudeResult.isErr(), true);
+if (interruptedClaudeResult.isErr()) {
+  assert.equal(interruptedClaudeResult.error.code, "PROVIDER_CANCELLED");
+}
+assert.equal(interruptCalls, 1);
+assert.equal(interruptibleRuntimeResult.value.isAlive(), true);
+await interruptibleRuntimeResult.value.close();
+
 const coldRuntime = await driver.createRuntime({ ...context, providerSessionId: "cold_session" });
 assert.equal(coldRuntime.isOk(), true);
 assert.equal(lastOptions?.resume, "cold_session");
@@ -212,6 +254,7 @@ const brokenStreamQuery: ClaudeQueryLike = {
     };
   },
   close() {},
+  async interrupt() {},
   async setPermissionMode() {},
   async applyFlagSettings() {},
 };

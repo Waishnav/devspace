@@ -5,6 +5,9 @@ import {
   decodeDaemonHello,
   decodeLocalAgentDaemonRequest,
   decodeLocalAgentDaemonResponse,
+  decodeWorkflowCall,
+  decodeWorkflowEventList,
+  decodeWorkflowRun,
   encodeLocalAgentDaemonResponse,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
@@ -216,3 +219,94 @@ assert.deepEqual(decodeAgentWaitResults([
     error: { code: "PROVIDER_EXECUTION_ERROR", message: "Failed.", retryable: true },
   },
 ]);
+
+const workflowRunRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_workflow_run",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "workflow.run",
+  params: {
+    workspaceId: "ws_test",
+    workspaceRoot: "/tmp/project",
+    name: "review",
+    args: { base: "main" },
+    writeMode: "read_only",
+  },
+});
+assert.equal(workflowRunRequest.method, "workflow.run");
+if (workflowRunRequest.method !== "workflow.run") throw new Error("expected workflow.run request");
+assert.deepEqual(workflowRunRequest.params.args, { base: "main" });
+assert.throws(() => decodeLocalAgentDaemonRequest({
+  requestId: "req_workflow_ambiguous",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "workflow.run",
+  params: { workspaceRoot: "/tmp/project", name: "review", resume: "wfl_old" },
+}), /Exactly one workflow/);
+assert.throws(() => decodeLocalAgentDaemonRequest({
+  requestId: "req_workflow_wait",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "workflow.wait",
+  params: {
+    id: "wfl_test",
+    scope: { workspaceRoot: "/tmp/project" },
+    timeoutMs: 60_001,
+  },
+}), /between 0 and 60000/);
+
+const workflowRun = decodeWorkflowRun({
+  id: "wfl_test",
+  workspaceId: "ws_test",
+  workspaceRoot: "/tmp/project",
+  name: "review",
+  status: "running",
+  writeMode: "read_only",
+  concurrency: 2,
+  createdAt: "now",
+  updatedAt: "now",
+  callCount: 1,
+});
+assert.equal(workflowRun.id, "wfl_test");
+
+const workflowCall = decodeWorkflowCall({
+  runId: "wfl_test",
+  index: 0,
+  agentId: "agt_test",
+  status: "running",
+  prompt: "Review this",
+  options: { target: "reviewer", label: "review" },
+  fingerprint: "fingerprint",
+  workspaceRoot: "/tmp/project",
+  createdAt: "now",
+  updatedAt: "now",
+});
+assert.equal(workflowCall.options.target, "reviewer");
+
+const workflowEventsRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_workflow_events",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "workflow.events",
+  params: {
+    id: "wfl_test",
+    scope: { workspaceRoot: "/tmp/project" },
+    after: 12,
+  },
+});
+assert.equal(workflowEventsRequest.method, "workflow.events");
+if (workflowEventsRequest.method !== "workflow.events") throw new Error("expected workflow.events request");
+assert.equal(workflowEventsRequest.params.after, 12);
+assert.deepEqual(decodeWorkflowEventList([{
+  sequence: 13,
+  runId: "wfl_test",
+  type: "phase_started",
+  data: { phase: "review" },
+  createdAt: "now",
+}]), [{
+  sequence: 13,
+  runId: "wfl_test",
+  type: "phase_started",
+  data: { phase: "review" },
+  createdAt: "now",
+}]);

@@ -121,16 +121,38 @@ export class OpencodeRuntime implements LocalAgentRuntime {
   }
 
   private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<unknown> {
+    input.signal?.throwIfAborted();
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+    let cancellation: Promise<true> | undefined;
+    const cancelPrompt = () => {
+      cancellation ??= Promise.resolve().then(async () => {
+        if (typeof this.client.session.abort !== "function") {
+          throw new Error("OpenCode session abort is unavailable.");
+        }
+        const result = await this.client.session.abort({
+          sessionID: sessionId,
+          directory: input.workspaceRoot,
+        }, { throwOnError: true });
+        if (unwrapProviderPayload(result) === false) {
+          throw new Error("OpenCode did not acknowledge the session abort.");
+        }
+        controller.abort();
+        return true as const;
+      });
+    };
+    input.signal?.addEventListener("abort", cancelPrompt, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.promptTimeoutMs);
     try {
-      return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
+      const result = await promptOpencodeSession(this.client, sessionId, input, controller.signal);
+      if (input.signal?.aborted && (await cancellation)) throw abortError();
+      return result;
     } catch (error) {
+      if (input.signal?.aborted && (await cancellation)) throw abortError();
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -142,9 +164,14 @@ export class OpencodeRuntime implements LocalAgentRuntime {
       });
     } finally {
       clearTimeout(timer);
+      input.signal?.removeEventListener("abort", cancelPrompt);
       this.promptControllers.delete(controller);
     }
   }
+}
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export class OpencodeLocalAgentDriver implements LocalAgentDriver {

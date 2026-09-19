@@ -78,6 +78,7 @@ export interface CodexAppServerRuntimeOptions {
   command: string;
   env: NodeJS.ProcessEnv;
   version?: string;
+  onInterruptError?: (error: unknown) => void;
 }
 
 export class CodexAppServerRuntime implements LocalAgentRuntime {
@@ -95,7 +96,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
       windowsHide: true,
       shell: usesWindowsCommandShell(options.command),
     });
-    this.rpc = new CodexAppServerRpc(this.child, options.version);
+    this.rpc = new CodexAppServerRpc(this.child, options.version, options.onInterruptError);
     this.child.once("exit", (code, signal) => {
       this.alive = false;
       this.rpc.fail(new Error(
@@ -121,6 +122,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
       provider: this.provider,
       operation: "run",
       run: async (): Promise<LocalAgentRunResult> => {
+        input.signal?.throwIfAborted();
         if (!this.isAlive()) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -147,7 +149,8 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
-        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal);
+        if (codexTurnWasCancelled(completed.event.params)) throw abortError();
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
@@ -339,6 +342,9 @@ class CodexAppServerRpc {
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly version?: string,
+    private readonly onInterruptError: (error: unknown) => void = (error) => {
+      console.warn(`Codex turn interrupt failed: ${errorMessage(error)}`);
+    },
   ) {
     createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => this.handleLine(line));
     child.stdin.on("error", (error) => this.fail(error));
@@ -360,7 +366,12 @@ class CodexAppServerRpc {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  async runTurn(threadId: string, params: unknown): Promise<CodexTurnResult> {
+  async runTurn(
+    threadId: string,
+    params: unknown,
+    signal?: AbortSignal,
+  ): Promise<CodexTurnResult> {
+    signal?.throwIfAborted();
     if (this.fatalError) throw this.fatalError;
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
@@ -376,12 +387,26 @@ class CodexAppServerRpc {
       reject: rejectTurn,
     };
     this.turns.set(threadId, turn);
+    let interrupt: Promise<unknown> | undefined;
+    const onAbort = () => {
+      const turnId = turn.turnId;
+      if (!turnId || interrupt) return;
+      interrupt = Promise.resolve()
+        .then(() => this.request("turn/interrupt", { threadId, turnId }))
+        .catch((error) => {
+          this.onInterruptError(error);
+          turn.reject(error instanceof Error ? error : new Error(errorMessage(error)));
+        });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
+      if (signal?.aborted) onAbort();
       if (turn.completed) return { event: turn.completed, items: turn.items };
       return await completion;
     } finally {
+      signal?.removeEventListener("abort", onAbort);
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
     }
   }
@@ -514,6 +539,15 @@ function parseCompletedTurn(params: unknown, items: unknown[]): {
     ? directString(error?.message) ?? "Codex turn failed."
     : undefined;
   return { finalResponse, items: completedItems, failure };
+}
+
+function codexTurnWasCancelled(params: unknown): boolean {
+  const status = asRecord(asRecord(params)?.turn)?.status;
+  return status === "interrupted" || status === "cancelled";
+}
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export function codexAppServerError(message: string, version?: string, stderr?: string): Error {
