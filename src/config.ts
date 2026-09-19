@@ -23,6 +23,7 @@ export interface ServerConfig {
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
   skillsEnabled: boolean;
+  experimentalSkillUris: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
   devspaceAgentsDir: string;
@@ -72,6 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,
     skillsEnabled: stored.skills.enabled,
+    experimentalSkillUris: env.DEVSPACE_EXPERIMENTAL_SKILL_URIS === "1",
     skillPaths: stored.skills.paths,
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),

@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { logEvent, commandPreview } from "../logger.js";
 import type { ServerConfig } from "../config.js";
+import type { Workspace, WorkspaceRegistry } from "../workspaces.js";
 import {
   WORKSPACE_APP_URI,
   type DiffStats,
@@ -105,6 +106,52 @@ export function logFailedToolResponse(
 
 export function textBlock(text: string): ToolContent {
   return { type: "text", text };
+}
+
+const SKILL_URI_SHELL_ARGUMENT =
+  /"(skills:\/\/[^"\r\n]+)"|'(skills:\/\/[^'\r\n]+)'|(?<![^\s|&;()<>])(skills:\/\/[^\s"'\`|&;()<>]+)/g;
+
+export async function expandSkillUrisInShellCommand(
+  config: ServerConfig,
+  workspaces: WorkspaceRegistry,
+  workspace: Workspace,
+  command: string,
+  shell: "native" | "bash",
+): Promise<string> {
+  if (!config.experimentalSkillUris || !command.includes("skills://")) {
+    return command;
+  }
+
+  // Experimental workaround: shell tools cannot consume skills:// URIs themselves.
+  // Rewrite only standalone URI arguments until MCP Skills/resources are broadly host-native.
+  const matches = Array.from(command.matchAll(SKILL_URI_SHELL_ARGUMENT));
+  if (matches.length === 0) return command;
+
+  let expanded = "";
+  let offset = 0;
+  for (const match of matches) {
+    const index = match.index;
+    const uri = match[1] ?? match[2] ?? match[3];
+    if (index === undefined || uri === undefined) continue;
+
+    const resolved = await workspaces.resolveReadPath(workspace, uri);
+    expanded += command.slice(offset, index);
+    expanded += quoteShellPath(resolved.absolutePath, shell);
+    offset = index + match[0].length;
+  }
+
+  return expanded + command.slice(offset);
+}
+
+function quoteShellPath(path: string, shell: "native" | "bash"): string {
+  if (shell === "native" && process.platform === "win32") {
+    return `"${path}"`;
+  }
+
+  const shellPath = process.platform === "win32"
+    ? path.replace(/\\/g, "/")
+    : path;
+  return `'${shellPath.replace(/'/g, `'\\''`)}'`;
 }
 
 export function countDiffStats(diff: string | undefined): DiffStats {

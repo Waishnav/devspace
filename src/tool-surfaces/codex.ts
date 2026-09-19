@@ -14,6 +14,7 @@ import {
 } from "./types.js";
 import {
   contentText,
+  expandSkillUrisInShellCommand,
   resultOutputSchema,
   runLoggedToolOperation,
   textBlock,
@@ -147,7 +148,11 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Execute command",
       description:
-        "Run a shell command in a workspace with the user's local permissions. Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin.",
+        "Run a shell command in a workspace with the user's local permissions. "
+        + (config.experimentalSkillUris
+          ? "Standalone skills:// arguments are resolved before execution. "
+          : "")
+        + "Returns the result when it exits during the yield window, otherwise returns a session_id for write_stdin.",
       inputSchema: {
         workspace_id: z.string().describe(workspaceIdDescription),
         cmd: z.string().min(1).describe("Shell command to execute."),
@@ -228,9 +233,16 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             workspace,
             workingDirectory,
           );
+          const command = await expandSkillUrisInShellCommand(
+            config,
+            workspaces,
+            workspace,
+            cmd,
+            "native",
+          );
           return processSessions.start({
             workspaceId,
-            command: cmd,
+            command,
             cwd,
             workspaceRoot: workspace.root,
             tty,

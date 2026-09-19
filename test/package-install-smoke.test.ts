@@ -30,7 +30,6 @@ function testPackedPackageLaunchers(): void {
       "--no-fund",
       "--no-package-lock",
       "--no-save",
-      "--omit=optional",
       join(root, archive),
     ], {
       cwd: installRoot,

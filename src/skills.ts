@@ -29,6 +29,9 @@ export interface SkillReadResolution {
   skill: Skill;
 }
 
+const SKILL_URI_PREFIX = "skills://";
+const MAX_SKILL_NAME_LENGTH = 64;
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SUBAGENTS_SKILL_NAME = "subagents";
 const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
 
@@ -108,7 +111,13 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   });
 
   const withoutSubagents = withoutSubagentsSkill(result);
-  if (!config.subagents.enabled) return withoutSubagents;
+  const available = config.experimentalSkillUris
+    ? {
+        skills: withoutSubagents.skills.filter((skill) => isRoutableSkillName(skill.name)),
+        diagnostics: withoutSubagents.diagnostics,
+      }
+    : withoutSubagents;
+  if (!config.subagents.enabled) return available;
 
   const managedDir = dirname(join(config.devspaceSkillsDir, SUBAGENTS_SKILL));
   const managed = loadSkillsFromDir({
@@ -120,8 +129,8 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   }
 
   return {
-    skills: [...withoutSubagents.skills, managed],
-    diagnostics: withoutSubagents.diagnostics,
+    skills: [...available.skills, managed],
+    diagnostics: available.diagnostics,
   };
 }
 
@@ -138,24 +147,69 @@ function withoutSubagentsSkill(result: LoadSkillsResult): LoadedSkills {
 export function resolveSkillReadPath(
   skills: Skill[],
   inputPath: string,
+  experimentalSkillUris: boolean,
 ): SkillReadResolution | undefined {
-  const absolutePath = resolve(expandHomePath(inputPath));
+  if (!experimentalSkillUris) {
+    const absolutePath = resolve(expandHomePath(inputPath));
 
-  for (const skill of skills) {
-    const skillFilePath = resolve(skill.filePath);
-    if (absolutePath === skillFilePath) {
+    for (const skill of skills) {
+      const skillFilePath = resolve(skill.filePath);
+      if (absolutePath === skillFilePath) {
+        return { absolutePath, skill };
+      }
+    }
+
+    for (const skill of skills) {
+      const baseDir = resolve(skill.baseDir);
+      if (!isPathInsideRoot(absolutePath, baseDir)) continue;
+
       return { absolutePath, skill };
     }
+
+    return undefined;
   }
 
-  for (const skill of skills) {
-    const baseDir = resolve(skill.baseDir);
-    if (!isPathInsideRoot(absolutePath, baseDir)) continue;
+  if (!inputPath.startsWith(SKILL_URI_PREFIX)) return undefined;
 
-    return { absolutePath, skill };
+  const skillReference = inputPath.slice(SKILL_URI_PREFIX.length);
+  const separatorIndex = skillReference.indexOf("/");
+  const skillName = separatorIndex === -1
+    ? skillReference
+    : skillReference.slice(0, separatorIndex);
+  const resourcePath = separatorIndex === -1
+    ? undefined
+    : skillReference.slice(separatorIndex + 1);
+
+  if (!skillName) {
+    throw new Error(`Invalid skill URI: ${inputPath}`);
+  }
+  if (!isRoutableSkillName(skillName)) {
+    throw new Error(`Invalid skill URI: ${inputPath}`);
   }
 
-  return undefined;
+  const skill = skills.find((candidate) => candidate.name === skillName);
+  if (!skill) {
+    throw new Error(`Unknown skill: ${skillName}`);
+  }
+
+  if (!resourcePath) {
+    return { absolutePath: resolve(skill.filePath), skill };
+  }
+
+  const baseDir = resolve(skill.baseDir);
+  const absolutePath = resolve(baseDir, resourcePath);
+  if (!isPathInsideRoot(absolutePath, baseDir)) {
+    throw new Error(`Skill resource is outside skill directory: ${inputPath}`);
+  }
+
+  return { absolutePath, skill };
+}
+
+export function formatSkillUri(skill: Skill): string {
+  if (!isRoutableSkillName(skill.name)) {
+    throw new Error(`Invalid skill name for skills:// URI: ${skill.name}`);
+  }
+  return `${SKILL_URI_PREFIX}${skill.name}`;
 }
 
 export function formatPathForPrompt(path: string): string {
@@ -168,4 +222,8 @@ export function formatPathForPrompt(path: string): string {
   }
 
   return resolvedPath.split(sep).join("/");
+}
+
+function isRoutableSkillName(name: string): boolean {
+  return name.length <= MAX_SKILL_NAME_LENGTH && SKILL_NAME_PATTERN.test(name);
 }

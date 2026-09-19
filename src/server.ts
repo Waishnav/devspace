@@ -43,7 +43,7 @@ import { ProcessSessionManager } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
-import { formatPathForPrompt } from "./skills.js";
+import { formatPathForPrompt, formatSkillUri } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
@@ -131,12 +131,16 @@ function serverInstructions(
   const showChangesInstruction =
     " If files are modified, call show_changes once after the final related change and before the final response.";
   const skills = config.skillsEnabled
-    ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned skill path before proceeding. `
+    ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned ${skillReferenceLabel(config)} before proceeding. `
     : "";
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
   const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
+}
+
+function skillReferenceLabel(config: ServerConfig): string {
+  return config.experimentalSkillUris ? "skills:// URI" : "skill path";
 }
 
 function formatVisibleAgent(agent: {
@@ -467,7 +471,9 @@ function registerMcpSurface(
         .map((skill) => ({
           name: skill.name,
           description: skill.description,
-          path: formatPathForPrompt(skill.filePath),
+          path: config.experimentalSkillUris
+            ? formatSkillUri(skill)
+            : formatPathForPrompt(skill.filePath),
         }));
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
@@ -496,7 +502,7 @@ function registerMcpSurface(
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
       const cardInstruction = config.skillsEnabled
-        ? "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
+        ? `Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file. When a task matches an available skill in skills, read its ${skillReferenceLabel(config)} before proceeding.`
         : "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file.";
       const workspaceInstruction = workspaceReused
         ? [
@@ -622,7 +628,7 @@ function registerMcpSurface(
           "Read all or part of a file in a workspace.",
           "Use this tool to inspect relevant AGENTS.md or CLAUDE.md files listed by open_workspace before working in nested directories.",
           config.skillsEnabled
-            ? "If available skills were returned and a task matches one, read the returned skill path before proceeding."
+            ? `If available skills were returned and a task matches one, read the returned ${skillReferenceLabel(config)} before proceeding.`
             : "",
         ]
           .filter(Boolean)
@@ -635,7 +641,7 @@ function registerMcpSurface(
           .string()
           .describe(
             config.skillsEnabled
-              ? "File path relative to the workspace root, or a skill path returned by open_workspace."
+              ? `File path relative to the workspace root, or a ${skillReferenceLabel(config)} returned by open_workspace.`
               : "File path to read, relative to the workspace root.",
           ),
         offset: z

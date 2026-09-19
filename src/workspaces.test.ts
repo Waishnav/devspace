@@ -344,7 +344,7 @@ test("workspace cache evicts old contexts without losing advertised skill reads"
   );
   await writeFile(resourceFile, "reference\n");
 
-  const config = loadConfig(writeTestDevspaceConfig(
+  const configEnv = writeTestDevspaceConfig(
     join(context.root, ".bounded-home"),
     {
       server: { port: 1 },
@@ -355,14 +355,23 @@ test("workspace cache evicts old contexts without losing advertised skill reads"
       skills: { agentDir },
       subagents: { enabled: true, instructions: "on-demand", providers: [] },
     },
-  ));
+  );
+  const config = loadConfig({
+    ...configEnv,
+    DEVSPACE_EXPERIMENTAL_SKILL_URIS: "1",
+  });
 
   const store = new SqliteWorkspaceStore(stateDir);
   try {
     const registry = new WorkspaceRegistry(config, store);
     const first = await registry.openWorkspace(context.root);
     assert.equal(
-      (await registry.resolveReadPath(first.workspace, resourceFile)).absolutePath,
+      (
+        await registry.resolveReadPath(
+          first.workspace,
+          "skills://cache-skill/reference.md",
+        )
+      ).absolutePath,
       await realpath(resourceFile),
     );
 
@@ -373,7 +382,12 @@ test("workspace cache evicts old contexts without losing advertised skill reads"
     const restored = await registry.getWorkspace(first.workspace.id);
     assert.notEqual(restored, first.workspace);
     assert.equal(
-      (await registry.resolveReadPath(restored, resourceFile)).absolutePath,
+      (
+        await registry.resolveReadPath(
+          restored,
+          "skills://cache-skill/reference.md",
+        )
+      ).absolutePath,
       await realpath(resourceFile),
     );
   } finally {

@@ -21,6 +21,7 @@ try {
   assert.equal(defaults.toolMode, "codex");
   assert.equal(defaults.uiEnabled, true);
   assert.equal(defaults.skillsEnabled, true);
+  assert.equal(defaults.experimentalSkillUris, false);
   assert.equal(defaults.artifactsEnabled, false);
   assert.deepEqual(defaults.subagents, {
     enabled: false,
@@ -121,6 +122,10 @@ try {
   });
 
   assert.equal(loadConfig(env).oauth.ownerToken, env.DEVSPACE_OAUTH_OWNER_TOKEN);
+  assert.equal(
+    loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_SKILL_URIS: "1" }).experimentalSkillUris,
+    true,
+  );
 } finally {
   rmSync(configDir, { recursive: true, force: true });
 }

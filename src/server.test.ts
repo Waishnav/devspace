@@ -435,8 +435,63 @@ test("open_workspace advertises subagent instructions on demand by default", asy
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   const skills = opened.skills as Array<Record<string, unknown>>;
-  assert.equal(skills.some((skill) => skill.name === "subagents"), true);
+  const subagents = skills.find((skill) => skill.name === "subagents");
+  assert.ok(subagents);
+  assert.match(String(subagents.path), /\/skills\/subagents\/SKILL\.md$/);
   assert.doesNotMatch(String(opened.instruction), /# DevSpace subagents/);
+});
+
+test("open_workspace advertises experimental skill URIs when enabled", async (t) => {
+  const context = await fixture(t, {
+    localAgentProviders: [{ name: "codex", available: true }],
+    experimentalSkillUris: true,
+  });
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const skills = opened.skills as Array<Record<string, unknown>>;
+  const subagents = skills.find((skill) => skill.name === "subagents");
+  assert.ok(subagents);
+  assert.equal(subagents.path, "skills://subagents");
+  assert.doesNotMatch(String(opened.instruction), /# DevSpace subagents/);
+});
+
+test("experimental skill URIs work as shell command arguments", async (t) => {
+  for (const toolMode of ["codex", "claude"] as const) {
+    await t.test(toolMode, async (t) => {
+      const context = await fixture(t, {
+        toolMode,
+        localAgentProviders: [{ name: "codex", available: true }],
+        experimentalSkillUris: true,
+      });
+      const workspaceId = structuredContent(
+        await callOpen(context.client, context.project, `skill-shell-${toolMode}`),
+      ).workspace_id;
+      assert.equal(typeof workspaceId, "string");
+
+      const skillArgument = toolMode === "codex"
+        ? "skills://subagents"
+        : '"skills://subagents"';
+      const command =
+        `node -p "require('node:fs').readFileSync(process.argv[1],'utf8')" ${skillArgument}`;
+      const result = structuredContent(await context.client.callTool({
+        name: toolMode === "codex" ? "exec_command" : "bash",
+        arguments: toolMode === "codex"
+          ? { workspace_id: workspaceId, cmd: command }
+          : { workspace_id: workspaceId, command },
+      }));
+
+      assert.match(String(result.result), /# DevSpace subagents/);
+
+      const literalCommand = `node -p "process.argv[1]" "prefixskills://subagents"`;
+      const literal = structuredContent(await context.client.callTool({
+        name: toolMode === "codex" ? "exec_command" : "bash",
+        arguments: toolMode === "codex"
+          ? { workspace_id: workspaceId, cmd: literalCommand }
+          : { workspace_id: workspaceId, command: literalCommand },
+      }));
+      assert.match(String(literal.result), /prefixskills:\/\/subagents/);
+    });
+  }
 });
 
 test("open_workspace preloads subagent instructions when configured", async (t) => {
@@ -722,6 +777,7 @@ async function fixture(
     subagents?: SubagentsConfig;
     toolMode?: ToolMode;
     uiEnabled?: boolean;
+    experimentalSkillUris?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -754,7 +810,7 @@ async function fixture(
   const initialProviderAvailability = typeof options.localAgentProviders === "function"
     ? options.localAgentProviders()
     : options.localAgentProviders ?? [];
-  const loadedConfig = loadConfig(writeTestDevspaceConfig(join(root, ".config"), {
+  const configEnv = writeTestDevspaceConfig(join(root, ".config"), {
     server: { port: 1 },
     workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
     skills: { agentDir },
@@ -763,7 +819,13 @@ async function fixture(
       instructions: "on-demand",
       providers: [],
     },
-  }));
+  });
+  const loadedConfig = loadConfig({
+    ...configEnv,
+    ...(options.experimentalSkillUris
+      ? { DEVSPACE_EXPERIMENTAL_SKILL_URIS: "1" }
+      : {}),
+  });
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     toolMode: options.toolMode ?? loadedConfig.toolMode,
