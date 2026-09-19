@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
+import type { Server as HttpServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -8,7 +9,7 @@ import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelconte
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { toNodeHandler } from "@modelcontextprotocol/node";
+import { toWebRequest } from "@modelcontextprotocol/node";
 import {
   registerAppResource,
   registerAppTool,
@@ -90,6 +91,125 @@ interface RunningServer {
   config: ServerConfig;
   localAgentProviders: LocalAgentProviderStatus[];
   close(): Promise<void>;
+}
+
+// Keep the origin socket open longer than the short default so a reverse
+// proxy or tunnel cannot reuse a socket after Node has already closed it.
+export const DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS = 5 * 60 * 1_000;
+export const DEVSPACE_HTTP_HEADERS_TIMEOUT_MS =
+  DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS + 5_000;
+
+export function configureHttpServer(httpServer: HttpServer): void {
+  httpServer.keepAliveTimeout = DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS;
+  httpServer.headersTimeout = DEVSPACE_HTTP_HEADERS_TIMEOUT_MS;
+}
+
+type ExpressTrustProxySetting = false | true | "loopback";
+
+function expressTrustProxySetting(config: ServerConfig): ExpressTrustProxySetting {
+  if (config.logging.trustProxy) return true;
+  if (["localhost", "127.0.0.1", "::1"].includes(config.host)) return "loopback";
+  return false;
+}
+
+function formatTrustProxySetting(setting: ExpressTrustProxySetting): string {
+  if (setting === "loopback") return "loopback (automatic)";
+  return setting ? "enabled (configured)" : "disabled";
+}
+
+function isLongLivedMcpRequest(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  return (body as { method?: unknown }).method === "subscriptions/listen";
+}
+
+function rpcRequestLogFields(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+  const candidate = body as { id?: unknown; method?: unknown };
+  return {
+    rpcId: candidate.id,
+    rpcIdType: typeof candidate.id,
+    rpcMethod: candidate.method,
+  };
+}
+
+const DEVSPACE_MCP_HANDLER_TIMEOUT_MS = 20_000;
+
+function createReliableMcpNodeHandler(
+  handler: ReturnType<typeof createMcpHandler>,
+  onerror: (error: Error) => void,
+) {
+  return async (req: Request, res: Response, parsedBody: unknown): Promise<void> => {
+    let finished = false;
+    const abort = new AbortController();
+    const handleClose = () => {
+      if (!finished) abort.abort();
+    };
+    res.on("close", handleClose);
+
+    try {
+      const webRequest = await toWebRequest(req, parsedBody, { signal: abort.signal });
+      const response = await Promise.race([
+        handler.fetch(webRequest, {
+          ...(req.auth !== undefined ? { authInfo: req.auth } : {}),
+          ...(parsedBody !== undefined ? { parsedBody } : {}),
+        }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => {
+            abort.abort();
+            reject(new Error(`MCP handler timed out after ${DEVSPACE_MCP_HANDLER_TIMEOUT_MS}ms`));
+          }, DEVSPACE_MCP_HANDLER_TIMEOUT_MS);
+          timer.unref?.();
+          abort.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+        }),
+      ]);
+      const headers: Record<string, string> = {};
+      for (const [name, value] of response.headers) headers[name] = value;
+
+      if (response.body === null) {
+        res.writeHead(response.status, headers);
+        finished = true;
+        res.end();
+        return;
+      }
+
+      if (isLongLivedMcpRequest(parsedBody)) {
+        res.writeHead(response.status, headers);
+        for await (const chunk of response.body) {
+          if (abort.signal.aborted) break;
+          if (!res.write(chunk)) {
+            await new Promise<void>((resolve) => res.once("drain", resolve));
+          }
+        }
+        finished = true;
+        res.end();
+        return;
+      }
+
+      // Finite MCP responses are buffered before writing them to Node. This
+      // gives the client an explicit Content-Length and prevents a stream
+      // error from turning into a misleading HTTP 200 with a truncated body.
+      const body = Buffer.from(await response.arrayBuffer());
+      delete headers["transfer-encoding"];
+      headers["content-length"] = String(body.byteLength);
+      res.writeHead(response.status, headers);
+      finished = true;
+      res.end(body);
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      try {
+        onerror(normalized);
+      } catch {
+        // Logging must not mask the transport error.
+      }
+      if (!res.headersSent) {
+        sendJsonRpcError(res, 500, -32603, "Internal server error");
+      } else if (!res.destroyed) {
+        res.destroy(normalized);
+      }
+    } finally {
+      res.off("close", handleClose);
+    }
+  };
 }
 
 type TrackToolActivity = <T>(operation: () => Promise<T>) => Promise<T>;
@@ -209,7 +329,7 @@ function sendJsonRpcError(
 
 function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
   return {
-    ip: requestIp(req, config.logging.trustProxy),
+    ip: requestIp(req, expressTrustProxySetting(config) !== false),
     host: req.header("host"),
     userAgent: req.header("user-agent"),
     origin: req.header("origin"),
@@ -855,27 +975,48 @@ export function createServer(
     return adapter.server;
   }, {
     legacy: "stateless",
+    responseMode: "json",
     onerror: logMcpHandlerError,
   });
-  const mcpNodeHandler = toNodeHandler(mcpHandler, {
-    onerror: logMcpHandlerError,
-  });
+  const mcpNodeHandler = createReliableMcpNodeHandler(mcpHandler, logMcpHandlerError);
 
-  if (config.logging.trustProxy) {
-    app.set("trust proxy", true);
-  }
+  app.set("trust proxy", expressTrustProxySetting(config));
 
   app.use((req, res, next) => {
     const requestId = randomUUID();
     const startedAt = performance.now();
+    const path = requestPath(req);
+    const shouldLogRequest = config.logging.requests
+      && (config.logging.assets || !path.startsWith("/mcp-app-assets"));
+    let finished = false;
     res.locals.requestId = requestId;
 
+    if (shouldLogRequest) {
+      logEvent(config.logging, "debug", "http_request_start", {
+        requestId,
+        method: req.method,
+        path,
+        ...requestLogFields(req, config),
+      });
+    }
+
     res.on("finish", () => {
-      const path = requestPath(req);
-      if (!config.logging.requests) return;
-      if (!config.logging.assets && path.startsWith("/mcp-app-assets")) return;
+      finished = true;
+      if (!shouldLogRequest) return;
 
       logEvent(config.logging, "info", "http_request", {
+        requestId,
+        method: req.method,
+        path,
+        status: res.statusCode,
+        durationMs: Math.round(performance.now() - startedAt),
+        ...requestLogFields(req, config),
+      });
+    });
+
+    res.on("close", () => {
+      if (finished || !shouldLogRequest) return;
+      logEvent(config.logging, "warn", "http_request_aborted", {
         requestId,
         method: req.method,
         path,
@@ -918,16 +1059,8 @@ export function createServer(
     res.json({ ok: true, name: "devspace" });
   });
 
-  app.all("/mcp", async (req, res) => {
+  app.all("/mcp", bearerAuth, async (req, res) => {
     const requestId = res.locals.requestId as string | undefined;
-
-    await new Promise<void>((resolve, reject) => {
-      bearerAuth(req, res, (error?: unknown) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-    if (res.headersSent) return;
 
     if (!req.auth?.resource || !oauthProvider.isResourceAllowed(req.auth.resource)) {
       logEvent(config.logging, "warn", "auth_denied", {
@@ -944,6 +1077,10 @@ export function createServer(
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
+      protocolVersion: req.header("mcp-protocol-version"),
+      mcpMethod: req.header("mcp-method"),
+      mcpName: req.header("mcp-name"),
+      ...rpcRequestLogFields(req.body),
     });
 
     try {
@@ -1002,7 +1139,7 @@ if (await isMainModule()) {
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
-    console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    console.log(`trust proxy: ${formatTrustProxySetting(expressTrustProxySetting(config))}`);
     const artifactDownloadStatus = !config.artifactsEnabled
       ? "disabled"
       : isArtifactDownloadSupportedPlatform()
@@ -1011,6 +1148,7 @@ if (await isMainModule()) {
     console.log(`native artifact download: ${artifactDownloadStatus}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
+  configureHttpServer(httpServer);
 
   let shuttingDown = false;
   const shutdown = async () => {
