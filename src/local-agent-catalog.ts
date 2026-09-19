@@ -68,6 +68,7 @@ export function buildLocalAgentCatalog(
           provider: profile.provider,
           model: profile.model ?? provider.model,
           effort: profile.effort ?? provider.effort,
+          writeMode: profile.writeMode,
         };
       }),
   };

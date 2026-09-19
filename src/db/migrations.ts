@@ -47,6 +47,21 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 9,
+    name: "dynamic-workflows",
+    up: migrateDynamicWorkflows,
+  },
+  {
+    version: 10,
+    name: "workflow-agent-authority",
+    up: migrateWorkflowAgentAuthority,
+  },
+  {
+    version: 11,
+    name: "local-agent-retry-metadata",
+    up: migrateLocalAgentRetryMetadata,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -289,9 +304,150 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
   `);
 }
 
+function migrateDynamicWorkflows(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table workflow_budgets (
+      id text primary key,
+      total_output_tokens integer check (total_output_tokens is null or total_output_tokens > 0),
+      known_output_tokens integer not null default 0 check (known_output_tokens >= 0),
+      usage_complete integer not null default 1 check (usage_complete in (0, 1)),
+      revision integer not null default 0 check (revision >= 0)
+    );
+
+    create table workflow_runs (
+      id text primary key,
+      workspace_id text not null,
+      workspace_root text not null,
+      lineage_id text not null,
+      budget_id text not null references workflow_budgets(id),
+      resumed_from_run_id text references workflow_runs(id),
+      state text not null check (state in (
+        'starting', 'running', 'pausing', 'paused', 'waiting_for_permission',
+        'waiting_for_usage', 'stopping', 'stopped', 'completed', 'failed',
+        'recovery_required'
+      )),
+      meta_json text not null,
+      script_source text not null,
+      script_hash text not null,
+      source_path text,
+      args_present integer not null check (args_present in (0, 1)),
+      args_json text,
+      defaults_json text not null,
+      policy_json text not null,
+      runtime_version text not null,
+      revision integer not null default 0 check (revision >= 0),
+      execution_generation integer not null default 1 check (execution_generation > 0),
+      result_json text,
+      result_artifact_id text,
+      error_json text,
+      pause_reason text,
+      next_eligible_at text,
+      created_at text not null,
+      updated_at text not null,
+      finished_at text
+    );
+
+    create index workflow_runs_workspace_idx on workflow_runs(workspace_id, updated_at desc);
+    create index workflow_runs_state_idx on workflow_runs(state, updated_at desc);
+    create index workflow_runs_lineage_idx on workflow_runs(lineage_id, created_at);
+
+    create table workflow_steps (
+      id text primary key,
+      run_id text not null references workflow_runs(id) on delete cascade,
+      parent_step_id text references workflow_steps(id),
+      kind text not null check (kind in ('agent', 'workflow')),
+      call_sequence integer not null check (call_sequence > 0),
+      logical_path text not null,
+      request_hash text not null,
+      request_json text not null,
+      phase text,
+      label text,
+      status text not null check (status in (
+        'queued', 'starting', 'running', 'waiting_for_permission',
+        'waiting_for_usage', 'completed', 'failed', 'stopped', 'cached', 'uncertain'
+      )),
+      agent_id text,
+      workspace_id text not null,
+      cached_from_step_id text references workflow_steps(id),
+      output_json text,
+      error_json text,
+      delivery_sequence integer check (delivery_sequence is null or delivery_sequence > 0),
+      worktree_json text,
+      created_at text not null,
+      updated_at text not null,
+      finished_at text,
+      unique(run_id, call_sequence)
+    );
+
+    create index workflow_steps_run_status_idx on workflow_steps(run_id, status);
+    create index workflow_steps_parent_idx on workflow_steps(parent_step_id);
+
+    create table workflow_attempts (
+      id text primary key,
+      step_id text not null references workflow_steps(id) on delete cascade,
+      attempt_number integer not null check (attempt_number > 0),
+      agent_id text not null,
+      agent_turn_id integer not null unique,
+      reason text not null check (reason in ('initial', 'schema_repair', 'restart', 'retry')),
+      state text not null check (state in (
+        'queued', 'starting', 'running', 'waiting_for_permission',
+        'waiting_for_usage', 'completed', 'failed', 'stopped', 'uncertain'
+      )),
+      usage_sequence integer not null default 0 check (usage_sequence >= 0),
+      output_tokens integer check (output_tokens is null or output_tokens >= 0),
+      usage_complete integer not null default 0 check (usage_complete in (0, 1)),
+      error_json text,
+      created_at text not null,
+      updated_at text not null,
+      finished_at text,
+      unique(step_id, attempt_number)
+    );
+
+    create table workflow_events (
+      run_id text not null references workflow_runs(id) on delete cascade,
+      sequence integer not null check (sequence > 0),
+      step_id text references workflow_steps(id),
+      type text not null,
+      payload_json text not null,
+      created_at text not null,
+      primary key(run_id, sequence)
+    );
+
+    create table workflow_resume_claims (
+      source_run_id text primary key references workflow_runs(id) on delete cascade,
+      source_generation integer not null,
+      resumed_by_run_id text not null unique references workflow_runs(id) on delete cascade,
+      created_at text not null
+    );
+  `);
+}
+
+function migrateWorkflowAgentAuthority(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "write_mode", "text not null default 'allowed'");
+  addColumnIfMissing(sqlite, "local_agent_turns", "write_mode", "text not null default 'allowed'");
+  addColumnIfMissing(sqlite, "local_agent_turns", "model", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "effort", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "attempt_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "workflow_run_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "workflow_step_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "workflow_attempt_id", "text");
+  sqlite.exec(`
+    create index if not exists local_agent_turns_workflow_run_idx
+      on local_agent_turns(workflow_run_id, id);
+    create index if not exists local_agent_turns_workflow_step_idx
+      on local_agent_turns(workflow_step_id, id);
+  `);
+}
+
+function migrateLocalAgentRetryMetadata(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_turns", "retry_after_ms", "integer");
+  addColumnIfMissing(sqlite, "local_agent_turns", "reset_at", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "execution_uncertain", "text");
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions",
+  table: "workspace_sessions" | "local_agent_sessions" | "local_agent_turns",
   column: string,
   definition: string,
 ): void {

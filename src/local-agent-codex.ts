@@ -11,14 +11,18 @@ import {
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
-import type {
-  LocalAgentDriver,
-  LocalAgentRunCallbacks,
-  LocalAgentRunInput,
-  LocalAgentRunResult,
-  LocalAgentRuntime,
-  LocalAgentRuntimeContext,
-  LocalAgentWriteMode,
+import {
+  localAgentWorkflowEnvironment,
+  type LocalAgentDriver,
+  type LocalAgentProgressUpdate,
+  type LocalAgentRunCallbacks,
+  type LocalAgentRunControl,
+  type LocalAgentRunInput,
+  type LocalAgentRunResult,
+  type LocalAgentRuntime,
+  type LocalAgentRuntimeContext,
+  type LocalAgentUsageUpdate,
+  type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
 export interface ResolvedCodexCommand {
@@ -76,6 +80,7 @@ export function parseCodexVersion(output: string | undefined): string | undefine
 
 export interface CodexAppServerRuntimeOptions {
   command: string;
+  args?: string[];
   env: NodeJS.ProcessEnv;
   version?: string;
 }
@@ -88,7 +93,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
   private closePromise?: Promise<void>;
 
   constructor(private readonly options: CodexAppServerRuntimeOptions) {
-    this.child = spawn(options.command, ["app-server"], {
+    this.child = spawn(options.command, options.args ?? ["app-server"], {
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
@@ -116,7 +121,11 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
     this.rpc.notify("initialized");
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+  async run(
+    input: LocalAgentRunInput,
+    callbacks?: LocalAgentRunCallbacks,
+    control?: LocalAgentRunControl,
+  ) {
     return captureAgentProviderResult({
       provider: this.provider,
       operation: "run",
@@ -147,8 +156,26 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
-        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        let usageSequence = 0;
+        let latestUsage: LocalAgentUsageUpdate | undefined;
+        const completed = await this.rpc.runTurn(
+          threadId,
+          turnParams(input, threadId),
+          control?.signal,
+          async (event) => {
+            const progress = codexProgress(event);
+            if (progress) await callbacks?.onProgress?.(progress);
+            const usage = codexUsage(input, event, ++usageSequence, false);
+            if (usage) {
+              latestUsage = usage;
+              await callbacks?.onUsage?.(usage);
+            } else {
+              usageSequence -= 1;
+            }
+          },
+        );
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
+        if (parsed.cancelled) throw new DOMException("Aborted", "AbortError");
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
             code: "PROVIDER_EXECUTION_ERROR",
@@ -169,11 +196,16 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex did not return a final assistant response.",
           });
         }
+        const usage = latestUsage ? { ...latestUsage, sequence: usageSequence + 1, final: true } : undefined;
+        if (usage) await callbacks?.onUsage?.(usage);
+        const structuredOutput = input.outputSchema ? parseJsonValue(parsed.finalResponse) : undefined;
         return {
           provider: this.provider,
           providerSessionId: threadId,
           finalResponse: parsed.finalResponse.trim(),
           items: parsed.items,
+          ...(structuredOutput === undefined ? {} : { structuredOutput }),
+          ...(usage ? { usage } : {}),
         };
       },
     });
@@ -240,14 +272,25 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
     private readonly commandResolver: CodexCommandResolver = resolveCodexCommand,
   ) {}
 
-  runtimeKey(_context: LocalAgentRuntimeContext): string {
+  runtimeKey(context: LocalAgentRuntimeContext): string {
     const command = this.resolveCommand();
     const executable = command?.executable ?? this.env.CODEX_COMMAND ?? "codex";
     const codexHome = resolve(this.env.CODEX_HOME ?? join(homedir(), ".codex"));
-    return `codex:${executable}:${codexHome}`;
+    return `codex:${executable}:${codexHome}${context.workflowRunId ? `:workflow:${context.workflowRunId}` : ""}`;
   }
 
-  async createRuntime(_context: LocalAgentRuntimeContext) {
+  capabilities() {
+    return {
+      cancellation: "turn",
+      structuredOutput: "native",
+      usage: "streaming",
+      correctionAuthority: "read_only",
+      permissionRequests: "preconfigured",
+      progress: "tools_and_text",
+    } as const;
+  }
+
+  async createRuntime(context: LocalAgentRuntimeContext) {
     return captureAgentProviderResult({
       provider: this.provider,
       operation: "create_runtime",
@@ -273,7 +316,10 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
         }
         const runtime = new CodexAppServerRuntime({
           command: command.executable,
-          env: codexCommandEnvironment(this.env),
+          ...(context.workflowRunId
+            ? { args: ["app-server", "--disable", "multi_agent", "--disable", "multi_agent_v2"] }
+            : {}),
+          env: localAgentWorkflowEnvironment(codexCommandEnvironment(this.env), context),
           version: command.version,
         });
         try {
@@ -320,6 +366,8 @@ interface CodexTurnAccumulator {
   threadId: string;
   turnId?: string;
   items: unknown[];
+  events: Promise<void>;
+  onEvent?: (event: CodexEvent) => void | Promise<void>;
   completed?: CodexEvent;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
@@ -360,8 +408,14 @@ class CodexAppServerRpc {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  async runTurn(threadId: string, params: unknown): Promise<CodexTurnResult> {
+  async runTurn(
+    threadId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onEvent?: (event: CodexEvent) => void | Promise<void>,
+  ): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
     let rejectTurn!: (error: Error) => void;
@@ -372,16 +426,28 @@ class CodexAppServerRpc {
     const turn: CodexTurnAccumulator = {
       threadId,
       items: [],
+      events: Promise.resolve(),
+      onEvent,
       resolve: resolveTurn,
       reject: rejectTurn,
     };
     this.turns.set(threadId, turn);
+    const interrupt = () => {
+      if (!turn.turnId) return;
+      void this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", interrupt, { once: true });
     try {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
-      if (turn.completed) return { event: turn.completed, items: turn.items };
+      if (signal?.aborted) interrupt();
+      if (turn.completed) {
+        await turn.events;
+        return { event: turn.completed, items: turn.items };
+      }
       return await completion;
     } finally {
+      signal?.removeEventListener("abort", interrupt);
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
     }
   }
@@ -430,6 +496,7 @@ class CodexAppServerRpc {
     const event = { method, params: message.params };
     const turn = this.findTurn(event);
     if (!turn) return;
+    if (turn.onEvent) turn.events = turn.events.then(() => turn.onEvent?.(event));
     const params = asRecord(event.params);
     if (params?.item !== undefined) {
       turn.items.push(params.item);
@@ -437,7 +504,10 @@ class CodexAppServerRpc {
     }
     if (event.method !== "turn/completed" || !turnMatchesEvent(turn, event)) return;
     turn.completed = event;
-    turn.resolve({ event, items: turn.items.slice() });
+    void turn.events.then(
+      () => turn.resolve({ event, items: turn.items.slice() }),
+      (error) => turn.reject(error instanceof Error ? error : new Error(String(error))),
+    );
   }
 
   private findTurn(event: CodexEvent): CodexTurnAccumulator | undefined {
@@ -453,23 +523,30 @@ class CodexAppServerRpc {
 }
 
 function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
+  const writeMode = input.toolPolicy === "read_only" || input.toolPolicy === "none"
+    ? "read_only"
+    : input.writeMode;
   return {
     ...(input.providerSessionId ? { threadId: input.providerSessionId } : {}),
     cwd: input.workspaceRoot,
     approvalPolicy: "never",
-    sandbox: sandboxFor(input.writeMode),
+    sandbox: sandboxFor(writeMode),
     ...(input.model ? { model: input.model } : {}),
   };
 }
 
 function turnParams(input: LocalAgentRunInput, threadId: string): Record<string, unknown> {
+  const writeMode = input.toolPolicy === "read_only" || input.toolPolicy === "none"
+    ? "read_only"
+    : input.writeMode;
   return {
     threadId,
     input: [{ type: "text", text: input.prompt }],
     approvalPolicy: "never",
-    sandboxPolicy: sandboxPolicyFor(input.writeMode),
+    sandboxPolicy: sandboxPolicyFor(writeMode),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
   };
 }
 
@@ -495,6 +572,7 @@ function parseCompletedTurn(params: unknown, items: unknown[]): {
   finalResponse: string;
   items: unknown[];
   failure?: string;
+  cancelled?: boolean;
 } {
   const turn = asRecord(asRecord(params)?.turn);
   const turnItems = turn?.items;
@@ -513,7 +591,7 @@ function parseCompletedTurn(params: unknown, items: unknown[]): {
   const failure = status === "failed"
     ? directString(error?.message) ?? "Codex turn failed."
     : undefined;
-  return { finalResponse, items: completedItems, failure };
+  return { finalResponse, items: completedItems, failure, cancelled: status === "interrupted" || status === "cancelled" };
 }
 
 export function codexAppServerError(message: string, version?: string, stderr?: string): Error {
@@ -549,6 +627,75 @@ function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolea
   if (eventThreadId && eventThreadId !== turn.threadId) return false;
   if (turn.turnId && eventTurnId && turn.turnId !== eventTurnId) return false;
   return eventThreadId === turn.threadId || Boolean(turn.turnId && eventTurnId === turn.turnId);
+}
+
+function codexUsage(
+  input: LocalAgentRunInput,
+  event: CodexEvent,
+  sequence: number,
+  final: boolean,
+): LocalAgentUsageUpdate | undefined {
+  if (event.method !== "thread/tokenUsage/updated") return undefined;
+  const params = asRecord(event.params);
+  const tokenUsage = asRecord(params?.tokenUsage ?? params?.token_usage);
+  const usage = asRecord(tokenUsage?.last);
+  if (!usage) return undefined;
+  const outputTokens = readCount(usage, "outputTokens", "output_tokens");
+  if (outputTokens === undefined) return undefined;
+  return {
+    attemptId: input.attemptId ?? "untracked",
+    sequence,
+    inputTokens: readCount(usage, "inputTokens", "input_tokens"),
+    outputTokens,
+    cacheReadTokens: readCount(usage, "cachedInputTokens", "cached_input_tokens"),
+    cacheWriteTokens: readCount(usage, "cacheWriteInputTokens", "cache_write_input_tokens"),
+    reasoningTokens: readCount(usage, "reasoningOutputTokens", "reasoning_output_tokens"),
+    final,
+  };
+}
+
+function codexProgress(event: CodexEvent): LocalAgentProgressUpdate | undefined {
+  const params = asRecord(event.params);
+  const item = asRecord(params?.item);
+  if (event.method === "item/started" || event.method === "item/updated" || event.method === "item/completed") {
+    const type = directString(item?.type);
+    if (type === "agentMessage" || type === "agent_message") {
+      const text = directString(item?.text);
+      return text ? { type: "text", text: text.slice(0, 8 * 1024), final: event.method === "item/completed" } : undefined;
+    }
+    return {
+      type: "tool",
+      toolName: type ?? "tool",
+      status: event.method === "item/started" ? "started" : event.method === "item/completed" ? "completed" : "updated",
+    };
+  }
+  if (event.method === "item/agentMessage/delta") {
+    const delta = directString(params?.delta);
+    return delta ? { type: "text", text: delta.slice(0, 8 * 1024) } : undefined;
+  }
+  return undefined;
+}
+
+function parseJsonValue(text: string): LocalAgentRunResult["structuredOutput"] | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return isJsonValue(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isJsonValue(value: unknown): value is Exclude<LocalAgentRunResult["structuredOutput"], undefined> {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  const record = asRecord(value);
+  return Boolean(record && Object.getPrototypeOf(value) === Object.prototype && Object.values(record).every(isJsonValue));
+}
+
+function readCount(record: Record<string, unknown>, camel: string, snake: string): number | undefined {
+  const value = record[camel] ?? record[snake];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

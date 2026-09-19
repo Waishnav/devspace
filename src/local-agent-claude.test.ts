@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   ClaudeLocalAgentDriver,
   claudeAuthoritySettings,
+  claudeQueryOptions,
   type ClaudeQueryLike,
   type ClaudeUserMessage,
 } from "./local-agent-claude.js";
@@ -33,6 +34,13 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
         type: "result",
         session_id: "claude_session_1",
         result: `response:${next.value.message.content}`,
+        usage: {
+          input_tokens: 3,
+          output_tokens: 5,
+          cache_read_input_tokens: 1,
+          cache_creation_input_tokens: 2,
+        },
+        ...(next.value.message.content === "structured" ? { structured_output: { ok: true } } : {}),
       },
     };
   }
@@ -88,14 +96,17 @@ assert.equal(runtimeResult.isOk(), true);
 if (runtimeResult.isErr()) throw runtimeResult.error;
 const runtime = runtimeResult.value;
 const sessionIds: string[] = [];
+const usageUpdates: unknown[] = [];
 const firstResult = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
   model: "sonnet",
   effort: "high",
   writeMode: "read_only",
+  attemptId: "attempt_claude_1",
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
+  onUsage: (usage) => { usageUpdates.push(usage); },
 });
 assert.equal(firstResult.isOk(), true);
 if (firstResult.isErr()) throw firstResult.error;
@@ -116,6 +127,18 @@ const third = await runtime.run({
   writeMode: "full_access",
 });
 assert.equal(third.isOk(), true);
+const preAborted = new AbortController();
+preAborted.abort();
+const rejectedBeforeSubmission = await runtime.run({
+  prompt: "cancelled-before-submission",
+  workspaceRoot: "/tmp/project",
+}, undefined, { signal: preAborted.signal });
+assert.equal(rejectedBeforeSubmission.isErr(), true);
+if (rejectedBeforeSubmission.isErr()) assert.equal(rejectedBeforeSubmission.error.code, "PROVIDER_CANCELLED");
+const afterRejectedSubmission = await runtime.run({ prompt: "after-cancel", workspaceRoot: "/tmp/project" });
+assert.equal(afterRejectedSubmission.isOk(), true);
+if (afterRejectedSubmission.isErr()) throw afterRejectedSubmission.error;
+assert.equal(afterRejectedSubmission.value.finalResponse, "response:after-cancel");
 assert.equal(factoryCalls, 1, "successive turns reuse one Claude query");
 assert.equal(first.providerSessionId, "claude_session_1");
 assert.equal(second.finalResponse, "response:second");
@@ -125,6 +148,17 @@ assert.equal(lastOptions?.permissionMode, "dontAsk");
 assert.equal(lastOptions?.allowDangerouslySkipPermissions, undefined);
 assert.deepEqual(lastOptions?.allowedTools, ["Read(/**)", "Edit(/**)", "Bash"]);
 assert.equal(lastOptions?.pathToClaudeCodeExecutable, undefined);
+const workflowOptions = claudeQueryOptions(context, {
+  prompt: "workflow", workspaceRoot: "/tmp/project", workflowRunId: "wfr_1",
+  workflowStepId: "wfs_1", workflowAttemptId: "wfa_1",
+}, { PATH: "/usr/bin" });
+assert.deepEqual(workflowOptions.disallowedTools, ["Agent", "Task"]);
+assert.deepEqual(workflowOptions.env, {
+  PATH: "/usr/bin",
+  DEVSPACE_WORKFLOW_RUN_ID: "wfr_1",
+  DEVSPACE_WORKFLOW_STEP_ID: "wfs_1",
+  DEVSPACE_WORKFLOW_ATTEMPT_ID: "wfa_1",
+});
 const initialSandbox = lastOptions?.sandbox as Record<string, unknown>;
 assert.equal(initialSandbox.enabled, true);
 assert.equal(initialSandbox.failIfUnavailable, true);
@@ -154,8 +188,17 @@ assert.deepEqual((fullSettings.sandbox as Record<string, unknown>), {
   allowUnsandboxedCommands: true,
 });
 assert.deepEqual(sessionIds, ["claude_session_1"]);
-assert.deepEqual(query?.permissionModes, ["dontAsk", "dontAsk", "bypassPermissions"]);
-assert.equal(query?.flagSettings.length, 3);
+assert.deepEqual(usageUpdates, [{
+  attemptId: "attempt_claude_1",
+  sequence: 1,
+  inputTokens: 3,
+  outputTokens: 5,
+  cacheReadTokens: 1,
+  cacheWriteTokens: 2,
+  final: true,
+}]);
+assert.deepEqual(query?.permissionModes, ["dontAsk", "dontAsk", "bypassPermissions", "dontAsk", "dontAsk"]);
+assert.equal(query?.flagSettings.length, 5);
 assert.equal(query?.flagSettings[0]?.alwaysThinkingEnabled, true);
 assert.equal(query?.flagSettings[0]?.effortLevel, "high");
 assert.equal(
@@ -175,6 +218,24 @@ assert.equal(
 await runtime.close();
 await runtime.close();
 assert.equal(query?.closeCount, 1);
+
+const structuredContext = { ...context, outputSchema: { type: "object" } } as const;
+const structuredRuntime = await driver.createRuntime(structuredContext);
+assert.equal(structuredRuntime.isOk(), true);
+assert.deepEqual(lastOptions?.outputFormat, {
+  type: "json_schema",
+  schema: { type: "object" },
+});
+if (structuredRuntime.isErr()) throw structuredRuntime.error;
+const structuredResult = await structuredRuntime.value.run({
+  prompt: "structured",
+  workspaceRoot: "/tmp/project",
+  outputSchema: { type: "object" },
+});
+assert.equal(structuredResult.isOk(), true);
+if (structuredResult.isErr()) throw structuredResult.error;
+assert.deepEqual(structuredResult.value.structuredOutput, { ok: true });
+await structuredRuntime.value.close();
 
 const coldRuntime = await driver.createRuntime({ ...context, providerSessionId: "cold_session" });
 assert.equal(coldRuntime.isOk(), true);

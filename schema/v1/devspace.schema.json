@@ -155,6 +155,185 @@
       },
       "additionalProperties": false
     },
+    "workflows": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "instructions": {
+          "default": "on-demand",
+          "type": "string",
+          "enum": [
+            "on-demand",
+            "preload"
+          ]
+        },
+        "defaultAgentType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "packageRoots": {
+          "default": [],
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "maxConcurrentAgents": {
+          "default": 16,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 256
+        },
+        "maxConcurrentRuns": {
+          "default": 4,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 32
+        },
+        "maxAgentsPerRun": {
+          "default": 1000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        },
+        "maxAttemptsPerRun": {
+          "default": 5000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 50000
+        },
+        "defaultOutputTokenBudget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxOutputTokenBudget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "requireWorktreesForConcurrentWrites": {
+          "default": false,
+          "type": "boolean"
+        },
+        "maxUsageLimitWaits": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "maxUsageLimitWaitMs": {
+          "default": 86400000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 86400000
+        },
+        "limits": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "scriptBytes": {
+              "default": 262144,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "argsBytes": {
+              "default": 1048576,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "promptBytes": {
+              "default": 1048576,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "schemaBytes": {
+              "default": 131072,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "schemaDepth": {
+              "default": 64,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 256
+            },
+            "agentResultBytes": {
+              "default": 4194304,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "runResultBytes": {
+              "default": 16777216,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "guestHeapBytes": {
+              "default": 67108864,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "guestStackBytes": {
+              "default": 1048576,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "guestSliceMs": {
+              "default": 1000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "guestTotalCpuMs": {
+              "default": 30000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "runActiveMs": {
+              "default": 21600000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "logMessageBytes": {
+              "default": 8192,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "logTotalBytes": {
+              "default": 1048576,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            "eventsPerRun": {
+              "default": 100000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "subagents": {
       "default": {
         "enabled": false,

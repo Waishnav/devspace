@@ -7,12 +7,13 @@ import {
   type AgentProviderError,
 } from "./local-agent-errors.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
-import type {
-  LocalAgentDriver,
-  LocalAgentRunInput,
-  LocalAgentRunResult,
-  LocalAgentRuntime,
-  LocalAgentRuntimeContext,
+import {
+  localAgentWorkflowEnvironment,
+  type LocalAgentDriver,
+  type LocalAgentRunInput,
+  type LocalAgentRunResult,
+  type LocalAgentRuntime,
+  type LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 
 const context: LocalAgentRuntimeContext = {
@@ -21,6 +22,25 @@ const context: LocalAgentRuntimeContext = {
   workspaceRoot: "/tmp/project",
 };
 const input: LocalAgentRunInput = { prompt: "inspect", workspaceRoot: "/tmp/project" };
+
+assert.deepEqual(localAgentWorkflowEnvironment({ PATH: "/bin" }, {
+  workflowRunId: "wfr_1", workflowStepId: "wfs_1", workflowAttemptId: "wfa_1",
+}), {
+  PATH: "/bin",
+  DEVSPACE_WORKFLOW_RUN_ID: "wfr_1",
+  DEVSPACE_WORKFLOW_STEP_ID: "wfs_1",
+  DEVSPACE_WORKFLOW_ATTEMPT_ID: "wfa_1",
+});
+assert.deepEqual(localAgentWorkflowEnvironment({
+  PATH: "/bin",
+  DEVSPACE_WORKFLOW_RUN_ID: "stale-run",
+  DEVSPACE_WORKFLOW_STEP_ID: "stale-step",
+  DEVSPACE_WORKFLOW_ATTEMPT_ID: "stale-attempt",
+}, {}), { PATH: "/bin" });
+assert.deepEqual(localAgentWorkflowEnvironment({
+  DEVSPACE_WORKFLOW_RUN_ID: "stale-run",
+  DEVSPACE_WORKFLOW_STEP_ID: "stale-step",
+}, { workflowRunId: "current-run" }), { DEVSPACE_WORKFLOW_RUN_ID: "current-run" });
 
 for (const [code, retryable] of [["ENOENT", false], ["ECONNREFUSED", true], ["ENOTFOUND", true]] as const) {
   const classified = await captureAgentProviderResult({

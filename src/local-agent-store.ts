@@ -6,6 +6,7 @@ import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped";
+export type PersistedLocalAgentWriteMode = "allowed" | "read_only" | "full_access";
 
 export interface LocalAgentRecord {
   id: string;
@@ -15,6 +16,7 @@ export interface LocalAgentRecord {
   provider: string;
   model?: string;
   effort?: string;
+  writeMode?: PersistedLocalAgentWriteMode;
   providerSessionId?: string;
   status: LocalAgentStatus;
   latestResponse?: string;
@@ -32,6 +34,7 @@ export interface CreateLocalAgentRecordInput {
   provider: string;
   model?: string;
   effort?: string;
+  writeMode?: PersistedLocalAgentWriteMode;
 }
 
 export interface LocalAgentTurnRecord {
@@ -43,6 +46,16 @@ export interface LocalAgentTurnRecord {
   error?: string;
   errorCode?: string;
   errorRetryable?: boolean;
+  writeMode?: PersistedLocalAgentWriteMode;
+  model?: string;
+  effort?: string;
+  attemptId?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  workflowAttemptId?: string;
+  retryAfterMs?: number;
+  resetAt?: string;
+  executionUncertain?: boolean;
   createdAt: string;
   completedAt?: string;
 }
@@ -51,11 +64,16 @@ export interface BeginLocalAgentTurnInput {
   prompt: string;
   model?: string;
   effort?: string;
+  writeMode?: PersistedLocalAgentWriteMode;
+  attemptId?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  workflowAttemptId?: string;
 }
 
 export type FinishLocalAgentTurnInput =
   | { status: "completed"; response?: string; providerSessionId?: string }
-  | { status: "failed"; error: string; errorCode: string; errorRetryable: boolean }
+  | { status: "failed"; error: string; errorCode: string; errorRetryable: boolean; retryAfterMs?: number; resetAt?: string; executionUncertain?: boolean }
   | { status: "stopped"; error?: string; errorCode?: string; errorRetryable?: boolean };
 
 export interface BegunLocalAgentTurn {
@@ -81,6 +99,7 @@ interface LocalAgentRow {
   provider: string;
   model: string | null;
   effort: string | null;
+  write_mode: string;
   provider_session_id: string | null;
   status: string;
   latest_response: string | null;
@@ -100,15 +119,27 @@ interface LocalAgentTurnRow {
   error: string | null;
   error_code: string | null;
   error_retryable: string | null;
+  write_mode: string;
+  model: string | null;
+  effort: string | null;
+  attempt_id: string | null;
+  workflow_run_id: string | null;
+  workflow_step_id: string | null;
+  workflow_attempt_id: string | null;
+  retry_after_ms: number | null;
+  reset_at: string | null;
+  execution_uncertain: string | null;
   created_at: string;
   completed_at: string | null;
 }
 
 export class LocalAgentStore {
   private readonly database: DatabaseHandle;
+  private readonly ownsDatabase: boolean;
 
-  constructor(stateDir: string) {
-    this.database = openDatabase(stateDir);
+  constructor(stateDirOrDatabase: string | DatabaseHandle) {
+    this.database = typeof stateDirOrDatabase === "string" ? openDatabase(stateDirOrDatabase) : stateDirOrDatabase;
+    this.ownsDatabase = typeof stateDirOrDatabase === "string";
   }
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
@@ -160,6 +191,7 @@ export class LocalAgentStore {
       provider: input.provider,
       model: input.model,
       effort: input.effort,
+      writeMode: input.writeMode ?? "allowed",
       status: "starting",
       createdAt: now,
       updatedAt: now,
@@ -175,10 +207,11 @@ export class LocalAgentStore {
           provider,
           model,
           effort,
+          write_mode,
           status,
           created_at,
           updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -188,6 +221,7 @@ export class LocalAgentStore {
         record.provider,
         record.model ?? null,
         record.effort ?? null,
+        record.writeMode ?? "allowed",
         record.status,
         record.createdAt,
         record.updatedAt,
@@ -242,6 +276,7 @@ export class LocalAgentStore {
           provider = ?,
           model = ?,
           effort = ?,
+          write_mode = ?,
           provider_session_id = ?,
           status = ?,
           latest_response = ?,
@@ -258,6 +293,7 @@ export class LocalAgentStore {
         updated.provider,
         updated.model ?? null,
         updated.effort ?? null,
+        updated.writeMode ?? "allowed",
         updated.providerSessionId ?? null,
         updated.status,
         updated.latestResponse ?? null,
@@ -278,7 +314,11 @@ export class LocalAgentStore {
     return storeResult("update", () => this.update(id, patch));
   }
 
-  beginTurn(agentId: string, input: BeginLocalAgentTurnInput): BegunLocalAgentTurn {
+  beginTurn(
+    agentId: string,
+    input: BeginLocalAgentTurnInput,
+    onPrepared?: (turn: BegunLocalAgentTurn) => void,
+  ): BegunLocalAgentTurn {
     return this.database.sqlite.transaction(() => {
       const current = this.getById(agentId);
       if (!current) throw new Error(`Unknown subagent id: ${agentId}`);
@@ -300,21 +340,42 @@ export class LocalAgentStore {
             agent_id,
             prompt,
             status,
+            write_mode,
+            model,
+            effort,
+            attempt_id,
+            workflow_run_id,
+            workflow_step_id,
+            workflow_attempt_id,
             created_at
-          ) values (?, ?, 'running', ?)`,
+          ) values (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(agentId, input.prompt, agent.updatedAt);
+        .run(
+          agentId,
+          input.prompt,
+          input.writeMode ?? current.writeMode ?? "allowed",
+          input.model ?? current.model ?? null,
+          input.effort ?? current.effort ?? null,
+          input.attemptId ?? null,
+          input.workflowRunId ?? null,
+          input.workflowStepId ?? null,
+          input.workflowAttemptId ?? null,
+          agent.updatedAt,
+        );
       const turn = this.getTurnById(Number(result.lastInsertRowid));
       if (!turn) throw new Error(`Unable to load the new turn for subagent ${agentId}.`);
-      return { agent, turn };
+      const begun = { agent, turn };
+      onPrepared?.(begun);
+      return begun;
     }).immediate();
   }
 
   beginTurnResult(
     agentId: string,
     input: BeginLocalAgentTurnInput,
+    onPrepared?: (turn: BegunLocalAgentTurn) => void,
   ): BetterResult<BegunLocalAgentTurn, AgentStoreError> {
-    return storeResult("begin_turn", () => this.beginTurn(agentId, input));
+    return storeResult("begin_turn", () => this.beginTurn(agentId, input, onPrepared));
   }
 
   finishTurn(
@@ -327,14 +388,12 @@ export class LocalAgentStore {
       if (!turn || turn.agentId !== agentId) {
         throw new Error(`Unknown turn ${turnId} for subagent ${agentId}.`);
       }
-      if (turn.status !== "running") {
-        throw new Error(`Turn ${turnId} for subagent ${agentId} is already ${turn.status}.`);
-      }
       const currentAgent = this.getById(agentId);
       if (!currentAgent) throw new Error(`Unknown subagent id: ${agentId}`);
+      if (turn.status !== "running") return currentAgent;
 
       const completedAt = new Date().toISOString();
-      this.database.sqlite
+      const won = this.database.sqlite
         .prepare(
           `update local_agent_turns set
             status = ?,
@@ -342,8 +401,11 @@ export class LocalAgentStore {
             error = ?,
             error_code = ?,
             error_retryable = ?,
+            retry_after_ms = ?,
+            reset_at = ?,
+            execution_uncertain = ?,
             completed_at = ?
-           where id = ? and agent_id = ?`,
+           where id = ? and agent_id = ? and status = 'running'`,
         )
         .run(
           completion.status,
@@ -353,10 +415,15 @@ export class LocalAgentStore {
           completion.status === "completed" || completion.errorRetryable === undefined
             ? null
             : String(completion.errorRetryable),
+          completion.status === "failed" ? completion.retryAfterMs ?? null : null,
+          completion.status === "failed" ? completion.resetAt ?? null : null,
+          completion.status === "failed" && completion.executionUncertain !== undefined
+            ? String(completion.executionUncertain) : null,
           completedAt,
           turnId,
           agentId,
         );
+      if (won.changes === 0) return requiredAgent(this.getById(agentId), agentId);
 
       if (completion.status === "completed") {
         return this.update(agentId, {
@@ -426,7 +493,7 @@ export class LocalAgentStore {
         .prepare(
           `update local_agent_turns
            set status = 'failed', error = ?, error_code = 'DAEMON_UNAVAILABLE',
-               error_retryable = 'true', completed_at = ?
+               error_retryable = 'true', execution_uncertain = 'true', completed_at = ?
            where status = 'running'`,
         )
         .run(message, now);
@@ -448,7 +515,7 @@ export class LocalAgentStore {
   }
 
   close(): void {
-    this.database.close();
+    if (this.ownsDatabase) this.database.close();
   }
 
 }
@@ -466,6 +533,7 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     provider: row.provider,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
+    writeMode: readWriteMode(row.write_mode),
     providerSessionId: row.provider_session_id ?? undefined,
     status: readStatus(row.status),
     latestResponse: row.latest_response ?? undefined,
@@ -475,6 +543,11 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readWriteMode(value: string): PersistedLocalAgentWriteMode {
+  if (value === "allowed" || value === "read_only" || value === "full_access") return value;
+  throw new Error(`Invalid stored local agent write mode: ${value}`);
 }
 
 function rowToLocalAgentTurnRecord(row: LocalAgentTurnRow): LocalAgentTurnRecord {
@@ -487,6 +560,16 @@ function rowToLocalAgentTurnRecord(row: LocalAgentTurnRow): LocalAgentTurnRecord
     error: row.error ?? undefined,
     errorCode: row.error_code ?? undefined,
     errorRetryable: readOptionalBoolean(row.error_retryable),
+    writeMode: readWriteMode(row.write_mode),
+    model: row.model ?? undefined,
+    effort: row.effort ?? undefined,
+    attemptId: row.attempt_id ?? undefined,
+    workflowRunId: row.workflow_run_id ?? undefined,
+    workflowStepId: row.workflow_step_id ?? undefined,
+    workflowAttemptId: row.workflow_attempt_id ?? undefined,
+    retryAfterMs: row.retry_after_ms ?? undefined,
+    resetAt: row.reset_at ?? undefined,
+    executionUncertain: readOptionalBoolean(row.execution_uncertain),
     createdAt: row.created_at,
     completedAt: row.completed_at ?? undefined,
   };
@@ -525,4 +608,9 @@ function readStatus(status: string): LocalAgentStatus {
     return status;
   }
   return "error";
+}
+
+function requiredAgent(record: LocalAgentRecord | undefined, agentId: string): LocalAgentRecord {
+  if (!record) throw new Error(`Unknown subagent id: ${agentId}`);
+  return record;
 }

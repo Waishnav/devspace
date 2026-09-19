@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentConflictError,
@@ -18,16 +19,21 @@ import {
   resolveLocalAgentTarget,
 } from "./local-agent-targets.js";
 import {
+  type BegunLocalAgentTurn,
   type LocalAgentRecord,
   type LocalAgentStore,
   type LocalAgentTurnRecord,
   type LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import {
+  localAgentCapabilities,
+  type LocalAgentCapabilities,
   type LocalAgentDriver,
+  type LocalAgentJsonSchema,
   type LocalAgentRunCallbacks,
   type LocalAgentRunInput,
   type LocalAgentRuntimeContext,
+  type LocalAgentToolPolicy,
   type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
@@ -45,12 +51,26 @@ export interface StartLocalAgentInput {
   model?: string;
   effort?: string;
   writeMode?: LocalAgentWriteMode;
+  attemptId?: string;
+  outputSchema?: LocalAgentJsonSchema;
+  toolPolicy?: LocalAgentToolPolicy;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  workflowAttemptId?: string;
+  expectedProfileHash?: string;
 }
 
 export interface RunOverrides {
   model?: string;
   effort?: string;
   writeMode?: LocalAgentWriteMode;
+  attemptId?: string;
+  outputSchema?: LocalAgentJsonSchema;
+  toolPolicy?: LocalAgentToolPolicy;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  workflowAttemptId?: string;
+  expectedProfileHash?: string;
 }
 
 export interface LocalAgentManagerLogger {
@@ -61,9 +81,10 @@ export interface LocalAgentManagerOptions {
   store: LocalAgentStore;
   drivers: readonly LocalAgentDriver[];
   pool: LocalAgentRuntimePool;
-  loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
+  loadProfiles: (workspaceRoot: string, workspaceId?: string) => Promise<LocalAgentProfile[]>;
   agentDir?: string;
   allowedRoots?: readonly string[];
+  validateWorkspaceScope?: (scope: LocalAgentWorkspaceScope, operation: string) => string;
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
 }
@@ -83,6 +104,25 @@ export type LocalAgentWaitResult =
 interface ActiveLocalAgentTurn {
   turnId: number;
   completion: Promise<void>;
+  abort: AbortController;
+}
+
+export interface StartedLocalAgentTurn extends BegunLocalAgentTurn {
+  capabilities: LocalAgentCapabilities;
+}
+
+export interface LocalAgentTurnCallbacks extends LocalAgentRunCallbacks {
+  onPrepared?: (turn: BegunLocalAgentTurn) => void;
+}
+
+export interface LocalAgentInvocationResolution {
+  target: string;
+  provider: LocalAgentProvider;
+  model?: string;
+  effort?: string;
+  writeMode: LocalAgentWriteMode;
+  profileHash: string;
+  capabilities: LocalAgentCapabilities;
 }
 
 /**
@@ -94,9 +134,10 @@ export class LocalAgentManager {
   private readonly store: LocalAgentStore;
   private readonly drivers = new Map<LocalAgentProvider, LocalAgentDriver>();
   private readonly pool: LocalAgentRuntimePool;
-  private readonly loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
+  private readonly loadProfiles: LocalAgentManagerOptions["loadProfiles"];
   private readonly agentDir?: string;
   private readonly allowedRoots?: readonly string[];
+  private readonly validateWorkspaceScope?: LocalAgentManagerOptions["validateWorkspaceScope"];
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
@@ -110,6 +151,7 @@ export class LocalAgentManager {
     this.loadProfiles = options.loadProfiles;
     this.agentDir = options.agentDir;
     this.allowedRoots = options.allowedRoots;
+    this.validateWorkspaceScope = options.validateWorkspaceScope;
     this.logger = options.logger;
     this.subagents = options.subagents;
   }
@@ -118,7 +160,74 @@ export class LocalAgentManager {
     return this.store.reconcileActiveRunsResult(message);
   }
 
+  async capabilities(
+    input: Pick<StartLocalAgentInput, "target" | "workspaceRoot" | "workspaceId" | "model" | "effort" | "writeMode" | "outputSchema" | "toolPolicy">,
+  ): Promise<BetterResult<LocalAgentCapabilities, AgentStartError>> {
+    const authorized = this.authorizeWorkspace(input.workspaceRoot, input.workspaceId, "capabilities");
+    if (authorized.isErr()) return authorized;
+    const profiles = await this.loadProfilesResult(authorized.value, input.target, input.workspaceId);
+    if (profiles.isErr()) return profiles;
+    const target = resolveLocalAgentTarget(input.target, profiles.value, input.model, input.effort, this.subagents.providers);
+    if (!target) return Result.err(new AgentTargetError({
+      code: "UNKNOWN_TARGET", target: input.target, retryable: false,
+      message: `Unknown subagent profile or provider: ${input.target}.`,
+    }));
+    const enabled = this.providerEnabledResult(target.provider, target.name, "capabilities");
+    if (enabled.isErr()) return enabled;
+    const driver = this.driverResult(target.provider, "capabilities");
+    if (driver.isErr()) return driver;
+    const context: LocalAgentRuntimeContext = {
+      agentId: "capability_probe", provider: driver.value.provider, workspaceRoot: authorized.value,
+      writeMode: input.writeMode, model: target.model, effort: target.effort,
+      outputSchema: input.outputSchema, toolPolicy: input.toolPolicy, agentDir: this.agentDir,
+    };
+    return Result.ok(localAgentCapabilities(driver.value, context, {
+      prompt: "capability probe", workspaceRoot: authorized.value, model: target.model,
+      effort: target.effort, outputSchema: input.outputSchema, toolPolicy: input.toolPolicy,
+    }));
+  }
+
+  async resolveInvocation(
+    input: Pick<StartLocalAgentInput, "target" | "workspaceRoot" | "workspaceId" | "model" | "effort" | "writeMode" | "outputSchema" | "toolPolicy">,
+  ): Promise<BetterResult<LocalAgentInvocationResolution, AgentStartError>> {
+    const authorized = this.authorizeWorkspace(input.workspaceRoot, input.workspaceId, "resolve");
+    if (authorized.isErr()) return authorized;
+    const profiles = await this.loadProfilesResult(authorized.value, input.target, input.workspaceId);
+    if (profiles.isErr()) return profiles;
+    const target = resolveLocalAgentTarget(input.target, profiles.value, input.model, input.effort, this.subagents.providers);
+    if (!target) return Result.err(new AgentTargetError({ code: "UNKNOWN_TARGET", target: input.target,
+      retryable: false, message: `Unknown subagent profile or provider: ${input.target}.` }));
+    const enabled = this.providerEnabledResult(target.provider, target.name, "resolve");
+    if (enabled.isErr()) return enabled;
+    const driver = this.driverResult(target.provider, "resolve");
+    if (driver.isErr()) return driver;
+    const writeMode = narrowerWriteMode(input.writeMode ?? "allowed",
+      target.kind === "profile" ? target.profile.writeMode ?? "allowed" : "allowed");
+    const context: LocalAgentRuntimeContext = { agentId: "capability_probe", provider: target.provider,
+      workspaceRoot: authorized.value, writeMode, model: target.model, effort: target.effort,
+      outputSchema: input.outputSchema, toolPolicy: input.toolPolicy, agentDir: this.agentDir };
+    return Result.ok({
+      target: target.name,
+      provider: target.provider,
+      model: target.model,
+      effort: target.effort,
+      writeMode,
+      profileHash: profileHash(target),
+      capabilities: localAgentCapabilities(driver.value, context, { prompt: "capability probe",
+        workspaceRoot: authorized.value, model: target.model, effort: target.effort,
+        outputSchema: input.outputSchema, toolPolicy: input.toolPolicy }),
+    });
+  }
+
   async start(input: StartLocalAgentInput): Promise<BetterResult<LocalAgentRecord, AgentStartError>> {
+    const started = await this.startTurn(input);
+    return started.isErr() ? started : Result.ok(started.value.agent);
+  }
+
+  async startTurn(
+    input: StartLocalAgentInput,
+    callbacks: LocalAgentTurnCallbacks = {},
+  ): Promise<BetterResult<StartedLocalAgentTurn, AgentStartError>> {
     const manager = this;
     return Result.gen(async function* () {
       yield* manager.acceptingResult("start");
@@ -127,7 +236,7 @@ export class LocalAgentManager {
         input.workspaceId,
         "start",
       );
-      const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
+      const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target, input.workspaceId));
       const target = resolveLocalAgentTarget(
         input.target,
         profiles,
@@ -143,6 +252,11 @@ export class LocalAgentManager {
           message: `Unknown subagent profile or provider: ${input.target}.`,
         }));
       }
+      if (input.expectedProfileHash && input.expectedProfileHash !== profileHash(target)) {
+        return Result.err(new AgentTargetError({ code: "TARGET_RESOLUTION_FAILED", target: target.name,
+          provider: target.provider, operation: "start", retryable: true,
+          message: `Subagent profile changed after workflow admission: ${target.name}.` }));
+      }
       if (target.kind === "profile" && target.profile.disabled) {
         return Result.err(new AgentTargetError({
           code: "PROVIDER_DISABLED",
@@ -153,7 +267,10 @@ export class LocalAgentManager {
         }));
       }
       yield* manager.providerEnabledResult(target.provider, target.name, "start");
-      yield* manager.driverResult(target.provider, "start");
+      const driver = yield* manager.driverResult(target.provider, "start");
+      const writeMode = narrowerWriteMode(input.writeMode ?? "allowed", target.kind === "profile"
+        ? target.profile.writeMode ?? "allowed"
+        : "allowed");
       const record = yield* manager.store.createResult({
         workspaceId: input.workspaceId,
         workspaceRoot,
@@ -161,12 +278,19 @@ export class LocalAgentManager {
         provider: target.provider,
         model: target.model,
         effort: target.effort,
+        writeMode,
       });
-      return manager.begin(record, input.prompt, {
+      return manager.beginTurn(record, input.prompt, {
         model: target.model,
         effort: target.effort,
-        writeMode: input.writeMode,
-      }, input.workspaceId);
+        writeMode,
+        attemptId: input.attemptId,
+        outputSchema: input.outputSchema,
+        toolPolicy: input.toolPolicy,
+        workflowRunId: input.workflowRunId,
+        workflowStepId: input.workflowStepId,
+        workflowAttemptId: input.workflowAttemptId,
+      }, input.workspaceId, callbacks, driver);
     });
   }
 
@@ -176,17 +300,37 @@ export class LocalAgentManager {
     overrides: RunOverrides = {},
     scope: LocalAgentWorkspaceScope,
   ): Promise<BetterResult<LocalAgentRecord, AgentContinueError>> {
+    const continued = await this.continueTurn(agentId, prompt, overrides, scope);
+    return continued.isErr() ? continued : Result.ok(continued.value.agent);
+  }
+
+  async continueTurn(
+    agentId: string,
+    prompt: string,
+    overrides: RunOverrides = {},
+    scope: LocalAgentWorkspaceScope,
+    callbacks: LocalAgentTurnCallbacks = {},
+  ): Promise<BetterResult<StartedLocalAgentTurn, AgentContinueError>> {
     const manager = this;
     return Result.gen(async function* () {
       yield* manager.acceptingResult("continue", agentId);
       const record = yield* manager.store.getByIdResult(agentId);
       if (!record) return Result.err(agentNotFound(agentId));
       yield* manager.agentWorkspaceResult(record, scope, "continue");
-      const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
-      yield* manager.profileForRecordResult(record, profiles);
+      const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName, record.workspaceId));
+      const profile = yield* manager.profileForRecordResult(record, profiles);
+      if (overrides.expectedProfileHash && overrides.expectedProfileHash !== recordProfileHash(record, profile)) {
+        return Result.err(new AgentTargetError({ code: "TARGET_RESOLUTION_FAILED", target: record.profileName,
+          provider: isLocalAgentProvider(record.provider) ? record.provider : undefined,
+          operation: "continue", retryable: true,
+          message: `Subagent profile changed after workflow admission: ${record.profileName}.` }));
+      }
       yield* manager.providerEnabledResult(record.provider, record.profileName, "continue");
-      yield* manager.driverResult(record.provider, "continue", agentId);
-      return manager.begin(record, prompt, overrides, scope.workspaceId);
+      const driver = yield* manager.driverResult(record.provider, "continue", agentId);
+      return manager.beginTurn(record, prompt, {
+        ...overrides,
+        writeMode: narrowerWriteMode(record.writeMode ?? "allowed", overrides.writeMode ?? record.writeMode ?? "allowed"),
+      }, scope.workspaceId, callbacks, driver);
     });
   }
 
@@ -259,6 +403,33 @@ export class LocalAgentManager {
     return Result.ok(results);
   }
 
+  async stop(
+    agentId: string,
+    turnId: number,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentTurnRecord, AgentWaitError>> {
+    const agent = this.get(agentId, scope);
+    if (agent.isErr()) return agent;
+    const stored = this.store.getTurnByIdResult(turnId);
+    if (stored.isErr()) return stored;
+    if (!stored.value || stored.value.agentId !== agentId) return Result.err(agentNotFound(agentId));
+    if (stored.value.status !== "running") return Result.ok(stored.value);
+    const active = this.activeTurns.get(agentId);
+    if (!active || active.turnId !== turnId) {
+      return Result.err(new AgentStoreError(
+        "stop",
+        new Error(`Turn ${turnId} is not active.`),
+        `Running turn state is unavailable for subagent ${agentId}.`,
+      ));
+    }
+    active.abort.abort(new Error("Agent turn stopped."));
+    await active.completion.catch(() => undefined);
+    const finished = this.store.getTurnByIdResult(turnId);
+    if (finished.isErr()) return finished;
+    if (!finished.value) return Result.err(agentNotFound(agentId));
+    return Result.ok(finished.value);
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.accepting = false;
@@ -290,12 +461,14 @@ export class LocalAgentManager {
     await this.pool.evictIdle(now);
   }
 
-  private begin(
+  private beginTurn(
     record: LocalAgentRecord,
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
-  ): BetterResult<LocalAgentRecord, AgentConflictError | AgentStoreError> {
+    callbacks: LocalAgentTurnCallbacks = {},
+    driver?: LocalAgentDriver,
+  ): BetterResult<StartedLocalAgentTurn, AgentConflictError | AgentStoreError> {
     if (this.activeTurns.has(record.id)) {
       return Result.err(new AgentConflictError({
         code: "AGENT_CONFLICT",
@@ -310,16 +483,49 @@ export class LocalAgentManager {
       prompt,
       model: overrides.model ?? record.model,
       effort: overrides.effort ?? record.effort,
-    });
+      writeMode: overrides.writeMode ?? record.writeMode ?? "allowed",
+      attemptId: overrides.attemptId,
+      workflowRunId: overrides.workflowRunId,
+      workflowStepId: overrides.workflowStepId,
+      workflowAttemptId: overrides.workflowAttemptId,
+    }, callbacks.onPrepared);
     if (begun.isErr()) return begun;
+    const abort = new AbortController();
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
-    const turn = Promise.resolve().then(() => (
-      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId)
-    ));
-    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn });
+    const turn = new Promise<void>((resolveTurn, rejectTurn) => {
+      setImmediate(() => {
+        void this.runTurn(
+          begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId,
+          { ...callbacks, onPrepared: undefined } as LocalAgentRunCallbacks, abort.signal,
+        ).then(resolveTurn, rejectTurn);
+      });
+    });
+    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn, abort });
     void turn.catch(() => undefined);
-    return Result.ok(begun.value.agent);
+    const resolvedDriver = driver ?? this.drivers.get(record.provider as LocalAgentProvider);
+    const capabilities = resolvedDriver ? localAgentCapabilities(resolvedDriver, {
+      agentId: record.id,
+      provider: resolvedDriver.provider,
+      workspaceRoot: record.workspaceRoot,
+      providerSessionId: record.providerSessionId,
+      writeMode: overrides.writeMode,
+      model: overrides.model ?? record.model,
+      effort: overrides.effort ?? record.effort,
+      outputSchema: overrides.outputSchema,
+      toolPolicy: overrides.toolPolicy,
+      workflowRunId: overrides.workflowRunId,
+      workflowStepId: overrides.workflowStepId,
+      workflowAttemptId: overrides.workflowAttemptId,
+      agentDir: this.agentDir,
+    }, {
+      prompt,
+      workspaceRoot: record.workspaceRoot,
+      attemptId: overrides.attemptId,
+      outputSchema: overrides.outputSchema,
+      toolPolicy: overrides.toolPolicy,
+    }) : unavailableCapabilities();
+    return Result.ok({ ...begun.value, capabilities });
   }
 
   private async runTurn(
@@ -328,6 +534,8 @@ export class LocalAgentManager {
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
+    inputCallbacks: LocalAgentRunCallbacks = {},
+    signal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -345,7 +553,7 @@ export class LocalAgentManager {
       const authorizedRecord = workspaceRoot === record.workspaceRoot
         ? record
         : { ...record, workspaceRoot };
-      const profiles = await this.loadProfilesResult(workspaceRoot, record.profileName);
+      const profiles = await this.loadProfilesResult(workspaceRoot, record.profileName, workspaceId);
       if (profiles.isErr()) {
         this.persistRunError(record, turnId, profiles.error, startedAt);
         return;
@@ -373,19 +581,36 @@ export class LocalAgentManager {
         writeMode: input.value.writeMode,
         model: input.value.model,
         effort: input.value.effort,
+        outputSchema: input.value.outputSchema,
+        toolPolicy: input.value.toolPolicy,
+        workflowRunId: input.value.workflowRunId,
+        workflowStepId: input.value.workflowStepId,
+        workflowAttemptId: input.value.workflowAttemptId,
         agentDir: this.agentDir,
       };
       const callbacks: LocalAgentRunCallbacks = {
-        onSessionId: (providerSessionId) => {
+        ...inputCallbacks,
+        onSessionId: async (providerSessionId) => {
           const current = this.store.getByIdResult(record.id);
           if (current.isErr()) throw current.error;
-          if (!current.value || current.value.providerSessionId === providerSessionId) return;
-          const updated = this.store.updateResult(record.id, { providerSessionId });
-          if (updated.isErr()) throw updated.error;
+          if (current.value && current.value.providerSessionId !== providerSessionId) {
+            const updated = this.store.updateResult(record.id, { providerSessionId });
+            if (updated.isErr()) throw updated.error;
+          }
+          await inputCallbacks.onSessionId?.(providerSessionId);
         },
       };
-      const result = await this.pool.run(driver.value, context, input.value, callbacks);
+      const result = await this.pool.run(driver.value, context, input.value, callbacks, signal ? { signal } : undefined);
       if (result.isErr()) {
+        if (signal?.aborted && result.error.code === "PROVIDER_CANCELLED") {
+          this.store.finishTurnResult(record.id, turnId, {
+            status: "stopped",
+            error: "Agent turn stopped.",
+            errorCode: "AGENT_STOPPED",
+            errorRetryable: false,
+          });
+          return;
+        }
         this.persistRunError(record, turnId, result.error, startedAt);
         return;
       }
@@ -396,7 +621,9 @@ export class LocalAgentManager {
       const updated = this.store.finishTurnResult(record.id, turnId, {
         providerSessionId: runResult.providerSessionId ?? current.value.providerSessionId,
         status: "completed",
-        response: runResult.finalResponse,
+        response: runResult.structuredOutput === undefined
+          ? runResult.finalResponse
+          : JSON.stringify(runResult.structuredOutput),
       });
       if (updated.isErr()) throw updated.error;
       this.log("info", "agent_run_completed", {
@@ -442,6 +669,9 @@ export class LocalAgentManager {
       error: error.message,
       errorCode: error.code,
       errorRetryable: error.retryable,
+      retryAfterMs: numericField(error, "retryAfterMs"),
+      resetAt: stringField(error, "resetAt"),
+      executionUncertain: booleanField(error, "executionUncertain"),
     });
     this.log("error", "agent_run_failed", {
       provider: record.provider,
@@ -477,11 +707,20 @@ export class LocalAgentManager {
       prompt: fullPrompt,
       workspaceRoot: record.workspaceRoot,
       providerSessionId: record.providerSessionId,
-      writeMode: overrides.writeMode ?? "allowed",
+      writeMode: narrowerWriteMode(
+        record.writeMode ?? "allowed",
+        narrowerWriteMode(profile?.writeMode ?? "allowed", overrides.writeMode ?? record.writeMode ?? "allowed"),
+      ),
       model: record.model ?? profile?.model,
       effort: record.effort ?? profile?.effort,
       modelOverrideRequested: overrides.model !== undefined,
       effortOverrideRequested: overrides.effort !== undefined,
+      attemptId: overrides.attemptId,
+      outputSchema: overrides.outputSchema,
+      toolPolicy: overrides.toolPolicy,
+      workflowRunId: overrides.workflowRunId,
+      workflowStepId: overrides.workflowStepId,
+      workflowAttemptId: overrides.workflowAttemptId,
     });
   }
 
@@ -577,6 +816,16 @@ export class LocalAgentManager {
     operation: string,
   ): BetterResult<string, AgentScopeError> {
     const normalized = resolve(workspaceRoot);
+    if (workspaceId && this.validateWorkspaceScope) {
+      try {
+        return Result.ok(resolve(this.validateWorkspaceScope({ workspaceId, workspaceRoot: normalized }, operation)));
+      } catch (cause) {
+        return Result.err(new AgentScopeError({
+          code: "WORKSPACE_NOT_ALLOWED", operation, retryable: false, cause,
+          message: "Workspace root does not match its stored workspace identity.",
+        }));
+      }
+    }
     if (!workspaceId || !this.allowedRoots) return Result.ok(normalized);
     try {
       return Result.ok(assertAllowedPath(normalized, [...this.allowedRoots]));
@@ -615,9 +864,10 @@ export class LocalAgentManager {
   private async loadProfilesResult(
     workspaceRoot: string,
     target: string,
+    workspaceId?: string,
   ): Promise<BetterResult<LocalAgentProfile[], AgentTargetError>> {
     try {
-      return Result.ok(await this.loadProfiles(workspaceRoot));
+      return Result.ok(await this.loadProfiles(workspaceRoot, workspaceId));
     } catch (cause) {
       if (isProgrammerDefect(cause)) throw cause;
       return Result.err(new AgentTargetError({
@@ -645,6 +895,49 @@ export function createLocalAgentManager(options: LocalAgentManagerOptions): Loca
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function narrowerWriteMode(left: LocalAgentWriteMode, right: LocalAgentWriteMode): LocalAgentWriteMode {
+  const rank: Record<LocalAgentWriteMode, number> = { read_only: 0, allowed: 1, full_access: 2 };
+  return rank[left] <= rank[right] ? left : right;
+}
+
+function unavailableCapabilities(): LocalAgentCapabilities {
+  return {
+    cancellation: "unsupported",
+    structuredOutput: "validated_text",
+    usage: "unavailable",
+    correctionAuthority: "unsupported",
+    permissionRequests: "preconfigured",
+    progress: "final_only",
+  };
+}
+
+function numericField(value: object, key: string): number | undefined {
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "number" && Number.isFinite(field) && field >= 0 ? field : undefined;
+}
+
+function stringField(value: object, key: string): string | undefined {
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
+}
+
+function booleanField(value: object, key: string): boolean | undefined {
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "boolean" ? field : undefined;
+}
+
+function profileHash(target: NonNullable<ReturnType<typeof resolveLocalAgentTarget>>): string {
+  return createHash("sha256").update(JSON.stringify(target.kind === "profile" ? target.profile : {
+    name: target.name, provider: target.provider, model: target.model, effort: target.effort,
+  })).digest("hex");
+}
+
+function recordProfileHash(record: LocalAgentRecord, profile: LocalAgentProfile | undefined): string {
+  return createHash("sha256").update(JSON.stringify(profile ?? {
+    name: record.profileName, provider: record.provider, model: record.model, effort: record.effort,
+  })).digest("hex");
 }
 
 function safeCauseType(cause: unknown): string | undefined {

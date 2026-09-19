@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { subagentsConfigSchema } from "./local-agent-config.js";
+import { workflowsConfigSchema } from "./workflow-config.js";
 
 export const DEVSPACE_CONFIG_VERSION = 1 as const;
 export const DEVSPACE_CONFIG_SCHEMA_URL =
@@ -78,6 +79,7 @@ export const devspaceConfigSchema = z.object({
   ui: uiConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
+  workflows: workflowsConfigSchema,
   subagents: subagentsConfigSchema.default({
     enabled: false,
     instructions: "on-demand",

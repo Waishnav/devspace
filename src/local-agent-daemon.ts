@@ -43,8 +43,9 @@ import type {
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import type { WorkflowReply, WorkflowRequest } from "./workflow-protocol.js";
 
-const MAX_REQUEST_BYTES = 512 * 1024;
+const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
 const DEFAULT_IDLE_CHECK_INTERVAL_MS = 1_000;
 const DEFAULT_REQUEST_READ_TIMEOUT_MS = 5_000;
@@ -70,6 +71,11 @@ export interface LocalAgentDaemonManager {
 export interface LocalAgentDaemonOptions {
   stateDir: string;
   manager: LocalAgentDaemonManager;
+  workflows?: {
+    request(input: WorkflowRequest): Promise<WorkflowReply>;
+    readonly activeRunCount: number;
+    close(): Promise<void>;
+  };
   configRevision: string;
   idleShutdownMs?: number;
   idleCheckIntervalMs?: number;
@@ -84,6 +90,7 @@ export interface LocalAgentDaemonOptions {
 export class LocalAgentDaemon {
   readonly paths: LocalAgentDaemonPaths;
   private readonly manager: LocalAgentDaemonManager;
+  private readonly workflows?: LocalAgentDaemonOptions["workflows"];
   private readonly configRevision: string;
   private readonly lock: LocalAgentDaemonLock;
   private readonly idleShutdownMs: number;
@@ -108,6 +115,7 @@ export class LocalAgentDaemon {
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
     this.manager = options.manager;
+    this.workflows = options.workflows;
     this.configRevision = options.configRevision;
     this.lock = new LocalAgentDaemonLock(this.paths);
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
@@ -178,6 +186,7 @@ export class LocalAgentDaemon {
       endpoint: this.paths.endpoint,
       startedAt: this.startedAt,
       activeTurns: this.manager.activeTurnCount,
+      activeWorkflows: this.workflows?.activeRunCount ?? 0,
       runtimeCount: this.manager.runtimeCount,
       clientConnections: this.sockets.size,
     };
@@ -192,13 +201,17 @@ export class LocalAgentDaemon {
     this.closePromise = (async () => {
       writeLocalAgentDaemonLog(this.paths, "info", "daemon_stopping", {
         activeTurns: this.manager.activeTurnCount,
+        activeWorkflows: this.workflows?.activeRunCount ?? 0,
         runtimeCount: this.manager.runtimeCount,
       });
       for (const socket of this.sockets) socket.destroy();
       this.sockets.clear();
       const [serverResult, managerResult] = await Promise.allSettled([
         withTimeout(closeServer(this.server), this.shutdownTimeoutMs, "daemon socket shutdown"),
-        withTimeout(this.manager.close(), this.shutdownTimeoutMs, "daemon manager shutdown"),
+        withTimeout((async () => {
+          await this.workflows?.close();
+          await this.manager.close();
+        })(), this.shutdownTimeoutMs, "daemon manager shutdown"),
       ]);
       if (serverResult.status === "rejected") {
         writeLocalAgentDaemonLog(this.paths, "warn", "daemon_socket_close_failed", {
@@ -314,6 +327,13 @@ export class LocalAgentDaemon {
     }
 
     switch (request.method) {
+      case "workflow.request":
+        if (!this.workflows) return { ok: false, error: {
+          code: "WORKFLOW_DISABLED", message: "Dynamic workflows are disabled.", retryable: false,
+        } } satisfies WorkflowReply;
+        this.activeTurnRequests += 1;
+        try { return await this.workflows.request(request.params); }
+        finally { this.activeTurnRequests -= 1; }
       case "hello":
         return {
           status: this.status(),
@@ -344,7 +364,7 @@ export class LocalAgentDaemon {
       case "daemon.stop":
         if (request.params.ifIdle) {
           this.accepting = false;
-          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0) {
+          if (this.activeTurnRequests > 0 || this.manager.activeTurnCount > 0 || (this.workflows?.activeRunCount ?? 0) > 0) {
             this.accepting = true;
             throw new AgentDaemonUnavailableError({
               code: "DAEMON_UNAVAILABLE",
@@ -391,7 +411,7 @@ export class LocalAgentDaemon {
 
   private async maintainIdle(): Promise<void> {
     await this.manager.evictIdle(this.now());
-    if (this.stopping || this.manager.activeTurnCount > 0 || this.manager.runtimeCount > 0 || this.sockets.size > 0) {
+    if (this.stopping || this.manager.activeTurnCount > 0 || this.manager.runtimeCount > 0 || this.sockets.size > 0 || (this.workflows?.activeRunCount ?? 0) > 0) {
       this.idleSince = undefined;
       return;
     }

@@ -9,6 +9,7 @@ import type {
   LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
+  LocalAgentRunControl,
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
@@ -76,6 +77,7 @@ export class LocalAgentRuntimePool {
     context: LocalAgentRuntimeContext,
     input: LocalAgentRunInput,
     inputCallbacks?: LocalAgentRunCallbacks,
+    control?: LocalAgentRunControl,
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     if (this.closing) return Result.err(poolClosedError(driver, context));
 
@@ -129,12 +131,16 @@ export class LocalAgentRuntimePool {
         if (reservationError) throw reservationError;
         await inputCallbacks?.onSessionId?.(providerSessionId);
       },
+      onUsage: (usage) => inputCallbacks?.onUsage?.(usage),
+      onProgress: (progress) => inputCallbacks?.onProgress?.(progress),
+      onPermissionRequest: (request) => inputCallbacks?.onPermissionRequest?.(request)
+        ?? { outcome: "cancelled" },
     };
     const startedAt = this.now();
     try {
       const inputReservationError = await reserveSession(input.providerSessionId ?? "");
       if (inputReservationError) return Result.err(inputReservationError);
-      const result = await runtime.run(input, callbacks);
+      const result = await runtime.run(input, callbacks, control);
       if (result.isErr()) {
         if (!runtime.isAlive()) {
           try {

@@ -9,6 +9,7 @@ import type {
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
+import { decodeWorkflowRequest, type WorkflowRequest } from "./workflow-protocol.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
 
 export type LocalAgentDaemonMethod =
@@ -18,11 +19,13 @@ export type LocalAgentDaemonMethod =
   | "agent.get"
   | "agent.list"
   | "agent.wait"
+  | "workflow.request"
   | "daemon.status"
   | "daemon.stop"
   | "daemon.logs";
 
 export type LocalAgentDaemonRequest =
+  | AgentDaemonRequestBase<"workflow.request", WorkflowRequest>
   | (AgentDaemonRequestBase<"hello", Record<string, never>> & { configRevision?: string })
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
@@ -55,6 +58,7 @@ export interface LocalAgentDaemonStatus {
   endpoint: string;
   startedAt: string;
   activeTurns: number;
+  activeWorkflows?: number;
   runtimeCount: number;
   clientConnections: number;
 }
@@ -106,6 +110,8 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
   const params = record?.params;
 
   switch (method) {
+    case "workflow.request":
+      return { requestId, protocolVersion, authToken, method, params: decodeWorkflowRequest(params) };
     case "hello":
       return {
         requestId,
@@ -221,6 +227,7 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     provider: requiredString(record?.provider, "provider"),
     model: optionalString(record?.model),
     effort: optionalString(record?.effort),
+    writeMode: decodeWriteMode(record?.writeMode),
     providerSessionId: optionalString(record?.providerSessionId),
     status,
     latestResponse: typeof record?.latestResponse === "string" ? record.latestResponse : undefined,
@@ -284,6 +291,7 @@ export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
     endpoint: requiredString(record?.endpoint, "endpoint"),
     startedAt: requiredString(record?.startedAt, "startedAt"),
     activeTurns: requiredInteger(record?.activeTurns, "activeTurns"),
+    ...(record?.activeWorkflows === undefined ? {} : { activeWorkflows: requiredInteger(record.activeWorkflows, "activeWorkflows") }),
     runtimeCount: requiredInteger(record?.runtimeCount, "runtimeCount"),
     clientConnections: requiredInteger(record?.clientConnections, "clientConnections"),
   };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
+  createLocalAgentDrivers,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
   extractPiProviderError,
@@ -9,6 +10,28 @@ import {
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
+import { localAgentCapabilities } from "./local-agent-runtime.js";
+
+const capabilityMatrix = Object.fromEntries(createLocalAgentDrivers({ env: {} }).map((driver) => [
+  driver.provider,
+  localAgentCapabilities(driver, {
+    agentId: `agt_${driver.provider}`,
+    provider: driver.provider,
+    workspaceRoot: "/tmp/project",
+  }, { prompt: "inspect", workspaceRoot: "/tmp/project" }),
+]));
+assert.equal(capabilityMatrix.codex?.structuredOutput, "native");
+assert.equal(capabilityMatrix.codex?.usage, "streaming");
+assert.equal(capabilityMatrix.claude?.structuredOutput, "native");
+assert.equal(capabilityMatrix.claude?.usage, "final");
+for (const provider of ["opencode", "pi"] as const) {
+  assert.equal(capabilityMatrix[provider]?.structuredOutput, "validated_text");
+  assert.equal(capabilityMatrix[provider]?.usage, "final");
+}
+for (const provider of ["cursor", "copilot", "grok"] as const) {
+  assert.equal(capabilityMatrix[provider]?.cancellation, "turn");
+  assert.equal(capabilityMatrix[provider]?.usage, "unavailable");
+}
 assert.deepEqual(
   resolveAcpModelConfigUpdate({
     sessionId: "session_model_1",

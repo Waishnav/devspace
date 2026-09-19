@@ -5,6 +5,7 @@ import type { LoggingConfig } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
+import type { WorkflowsConfig } from "./workflow-config.js";
 
 export type { ToolMode } from "./config-schema.js";
 
@@ -27,6 +28,7 @@ export interface ServerConfig {
   devspaceSkillsDir: string;
   devspaceAgentsDir: string;
   subagents: SubagentsConfig;
+  workflows?: WorkflowsConfig;
   agentDir: string;
   logging: LoggingConfig;
 }
@@ -76,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),
     subagents: stored.subagents,
+    workflows: stored.workflows,
     agentDir: normalizePath(stored.skills.agentDir),
     logging: {
       ...stored.logging,

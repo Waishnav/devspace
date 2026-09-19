@@ -35,7 +35,8 @@ import {
   type LocalAgentDaemonResponse,
   type LocalAgentDaemonStatus,
 } from "./local-agent-daemon-protocol.js";
-import { localAgentProviderConfigRevision } from "./local-agent-config.js";
+import { executionConfigRevision } from "./workflow-config.js";
+import { decodeWorkflowReply, type WorkflowRequest, type WorkflowReply } from "./workflow-protocol.js";
 import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   ensureLocalAgentDaemonSecret,
@@ -105,6 +106,21 @@ export class LocalAgentClient {
     input: StartLocalAgentInput,
   ): Promise<BetterResult<LocalAgentRecord, AgentStartError | AgentDaemonError>> {
     return this.start(input);
+  }
+
+  async workflow(input: WorkflowRequest): Promise<WorkflowReply> {
+    const timeout = input.operation === "wait"
+      ? (input.input.timeoutMs ?? 30_000) + this.requestTimeoutMs
+      : this.requestTimeoutMs;
+    const result = await this.request("workflow.request", input, timeout);
+    if (result.isErr()) return { ok: false, error: {
+      code: result.error.code, message: result.error.message, retryable: result.error.retryable,
+    } };
+    const decoded = decodeValue(result.value, "workflow.request", decodeWorkflowReply);
+    if (decoded.isErr()) return { ok: false, error: {
+      code: decoded.error.code, message: decoded.error.message, retryable: decoded.error.retryable,
+    } };
+    return decoded.value;
   }
 
   async start(
@@ -272,7 +288,7 @@ export class LocalAgentClient {
     const decoded = decodeValue(response.value.result, "hello", decodeDaemonHello);
     if (decoded.isErr()) return decoded;
     if (!decoded.value.configMatches) {
-      if (allowStaleBusyConfig && decoded.value.status.activeTurns > 0) {
+      if (allowStaleBusyConfig && (decoded.value.status.activeTurns > 0 || (decoded.value.status.activeWorkflows ?? 0) > 0)) {
         return Result.ok(decoded.value.status);
       }
       return this.replaceIdleChangedDaemon(authToken.value, decoded.value.status);
@@ -288,11 +304,11 @@ export class LocalAgentClient {
       code: "DAEMON_CONFIG_CHANGED",
       operation: "startup",
       retryable: true,
-      message: status.activeTurns > 0
-        ? "The local agent daemon is running active turns with an older provider configuration. Retry after they finish."
+      message: status.activeTurns > 0 || (status.activeWorkflows ?? 0) > 0
+        ? "The local agent daemon is running active turns or workflows with an older execution configuration. Retry after they finish."
         : "The local agent daemon is using an older provider configuration.",
     });
-    if (status.activeTurns > 0) return Result.err(changed);
+    if (status.activeTurns > 0 || (status.activeWorkflows ?? 0) > 0) return Result.err(changed);
     return this.stopIdleDaemon(authToken, LOCAL_AGENT_DAEMON_PROTOCOL_VERSION, status, changed);
   }
 
@@ -312,13 +328,13 @@ export class LocalAgentClient {
     if (statusResponse.isErr() || !statusResponse.value.ok) return Result.err(mismatch);
     const status = decodeValue(statusResponse.value.result, "hello", decodeDaemonStatus);
     if (status.isErr()) return status;
-    if (status.value.activeTurns > 0) {
+    if (status.value.activeTurns > 0 || (status.value.activeWorkflows ?? 0) > 0) {
       return Result.err(new AgentDaemonProtocolMismatchError({
         code: "DAEMON_PROTOCOL_MISMATCH",
         operation: "startup",
         retryable: true,
         cause: mismatch,
-        message: "An older local agent daemon is still running active turns. Retry after they finish.",
+        message: "An older local agent daemon is still running active turns or workflows. Retry after they finish.",
       }));
     }
 
@@ -388,7 +404,14 @@ export class LocalAgentClient {
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
     timeoutMs: number | null = this.requestTimeoutMs,
   ): Promise<BetterResult<unknown, RequestError<M>>> {
-    const ready = await (isObservationRequest(method)
+    const workflowRequest = method === "workflow.request" ? params as WorkflowRequest : undefined;
+    const observation = isObservationRequest(method)
+      || workflowRequest?.operation === "get"
+      || workflowRequest?.operation === "wait"
+      || workflowRequest?.operation === "list"
+      || (workflowRequest?.operation === "control"
+        && ["pause", "stop", "stop_agent"].includes(workflowRequest.input.action));
+    const ready = await (observation
       ? this.ensureReadyForObservation()
       : this.ensureReady());
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
@@ -496,12 +519,13 @@ function isObservationRequest(
 }
 
 export function createLocalAgentClient(
-  config: Pick<ServerConfig, "configDir" | "stateDir" | "subagents">,
+  config: Pick<ServerConfig, "configDir" | "stateDir" | "subagents" | "workflows">
+    & Partial<Pick<ServerConfig, "allowedRoots" | "worktreeRoot">>,
 ): LocalAgentClient {
   return new LocalAgentClient({
     configDir: config.configDir,
     stateDir: config.stateDir,
-    configRevision: localAgentProviderConfigRevision(config.subagents),
+    configRevision: executionConfigRevision(config),
   });
 }
 
@@ -701,6 +725,7 @@ function isRequestError(
     case "daemon.status":
     case "daemon.stop":
     case "daemon.logs":
+    case "workflow.request":
       return false;
   }
 }

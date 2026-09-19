@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -6,16 +7,19 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
-import type {
-  LocalAgentDriver,
-  LocalAgentRunCallbacks,
-  LocalAgentRunInput,
-  LocalAgentRunResult,
-  LocalAgentRuntime,
-  LocalAgentRuntimeContext,
-  LocalAgentWriteMode,
+import {
+  localAgentWorkflowEnvironment,
+  type LocalAgentDriver,
+  type LocalAgentProgressUpdate,
+  type LocalAgentRunCallbacks,
+  type LocalAgentRunControl,
+  type LocalAgentRunInput,
+  type LocalAgentRunResult,
+  type LocalAgentRuntime,
+  type LocalAgentRuntimeContext,
+  type LocalAgentUsageUpdate,
+  type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
-
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
@@ -28,6 +32,7 @@ const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
 
 export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
+  interrupt?(): Promise<void>;
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
   applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
   setModel?(model?: string): Promise<void>;
@@ -92,7 +97,11 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
     this.iterator = query[Symbol.asyncIterator]();
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+  async run(
+    input: LocalAgentRunInput,
+    callbacks?: LocalAgentRunCallbacks,
+    control?: LocalAgentRunControl,
+  ) {
     return captureAgentProviderResult({
       provider: "claude",
       operation: "run",
@@ -107,7 +116,8 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           });
         }
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
-        const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
+        const effectiveWriteMode = input.toolPolicy === "read_only" ? "read_only" : input.writeMode;
+        const flagSettings = claudeAuthoritySettings(input.workspaceRoot, effectiveWriteMode);
         if (input.effort) {
           Object.assign(flagSettings, {
             alwaysThinkingEnabled: true,
@@ -115,20 +125,35 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           });
         }
         await this.query.applyFlagSettings(flagSettings);
-        await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
+        await this.query.setPermissionMode(claudePermissionMode(effectiveWriteMode));
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
+        let cancellation: Promise<boolean> | undefined;
+        const abort = () => {
+          cancellation ??= this.query.interrupt
+            ? this.query.interrupt().then(() => true, () => false)
+            : Promise.resolve(false);
+        };
+        if (control?.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        control?.signal.addEventListener("abort", abort, { once: true });
+        if (control?.signal.aborted) {
+          control.signal.removeEventListener("abort", abort);
+          throw new DOMException("Aborted", "AbortError");
+        }
         this.inputQueue.push({
           type: "user",
           message: { role: "user", content: input.prompt },
           parent_tool_use_id: null,
         });
-
         const items: unknown[] = [];
-        for (;;) {
+        try {
+          for (;;) {
           let next: IteratorResult<unknown>;
           try {
             next = await this.iterator.next();
           } catch (error) {
+            if (control?.signal.aborted && await cancellation) {
+              throw new DOMException("Aborted", "AbortError");
+            }
             this.alive = false;
             if (isProgrammerDefect(error)) throw error;
             throw new AgentProviderUnavailableError({
@@ -139,6 +164,9 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               cause: error,
               message: "Claude query stream failed.",
             });
+          }
+          if (control?.signal.aborted && await cancellation) {
+            throw new DOMException("Aborted", "AbortError");
           }
           if (next.done) {
             this.alive = false;
@@ -153,6 +181,8 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           const message = next.value;
           items.push(message);
           const record = asRecord(message);
+          const progress = claudeProgress(record);
+          if (progress) await callbacks?.onProgress?.(progress);
           if (typeof record?.session_id === "string") {
             const previousSessionId = this.providerSessionId;
             this.providerSessionId = record.session_id;
@@ -174,7 +204,8 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             });
           }
           const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
-          if (!finalResponse) {
+          const structuredOutput = jsonValue(record.structured_output);
+          if (!finalResponse && structuredOutput === undefined) {
             throw new AgentProviderProtocolError({
               code: "PROVIDER_PROTOCOL_ERROR",
               provider: "claude",
@@ -183,12 +214,19 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude did not return a final assistant response.",
             });
           }
+          const usage = claudeUsage(input, record);
+          if (usage) await callbacks?.onUsage?.(usage);
           return {
             provider: this.provider,
             providerSessionId: this.providerSessionId ?? null,
             finalResponse,
             items,
+            ...(structuredOutput === undefined ? {} : { structuredOutput }),
+            ...(usage ? { usage } : {}),
           };
+          }
+        } finally {
+          control?.signal.removeEventListener("abort", abort);
         }
       },
     });
@@ -222,7 +260,25 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
     const authority = context.writeMode === "full_access" ? "full_access" : "restricted";
-    return `claude:${context.agentId}:${authority}`;
+    const schema = context.outputSchema
+      ? createHash("sha256").update(JSON.stringify(context.outputSchema)).digest("hex").slice(0, 12)
+      : undefined;
+    const specialization = context.toolPolicy || schema
+      ? `:${context.toolPolicy ?? "normal"}:${schema ?? "text"}`
+      : "";
+    const workflow = context.workflowRunId ? `:workflow:${context.workflowRunId}` : "";
+    return `claude:${context.agentId}:${authority}${specialization}${workflow}`;
+  }
+
+  capabilities() {
+    return {
+      cancellation: "turn",
+      structuredOutput: "native",
+      usage: "final",
+      correctionAuthority: "no_tools",
+      permissionRequests: "preconfigured",
+      progress: "tools_and_text",
+    } as const;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -239,6 +295,8 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
           writeMode: context.writeMode,
           model: context.model,
           effort: context.effort,
+          outputSchema: context.outputSchema,
+          toolPolicy: context.toolPolicy,
         };
         const query = await this.factory({
           context,
@@ -274,17 +332,21 @@ export function claudeQueryOptions(
     cwd: input.workspaceRoot,
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : {}),
+    ...(input.outputSchema ? { outputFormat: { type: "json_schema", schema: input.outputSchema } } : {}),
     ...(context.providerSessionId ? { resume: context.providerSessionId } : {}),
     permissionMode,
     // Restricted runtimes stay warm across read_only/allowed turns. Keep the
     // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
+    ...(input.toolPolicy === "none"
+      ? { allowedTools: [] }
+      : input.writeMode === "full_access"
       ? {}
       : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
+    ...(input.workflowRunId ? { disallowedTools: ["Agent", "Task"] } : {}),
     sandbox: authority.sandbox,
     settings: authority.settings,
     ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
-    env: claudeCommandEnvironment(env),
+    env: localAgentWorkflowEnvironment(claudeCommandEnvironment(env), input),
     ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
   };
 }
@@ -384,4 +446,66 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function claudeUsage(
+  input: LocalAgentRunInput,
+  result: Record<string, unknown>,
+): LocalAgentUsageUpdate | undefined {
+  const usage = asRecord(result.usage);
+  if (!usage) return undefined;
+  const outputTokens = finiteNonnegative(usage.output_tokens);
+  if (outputTokens === undefined) return undefined;
+  return {
+    attemptId: input.attemptId ?? "untracked",
+    sequence: 1,
+    inputTokens: finiteNonnegative(usage.input_tokens),
+    outputTokens,
+    cacheReadTokens: finiteNonnegative(usage.cache_read_input_tokens),
+    cacheWriteTokens: finiteNonnegative(usage.cache_creation_input_tokens),
+    final: true,
+  };
+}
+
+function claudeProgress(message: Record<string, unknown> | undefined): LocalAgentProgressUpdate | undefined {
+  if (message?.type !== "stream_event") return undefined;
+  const event = asRecord(message.event);
+  if (event?.type === "content_block_start") {
+    const block = asRecord(event.content_block);
+    if (block?.type === "tool_use" && typeof block.name === "string") {
+      return { type: "tool", toolName: block.name, status: "started" };
+    }
+  }
+  if (event?.type === "content_block_delta") {
+    const delta = asRecord(event.delta);
+    if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text) {
+      return { type: "text", text: delta.text.slice(0, 8 * 1024) };
+    }
+  }
+  return undefined;
+}
+
+function jsonValue(value: unknown): LocalAgentRunResult["structuredOutput"] | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const result = value.map(jsonValue);
+    return result.some((entry, index) => entry === undefined && value[index] !== undefined)
+      ? undefined
+      : result as LocalAgentRunResult["structuredOutput"];
+  }
+  const record = asRecord(value);
+  if (!record || Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+  const result: Record<string, Exclude<LocalAgentRunResult["structuredOutput"], undefined>> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    const parsed = jsonValue(entry);
+    if (parsed === undefined) return undefined;
+    result[key] = parsed;
+  }
+  return result;
+}
+
+function finiteNonnegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }

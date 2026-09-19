@@ -18,14 +18,23 @@ class FakePiSession implements PiSessionLike {
   effort?: unknown;
   activeTools: string[] = [];
   toolHistory: string[][] = [];
+  abortCount = 0;
+  private releaseHold?: () => void;
 
   async prompt(text: string): Promise<void> {
+    if (text === "hold") await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     const message = {
       role: "assistant",
       content: [{ type: "text", text: `response:${text}` }],
+      usage: { input: 3, output: 5, cacheRead: 1, cacheWrite: 2 },
     };
     this.messages.push(message);
     for (const listener of this.listeners) listener({ type: "agent_end" } as AgentSessionEvent);
+  }
+
+  async abort(): Promise<void> {
+    this.abortCount += 1;
+    this.releaseHold?.();
   }
 
   subscribe(listener: AgentSessionEventListener): () => void {
@@ -69,6 +78,7 @@ const context: LocalAgentRuntimeContext = {
   workspaceRoot: "/tmp/project",
 };
 const sessionIds: string[] = [];
+const usageUpdates: unknown[] = [];
 
 const first = await pool.run(driver, context, {
   prompt: "first",
@@ -76,8 +86,10 @@ const first = await pool.run(driver, context, {
   model: "provider/model",
   effort: "high",
   writeMode: "read_only",
+  attemptId: "attempt_pi_1",
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
+  onUsage: (usage) => { usageUpdates.push(usage); },
 });
 assert.equal(factoryEnv?.HARNESS_ENV, "pi");
 const second = await pool.run(driver, context, {
@@ -105,6 +117,15 @@ assert.equal(second.value.finalResponse, "response:second");
 assert.deepEqual(sessions[0]?.model, { id: "model" });
 assert.equal(sessions[0]?.effort, "high");
 assert.deepEqual(sessionIds, ["pi_session_1"]);
+assert.deepEqual(usageUpdates, [{
+  attemptId: "attempt_pi_1",
+  sequence: 1,
+  inputTokens: 3,
+  outputTokens: 5,
+  cacheReadTokens: 1,
+  cacheWriteTokens: 2,
+  final: true,
+}]);
 assert.deepEqual(sessions[0]?.activeTools, ["read", "grep", "find", "ls"]);
 assert.deepEqual(sessions[0]?.toolHistory, [
   ["read", "grep", "find", "ls"],
@@ -133,6 +154,24 @@ assert.equal(contexts.length, 2, "cold continuation creates a new AgentSession")
 assert.equal(contexts[1]?.providerSessionId, "pi_session_1");
 assert.deepEqual(sessions[1]?.activeTools, ["read", "grep", "find", "ls", "edit", "write", "bash"]);
 await pool.close();
+
+const cancellationSession = new FakePiSession();
+const cancellationDriver = new PiLocalAgentDriver(async () => cancellationSession);
+const cancellationRuntime = await cancellationDriver.createRuntime(context);
+assert.equal(cancellationRuntime.isOk(), true);
+if (cancellationRuntime.isErr()) throw cancellationRuntime.error;
+const turnAbort = new AbortController();
+const cancelledTurn = cancellationRuntime.value.run({
+  prompt: "hold",
+  workspaceRoot: "/tmp/project",
+}, undefined, { signal: turnAbort.signal });
+await new Promise<void>((resolve) => setImmediate(resolve));
+turnAbort.abort();
+const cancelledResult = await cancelledTurn;
+assert.equal(cancelledResult.isErr(), true);
+if (cancelledResult.isErr()) assert.equal(cancelledResult.error.code, "PROVIDER_CANCELLED");
+assert.equal(cancellationSession.abortCount, 1);
+await cancellationRuntime.value.close();
 
 const missingModelSession = new FakePiSession();
 Object.defineProperty(missingModelSession, "modelRegistry", { value: { find: () => undefined } });

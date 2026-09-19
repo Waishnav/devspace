@@ -6,13 +6,17 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
-import type {
-  LocalAgentDriver,
-  LocalAgentRunCallbacks,
-  LocalAgentRunInput,
-  LocalAgentRunResult,
-  LocalAgentRuntime,
-  LocalAgentRuntimeContext,
+import {
+  localAgentWorkflowEnvironment,
+  type LocalAgentDriver,
+  type LocalAgentProgressUpdate,
+  type LocalAgentRunCallbacks,
+  type LocalAgentRunControl,
+  type LocalAgentRunInput,
+  type LocalAgentRunResult,
+  type LocalAgentRuntime,
+  type LocalAgentRuntimeContext,
+  type LocalAgentUsageUpdate,
 } from "./local-agent-runtime.js";
 import {
   createPiSandboxExtension,
@@ -38,7 +42,7 @@ export type PiSessionLike = Pick<
   | "setModel"
   | "setThinkingLevel"
   | "dispose"
->;
+> & { abort?: () => Promise<void> };
 
 export type PiSessionFactory = (
   context: LocalAgentRuntimeContext,
@@ -53,6 +57,8 @@ export class PiSessionRuntime implements LocalAgentRuntime {
   private closed = false;
   private collectingEvents = false;
   private events: unknown[] = [];
+  private onProgress?: LocalAgentRunCallbacks["onProgress"];
+  private progress = Promise.resolve();
 
   constructor(
     private readonly session: PiSessionLike,
@@ -61,10 +67,19 @@ export class PiSessionRuntime implements LocalAgentRuntime {
       if (!this.collectingEvents) return;
       if (this.events.length >= MAX_PI_EVENTS) this.events.shift();
       this.events.push(event);
+      const update = piProgress(event);
+      const callback = this.onProgress;
+      if (update && callback) {
+        this.progress = this.progress.then(() => callback(update));
+      }
     });
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+  async run(
+    input: LocalAgentRunInput,
+    callbacks?: LocalAgentRunCallbacks,
+    control?: LocalAgentRunControl,
+  ) {
     return captureAgentProviderResult({
       provider: this.provider,
       operation: "run",
@@ -83,10 +98,33 @@ export class PiSessionRuntime implements LocalAgentRuntime {
         this.events = [];
         const messageStart = this.session.messages.length;
         this.collectingEvents = true;
+        this.onProgress = callbacks?.onProgress;
+        this.progress = Promise.resolve();
+        let cancellation: Promise<boolean> | undefined;
+        const abort = () => {
+          cancellation ??= this.session.abort
+            ? this.session.abort().then(() => true, () => false)
+            : Promise.resolve(false);
+        };
+        if (control?.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        control?.signal.addEventListener("abort", abort, { once: true });
         try {
-          await this.session.prompt(input.prompt);
+          try {
+            await this.session.prompt(input.prompt);
+          } catch (error) {
+            if (control?.signal.aborted && await cancellation) {
+              throw new DOMException("Aborted", "AbortError");
+            }
+            throw error;
+          }
         } finally {
+          control?.signal.removeEventListener("abort", abort);
           this.collectingEvents = false;
+          this.onProgress = undefined;
+        }
+        await this.progress;
+        if (control?.signal.aborted && await cancellation) {
+          throw new DOMException("Aborted", "AbortError");
         }
         const currentMessages = this.session.messages.slice(messageStart);
         const finalResponse = extractPiFinalResponse({ messages: currentMessages });
@@ -110,11 +148,14 @@ export class PiSessionRuntime implements LocalAgentRuntime {
             message: "Pi did not return a final assistant response.",
           });
         }
+        const usage = piUsage(input, currentMessages);
+        if (usage) await callbacks?.onUsage?.(usage);
         return {
           provider: this.provider,
           providerSessionId: this.session.sessionId,
           finalResponse,
           items: [...this.events, ...currentMessages],
+          ...(usage ? { usage } : {}),
         };
       },
     });
@@ -142,7 +183,9 @@ export class PiSessionRuntime implements LocalAgentRuntime {
 
   private async applyOverrides(input: LocalAgentRunInput): Promise<void> {
     await updatePiSandboxSession(this.session, input.workspaceRoot, input.writeMode ?? "allowed");
-    this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
+    this.session.setActiveToolsByName(input.toolPolicy === "none"
+      ? []
+      : [...piToolsForWriteMode(input.toolPolicy === "read_only" ? "read_only" : input.writeMode)]);
     if (input.model) {
       const model = resolvePiModel(this.session.modelRegistry, input.model);
       if (!model) {
@@ -172,7 +215,18 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
   ) {}
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
-    return `pi:${context.agentId}`;
+    return `pi:${context.agentId}${context.workflowRunId ? `:workflow:${context.workflowRunId}` : ""}`;
+  }
+
+  capabilities() {
+    return {
+      cancellation: "turn",
+      structuredOutput: "validated_text",
+      usage: "final",
+      correctionAuthority: "no_tools",
+      permissionRequests: "preconfigured",
+      progress: "tools_and_text",
+    } as const;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -188,6 +242,8 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
           writeMode: context.writeMode,
           model: context.model,
           effort: context.effort,
+          outputSchema: context.outputSchema,
+          toolPolicy: context.toolPolicy,
         };
         const session = await this.factory(context, input, this.env);
         return new PiSessionRuntime(session);
@@ -231,7 +287,11 @@ async function defaultPiSessionFactory(
   const resourceLoader = new DefaultResourceLoader({
     cwd: input.workspaceRoot,
     agentDir,
-    extensionFactories: [createPiSandboxExtension(input.workspaceRoot, modeRef, env)],
+    extensionFactories: [createPiSandboxExtension(
+      input.workspaceRoot,
+      modeRef,
+      localAgentWorkflowEnvironment(env, input),
+    )],
   });
   let session: PiSessionLike | undefined;
   try {
@@ -250,7 +310,9 @@ async function defaultPiSessionFactory(
     });
     session = result.session;
     await registerPiSandboxSession(session, input.workspaceRoot, modeRef, input.writeMode ?? "allowed");
-    session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
+    session.setActiveToolsByName(input.toolPolicy === "none"
+      ? []
+      : [...piToolsForWriteMode(input.toolPolicy === "read_only" ? "read_only" : input.writeMode)]);
     return session;
   } catch (error) {
     if (session) {
@@ -367,6 +429,59 @@ export function extractPiProviderError(value: unknown): string {
   if (!record) return "";
   const error = record.errorMessage ?? record.error;
   return typeof error === "string" ? error.trim() : "";
+}
+
+function piUsage(
+  input: LocalAgentRunInput,
+  messages: readonly unknown[],
+): LocalAgentUsageUpdate | undefined {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let found = false;
+  for (const message of messages) {
+    const usage = asRecord(asRecord(message)?.usage);
+    if (!usage) continue;
+    const output = finiteNonnegative(usage.output);
+    if (output === undefined) continue;
+    found = true;
+    inputTokens += finiteNonnegative(usage.input) ?? 0;
+    outputTokens += output;
+    cacheReadTokens += finiteNonnegative(usage.cacheRead) ?? 0;
+    cacheWriteTokens += finiteNonnegative(usage.cacheWrite) ?? 0;
+  }
+  return found ? {
+    attemptId: input.attemptId ?? "untracked",
+    sequence: 1,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    final: true,
+  } : undefined;
+}
+
+function piProgress(value: unknown): LocalAgentProgressUpdate | undefined {
+  const event = asRecord(value);
+  if (!event) return undefined;
+  const type = event?.type;
+  if (type === "tool_execution_start" || type === "tool_execution_update" || type === "tool_execution_end") {
+    const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+    return {
+      type: "tool",
+      toolName,
+      status: type === "tool_execution_start" ? "started" : type === "tool_execution_end" ? "completed" : "updated",
+    };
+  }
+  if (type !== "message_update" && type !== "message_end") return undefined;
+  const message = asRecord(event.message);
+  const text = extractPiFinalResponse([message]);
+  return text ? { type: "text", text, ...(type === "message_end" ? { final: true } : {}) } : undefined;
+}
+
+function finiteNonnegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function unwrapProviderPayload(value: unknown): unknown {

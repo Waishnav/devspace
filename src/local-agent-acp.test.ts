@@ -14,6 +14,8 @@ import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 
 const requests: Array<{ method: string; params?: unknown }> = [];
 const queues = new Map<string, { values: unknown[] }>();
+let cancelCount = 0;
+let settleHeldPrompt: (() => void) | undefined;
 const connection = {
   agent: {
     async request(method: string, params?: unknown): Promise<unknown> {
@@ -36,6 +38,11 @@ const connection = {
         return { sessionId };
       }
       if (method === "session/prompt") {
+        const prompt = (params as { prompt?: Array<{ text?: string }> }).prompt?.[0]?.text;
+        if (prompt === "hold") {
+          await new Promise<void>((resolve) => { settleHeldPrompt = resolve; });
+          return { stopReason: "cancelled" };
+        }
         const queue = queues.get(input?.sessionId ?? "");
         queue?.values.push({
           update: {
@@ -43,9 +50,23 @@ const connection = {
             content: { type: "text", text: "ACP response" },
           },
         });
-        return { stopReason: "end_turn" };
+        return {
+          stopReason: "end_turn",
+          usage: {
+            totalTokens: 15,
+            inputTokens: 3,
+            outputTokens: 5,
+            thoughtTokens: 4,
+            cachedReadTokens: 1,
+            cachedWriteTokens: 2,
+          },
+        };
       }
       return {};
+    },
+    async cancel() {
+      cancelCount += 1;
+      settleHeldPrompt?.();
     },
   },
   close() {},
@@ -53,6 +74,7 @@ const connection = {
 };
 
 const sessionIds: string[] = [];
+const usageUpdates: unknown[] = [];
 const runtime = new AcpRuntime({
   provider: "cursor",
   command: "cursor-agent",
@@ -68,8 +90,10 @@ const firstResult = await runtime.run({
   model: "model-a",
   effort: "high",
   writeMode: "read_only",
+  attemptId: "attempt_acp_1",
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
+  onUsage: (usage) => { usageUpdates.push(usage); },
 });
 assert.equal(firstResult.isOk(), true);
 if (firstResult.isErr()) throw firstResult.error;
@@ -91,6 +115,16 @@ const warm = warmResult.value;
 assert.equal(first.providerSessionId, "cursor_session_1");
 assert.equal(warm.finalResponse, "ACP response");
 assert.deepEqual(sessionIds, ["cursor_session_1", "cursor_session_1"]);
+assert.deepEqual(usageUpdates, [{
+  attemptId: "attempt_acp_1",
+  sequence: 1,
+  inputTokens: 3,
+  outputTokens: 5,
+  cacheReadTokens: 1,
+  cacheWriteTokens: 2,
+  reasoningTokens: 4,
+  final: true,
+}]);
 assert.equal(requests.filter(({ method }) => method === "session/new").length, 1);
 assert.equal(requests.filter(({ method }) => method === "session/resume").length, 0);
 assert.equal(requests.filter(({ method }) => method === "session/set_config_option").length, 4);
@@ -98,6 +132,19 @@ assert.equal(
   Object.hasOwn(requests.find(({ method }) => method === "session/new")?.params as object, "additionalDirectories"),
   false,
 );
+
+const acpAbort = new AbortController();
+const held = runtime.run({
+  prompt: "hold",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: first.providerSessionId ?? undefined,
+}, undefined, { signal: acpAbort.signal });
+await new Promise<void>((resolve) => setImmediate(resolve));
+acpAbort.abort();
+const cancelled = await held;
+assert.equal(cancelled.isErr(), true);
+if (cancelled.isErr()) assert.equal(cancelled.error.code, "PROVIDER_CANCELLED");
+assert.equal(cancelCount, 1);
 
 await runtime.releaseSession("cursor_session_1");
 assert.equal(queues.has("cursor_session_1"), false);
@@ -253,6 +300,125 @@ assert.equal(completedOverlappingTurn.isOk(), true);
 if (completedOverlappingTurn.isErr()) throw completedOverlappingTurn.error;
 assert.equal(completedOverlappingTurn.value.finalResponse, "overlap response");
 await overlapRuntime.close();
+
+const liveQueues = new Map<string, { values: unknown[]; onValue?: (value: unknown) => void }>();
+let finishLivePrompt!: () => void;
+const livePromptGate = new Promise<void>((resolve) => { finishLivePrompt = resolve; });
+let progressDelivered!: () => void;
+const liveProgress = new Promise<void>((resolve) => { progressDelivered = resolve; });
+const liveConnection = {
+  agent: {
+    async request(method: string, params?: unknown): Promise<unknown> {
+      const sessionId = (params as { sessionId?: string } | undefined)?.sessionId ?? "live_session";
+      if (method === "session/new") {
+        liveQueues.set(sessionId, { values: [] });
+        return { sessionId };
+      }
+      if (method === "session/prompt") {
+        const update = { update: { sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "live response" } } };
+        const queue = liveQueues.get(sessionId)!;
+        queue.values.push(update);
+        queue.onValue?.(update);
+        await livePromptGate;
+        return { stopReason: "end_turn" };
+      }
+      return {};
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+};
+const liveRuntime = new AcpRuntime({
+  provider: "cursor", command: "cursor-agent", args: ["acp"], env: {}, queues: liveQueues,
+}, liveConnection);
+let livePromptSettled = false;
+const liveRun = liveRuntime.run({ prompt: "live", workspaceRoot: "/tmp/project" }, {
+  onProgress: () => { progressDelivered(); },
+}).then((result) => { livePromptSettled = true; return result; });
+await liveProgress;
+assert.equal(livePromptSettled, false, "ACP progress is delivered before the prompt completes");
+finishLivePrompt();
+assert.equal((await liveRun).isOk(), true);
+await liveRuntime.close();
+
+const fencedQueues = new Map<string, { values: unknown[]; onValue?: (value: unknown) => void }>();
+let finishFencedPrompt!: () => void;
+let finishFencedCancel!: () => void;
+let fencedPromptEntered!: () => void;
+const fencedPromptGate = new Promise<void>((resolve) => { finishFencedPrompt = resolve; });
+const fencedCancelGate = new Promise<void>((resolve) => { finishFencedCancel = resolve; });
+const fencedPromptStarted = new Promise<void>((resolve) => { fencedPromptEntered = resolve; });
+const fencedConnection = {
+  agent: {
+    async request(method: string, params?: unknown): Promise<unknown> {
+      const sessionId = (params as { sessionId?: string } | undefined)?.sessionId ?? "fenced_session";
+      if (method === "session/new") {
+        fencedQueues.set(sessionId, { values: [] });
+        return { sessionId };
+      }
+      if (method === "session/prompt") {
+        fencedPromptEntered();
+        await fencedPromptGate;
+        return { stopReason: "cancelled" };
+      }
+      return {};
+    },
+    async cancel() { await fencedCancelGate; },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+};
+const fencedRuntime = new AcpRuntime({
+  provider: "cursor", command: "cursor-agent", args: ["acp"], env: {}, queues: fencedQueues,
+}, fencedConnection);
+const fencedAbort = new AbortController();
+let fencedSessionId: string | undefined;
+const fencedRun = fencedRuntime.run({ prompt: "first", workspaceRoot: "/tmp/project" }, {
+  onSessionId: (sessionId) => { fencedSessionId = sessionId; },
+}, { signal: fencedAbort.signal });
+await fencedPromptStarted;
+fencedAbort.abort();
+finishFencedPrompt();
+await new Promise<void>((resolve) => setImmediate(resolve));
+await assert.rejects(fencedRuntime.run({
+  prompt: "second", workspaceRoot: "/tmp/project", providerSessionId: fencedSessionId,
+}), /already has an active turn/);
+finishFencedCancel();
+assert.equal((await fencedRun).isErr(), true);
+await fencedRuntime.close();
+
+let finishOpeningSession!: () => void;
+let openingSessionEntered!: () => void;
+const openingSessionGate = new Promise<void>((resolve) => { finishOpeningSession = resolve; });
+const openingSessionStarted = new Promise<void>((resolve) => { openingSessionEntered = resolve; });
+let promptAfterAbort = 0;
+const setupAbortRuntime = new AcpRuntime({
+  provider: "cursor", command: "cursor-agent", args: ["acp"], env: {},
+}, {
+  agent: {
+    async request(method: string): Promise<unknown> {
+      if (method === "session/new") {
+        openingSessionEntered();
+        await openingSessionGate;
+        return { sessionId: "setup_abort_session" };
+      }
+      if (method === "session/prompt") promptAfterAbort += 1;
+      return {};
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+});
+const setupAbort = new AbortController();
+const setupAbortRun = setupAbortRuntime.run({ prompt: "never submit", workspaceRoot: "/tmp/project" },
+  undefined, { signal: setupAbort.signal });
+await openingSessionStarted;
+setupAbort.abort();
+finishOpeningSession();
+assert.equal((await setupAbortRun).isErr(), true);
+assert.equal(promptAfterAbort, 0);
+await setupAbortRuntime.close();
 
 const cachedContext = {
   agentId: "agt_acp",

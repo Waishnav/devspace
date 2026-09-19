@@ -4,6 +4,7 @@ import { access, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { registerWorkflowTools } from "./workflow-tools.js";
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
@@ -144,10 +145,12 @@ function formatVisibleAgent(agent: {
   provider: string;
   model?: string;
   effort?: string;
+  write_mode?: "read_only" | "allowed" | "full_access";
 }): string {
   const model = agent.model ? `, model ${agent.model}` : "";
   const effort = agent.effort ? `, effort ${agent.effort}` : "";
-  return `${agent.name} (${agent.provider}${model}${effort})`;
+  const writeMode = agent.write_mode ? `, write_mode ${agent.write_mode}` : "";
+  return `${agent.name} (${agent.provider}${model}${effort}${writeMode})`;
 }
 
 function formatAvailableAgentProvider(provider: {
@@ -176,6 +179,7 @@ const workspaceAgentsFileOutputSchema = z.object({
 });
 
 const workspaceLocalAgentOutputSchema = z.object({
+  write_mode: z.enum(["read_only", "allowed", "full_access"]).optional(),
   name: z.string(),
   description: z.string(),
   provider: z.string(),
@@ -461,9 +465,14 @@ function registerMcpSurface(
       const preloadedSubagentInstructions = preloadSubagents && subagentsSkill
         ? readFileSync(subagentsSkill.filePath, "utf8")
         : undefined;
+      const preloadWorkflows = config.workflows?.enabled && config.workflows.instructions === "preload";
+      const workflowsSkill = workspace.skills.find((skill) => skill.name === "workflows");
+      const preloadedWorkflowInstructions = preloadWorkflows && workflowsSkill
+        ? readFileSync(workflowsSkill.filePath, "utf8") : undefined;
       const cardSkills = workspace.skills
         .filter((skill) => !skill.disableModelInvocation)
         .filter((skill) => !(preloadSubagents && skill.name === "subagents"))
+        .filter((skill) => !(preloadWorkflows && skill.name === "workflows"))
         .map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -482,7 +491,9 @@ function registerMcpSurface(
           effort: provider.effort,
           note: provider.note,
         }));
-      const cardAgents = agentCatalog.profiles;
+      const cardAgents = agentCatalog.profiles.map(({ writeMode, ...profile }) => ({
+        ...profile, ...(writeMode ? { write_mode: writeMode } : {}),
+      }));
       const cardAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -507,13 +518,12 @@ function registerMcpSurface(
         : workspace.mode === "worktree"
           ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
           : cardInstruction;
-      const instruction = preloadedSubagentInstructions && includeBootstrapContext
-        ? [
-            workspaceInstruction,
-            "Subagent workflow instructions:",
-            preloadedSubagentInstructions,
-          ].join("\n\n")
-        : workspaceInstruction;
+      const instruction = [workspaceInstruction,
+        ...(includeBootstrapContext && preloadedSubagentInstructions
+          ? ["Subagent workflow instructions:", preloadedSubagentInstructions] : []),
+        ...(includeBootstrapContext && preloadedWorkflowInstructions
+          ? ["Dynamic workflow instructions:", preloadedWorkflowInstructions] : []),
+      ].join("\n\n");
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -696,6 +706,8 @@ function registerMcpSurface(
     workspaces,
     processSessions,
   });
+
+  registerWorkflowTools({ server: registrationTarget, config, workspaces });
 
   registerAppTool(
     registrationTarget,

@@ -56,6 +56,7 @@ import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { logEvent } from "./logger.js";
 import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
+import { runWorkflowsCommand } from "./workflow-cli.js";
 
 type Command =
   | "serve"
@@ -64,6 +65,7 @@ type Command =
   | "config"
   | "worktrees"
   | "agents"
+  | "workflows"
   | "show-changes"
   | "help"
   | "version";
@@ -96,6 +98,9 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "workflows":
+      await runWorkflowsCommand(args);
+      return;
     case "show-changes":
       await runShowChanges(args);
       return;
@@ -116,6 +121,7 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "config"
     || command === "worktrees"
     || command === "agents"
+    || command === "workflows"
     || command === "show-changes"
   ) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
@@ -498,6 +504,7 @@ function printHelp(): void {
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents daemon <status|stop|logs>",
+      "  devspace workflows --help  Run and control JavaScript agent workflows",
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
@@ -526,6 +533,9 @@ async function runShowChanges(args: string[]): Promise<void> {
 
 async function runAgentsCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
+  if (process.env.DEVSPACE_WORKFLOW_RUN_ID && (subcommand === "run" || subcommand === "continue")) {
+    throw new Error("Workflow workers cannot launch extra agents through the CLI. Return the task to the owning workflow.");
+  }
   const { args: commandArgs, json } = extractJsonOption(rest);
   switch (subcommand) {
     case "ls":

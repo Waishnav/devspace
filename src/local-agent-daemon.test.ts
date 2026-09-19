@@ -665,7 +665,7 @@ const socketDaemon = new LocalAgentDaemon({
   stateDir: socketStateDir,
   configRevision: CONFIG_REVISION,
   manager: socketManager,
-  requestReadTimeoutMs: 30,
+  requestReadTimeoutMs: 500,
   shutdownTimeoutMs: 100,
   idleShutdownMs: 60_000,
 });
@@ -716,7 +716,7 @@ try {
   assert.equal(malformed.ok, false);
   if (!malformed.ok) assert.equal(malformed.error.code, "DAEMON_INVALID_REQUEST");
 
-  const oversized = await sendRawRequest(socketDaemon.paths.endpoint, "x".repeat(512 * 1024 + 1));
+  const oversized = await sendRawRequest(socketDaemon.paths.endpoint, "x".repeat(2 * 1024 * 1024 + 1));
   assert.equal(oversized.ok, false);
   if (!oversized.ok) assert.equal(oversized.error.code, "DAEMON_INVALID_REQUEST");
 
@@ -747,6 +747,8 @@ async function sendRawRequest(
 ): Promise<RawDaemonResponse> {
   const socket = createConnection(endpoint);
   socket.setEncoding("utf8");
+  // A rejected oversized write can finish with EPIPE after the response arrives.
+  socket.on("error", () => {});
   const connected = onceSocket(socket, "connect");
   let buffer = "";
   const response = new Promise<RawDaemonResponse>((resolveResponse, rejectResponse) => {

@@ -17,6 +17,7 @@ import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
+import { defaultWorkflowsConfig, type WorkflowsConfig } from "./workflow-config.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
@@ -46,6 +47,18 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
         expected.sort(),
       );
     });
+  }
+});
+
+test("enabled workflows are discoverable in both tool modes and can preload instructions", async (t) => {
+  for (const toolMode of ["claude", "codex"] as const) {
+    const context = await fixture(t, { toolMode, uiEnabled: false,
+      workflows: { ...defaultWorkflowsConfig(), enabled: true, instructions: "preload" } });
+    const tools = (await context.client.listTools()).tools;
+    assert.ok(tools.some(({ name }) => name === "run_workflow"));
+    const opened = structuredContent(await callOpen(context.client, context.project, `workflow-${toolMode}`));
+    assert.match(String(opened.instruction), /Dynamic workflow instructions/);
+    assert.match(String(opened.instruction), /parallel/);
   }
 });
 
@@ -351,6 +364,9 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
     providerNote,
   );
   assert.ok(Array.isArray(firstStructured.agents));
+  const firstText = (first.content as Array<{ type: string; text?: string }>)
+    .find((item) => item.type === "text");
+  assert.match(firstText?.text ?? "", /reviewer \(codex, write_mode read_only\)/);
   assert.ok(Array.isArray(firstStructured.skill_diagnostics));
   assert.equal("workspaceReused" in firstStructured, false);
   assert.equal("includeBootstrapContext" in firstStructured, false);
@@ -720,6 +736,7 @@ async function fixture(
     git?: boolean;
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
+    workflows?: WorkflowsConfig;
     toolMode?: ToolMode;
     uiEnabled?: boolean;
   } = {},
@@ -738,6 +755,7 @@ async function fixture(
     "name: reviewer",
     "description: Reviews project changes.",
     "provider: codex",
+    "writeMode: read_only",
     "---",
     "Review changes.",
   ].join("\n"));
@@ -758,6 +776,7 @@ async function fixture(
     server: { port: 1 },
     workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
     skills: { agentDir },
+    workflows: options.workflows,
     subagents: {
       enabled: options.localAgentProviders !== undefined,
       instructions: "on-demand",

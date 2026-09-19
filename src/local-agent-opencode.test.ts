@@ -16,6 +16,7 @@ import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 let sessionNumber = 0;
 const createInputs: unknown[] = [];
 const promptInputs: unknown[] = [];
+const abortInputs: unknown[] = [];
 let healthAvailable = true;
 const client = {
   global: {
@@ -33,12 +34,26 @@ const client = {
     async prompt(input: unknown) {
       promptInputs.push(input);
       const sessionId = (input as { sessionID: string }).sessionID;
+      if ((input as { parts?: Array<{ text?: string }> }).parts?.[0]?.text === "rate limited") {
+        return { data: { info: { role: "assistant", error: {
+          name: "APIError",
+          data: { message: "quota reached", statusCode: 429, isRetryable: true,
+            responseHeaders: { "Retry-After": "2" } },
+        } }, parts: [] } };
+      }
       return {
         data: {
-          info: { role: "assistant" },
+          info: {
+            role: "assistant",
+            tokens: { input: 3, output: 5, reasoning: 4, cache: { read: 1, write: 2 } },
+          },
           parts: [{ type: "text", text: `response:${sessionId}` }],
         },
       };
+    },
+    async abort(input: unknown) {
+      abortInputs.push(input);
+      return { data: true };
     },
   },
 } as unknown as OpencodeClientLike;
@@ -55,6 +70,7 @@ const factory: OpencodeFactory = async (_context, env) => {
 };
 const driver = new OpencodeLocalAgentDriver(factory, { HARNESS_ENV: "opencode" });
 const pool = new LocalAgentRuntimePool();
+const usageUpdates: unknown[] = [];
 
 const first = await pool.run(driver, {
   agentId: "agt_one",
@@ -65,6 +81,9 @@ const first = await pool.run(driver, {
     workspaceRoot: "/tmp/project",
     model: "anthropic/sonnet",
     effort: "high",
+    attemptId: "attempt_opencode_1",
+  }, {
+    onUsage: (usage) => { usageUpdates.push(usage); },
   });
 const second = await pool.run(driver, {
   agentId: "agt_two",
@@ -79,6 +98,16 @@ assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
 assert.equal(factoryEnv?.HARNESS_ENV, "opencode");
 assert.equal(first.isOk(), true);
 assert.equal(second.isOk(), true);
+assert.deepEqual(usageUpdates, [{
+  attemptId: "attempt_opencode_1",
+  sequence: 1,
+  inputTokens: 3,
+  outputTokens: 5,
+  reasoningTokens: 4,
+  cacheReadTokens: 1,
+  cacheWriteTokens: 2,
+  final: true,
+}]);
 
 if (process.platform !== "win32") {
   const commandRoot = await mkdtemp(join(tmpdir(), "devspace-opencode-env-"));
@@ -198,6 +227,49 @@ assert.deepEqual(promptInputs[2], {
   variant: "low",
 });
 
+const workflow = await pool.run(driver, {
+  agentId: "agt_workflow",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+  workflowRunId: "wfr_1",
+  workflowStepId: "wfs_1",
+  workflowAttemptId: "wfa_1",
+}, {
+  prompt: "bounded workflow turn",
+  workspaceRoot: "/tmp/project",
+  workflowRunId: "wfr_1",
+  workflowStepId: "wfs_1",
+  workflowAttemptId: "wfa_1",
+});
+assert.equal(workflow.isOk(), true);
+assert.equal(factoryCalls, 2, "workflow turns use a provenance-scoped OpenCode server");
+assert.equal(factoryEnv?.HARNESS_ENV, "opencode");
+assert.deepEqual(promptInputs[3], {
+  sessionID: "session_3",
+  directory: "/tmp/project",
+  parts: [{ type: "text", text: "bounded workflow turn" }],
+  agent: "devspace_allowed",
+  tools: { task: false },
+});
+
+const rateLimited = await pool.run(driver, {
+  agentId: "agt_one", provider: "opencode", workspaceRoot: "/tmp/project",
+}, {
+  prompt: "rate limited", workspaceRoot: "/tmp/project",
+  providerSessionId: firstRecord.providerSessionId ?? undefined,
+});
+assert.equal(rateLimited.isErr(), true);
+if (rateLimited.isErr()) {
+  assert.equal(rateLimited.error.retryAfterMs, 2_000);
+  assert.equal(rateLimited.error.executionUncertain, false);
+  assert.equal(typeof rateLimited.error.resetAt, "string");
+}
+
+let timeoutAbortCount = 0;
+let timeoutPromptCount = 0;
+let rejectOpenCodePrompt: ((error: Error) => void) | undefined;
+let fenceTimeoutAbort = false;
+let finishTimeoutAbort: (() => void) | undefined;
 const timeoutClient = {
   global: {
     async health() { return { data: { healthy: true } }; },
@@ -205,17 +277,42 @@ const timeoutClient = {
   session: {
     async create() { return { data: { id: "session_timeout" } }; },
     async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      timeoutPromptCount += 1;
       return new Promise<never>((_resolve, reject) => {
+        rejectOpenCodePrompt = reject;
         options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       });
     },
+    async abort() {
+      timeoutAbortCount += 1;
+      if (fenceTimeoutAbort) await new Promise<void>((resolve) => { finishTimeoutAbort = resolve; });
+      rejectOpenCodePrompt?.(new Error("server stopped the prompt"));
+      return { data: true };
+    },
   },
 } as unknown as OpencodeClientLike;
+const preAbortedRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 60_000);
+const preAborted = new AbortController();
+preAborted.abort();
+const rejectedBeforePrompt = await preAbortedRuntime.run({
+  prompt: "do not submit", workspaceRoot: "/tmp/project",
+}, undefined, { signal: preAborted.signal });
+assert.equal(rejectedBeforePrompt.isErr(), true);
+assert.equal(timeoutPromptCount, 0);
+await preAbortedRuntime.close();
+
 const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 5);
-const timedOutPrompt = await timeoutRuntime.run({
+fenceTimeoutAbort = true;
+let timeoutSettled = false;
+const timedOutPromptPromise = timeoutRuntime.run({
   prompt: "never finishes",
   workspaceRoot: "/tmp/project",
-});
+}).then((result) => { timeoutSettled = true; return result; });
+await new Promise<void>((resolve) => setTimeout(resolve, 15));
+assert.equal(timeoutSettled, false, "timeout remains fenced until server-side cancellation settles");
+finishTimeoutAbort?.();
+fenceTimeoutAbort = false;
+const timedOutPrompt = await timedOutPromptPromise;
 assert.equal(timedOutPrompt.isErr(), true);
 if (timedOutPrompt.isErr()) {
   assert.equal(timedOutPrompt.error.code, "PROVIDER_PROTOCOL_ERROR");
@@ -223,9 +320,47 @@ if (timedOutPrompt.isErr()) {
   assert.match(timedOutPrompt.error.message, /provider timeout/);
 }
 await timeoutRuntime.close();
+assert.equal(timeoutAbortCount, 1, "provider timeout aborts the server-side OpenCode session");
+
+const cancellableRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 60_000);
+const opencodeAbort = new AbortController();
+const cancelledPrompt = cancellableRuntime.run({
+  prompt: "cancel me",
+  workspaceRoot: "/tmp/project",
+}, undefined, { signal: opencodeAbort.signal });
+await new Promise<void>((resolve) => setImmediate(resolve));
+opencodeAbort.abort();
+const cancelledResult = await cancelledPrompt;
+assert.equal(cancelledResult.isErr(), true);
+if (cancelledResult.isErr()) assert.equal(cancelledResult.error.code, "PROVIDER_CANCELLED");
+assert.equal(timeoutAbortCount, 2);
+await cancellableRuntime.close();
+
+const uncertainClient = {
+  global: { async health() { return { data: { healthy: true } }; } },
+  session: {
+    async create() { return { data: { id: "session_uncertain" } }; },
+    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      return new Promise<never>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    },
+    async abort() { throw new Error("cancellation failed"); },
+  },
+} as unknown as OpencodeClientLike;
+const uncertainRuntime = new OpencodeRuntime(uncertainClient, { close: () => undefined }, 5);
+const uncertainTimeout = await uncertainRuntime.run({ prompt: "uncertain", workspaceRoot: "/tmp/project" });
+assert.equal(uncertainTimeout.isErr(), true);
+if (uncertainTimeout.isErr()) {
+  assert.equal(uncertainTimeout.error.retryable, false);
+  assert.equal(uncertainTimeout.error.executionUncertain, true);
+}
+assert.equal(uncertainRuntime.isAlive(), false);
+await uncertainRuntime.close();
 
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
+assert.equal(opencodeAgentFor("allowed", "none"), "devspace_no_tools");
 assert.deepEqual(opencodePermissionFor("allowed"), {
   read: "allow",
   edit: "allow",
@@ -346,4 +481,4 @@ await recoveringPool.close();
 
 await pool.close();
 await pool.close();
-assert.equal(closeCalls, 1, "shared OpenCode server closes once");
+assert.equal(closeCalls, 2, "the direct and workflow-scoped OpenCode servers each close once");

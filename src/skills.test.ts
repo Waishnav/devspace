@@ -33,9 +33,11 @@ try {
   await mkdir(join(projectRoot, ".pi", "skills", "project-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "subagents"), { recursive: true });
+  await mkdir(join(agentDir, "skills", "workflows"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
   await mkdir(join(explicitSkills, "subagents"), { recursive: true });
+  await mkdir(join(explicitSkills, "workflows"), { recursive: true });
   await mkdir(join(devspaceSkills, "devspace-local-skill"), { recursive: true });
 
   await writeFile(
@@ -149,6 +151,28 @@ try {
     ].join("\n"),
   );
   await writeFile(
+    join(agentDir, "skills", "workflows", "SKILL.md"),
+    [
+      "---",
+      "name: workflows",
+      "description: User workflow skill winner.",
+      "---",
+      "",
+      "# User Workflows",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(explicitSkills, "workflows", "SKILL.md"),
+    [
+      "---",
+      "name: workflows",
+      "description: User workflow skill loser.",
+      "---",
+      "",
+      "# Duplicate User Workflows",
+    ].join("\n"),
+  );
+  await writeFile(
     join(explicitSkills, "disabled", "SKILL.md"),
     [
       "---",
@@ -185,6 +209,7 @@ try {
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
   assert.equal(loaded.skills.some((skill) => skill.name === "devspace-local-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "subagents"), false);
+  assert.equal(loaded.skills.some((skill) => skill.name === "workflows"), true);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
   assert.equal(loaded.diagnostics.some((diagnostic) => diagnostic.type === "collision"), true);
@@ -193,6 +218,10 @@ try {
       (diagnostic) => diagnostic.collision?.name === "subagents",
     ),
     false,
+  );
+  assert.equal(
+    loaded.diagnostics.some((diagnostic) => diagnostic.collision?.name === "workflows"),
+    true,
   );
 
   await mkdir(join(devspaceSkills, "subagents"), { recursive: true });

@@ -13,6 +13,7 @@ type SectionOverrides = {
   artifacts?: Partial<DevspaceConfig["artifacts"]>;
   skills?: Partial<DevspaceConfig["skills"]>;
   subagents?: DevspaceConfig["subagents"];
+  workflows?: DevspaceConfig["workflows"];
   logging?: Partial<DevspaceConfig["logging"]>;
   oauth?: Partial<DevspaceConfig["oauth"]>;
 };
@@ -33,6 +34,7 @@ export function writeTestDevspaceConfig(
     artifacts: { ...defaults.artifacts, ...overrides.artifacts },
     skills: { ...defaults.skills, ...overrides.skills },
     subagents: overrides.subagents ?? defaults.subagents,
+    workflows: overrides.workflows ?? defaults.workflows,
     logging: { ...defaults.logging, ...overrides.logging },
     oauth: { ...defaults.oauth, ...overrides.oauth },
   }, env);

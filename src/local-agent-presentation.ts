@@ -15,6 +15,7 @@ export type AgentTargetOutput =
       kind: "profile";
       provider: string;
       description: string;
+      writeMode?: "allowed" | "read_only" | "full_access";
       model?: string;
       effort?: string;
     };
@@ -67,6 +68,7 @@ export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTarg
         kind: "profile",
         provider: profile.provider,
         description: profile.description,
+        ...(profile.writeMode ? { writeMode: profile.writeMode } : {}),
         ...(profile.model ? { model: profile.model } : {}),
         ...(profile.effort ? { effort: profile.effort } : {}),
       })),
@@ -110,7 +112,7 @@ export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): str
     if (target.kind === "provider") {
       return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
-    return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
+    return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${xmlAttributes({ write_mode: target.writeMode })}${settings}>${escapeXmlText(target.description)}</profile>`;
   }).join("\n");
 }
 

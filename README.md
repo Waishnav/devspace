@@ -22,6 +22,8 @@ DevSpace is a self-hosted MCP server that lets ChatGPT read, edit, search, and r
 
 The same `/mcp` endpoint serves the 2026-07-28 per-request protocol and automatically supports older 2025-era clients through stateless compatibility handling. There is no protocol mode to configure.
 
+[Dynamic workflows](docs/dynamic-workflows.md) let a host write JavaScript to coordinate configured subagents in parallel, run pipelines, validate structured results, and inspect or control durable runs.
+
 ## Sponsors and Special Thanks
 <!-- 
 

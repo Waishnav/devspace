@@ -10,7 +10,18 @@ import {
 import { LocalAgentManager } from "./local-agent-manager.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
-import { localAgentProviderConfigRevision } from "./local-agent-config.js";
+import { executionConfigRevision } from "./workflow-config.js";
+import { createWorkflowManager } from "./workflow-manager.js";
+import { openDatabase } from "./db/client.js";
+import { WorkflowStore } from "./workflow-store.js";
+import { WorkflowRegistry } from "./workflow-registry.js";
+import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { WorkspaceRegistry } from "./workspaces.js";
+import { join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { assertAllowedPath, expandHomePath } from "./roots.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const config = loadConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -20,26 +31,91 @@ const log = (
   event: string,
   fields: Record<string, unknown>,
 ) => writeLocalAgentDaemonLog(paths, level, event, fields);
-const store = new LocalAgentStore(paths.stateDir);
+const database = openDatabase(paths.stateDir);
+const store = new LocalAgentStore(database);
+const workspaceStore = new SqliteWorkspaceStore(config.stateDir);
+const workspaces = new WorkspaceRegistry(config, workspaceStore);
 const manager = new LocalAgentManager({
   store,
   drivers: createLocalAgentDrivers({ subagents: config.subagents }),
   pool: new LocalAgentRuntimePool({ logger: log }),
-  loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
+  loadProfiles: (workspaceRoot, workspaceId) => {
+    const session = workspaceId ? workspaceStore.getSession(workspaceId) : undefined;
+    const profileRoot = session?.mode === "worktree" && session.managed && session.sourceRoot
+      ? session.sourceRoot : workspaceRoot;
+    return loadLocalAgentProfiles(config, profileRoot, { includeDisabled: true });
+  },
   agentDir: config.agentDir,
   allowedRoots: config.allowedRoots,
+  validateWorkspaceScope: (scope) => {
+    if (!scope.workspaceId) return scope.workspaceRoot;
+    const session = workspaceStore.getSession(scope.workspaceId);
+    if (!session || session.status !== "active" || resolve(session.root) !== resolve(scope.workspaceRoot)) {
+      throw new Error("Workspace identity is unavailable or does not match its root.");
+    }
+    const canonicalAllowed = (path: string, roots: string[]) => {
+      assertAllowedPath(path, roots);
+      const canonicalRoots = roots.flatMap((root) => {
+        try { return [realpathSync(root)]; }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+          throw error;
+        }
+      });
+      return assertAllowedPath(realpathSync(path), canonicalRoots);
+    };
+    if (session.mode === "worktree") {
+      if (!session.managed || !session.sourceRoot) throw new Error("Managed workspace source is unavailable.");
+      canonicalAllowed(session.sourceRoot, config.allowedRoots);
+      canonicalAllowed(session.root, [config.worktreeRoot]);
+    } else canonicalAllowed(session.root, config.allowedRoots);
+    return session.root;
+  },
   logger: log,
   subagents: config.subagents,
 });
+const workflows = config.workflows?.enabled ? createWorkflowManager({
+  stateDir: config.stateDir, agents: manager, agentStore: store, config: config.workflows,
+  store: new WorkflowStore(database),
+  registry: new WorkflowRegistry({
+    userRoot: join(config.configDir, "workflows"), allowedRoots: config.allowedRoots,
+    packageRoots: config.workflows.packageRoots.map((path) => resolve(config.configDir, expandHomePath(path))),
+    scriptBytes: config.workflows.limits.scriptBytes,
+  }),
+  validateScope: async (scope) => {
+    const workspace = await workspaces.getWorkspace(scope.workspaceId);
+    if (workspace.root !== scope.workspaceRoot) throw new Error("WORKSPACE_NOT_ALLOWED: Workspace root does not match its stored identity.");
+    return { workspaceId: workspace.id, workspaceRoot: workspace.root };
+  },
+  inspectWorktree: async ({ scope, worktree }) => {
+    const workspace = await workspaces.getWorkspace(scope.workspaceId);
+    if (workspace.root !== scope.workspaceRoot) throw new Error("Managed workspace identity changed.");
+    const [status, head] = await Promise.all([
+      promisify(execFile)("git", ["status", "--porcelain=v1", "--untracked-files=normal"], { cwd: workspace.root }),
+      promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: workspace.root }),
+    ]);
+    return { changed: Boolean(status.stdout.trim()) || head.stdout.trim() !== worktree.baseSha };
+  },
+  createWorktree: async ({ scope }) => {
+    const source = await workspaces.getWorkspace(scope.workspaceId);
+    const baseRef = source.mode === "worktree"
+      ? (await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: source.root })).stdout.trim()
+      : undefined;
+    const { workspace } = await workspaces.openWorkspace({ path: source.sourceRoot ?? source.root, mode: "worktree", baseRef });
+    return { workspaceId: workspace.id, workspaceRoot: workspace.root, baseSha: workspace.worktree!.baseSha };
+  },
+}) : undefined;
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
-  configRevision: localAgentProviderConfigRevision(config.subagents),
+  workflows,
+  configRevision: executionConfigRevision(config),
   onLockAcquired: () => {
     const reconciled = manager.reconcileActiveRuns();
     if (reconciled.isErr()) throw reconciled.error;
+    workflows?.reconcileActiveRuns();
   },
-  onClosed: () => { if (!shuttingDown) process.exit(0); },
+  onClosed: () => { workspaceStore.close(); database.close(); if (!shuttingDown) process.exit(0); },
   idleShutdownMs: parseIdleShutdownMs(process.env.DEVSPACE_AGENTD_IDLE_TIMEOUT_MS),
 });
 
