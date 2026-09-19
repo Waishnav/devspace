@@ -18,6 +18,7 @@ import {
   runLoggedToolOperation,
   textBlock,
 } from "./shared.js";
+import { registerDurableJobTools } from "./jobs.js";
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
 
@@ -36,6 +37,7 @@ export function registerCodexTools(context: ToolRegistrationContext): void {
 const CODEX_REGISTRATIONS: readonly CodexRegistration[] = [
   registerApplyPatchTool,
   registerCodexProcessTools,
+  registerDurableJobTools,
 ];
 
 function processResult(snapshot: ProcessSnapshot): string {
