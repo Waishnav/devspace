@@ -3,7 +3,6 @@ import { logEvent, commandPreview } from "../logger.js";
 import type { ServerConfig } from "../config.js";
 import {
   WORKSPACE_APP_URI,
-  type DiffStats,
   type ToolContent,
   type ToolLogFields,
   type ToolWidgetDescriptorMeta,
@@ -105,18 +104,4 @@ export function logFailedToolResponse(
 
 export function textBlock(text: string): ToolContent {
   return { type: "text", text };
-}
-
-export function countDiffStats(diff: string | undefined): DiffStats {
-  if (!diff) return { additions: 0, removals: 0 };
-
-  let additions = 0;
-  let removals = 0;
-
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-    if (line.startsWith("-") && !line.startsWith("---")) removals++;
-  }
-
-  return { additions, removals };
 }

@@ -56,11 +56,6 @@ export interface ToolLogFields {
   error?: string;
 }
 
-export interface DiffStats {
-  additions: number;
-  removals: number;
-}
-
 export interface ToolDefinitionMeta extends Record<string, unknown> {
   ui: {
     resourceUri: string;

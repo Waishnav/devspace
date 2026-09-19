@@ -44,20 +44,34 @@ function processResult(snapshot: ProcessSnapshot): string {
     : snapshot.signal
       ? `Process exited after signal ${snapshot.signal}.`
       : `Process exited with code ${snapshot.exitCode ?? "unknown"}.`;
-  return snapshot.output
-    ? `${snapshot.output.replace(/\n$/, "")}\n${status}`
-    : status;
+  return [
+    `Wall time: ${snapshot.wallTimeSeconds.toFixed(4)} seconds`,
+    status,
+    snapshot.originalTokenCount !== undefined
+      ? `Original token count: ${snapshot.originalTokenCount}`
+      : undefined,
+    "Output:",
+    snapshot.output.replace(/\n$/, ""),
+  ].filter((line) => line !== undefined).join("\n");
 }
 
 function processOutputSchema(): z.ZodRawShape {
-  return resultOutputSchema({
+  return {
+    output: z.string().describe("Command output text, with truncation noted inline when needed."),
+    wall_time_seconds: z
+      .number()
+      .nonnegative()
+      .describe("Elapsed wall time spent on this tool call in seconds."),
     session_id: z.number().optional(),
-    running: z.boolean(),
     exit_code: z.number().int().optional(),
     signal: z.string().optional(),
-    wall_time_ms: z.number().nonnegative(),
-    output_truncated: z.boolean(),
-  });
+    original_token_count: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Approximate original token count when output was truncated."),
+  };
 }
 
 function processToolResponse(snapshot: ProcessSnapshot) {
@@ -66,13 +80,14 @@ function processToolResponse(snapshot: ProcessSnapshot) {
   return {
     content,
     structuredContent: {
-      result,
-      session_id: snapshot.sessionId,
-      running: snapshot.running,
-      exit_code: snapshot.exitCode,
-      signal: snapshot.signal,
-      wall_time_ms: snapshot.wallTimeMs,
-      output_truncated: snapshot.outputTruncated,
+      output: snapshot.output,
+      wall_time_seconds: snapshot.wallTimeSeconds,
+      ...(snapshot.sessionId !== undefined ? { session_id: snapshot.sessionId } : {}),
+      ...(snapshot.exitCode !== undefined ? { exit_code: snapshot.exitCode } : {}),
+      ...(snapshot.signal !== undefined ? { signal: snapshot.signal } : {}),
+      ...(snapshot.originalTokenCount !== undefined
+        ? { original_token_count: snapshot.originalTokenCount }
+        : {}),
     },
   };
 }
@@ -94,17 +109,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
             "Patch text enclosed by *** Begin Patch and *** End Patch markers.",
           ),
       },
-      outputSchema: resultOutputSchema({
-        additions: z.number(),
-        removals: z.number(),
-        files: z.array(
-          z.object({
-            path: z.string(),
-            previous_path: z.string().optional(),
-            operation: z.enum(["add", "update", "delete", "move"]),
-          }),
-        ),
-      }),
+      outputSchema: resultOutputSchema(),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, patch }) => {
@@ -119,20 +124,24 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
           return applyPatch(workspace.root, patch);
         },
       );
-      const paths = applied.files.map((file) => file.path).join(", ");
-      const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
+      const changes = applied.files.map((file) => {
+        if (file.operation === "move") {
+          return `R ${file.previousPath ?? "?"} -> ${file.path}`;
+        }
+        const prefix = file.operation === "add"
+          ? "A"
+          : file.operation === "delete"
+            ? "D"
+            : "M";
+        return `${prefix} ${file.path}`;
+      }).join("\n");
+      const result = `Success. Updated the following files:\n${changes}`;
       const content = [textBlock(result)];
 
       return {
         content,
         structuredContent: {
           result,
-          additions: applied.additions,
-          removals: applied.removals,
-          files: applied.files.map(({ previousPath, ...file }) => ({
-            ...file,
-            previous_path: previousPath,
-          })),
         },
       };
     },
@@ -157,21 +166,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe(
             "Allocate a pseudo-terminal for interactive commands. Defaults to false.",
           ),
-        columns: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Initial PTY width. Defaults to 80."),
-        rows: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Initial PTY height. Defaults to 24."),
-        working_directory: z
+        workdir: z
           .string()
           .optional()
           .describe(
@@ -201,15 +196,13 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       workspace_id,
       cmd,
       tty,
-      columns,
-      rows,
-      working_directory,
+      workdir,
       yield_time_ms,
       max_output_tokens,
     }) => {
       const startedAt = performance.now();
       const workspaceId = workspace_id;
-      const workingDirectory = working_directory;
+      const workingDirectory = workdir;
       const yieldTimeMs = yield_time_ms;
       const maxOutputTokens = max_output_tokens;
       const snapshot = await runLoggedToolOperation(
@@ -234,8 +227,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             cwd,
             workspaceRoot: workspace.root,
             tty,
-            columns,
-            rows,
             yieldTimeMs,
             maxOutputTokens,
           });
@@ -266,20 +257,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe(
             "Characters to write. Omit or pass an empty string to poll.",
           ),
-        columns: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Resize a PTY to this width."),
-        rows: z
-          .number()
-          .int()
-          .min(1)
-          .max(1_000)
-          .optional()
-          .describe("Resize a PTY to this height."),
         yield_time_ms: z
           .number()
           .int()
@@ -304,8 +281,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       workspace_id,
       session_id,
       chars,
-      columns,
-      rows,
       yield_time_ms,
       max_output_tokens,
     }) => {
@@ -324,8 +299,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
             workspaceId,
             sessionId,
             chars,
-            columns,
-            rows,
             yieldTimeMs,
             maxOutputTokens,
           });
