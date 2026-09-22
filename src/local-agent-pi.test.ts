@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentSessionEvent, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import {
   PiLocalAgentDriver,
@@ -11,7 +14,10 @@ import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 class FakePiSession implements PiSessionLike {
   readonly sessionId = "pi_session_1";
   readonly messages: any[] = [];
-  readonly modelRegistry = { find: () => ({ id: "model" }) } as unknown as PiSessionLike["modelRegistry"];
+  readonly modelRuntime = {
+    getModel: () => ({ id: "model" }),
+    getModels: () => [],
+  } as unknown as PiSessionLike["modelRuntime"];
   private readonly listeners = new Set<AgentSessionEventListener>();
   disposeCount = 0;
   model?: unknown;
@@ -135,7 +141,9 @@ assert.deepEqual(sessions[1]?.activeTools, ["read", "grep", "find", "ls", "edit"
 await pool.close();
 
 const missingModelSession = new FakePiSession();
-Object.defineProperty(missingModelSession, "modelRegistry", { value: { find: () => undefined } });
+Object.defineProperty(missingModelSession, "modelRuntime", {
+  value: { getModel: () => undefined, getModels: () => [] },
+});
 const missingModelDriver = new PiLocalAgentDriver(async () => missingModelSession);
 const missingModelRuntime = await missingModelDriver.createRuntime(context);
 assert.equal(missingModelRuntime.isOk(), true);
@@ -152,3 +160,23 @@ if (missingModel.isErr()) {
   assert.match(missingModel.error.message, /provider\/missing-model/);
 }
 await missingModelRuntime.value.close();
+
+const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+const piAgentDir = mkdtempSync(join(tmpdir(), "devspace-pi-sdk-smoke-"));
+process.env.PI_CODING_AGENT_DIR = piAgentDir;
+try {
+  const realDriver = new PiLocalAgentDriver();
+  const realRuntime = await realDriver.createRuntime({
+    agentId: "agt_pi_sdk_smoke",
+    provider: "pi",
+    workspaceRoot: piAgentDir,
+    writeMode: "full_access",
+  });
+  assert.equal(realRuntime.isOk(), true, "default Pi factory initializes the installed SDK");
+  if (realRuntime.isErr()) throw realRuntime.error;
+  await realRuntime.value.close();
+} finally {
+  if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+  rmSync(piAgentDir, { recursive: true, force: true });
+}
