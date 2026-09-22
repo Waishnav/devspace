@@ -52,7 +52,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.200",
     "@anthropic-ai/sandbox-runtime": "0.0.71",
     "@clack/prompts": "^1.5.1",
-    "@earendil-works/pi-coding-agent": "^0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.7",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -87,6 +87,9 @@
     "vite": "^8.0.14"
   },
   "overrides": {
+    "@earendil-works/pi-agent-core": "0.80.7",
+    "@earendil-works/pi-ai": "0.80.7",
+    "@earendil-works/pi-tui": "0.80.7",
     "protobufjs": "7.6.4",
     "ws": "8.21.0",
     "undici": "8.5.0"

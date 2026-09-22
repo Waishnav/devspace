@@ -5,3 +5,11 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: false
+
+# pnpm 11 reads overrides here, not from package.json. 0.80.7 depends on
+# these siblings with ^0.80.7; without an override they resolve to 0.80.10,
+# which no longer exports getOAuthApiKey and breaks AuthStorage.
+overrides:
+  '@earendil-works/pi-agent-core': '0.80.7'
+  '@earendil-works/pi-ai': '0.80.7'
+  '@earendil-works/pi-tui': '0.80.7'
