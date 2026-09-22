@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRuntime, ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -31,7 +31,7 @@ export type PiSessionLike = Pick<
   AgentSession,
   | "sessionId"
   | "messages"
-  | "modelRegistry"
+  | "modelRuntime"
   | "prompt"
   | "subscribe"
   | "setActiveToolsByName"
@@ -144,7 +144,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     await updatePiSandboxSession(this.session, input.workspaceRoot, input.writeMode ?? "allowed");
     this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     if (input.model) {
-      const model = resolvePiModel(this.session.modelRegistry, input.model);
+      const model = resolvePiModel(this.session.modelRuntime, input.model);
       if (!model) {
         throw new AgentProviderProtocolError({
           code: "PROVIDER_PROTOCOL_ERROR",
@@ -202,8 +202,7 @@ async function defaultPiSessionFactory(
   env: NodeJS.ProcessEnv = {},
 ): Promise<PiSessionLike> {
   const {
-    AuthStorage,
-    ModelRegistry,
+    ModelRuntime,
     SessionManager,
     DefaultResourceLoader,
     createAgentSession,
@@ -212,11 +211,13 @@ async function defaultPiSessionFactory(
   // DevSpace's agentDir is the compatibility directory used for instructions;
   // Pi keeps its own native auth, model, and session state under getAgentDir().
   const agentDir = getAgentDir();
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-  applyPiProviderEnvironment(modelRegistry, env);
+  const modelRuntime = await ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: join(agentDir, "models.json"),
+  });
+  applyPiProviderEnvironment(modelRuntime, env);
   const sessionManager = await resolveSessionManager(SessionManager, input.workspaceRoot, input.providerSessionId);
-  const model = input.model ? resolvePiModel(modelRegistry, input.model) : undefined;
+  const model = input.model ? resolvePiModel(modelRuntime, input.model) : undefined;
   if (input.model && !model) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -238,8 +239,7 @@ async function defaultPiSessionFactory(
     const result = await createAgentSession({
       cwd: input.workspaceRoot,
       agentDir,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       sessionManager: sessionManager as never,
       resourceLoader,
       ...(model ? { model: model as never } : {}),
@@ -265,24 +265,25 @@ async function defaultPiSessionFactory(
 }
 
 function applyPiProviderEnvironment(
-  modelRegistry: ModelRegistry,
+  modelRuntime: ModelRuntime,
   env: NodeJS.ProcessEnv,
 ): void {
-  const getApiKeyAndHeaders = modelRegistry.getApiKeyAndHeaders.bind(modelRegistry);
   const providerEnv = Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
-  modelRegistry.getApiKeyAndHeaders = async (model) => {
-    const auth = await getApiKeyAndHeaders(model);
-    if (!auth.ok) return auth;
-    return {
-      ...auth,
-      env: {
-        ...auth.env,
-        ...providerEnv,
-      },
-    };
-  };
+  if (Object.keys(providerEnv).length === 0) return;
+
+  const getAuth = modelRuntime.getAuth.bind(modelRuntime);
+  modelRuntime.getAuth = ((
+    target: string | Parameters<ModelRuntime["getAuth"]>[0],
+    overrides?: ModelRuntimeAuthOverrides,
+  ) => getAuth(target as never, {
+    ...overrides,
+    env: {
+      ...overrides?.env,
+      ...providerEnv,
+    },
+  })) as ModelRuntime["getAuth"];
 }
 
 export function piToolsForWriteMode(writeMode: LocalAgentRunInput["writeMode"]): readonly string[] {
@@ -321,13 +322,15 @@ async function resolveSessionManager(
   return SessionManager.open(match.path);
 }
 
-function resolvePiModel(registry: { find(provider: string, modelId: string): unknown; getAll?: () => unknown[] }, reference: string): unknown {
+function resolvePiModel(runtime: {
+  getModel(providerId: string, modelId: string): unknown;
+  getModels(): readonly unknown[];
+}, reference: string): unknown {
   const separator = reference.indexOf("/");
   if (separator !== -1) {
-    return registry.find(reference.slice(0, separator), reference.slice(separator + 1));
+    return runtime.getModel(reference.slice(0, separator), reference.slice(separator + 1));
   }
-  const all = registry.getAll?.() ?? [];
-  return all.find((model) => asRecord(model)?.id === reference);
+  return runtime.getModels().find((model) => asRecord(model)?.id === reference);
 }
 
 export function extractPiFinalResponse(value: unknown): string {
