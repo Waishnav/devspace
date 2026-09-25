@@ -1,0 +1,296 @@
+---
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource-variable/hanken-grotesk";
+import Shell from "../Shell.astro";
+import PixelField from "./PixelField.astro";
+import ChatMock from "./ChatMock.astro";
+import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
+---
+
+<Shell variant={1} bodyClass="v1">
+  <header class="nav">
+    <div class="nav__left">
+      <a class="brand" href="/">devspace<span>.run</span></a>
+      <a href={DOCS}>Docs</a>
+      <a href="/docs/orchestration/dynamic-workflows">Workflows</a>
+      <a href="/docs/roadmap">Roadmap</a>
+      <a href={GITHUB}>GitHub</a>
+    </div>
+    <button class="btn btn--dark" data-copy={INSTALL}>
+      <span class="btn__idle">Install</span><span class="btn__done">Copied</span>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8m0 0 3.5-3.5M8 10 4.5 6.5M3 13h10" /></svg>
+    </button>
+  </header>
+
+  <main class="frame">
+    <section class="hero">
+      <div class="hero__left">
+        <a class="tag" href="/docs/orchestration/dynamic-workflows">v1.1 · dynamic workflows in preview <span>→</span></a>
+        <h1>Let your coding agents delegate to each other.</h1>
+      </div>
+      <div class="hero__right">
+        <p>
+          DevSpace turns any harness into an orchestrator. Codex can hand work to
+          Claude Code, ChatGPT can run both — as bounded subagents and replayable
+          workflows, on your own machine.
+        </p>
+        <div class="hero__cta">
+          <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
+            <code>{INSTALL}</code>
+            <span class="btn__idle">⧉</span><span class="btn__done">✓</span>
+          </button>
+          <a class="btn btn--ghost btn--lg" href={DOCS}>Read the docs <span>→</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="works">
+      <p>Delegates<br />to</p>
+      <ul>
+        {PROVIDERS.map((p) => (
+          <li><b>{p.name}</b><span>{p.via}</span></li>
+        ))}
+      </ul>
+    </section>
+
+    <section class="stage">
+      <div class="stage__art"><PixelField /></div>
+      <div class="stage__mock"><ChatMock /></div>
+      <a class="stage__tag" href="/docs/orchestration/subagents">How subagents work <span>→</span></a>
+    </section>
+
+    <section class="pillars">
+      {PILLARS.map((p, i) => (
+        <a class="pillar" href={p.href}>
+          <span class="pillar__n">0{i + 1} — {p.kicker}</span>
+          <h2>{p.title}</h2>
+          <p>{p.body}</p>
+          <span class="pillar__more">Learn more →</span>
+        </a>
+      ))}
+    </section>
+
+    <section class="split">
+      <div class="split__text">
+        <span class="eyebrow">Your matrix, as config</span>
+        <h2>You already pick a model per task. Write it down once.</h2>
+        <p>
+          Profiles are markdown files you own. The orchestrating model sees only
+          names and descriptions, and routes each brief to the right harness —
+          across vendors, on the subscriptions you already pay for.
+        </p>
+        <a class="link" href="/docs/orchestration/profiles">Agent profiles →</a>
+      </div>
+      <div class="split__card">
+        <div class="card__head"><span>devspace agents targets</span><span class="dim">5 profiles</span></div>
+        <table>
+          <tbody>
+            {MATRIX.map((row) => (
+              <tr>
+                <td>{row.task}</td>
+                <td><b>{row.profile}</b></td>
+                <td class="dim">{row.why}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <pre class="card__file"><span class="dim">.devspace/agents/reviewer.md</span>
+---
+name: reviewer
+description: Read-only review for bugs and missing tests.
+provider: codex
+effort: high
+---</pre>
+      </div>
+    </section>
+
+    <section class="split split--rev">
+      <div class="split__text">
+        <span class="eyebrow">Dynamic workflows · preview</span>
+        <h2>Program the loop. Resume from the step that failed.</h2>
+        <p>
+          The orchestrator writes a small script — plan with one vendor, build with
+          another, verify in parallel — launches it, and polls. Writers get isolated
+          worktrees. A failed run resumes from its first failed call, reusing
+          everything before it.
+        </p>
+        <a class="link" href="/docs/orchestration/dynamic-workflows">Dynamic workflows →</a>
+      </div>
+      <div class="split__card split__card--code">
+        <div class="card__head"><span>.devspace/workflows/ship.js</span><span class="dim">js</span></div>
+        <pre>{WORKFLOW_SNIPPET}</pre>
+      </div>
+    </section>
+
+    <section class="faq">
+      <h2>Questions</h2>
+      <div>
+        {FAQ.map((f) => (
+          <details>
+            <summary>{f.q}</summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+    </section>
+
+    <section class="cta">
+      <h2>Stop deciding what to prompt next.</h2>
+      <div class="hero__cta">
+        <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
+          <code>{INSTALL}</code><span class="btn__idle">⧉</span><span class="btn__done">✓</span>
+        </button>
+        <a class="btn btn--ghost btn--lg" href={GITHUB}>Star on GitHub <span>→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>devspace.run — MIT licensed</span>
+    <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a></span>
+  </footer>
+</Shell>
+
+<style is:global>
+  body.v1 {
+    --bg: #f5f5f3; --paper: #fafaf8; --ink: #151515; --muted: #6d6c67; --line: #dcdcd7;
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.6 "IBM Plex Mono", ui-monospace, monospace;
+  }
+</style>
+
+<style>
+  .dim { color: var(--muted); }
+  a { text-decoration: none; }
+
+  .nav {
+    max-width: 1320px; margin: 0 auto; padding: 16px 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .nav__left { display: flex; align-items: center; gap: 30px; }
+  .nav__left a:not(.brand):hover { text-decoration: underline; text-underline-offset: 4px; }
+  .brand { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
+  .brand span { color: var(--muted); font-weight: 400; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 12px; cursor: pointer;
+    border: 1px solid var(--ink); padding: 11px 22px; font: 500 13px "IBM Plex Mono", monospace;
+  }
+  .btn svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+  .btn--dark { background: var(--ink); color: #f5f5f3; }
+  .btn--dark:hover { background: #2b2b2b; }
+  .btn--ghost { background: var(--paper); border-color: var(--line); }
+  .btn--ghost:hover { border-color: var(--ink); }
+  .btn--lg { padding: 16px 24px; }
+  .btn code { font: inherit; }
+  .btn__done, .btn[data-copied] .btn__idle { display: none; }
+  .btn[data-copied] .btn__done { display: inline; }
+
+  .frame {
+    max-width: 1296px; margin: 0 auto; border: 1px solid var(--line); border-bottom: 0;
+    background: var(--bg);
+  }
+  .frame > section { border-bottom: 1px solid var(--line); }
+
+  .hero {
+    display: grid; grid-template-columns: 1.1fr 1fr; gap: 64px; align-items: end;
+    padding: 110px 44px 80px;
+  }
+  .tag {
+    display: inline-flex; gap: 14px; background: #fff; border: 1px solid var(--line);
+    padding: 10px 20px; margin-bottom: 30px; font-size: 13px;
+  }
+  .tag:hover { border-color: var(--ink); }
+  h1 {
+    margin: 0; font-weight: 600; font-size: clamp(34px, 4.3vw, 54px); line-height: 1.1;
+    letter-spacing: -0.035em; max-width: 13ch;
+  }
+  .hero__right p { margin: 0 0 30px; max-width: 46ch; font-size: 14.5px; }
+  .hero__cta { display: flex; flex-wrap: wrap; gap: 10px; }
+
+  .works { display: grid; grid-template-columns: 140px 1fr; align-items: center; padding: 26px 44px; gap: 24px; }
+  .works p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .works ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+  .works li {
+    background: #ececea; padding: 18px 10px; text-align: center; display: grid; gap: 2px;
+    transition: background 0.2s;
+  }
+  .works li:hover { background: #e3e3e0; }
+  .works b { font-weight: 500; }
+  .works span { font-size: 11px; color: var(--muted); }
+
+  .stage { position: relative; padding: 14px 14px 0; background: #ededea; }
+  .stage__art { height: 760px; }
+  .stage__mock {
+    position: absolute; left: 50%; top: 90px; transform: translateX(-50%);
+    width: min(940px, calc(100% - 60px));
+  }
+  .stage__tag {
+    position: absolute; right: 14px; bottom: 0; background: #fff; padding: 16px 26px;
+    display: flex; gap: 26px; font-size: 13.5px;
+  }
+
+  .pillars { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .pillar { padding: 44px 36px 40px; display: flex; flex-direction: column; gap: 14px; transition: background 0.2s; }
+  .pillar + .pillar { border-left: 1px solid var(--line); }
+  .pillar:hover { background: var(--paper); }
+  .pillar__n { color: var(--muted); font-size: 12px; }
+  .pillar h2 { margin: 0; font-size: 21px; line-height: 1.25; letter-spacing: -0.02em; font-weight: 600; }
+  .pillar p { margin: 0; color: #3e3d3a; font-family: "Hanken Grotesk Variable", sans-serif; font-size: 15px; line-height: 1.55; }
+  .pillar__more { margin-top: auto; padding-top: 12px; font-size: 13px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1.15fr; gap: 56px; padding: 88px 44px; align-items: center; }
+  .split--rev .split__text { order: 2; }
+  .eyebrow { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .split h2 { font-size: clamp(26px, 2.6vw, 34px); line-height: 1.15; letter-spacing: -0.03em; margin: 14px 0 18px; font-weight: 600; }
+  .split p { font-family: "Hanken Grotesk Variable", sans-serif; font-size: 16px; color: #3e3d3a; max-width: 50ch; margin: 0 0 24px; }
+  .link { border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
+
+  .split__card { background: #fff; border: 1px solid var(--line); font-size: 13px; }
+  .card__head { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
+  td b { font-weight: 500; }
+  .card__file { margin: 0; padding: 14px 16px; background: #f7f7f5; font: inherit; white-space: pre-wrap; }
+  .split__card--code { background: #151515; color: #e7e5df; border-color: #151515; }
+  .split__card--code .card__head { border-color: #2c2c2a; }
+  .split__card--code pre { margin: 0; padding: 16px; font: 12.5px/1.65 "IBM Plex Mono", monospace; overflow-x: auto; }
+
+  .faq { display: grid; grid-template-columns: 1fr 2fr; gap: 56px; padding: 80px 44px; }
+  .faq h2 { margin: 0; font-size: 30px; letter-spacing: -0.03em; font-weight: 600; }
+  details { border-top: 1px solid var(--line); padding: 18px 0; }
+  details:last-child { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; font-weight: 500; }
+  summary::after { content: "+"; color: var(--muted); }
+  details[open] summary::after { content: "−"; }
+  details p { margin: 12px 0 0; font-family: "Hanken Grotesk Variable", sans-serif; font-size: 15.5px; color: #3e3d3a; max-width: 62ch; }
+
+  .cta { padding: 110px 44px; display: flex; flex-direction: column; align-items: center; gap: 32px; text-align: center; }
+  .cta h2 { margin: 0; font-size: clamp(28px, 3.4vw, 44px); letter-spacing: -0.035em; font-weight: 600; }
+
+  .foot {
+    max-width: 1296px; margin: 0 auto; padding: 22px 12px 90px;
+    display: flex; justify-content: space-between; color: var(--muted); font-size: 13px;
+    border-top: 1px solid var(--line);
+  }
+
+  @media (max-width: 1000px) {
+    .hero, .split, .faq { grid-template-columns: 1fr; gap: 32px; }
+    .split--rev .split__text { order: 0; }
+    .works { grid-template-columns: 1fr; }
+    .works ul { grid-template-columns: repeat(4, 1fr); }
+    .pillars { grid-template-columns: 1fr; }
+    .pillar + .pillar { border-left: 0; border-top: 1px solid var(--line); }
+    .stage__art { height: 1100px; }
+  }
+  @media (max-width: 700px) {
+    .nav__left a:not(.brand) { display: none; }
+    .hero { padding: 64px 20px 48px; }
+    .works, .split, .faq, .cta, .pillar { padding-left: 20px; padding-right: 20px; }
+    .works ul { grid-template-columns: repeat(2, 1fr); }
+    .stage__mock { width: calc(100% - 24px); top: 40px; }
+    .btn--lg code { font-size: 12px; }
+  }
+</style>

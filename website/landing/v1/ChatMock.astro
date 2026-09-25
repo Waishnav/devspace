@@ -1,0 +1,167 @@
+---
+// Illustrative host session: ChatGPT driving DevSpace over MCP and delegating
+// to other harnesses. Tool names and output shapes mirror the real contract.
+---
+
+<div class="mock" role="img" aria-label="Illustration: ChatGPT opening a workspace through DevSpace, delegating planning to Codex and implementation to Claude Code, then showing a review card">
+  <div class="mock__bar">
+    <span class="mock__dots"><i></i><i></i><i></i></span>
+    <span class="mock__title">ChatGPT · <b>DevSpace</b> connector</span>
+    <span class="mock__pill">~/work/billing</span>
+  </div>
+
+  <div class="mock__body">
+    <div class="mock__chat">
+      <div class="msg msg--user s1">
+        Add CSV export to the billing page. Have Codex plan it, Claude build it, and get a second review.
+      </div>
+
+      <div class="tool s2">
+        <div class="tool__head"><span class="ok">✓</span> open_workspace <span class="dim">~/work/billing</span></div>
+        <div class="tool__meta">ws_8f2c · checkout · AGENTS.md · 3 skills · 9 agent profiles</div>
+      </div>
+
+      <div class="tool s3">
+        <div class="tool__head"><span class="ok">✓</span> exec_command</div>
+        <pre><span class="dim">$</span> devspace agents run codex --effort xhigh "Plan CSV export…"
+<span class="xml">&lt;agent id="agt_P1an" status="running"/&gt;</span>
+<span class="dim">$</span> devspace agents wait agt_P1an
+<span class="xml">&lt;agent id="agt_P1an" status="completed"&gt;</span>1. Add /export route …<span class="xml">&lt;/agent&gt;</span></pre>
+      </div>
+
+      <div class="msg msg--asst s4">
+        Codex returned a four-step plan. Handing implementation to <b>claude-implementer</b> and review to <b>copilot-reviewer</b> in parallel.
+      </div>
+
+      <div class="review s6">
+        <div class="review__head">
+          <span>show_changes</span><span><em class="add">+212</em> <em class="del">−18</em> · 6 files</span>
+        </div>
+        <ul>
+          <li><span>src/routes/billing/export.ts</span><em class="add">+96</em></li>
+          <li><span>src/lib/csv.ts</span><em class="add">+64</em></li>
+          <li><span>src/routes/billing/page.tsx</span><b><em class="add">+21</em> <em class="del">−9</em></b></li>
+          <li><span>test/billing-export.test.ts</span><em class="add">+31</em></li>
+        </ul>
+      </div>
+
+      <div class="composer">
+        <span>Ask anything</span>
+        <span class="composer__chip">DevSpace</span>
+      </div>
+    </div>
+
+    <aside class="mock__agents">
+      <div class="agents__title">Subagents <span class="dim">devspace agents ls</span></div>
+      <div class="agent a1">
+        <div><b>agt_P1an</b> <span class="dim">codex · xhigh</span></div>
+        <span class="st st--done">completed</span>
+        <p>Plan CSV export</p>
+      </div>
+      <div class="agent a2">
+        <div><b>agt_Bu1d</b> <span class="dim">claude-implementer</span></div>
+        <span class="st st--run">running</span>
+        <p>Implement steps 1–4</p>
+        <div class="bar"><span></span></div>
+      </div>
+      <div class="agent a3">
+        <div><b>agt_R3vw</b> <span class="dim">copilot-reviewer</span></div>
+        <span class="st st--run">running</span>
+        <p>Review for regressions</p>
+        <div class="bar"><span></span></div>
+      </div>
+      <div class="agents__foot">
+        <span class="dim">$</span> devspace agents wait agt_Bu1d agt_R3vw
+      </div>
+    </aside>
+  </div>
+</div>
+
+<style>
+  .mock {
+    --m-bg: #161616; --m-panel: #1d1d1c; --m-line: #2c2c2a; --m-fg: #e9e7e2; --m-dim: #8a8883;
+    width: 100%; background: var(--m-bg); color: var(--m-fg);
+    border: 1px solid #000; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(20, 24, 30, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+    font: 12px/1.55 "IBM Plex Mono", ui-monospace, monospace;
+    text-align: left;
+  }
+  .dim { color: var(--m-dim); }
+  .mock__bar {
+    display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+    border-bottom: 1px solid var(--m-line); background: #121212;
+  }
+  .mock__dots { display: flex; gap: 6px; }
+  .mock__dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; display: block; }
+  .mock__dots i:nth-child(2) { background: #febc2e; }
+  .mock__dots i:nth-child(3) { background: #28c840; }
+  .mock__title { flex: 1; color: var(--m-dim); }
+  .mock__title b { color: var(--m-fg); font-weight: 500; }
+  .mock__pill { border: 1px solid var(--m-line); padding: 1px 8px; border-radius: 4px; color: var(--m-dim); }
+
+  .mock__body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; min-height: 470px; }
+  .mock__chat { padding: 18px 20px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+  .msg { max-width: 88%; font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
+  .msg--user { align-self: flex-end; background: #2a2a28; padding: 9px 13px; border-radius: 14px; }
+  .msg--asst b { font-family: "IBM Plex Mono", monospace; font-weight: 500; font-size: 12px; }
+
+  .tool { border: 1px solid var(--m-line); border-radius: 7px; background: var(--m-panel); overflow: hidden; }
+  .tool__head { padding: 6px 10px; border-bottom: 1px solid var(--m-line); }
+  .tool__meta { padding: 6px 10px; color: var(--m-dim); }
+  .tool pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; font: inherit; }
+  .ok { color: #4ade80; }
+  .xml { color: #e0a86a; }
+
+  .review { border: 1px solid #2f4d36; border-radius: 7px; overflow: hidden; }
+  .review__head { display: flex; justify-content: space-between; padding: 6px 10px; background: #173020; color: #b7f0c6; }
+  .review ul { list-style: none; margin: 0; padding: 4px 0; }
+  .review li { display: flex; gap: 8px; justify-content: space-between; padding: 2px 10px; color: var(--m-dim); }
+  .review li b { font-weight: 400; flex: none; }
+  .review li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  em { font-style: normal; }
+  .add { color: #4ade80; }
+  .del { color: #f87171; }
+
+  .composer {
+    margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid var(--m-line); border-radius: 12px; padding: 12px 12px; color: var(--m-dim);
+    font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
+  }
+  .composer__chip { font: 11px "IBM Plex Mono", monospace; border: 1px solid var(--m-line); padding: 2px 8px; border-radius: 999px; color: var(--m-fg); }
+
+  .mock__agents { border-left: 1px solid var(--m-line); background: #131313; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .agents__title { display: flex; justify-content: space-between; padding-bottom: 6px; border-bottom: 1px solid var(--m-line); }
+  .agent { border: 1px solid var(--m-line); border-radius: 6px; padding: 8px 9px; position: relative; background: var(--m-panel); }
+  .agent p { margin: 4px 0 0; color: var(--m-dim); }
+  .st { display: block; margin-top: 2px; font-size: 11px; }
+  .st::before { content: "●"; margin-right: 4px; }
+  .st--done { color: #4ade80; }
+  .st--run { color: #f0a54a; }
+  .st--run::before { animation: blink 0.9s infinite alternate; }
+  .bar { height: 3px; background: var(--m-line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .bar span { display: block; height: 100%; width: 30%; background: #f0a54a; animation: grow 6s ease-in-out infinite alternate; }
+  .a3 .bar span { animation-duration: 4.2s; }
+  .agents__foot { margin-top: auto; color: var(--m-fg); border-top: 1px solid var(--m-line); padding-top: 8px; font-size: 11px; }
+
+  /* Staggered reveal: the session plays out once on load. */
+  .s1, .s2, .s3, .s4, .s6, .a1, .a2, .a3 { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .s1 { animation-delay: 0.2s; }
+  .s2 { animation-delay: 0.7s; }
+  .s3, .a1 { animation-delay: 1.3s; }
+  .s4 { animation-delay: 2s; }
+  .a2 { animation-delay: 2.4s; }
+  .a3 { animation-delay: 2.6s; }
+  .s6 { animation-delay: 3.2s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes blink { to { opacity: 0.3; } }
+  @keyframes grow { to { width: 92%; } }
+
+  @media (max-width: 820px) {
+    .mock__body { grid-template-columns: 1fr; }
+    .mock__agents { border-left: 0; border-top: 1px solid var(--m-line); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mock * { animation: none !important; }
+  }
+</style>

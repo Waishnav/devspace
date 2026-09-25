@@ -1,0 +1,85 @@
+---
+// Minimal document shell for the landing variants. The docs keep Blume's own
+// chrome; landing pages need full control over typography and layout.
+interface Props {
+  title?: string;
+  description?: string;
+  variant: 1 | 2 | 3;
+  bodyClass?: string;
+}
+
+const {
+  title = "DevSpace — let your coding agents delegate to each other",
+  description = "The agent-agnostic orchestration layer for coding agents. Delegate to Codex, Claude Code, OpenCode, Cursor, and more as subagents, and program multi-agent loops as dynamic workflows.",
+  variant,
+  bodyClass,
+} = Astro.props;
+
+const variants = [
+  { n: 1, href: "/v1", label: "Workbench" },
+  { n: 2, href: "/v2", label: "Field notes" },
+  { n: 3, href: "/v3", label: "Night shift" },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content="https://devspace.run" />
+    <link rel="canonical" href="https://devspace.run/" />
+  </head>
+  <body class={bodyClass}>
+    <slot />
+
+    {/* Temporary: lets reviewers flip between design explorations. */}
+    <nav class="variant-switch" aria-label="Design variants">
+      {variants.map((v) => (
+        <a href={v.href} aria-current={v.n === variant ? "page" : undefined} title={v.label}>
+          V{v.n}<span>{v.label}</span>
+        </a>
+      ))}
+    </nav>
+  </body>
+</html>
+
+<script>
+  // Any element with data-copy copies its value and flags data-copied briefly.
+  document.addEventListener("click", async (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-copy]");
+    if (!target) return;
+    await navigator.clipboard?.writeText(target.dataset.copy ?? "");
+    target.dataset.copied = "";
+    setTimeout(() => delete target.dataset.copied, 1400);
+  });
+</script>
+
+<style is:global>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; -webkit-font-smoothing: antialiased; }
+  img, svg { display: block; max-width: 100%; }
+  a { color: inherit; }
+  button { font: inherit; color: inherit; }
+
+  .variant-switch {
+    position: fixed; z-index: 100; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+    background: rgba(20, 20, 20, 0.86); backdrop-filter: blur(8px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+    font: 500 12px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  .variant-switch a {
+    color: #bdbdb8; text-decoration: none; padding: 8px 12px; border-radius: 999px;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .variant-switch a span { color: #7d7d78; }
+  .variant-switch a[aria-current="page"] { background: #f4f4f1; color: #111; }
+  .variant-switch a[aria-current="page"] span { color: #555; }
+  @media (max-width: 560px) { .variant-switch a span { display: none; } }
+</style>
