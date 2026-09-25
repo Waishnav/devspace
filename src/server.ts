@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
+import type { Server as HttpServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -90,6 +91,16 @@ interface RunningServer {
   config: ServerConfig;
   localAgentProviders: LocalAgentProviderStatus[];
   close(): Promise<void>;
+}
+
+// Keep the local origin alive longer than the reverse proxy's pooled connection.
+// Node must also advertise this timeout itself, so MCP responses drop hop-by-hop headers below.
+export const DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS = 5 * 60 * 1_000;
+export const DEVSPACE_HTTP_HEADERS_TIMEOUT_MS = DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS + 5_000;
+
+export function configureHttpServer(httpServer: HttpServer): void {
+  httpServer.keepAliveTimeout = DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS;
+  httpServer.headersTimeout = DEVSPACE_HTTP_HEADERS_TIMEOUT_MS;
 }
 
 type TrackToolActivity = <T>(operation: () => Promise<T>) => Promise<T>;
@@ -216,6 +227,32 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
     referer: req.header("referer"),
     contentLength: req.header("content-length"),
   };
+}
+
+function rpcRequestLogFields(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+  const request = body as { id?: unknown; method?: unknown };
+  return {
+    rpcId: request.id,
+    rpcMethod: request.method,
+  };
+}
+
+function nodeMcpResponse(response: globalThis.Response): globalThis.Response {
+  const headers = new Headers(response.headers);
+
+  // Connection is hop-by-hop state owned by Node's HTTP server. Preserving an
+  // application-supplied value prevents Node from advertising its real socket
+  // lifetime and can make a proxy reuse a connection while the server closes it.
+  headers.delete("connection");
+  headers.delete("keep-alive");
+  headers.delete("transfer-encoding");
+
+  return new globalThis.Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function assetBaseUrl(config: ServerConfig): string {
@@ -857,7 +894,9 @@ export function createServer(
     legacy: "stateless",
     onerror: logMcpHandlerError,
   });
-  const mcpNodeHandler = toNodeHandler(mcpHandler, {
+  const mcpNodeHandler = toNodeHandler({
+    fetch: async (request, options) => nodeMcpResponse(await mcpHandler.fetch(request, options)),
+  }, {
     onerror: logMcpHandlerError,
   });
 
@@ -868,12 +907,25 @@ export function createServer(
   app.use((req, res, next) => {
     const requestId = randomUUID();
     const startedAt = performance.now();
+    const path = requestPath(req);
+    const shouldLogRequest = config.logging.requests
+      && (config.logging.assets || !path.startsWith("/mcp-app-assets"));
+    let finished = false;
     res.locals.requestId = requestId;
 
+    if (shouldLogRequest) {
+      logEvent(config.logging, "debug", "http_request_start", {
+        requestId,
+        method: req.method,
+        path,
+        ...requestLogFields(req, config),
+        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
+      });
+    }
+
     res.on("finish", () => {
-      const path = requestPath(req);
-      if (!config.logging.requests) return;
-      if (!config.logging.assets && path.startsWith("/mcp-app-assets")) return;
+      finished = true;
+      if (!shouldLogRequest) return;
 
       logEvent(config.logging, "info", "http_request", {
         requestId,
@@ -882,6 +934,21 @@ export function createServer(
         status: res.statusCode,
         durationMs: Math.round(performance.now() - startedAt),
         ...requestLogFields(req, config),
+        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
+      });
+    });
+
+    res.on("close", () => {
+      if (finished || !shouldLogRequest) return;
+      logEvent(config.logging, "warn", "http_request_aborted", {
+        requestId,
+        method: req.method,
+        path,
+        headersSent: res.headersSent,
+        ...(res.headersSent ? { status: res.statusCode } : {}),
+        durationMs: Math.round(performance.now() - startedAt),
+        ...requestLogFields(req, config),
+        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
       });
     });
 
@@ -944,6 +1011,10 @@ export function createServer(
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
+      protocolVersion: req.header("mcp-protocol-version"),
+      mcpMethod: req.header("mcp-method"),
+      mcpName: req.header("mcp-name"),
+      ...rpcRequestLogFields(req.body),
     });
 
     try {
@@ -1011,6 +1082,7 @@ if (await isMainModule()) {
     console.log(`native artifact download: ${artifactDownloadStatus}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
+  configureHttpServer(httpServer);
 
   let shuttingDown = false;
   const shutdown = async () => {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -14,7 +15,14 @@ import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createMcpServer, createServer } from "./server.js";
+import { shutdownHttpServer } from "./server-shutdown.js";
+import {
+  configureHttpServer,
+  createMcpServer,
+  createServer,
+  DEVSPACE_HTTP_HEADERS_TIMEOUT_MS,
+  DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS,
+} from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
@@ -470,6 +478,14 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
 });
 
+test("HTTP listener advertises a tunnel-safe keep-alive lifetime", () => {
+  const httpServer = createHttpServer();
+  configureHttpServer(httpServer);
+
+  assert.equal(httpServer.keepAliveTimeout, DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS);
+  assert.equal(httpServer.headersTimeout, DEVSPACE_HTTP_HEADERS_TIMEOUT_MS);
+});
+
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(
     t,
@@ -503,6 +519,8 @@ test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) =
     {},
   );
   assert.equal(listed.status, 200, await listed.clone().text());
+  assert.equal(listed.headers.get("connection"), "keep-alive");
+  assert.match(listed.headers.get("keep-alive") ?? "", /timeout=300/);
   const listBody = await listed.json() as {
     result?: { tools?: Array<{ name?: string }> };
   };
@@ -581,6 +599,52 @@ test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) =
   assert.equal(legacyTools.status, 200, await legacyTools.clone().text());
   assert.equal(legacyTools.headers.get("mcp-session-id"), null);
   assert.match(await legacyTools.text(), /"open_workspace"/);
+});
+
+test("aborting one MCP request does not poison the next stateless request", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(
+    t,
+    "devspace-aborted-http-test-",
+  );
+  const opened = await postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/call",
+    {
+      name: "open_workspace",
+      arguments: { path: root },
+      _meta: { "openai/session": "aborted-http-test" },
+    },
+  );
+  const openBody = await opened.json() as {
+    result?: { structuredContent?: { workspace_id?: string } };
+  };
+  const workspaceId = openBody.result?.structuredContent?.workspace_id;
+  assert.equal(typeof workspaceId, "string");
+
+  const controller = new AbortController();
+  const toolCall = postModernMcp(
+    localBaseUrl,
+    accessToken,
+    "tools/call",
+    {
+      name: "exec_command",
+      arguments: {
+        workspace_id: workspaceId,
+        cmd: "node -e \"const fs=require('node:fs');fs.writeFileSync('started','');setTimeout(()=>fs.writeFileSync('finished',''),500)\"",
+        yield_time_ms: 1_000,
+      },
+    },
+    { signal: controller.signal },
+  );
+  await waitForFile(join(root, "started"));
+  controller.abort();
+  await assert.rejects(toolCall, /abort/i);
+
+  const listed = await postModernMcp(localBaseUrl, accessToken, "tools/list", {});
+  assert.equal(listed.status, 200, await listed.clone().text());
+  await listed.text();
+  await waitForFile(join(root, "finished"));
 });
 
 test("server shutdown waits for an active MCP tool call", async (t) => {
@@ -694,12 +758,10 @@ async function httpServerFixture(
   const running = createServer(config, { incomingArtifactAdapters: [] });
   const httpServer = running.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => httpServer.once("listening", resolve));
+  configureHttpServer(httpServer);
 
   t.after(async () => {
-    await new Promise<void>((resolve, reject) => {
-      httpServer.close((error) => error ? reject(error) : resolve());
-    });
-    await running.close();
+    await shutdownHttpServer(httpServer, running.close);
     await rm(root, { recursive: true, force: true });
   });
 
@@ -909,6 +971,7 @@ function postModernMcp(
   accessToken: string | undefined,
   method: string,
   params: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
 ): Promise<Response> {
   const mcpName = typeof params.name === "string"
     ? params.name
@@ -924,6 +987,7 @@ function postModernMcp(
       "mcp-protocol-version": "2026-07-28",
       ...(mcpName ? { "mcp-name": mcpName } : {}),
     },
+    signal: options.signal,
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: `modern-${method}`,
