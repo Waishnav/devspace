@@ -1,0 +1,106 @@
+---
+title: Subagents
+description: Delegate one bounded task to another harness, keep its ID, wait on it, and continue it later — six commands, compact XML output.
+---
+
+A subagent is a bounded worker: an explicit brief, a target, a lifecycle, and a
+result the orchestrator can inspect. Use one when a task benefits from
+separate context, a specialist model, or a worker you can follow up with.
+For routine edits, the orchestrator should just do the work.
+
+<DelegationDiagram />
+
+## The workflow
+
+<Steps>
+  <Step title="Discover targets">
+    ```bash
+    devspace agents targets
+    ```
+
+    ```xml
+    <provider name="codex" model="gpt-5.4" effort="high"/>
+    <provider name="claude" model="sonnet"/>
+    <profile name="reviewer" provider="codex">Read-only reviewer for bugs and missing tests.</profile>
+    ```
+
+    Prefer a matching [profile](/orchestration/profiles). Use a raw provider
+    when no profile fits.
+
+  </Step>
+  <Step title="Start work with a self-contained brief">
+    The subagent receives the brief and its profile instructions — **not** the
+    parent conversation. Include the objective, relevant paths, constraints,
+    and the expected result.
+
+    ```bash
+    devspace agents run reviewer "Review src/auth/ for session fixation. Report file:line findings."
+    devspace agents run claude --model opus --effort high "Implement …"
+    ```
+
+    Returns immediately: `<agent id="agt_7Kq2" status="running"/>`.
+
+  </Step>
+  <Step title="Wait for one or many">
+    ```bash
+    devspace agents wait agt_7Kq2
+    devspace agents wait agt_a agt_b agt_c --timeout 60
+    ```
+
+    Without `--timeout`, `wait` blocks until every named agent finishes its
+    current work. With it, you get one fragment per agent in first-seen order;
+    unfinished work is marked `status="running" wait="timeout"`.
+
+  </Step>
+  <Step title="Continue related work">
+    ```bash
+    devspace agents continue agt_7Kq2 "Now check the fix you proposed against the tests in test/auth."
+    ```
+
+    Continue when the agent's existing provider context helps. Start a new
+    agent for unrelated work.
+
+  </Step>
+</Steps>
+
+## Inspecting
+
+```bash
+devspace agents show agt_7Kq2   # immediate snapshot
+devspace agents ls              # agents in the current project
+```
+
+Use `show` for a snapshot, not as a polling loop — `wait` expresses the
+dependency.
+
+## Output format
+
+Model-facing commands print compact XML fragments with no wrapper. Lists print
+one fragment per item; empty lists print nothing.
+
+```xml
+<agent id="agt_123" status="running"/>
+<agent id="agt_123" status="completed">Review complete.</agent>
+<agent id="agt_456" status="failed" code="PROVIDER_EXECUTION_ERROR" retryable="true">Provider disconnected.</agent>
+<error code="AGENT_NOT_FOUND" retryable="false" agent-id="agt_missing">Subagent not found.</error>
+```
+
+Prompts, provider session IDs, workspace paths, and timestamps are never
+included. `--json` exists for scripts; the bundled skill does not use it.
+
+## Lifecycle
+
+- **One active turn per agent**; different agents run concurrently.
+- Logical agent records live in the daemon's SQLite store. Live provider
+  runtimes are disposable and are recreated after a daemon restart.
+- If the daemon restarts mid-turn, `running` agents become `error` without
+  losing their provider session; `continue` resumes where the provider allows.
+- Failures carry structured `code` and `retryable` fields so the orchestrator
+  can tell cancellation, availability, and workspace conflicts apart.
+
+## Good uses
+
+- Review a change for correctness, security, or missing tests.
+- Investigate a bounded part of a codebase and report findings.
+- Implement one isolated change with clear acceptance criteria.
+- Run a focused verification pass after other work.

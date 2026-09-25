@@ -1,0 +1,69 @@
+---
+title: Troubleshooting
+description: The setup issues people hit most, and the one-line fix for each.
+---
+
+Start with `npx @waishnav/devspace doctor` — it reports config, Node, Git,
+Bash, public URL, allowed hosts, and native SQLite status.
+
+<Accordion title="devspace: command not found">
+  Use `npx @waishnav/devspace …`, or make sure npm's global bin directory is on
+  your `PATH`.
+</Accordion>
+
+<Accordion title="Unsupported Node version">
+  DevSpace requires Node `>=22.19 <27`. Install Node 22 LTS with `nvm`, `fnm`,
+  or `mise`.
+</Accordion>
+
+<Accordion title="better-sqlite3 could not load">
+  Native dependencies were built for a different Node runtime. Run
+  `npm rebuild better-sqlite3`, then `doctor`.
+</Accordion>
+
+<Accordion title="Public URL includes /mcp">
+  Setup wants the origin (`https://host`); the client wants the endpoint
+  (`https://host/mcp`). Fix it with
+  `devspace config set publicBaseUrl https://host`.
+</Accordion>
+
+<Accordion title="Tailscale Funnel /mcp returns 404">
+  Run `tailscale funnel --bg 7676` from the root. Do not use
+  `--set-path=/mcp` — Funnel strips the mount path, and DevSpace also needs its
+  OAuth routes.
+</Accordion>
+
+<Accordion title="Host header or 403 errors">
+  Allowed hosts derive from `publicBaseUrl`. If your tunnel URL changed, update
+  it.
+</Accordion>
+
+<Accordion title="OAuth redirect host rejected">
+  Add the client's redirect host to `oauth.allowedRedirectHosts`.
+</Accordion>
+
+<Accordion title="Unknown workspace_id">
+  Workspace IDs are session handles. After a server restart, call
+  `open_workspace` again.
+</Accordion>
+
+<Accordion title="Workspace path rejected">
+  `open_workspace` paths must be inside an allowed root. Check with
+  `devspace config get` or rerun `devspace init --force`.
+</Accordion>
+
+<Accordion title="Worktree mode fails">
+  It needs Git, a repository with at least one commit, and a `base_ref` that
+  resolves. Uncommitted changes are not copied into the worktree.
+</Accordion>
+
+<Accordion title="Shell commands fail on Windows">
+  DevSpace needs Bash. Install Git for Windows (Git Bash) or use WSL.
+</Accordion>
+
+<Accordion title="A subagent provider is missing from targets">
+  Confirm it is enabled under `subagents.providers`, that its CLI is installed
+  and logged in, and check `devspace agents daemon logs`. A daemon with active
+  work returns `DAEMON_CONFIG_CHANGED` until that work finishes, then picks up
+  the new configuration.
+</Accordion>

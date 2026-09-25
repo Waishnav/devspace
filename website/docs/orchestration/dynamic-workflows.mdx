@@ -1,0 +1,132 @@
+---
+title: Dynamic workflows
+description: Program multi-agent loops as small, replayable JavaScript scripts — fan out, pipeline, phase, and resume from the first failed call.
+sidebar:
+  badge: Preview
+---
+
+:::info
+Dynamic workflows ship with DevSpace v1.1 and are in preview. Commands and
+script primitives may still change before the release.
+:::
+
+A subagent is one delegation. A **workflow** is the loop around many of them,
+written down: review a diff from three angles and synthesize; run the same
+staged pipeline over forty files; try two implementations in isolated worktrees
+and compare. The orchestrating model can write the script, launch it, and poll
+it — without holding the entire run in one tool call or its own context.
+
+<WorkflowRun />
+
+## A workflow script
+
+Named workflows live at `.devspace/workflows/<name>.js`. The first statement
+exports literal metadata; the rest composes primitives and returns a
+JSON-compatible result.
+
+```js .devspace/workflows/review-auth.js lineNumbers
+export const meta = {
+  name: "review-auth",
+  description: "Review auth changes from two perspectives",
+  phases: [{ title: "Review" }, { title: "Synthesize" }],
+  concurrency: 2,
+};
+
+phase("Review");
+const findings = await parallel([
+  () => agent("Review the auth diff for correctness.", { label: "correctness", profile: "reviewer" }),
+  () => agent("Review the auth diff for security.", { label: "security", provider: "claude" }),
+]);
+
+phase("Synthesize");
+const summary = await agent(
+  `Synthesize these findings: ${JSON.stringify(findings)}`,
+  { label: "summary" },
+);
+
+return { findings, summary };
+```
+
+## Primitives
+
+| Primitive | What it does |
+| --- | --- |
+| `agent(prompt, options?)` | One bounded delegation. Options: `label`, `phase`, `schema`, `profile` or `provider`, `model`, `effort`, `isolation: "worktree"`. |
+| `parallel([thunks])` | Runs tasks concurrently, preserving order. A failed branch yields `null`. |
+| `pipeline(items, ...stages)` | Runs each item through dependent stages; a failed chain yields `null` without stopping the others. |
+| `phase(title)` / `log(message)` | Record meaningful progress. |
+| `workflow(nameOrRef, args?)` | Compose another named workflow (or `{ scriptPath }`) one level deep. |
+| `args` | Values passed with `--arg key=value`. |
+
+### Structured results
+
+Ask for typed JSON when a later step consumes the output:
+
+```js
+const review = await agent("Return the discovered bugs.", {
+  schema: {
+    type: "object",
+    properties: { bugs: { type: "array", items: { type: "string" } } },
+    required: ["bugs"],
+  },
+});
+```
+
+### Isolated writers
+
+`isolation: "worktree"` gives a call its own Git worktree, so parallel agents
+that edit overlapping files never collide. Readers and intentionally sequential
+writers can share the checkout.
+
+```js
+const [a, b] = await parallel([
+  () => agent("Implement the cache with an LRU.", { provider: "claude", isolation: "worktree" }),
+  () => agent("Implement the cache with a TTL map.", { provider: "codex", isolation: "worktree" }),
+]);
+```
+
+## Run and inspect
+
+```bash
+devspace workflow run --name review-auth --json
+devspace workflow run --file ./scratch.js --arg pr=482 --json
+devspace workflow status <run-id> --json
+devspace workflow calls <run-id> --json
+devspace workflow call <run-id> <call-index> --json
+devspace workflow cancel <run-id> --json
+devspace workflow ls --json
+```
+
+From an agent harness, prefer `--json`, keep the run ID, and poll `status`
+until it reaches `completed`, `failed`, or `cancelled`. `--follow` streams
+output for interactive terminals.
+
+### Navigator
+
+```bash
+devspace workflow tui [run-id]
+```
+
+A read-only terminal navigator: declared phases beside the agent calls in each
+phase, and a per-call inspector with activity, prompt, result, worktree, and
+provider metadata. Token counts are best-effort provider observations — shown
+as unavailable rather than estimated.
+
+## Resume
+
+Failed and cancelled runs are terminal. Fix the script and create a resumed run:
+
+```bash
+devspace workflow run --resume <run-id> --json
+devspace workflow run --resume <run-id> --file ./fixed.js --json
+```
+
+Resume reuses the unchanged successful prefix and executes live from the first
+call that failed or changed. Keep completed calls' prompts and options stable
+to reuse them. Completed `worktree` calls cannot be reused because their
+checkout is not restored.
+
+:::warning
+Scripts must be replayable. Do not use `Date.now()`, `Math.random()`, or
+argument-less `new Date()`. Pass changing values through `args`.
+:::

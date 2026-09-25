@@ -1,0 +1,58 @@
+---
+title: Providers
+description: The harnesses DevSpace can run as subagents, how each is integrated, and how to configure commands, models, and environments.
+---
+
+DevSpace integrates each harness natively instead of scraping a terminal. It
+uses the CLIs and logins you already have — your existing subscriptions keep
+working.
+
+| Provider | Integration | Runtime sharing |
+| --- | --- | --- |
+| `codex` | Host-installed `codex app-server` | One app-server across agents |
+| `claude` | Claude Agent SDK | One warm runtime per agent |
+| `opencode` | OpenCode SDK | One server across sessions |
+| `pi` | Embedded Pi coding-agent SDK | One in-process session per agent |
+| `cursor` | ACP | One process across sessions |
+| `copilot` | ACP | One process across sessions |
+| `grok` | Grok Build ACP (`grok agent stdio`) | One process across sessions |
+
+## Configure
+
+Providers are explicit. Omitted providers are disabled.
+
+```jsonc ~/.devspace/config.jsonc
+{
+  "subagents": {
+    "enabled": true,
+    "instructions": "on-demand",
+    "providers": [
+      {
+        "id": "codex",
+        "enabled": true,
+        "model": "gpt-5.4",
+        "effort": "high",
+        "env": { "CODEX_HOME": "/home/alice/.codex-work" },
+      },
+      { "id": "claude", "enabled": true, "model": "sonnet" },
+    ],
+  },
+}
+```
+
+- `command` names one executable (no argument splitting). Codex, Claude,
+  Cursor, Copilot, and Grok accept it; use a wrapper script for fixed args.
+- `env` overlays literal values on the daemon's environment for that provider
+  only. `$NAME` references are not expanded.
+- Availability is re-checked before a provider is shown or used.
+
+## Effort
+
+`effort` passes through without translation:
+
+- **claude** — SDK effort with adaptive thinking
+- **codex** — app-server reasoning effort
+- **pi** — AgentSession thinking level
+- **opencode** — model variant
+- **cursor**, **copilot** — ACP thought-level config when supported
+- **grok** — `--reasoning-effort` on startup

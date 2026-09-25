@@ -1,0 +1,53 @@
+---
+title: Tool surfaces
+description: The exact MCP tools DevSpace exposes to a host, in the default Codex-style surface and the Claude-style alternative.
+---
+
+DevSpace keeps the model-facing surface small. Choose it with `tools.mode` in
+`~/.devspace/config.jsonc`.
+
+<Tabs>
+  <Tab title="codex (default)">
+    | Tool | Purpose |
+    | --- | --- |
+    | `open_workspace` | Open a checkout or new worktree; returns `workspace_id`, instructions, skills, and the agent catalog. |
+    | `read` | Read a file inside the workspace. |
+    | `apply_patch` | Apply a Codex-format patch. |
+    | `exec_command` | Run a command; returns a process session if it outlives its yield window. |
+    | `write_stdin` | Poll a running session, send input, resize a PTY, or send Ctrl-C. |
+    | `show_changes` | Render the combined diff for the turn and advance the review point. |
+  </Tab>
+  <Tab title="claude">
+    | Tool | Purpose |
+    | --- | --- |
+    | `open_workspace` | Same as above. |
+    | `read` | Read a file. |
+    | `write` | Write a file. |
+    | `edit` | Exact string replacement. |
+    | `bash` | Run a shell command. |
+    | `show_changes` | Same as above. |
+  </Tab>
+</Tabs>
+
+Dedicated `grep`, `glob`, and `ls` tools are intentionally absent; the shell
+tool uses `rg`, `find`, and `ls`. File writes go through the edit tools rather
+than shell redirection.
+
+## Review cards
+
+Widget UI is attached only to `open_workspace` and `show_changes` — never to
+every read or command. `show_changes` returns a compact `review_ref`; hosts
+that support MCP Apps render the full file list and patch. Inspect any review
+locally with:
+
+```bash
+devspace show-changes <review-ref> --json
+```
+
+Set `ui.enabled` to `false` to drop widget metadata while keeping the tool.
+
+## Native file download
+
+With `artifacts.enabled`, hosts also get `download_artifact`, which saves a
+host-native attached or generated file into an open workspace. See
+[Artifacts](/reference/artifacts).

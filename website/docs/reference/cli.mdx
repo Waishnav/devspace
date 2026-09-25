@@ -1,0 +1,46 @@
+---
+title: CLI
+description: Every devspace command — setup, the MCP server, subagents, workflows, and diagnostics.
+---
+
+## Setup and server
+
+| Command | Description |
+| --- | --- |
+| `devspace` | Run first-time setup if needed, then start the server. |
+| `devspace init [--force]` | Create or update `~/.devspace/config.jsonc` and `auth.json`. |
+| `devspace serve` | Start the MCP server on `127.0.0.1:7676`. |
+| `devspace doctor` | Show config, runtime, Git, Bash, and native dependency status. |
+| `devspace config get` | Print the persisted config. |
+| `devspace config set publicBaseUrl <url\|null>` | Update the public origin, preserving comments. |
+| `devspace worktrees prune` | Prune managed worktrees unused for three days. |
+| `devspace show-changes <review-ref> [--json]` | Inspect a Git-backed review checkpoint. |
+| `devspace -v`, `--version` | Print the installed version. |
+
+## Subagents
+
+| Command | Description |
+| --- | --- |
+| `devspace agents targets` | List usable providers and profiles for this project. |
+| `devspace agents run <target> [--model m] [--effort e] <brief>` | Start a new logical agent. |
+| `devspace agents continue <id> [--model m] [--effort e] <brief>` | Send a follow-up to an existing agent. |
+| `devspace agents show <id>` | Immediate snapshot. |
+| `devspace agents wait <id>... [--timeout s]` | Block until all named agents finish their current work. |
+| `devspace agents ls` | List agents in the current project. |
+| `devspace agents daemon <status\|stop\|logs>` | Diagnose the local agent daemon. |
+
+Agent commands print compact XML fragments; add `--json` for scripts.
+
+## Workflows <Badge>Preview</Badge>
+
+| Command | Description |
+| --- | --- |
+| `devspace workflow run --name <name> [--arg k=v]...` | Run `.devspace/workflows/<name>.js`. |
+| `devspace workflow run --file <path> [--arg k=v]...` | Run a script by path. |
+| `devspace workflow run --resume <run-id> [--file <path>]` | Create a resumed run. |
+| `devspace workflow status <run-id>` | Run status and phase progress. |
+| `devspace workflow calls <run-id>` | Compact list of child calls. |
+| `devspace workflow call <run-id> <index>` | One call's prompt, result, or error. |
+| `devspace workflow cancel <run-id>` | Cancel a run. |
+| `devspace workflow ls` | Runs in the current project. |
+| `devspace workflow tui [run-id]` | Read-only terminal navigator. |

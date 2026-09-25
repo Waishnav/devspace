@@ -1,0 +1,49 @@
+---
+title: Coding agents
+description: Teach Codex, Claude Code, OpenCode, Pi, Cursor, or any skills-capable harness to delegate to the others through the devspace CLI.
+---
+
+A coding harness does not need MCP to use DevSpace. It already has a shell.
+Install the skill and it learns to call `devspace agents` directly — no server,
+no tunnel.
+
+```bash
+npx skills add Waishnav/devspace --skill subagents --global
+```
+
+The Skills CLI asks which installed harnesses receive the skill. DevSpace
+setup never copies files into agent skill directories itself.
+
+## Scope
+
+Run agent commands from the project the subagent should use. DevSpace
+discovers the current Git repository, or the current directory outside one.
+Lists, lookups, and continuations stay inside that scope.
+
+## Example: Claude Code calls Codex
+
+Inside Claude Code, a request like _"get a second opinion from Codex on this
+migration"_ becomes:
+
+```bash
+devspace agents run codex --effort high "Review db/migrations/0042_*.sql for data-loss risks. The table has 40M rows. Report findings with file:line."
+# <agent id="agt_P1xd" status="running"/>
+devspace agents wait agt_P1xd
+```
+
+And the reverse works the same way: Codex can hand implementation to Claude,
+OpenCode can ask Pi for a cheap exploration pass, and any of them can fan out to
+several at once:
+
+```bash
+devspace agents wait agt_a agt_b agt_c --timeout 120
+```
+
+<CardGroup cols={2}>
+  <Card title="Subagents" href="/orchestration/subagents" icon="users">
+    The full command workflow and output format.
+  </Card>
+  <Card title="Delegation patterns" href="/orchestration/patterns" icon="lightbulb">
+    Planner, implementer, reviewer, QA — composed.
+  </Card>
+</CardGroup>

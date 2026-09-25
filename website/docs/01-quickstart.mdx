@@ -1,0 +1,105 @@
+---
+title: Quickstart
+description: Install DevSpace, choose which agents it may delegate to, and run your first subagent from a coding harness or ChatGPT.
+sidebar:
+  icon: rocket
+---
+
+DevSpace requires Node `>=22.19 <27`, Git, and a Bash-compatible shell
+(Git Bash or WSL on Windows).
+
+<Steps>
+  <Step title="Run setup">
+    ```bash
+    npx @waishnav/devspace init
+    ```
+
+    Or install the CLI globally with `npm install -g @waishnav/devspace` and run
+    `devspace init`.
+
+  </Step>
+  <Step title="Choose where you will use it">
+    Setup asks one question at a time. First: **ChatGPT**, **Coding Agents**,
+    or both. This is where _you_ invoke DevSpace from — it skips the setup that
+    does not apply.
+  </Step>
+  <Step title="Choose your subagents">
+    DevSpace detects the harnesses installed on your machine — Codex, Claude
+    Code, OpenCode, Pi, Cursor, Copilot, Grok — and asks which ones it may run
+    as subagents. The choice is stored under `subagents` in
+    `~/.devspace/config.jsonc`.
+  </Step>
+  <Step title="Finish the path you picked">
+    <Tabs>
+      <Tab title="Coding Agents">
+        Setup prints a Skills CLI command. Run it and pick which installed
+        harnesses receive the skill:
+
+        ```bash
+        npx skills add Waishnav/devspace --skill subagents --global
+        ```
+
+        No server is needed. The skill teaches the harness the
+        `devspace agents` commands.
+      </Tab>
+      <Tab title="ChatGPT">
+        Setup asks for the project folders ChatGPT may open and the public
+        HTTPS origin of your tunnel (without `/mcp`). Then start the server:
+
+        ```bash
+        npx @waishnav/devspace serve
+        ```
+
+        Add `https://your-tunnel.example.com/mcp` as a connector and approve it
+        with the Owner password printed by setup. See
+        [Connect an MCP host](/connect/mcp-hosts).
+      </Tab>
+    </Tabs>
+
+  </Step>
+</Steps>
+
+## Your first delegation
+
+From a project directory, ask your harness to delegate — or try the commands
+yourself:
+
+```bash
+devspace agents targets
+```
+
+```xml
+<provider name="codex" model="gpt-5.4" effort="high"/>
+<provider name="claude" model="sonnet"/>
+<profile name="reviewer" provider="codex">Read-only reviewer for bugs and missing tests.</profile>
+```
+
+```bash
+devspace agents run reviewer "Review the uncommitted diff for correctness and missing tests. Cite files."
+# <agent id="agt_7Kq2" status="running"/>
+
+devspace agents wait agt_7Kq2
+# <agent id="agt_7Kq2" status="completed">findings: …</agent>
+```
+
+The harness that ran these commands is now an orchestrator: it chose a target,
+wrote a self-contained brief, and blocked on the result without holding the
+work in its own context.
+
+## Check your setup
+
+```bash
+npx @waishnav/devspace doctor
+```
+
+`doctor` reports the resolved config, Node version and ABI, platform, Git,
+Bash, public URL, allowed hosts, and native SQLite status.
+
+<CardGroup cols={2}>
+  <Card title="Subagents" href="/orchestration/subagents" icon="users">
+    Targets, briefs, waiting, and continuing a worker.
+  </Card>
+  <Card title="Agent profiles" href="/orchestration/profiles" icon="file">
+    Turn your model-per-task matrix into reusable roles.
+  </Card>
+</CardGroup>

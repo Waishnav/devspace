@@ -1,0 +1,32 @@
+---
+title: Roadmap
+description: Where DevSpace is going — from a local orchestration layer to environments where your agents get their own computer.
+sidebar:
+  order: 99
+  icon: map
+---
+
+## Now — v1.0
+
+A minimal coding harness over MCP for ChatGPT and Claude, plus bounded
+subagents across seven harnesses from any shell.
+
+## Next — v1.1
+
+Orchestration as a first-class primitive:
+
+- **Dynamic workflows** — replayable scripts that fan out, pipeline, and phase
+  agent calls, with resume and a terminal navigator.
+- Richer provider observability: normalized activity and best-effort token
+  counts per call.
+
+## Later — environments
+
+Today, DevSpace orchestrates agents on _your_ machine. The longer-term
+direction is **environments**: a dedicated computer and compute for your
+agents, so a workflow can keep running, in parallel and in isolation, while
+your laptop is closed.
+
+The bet underneath all of it: you will stop deciding what to prompt next. A
+model will translate intent into work and route each piece to the best harness
+for it. DevSpace is the agent-agnostic layer that makes that routing possible.
