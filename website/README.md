@@ -11,11 +11,15 @@ npm run build   # static output in dist/
 npx blume validate
 ```
 
+If `blume dev` is already running, `blume build` refuses to run; use
+`npx blume build --isolated` (output in `.blume-verify/dist`).
+
 ## Layout
 
 - `docs/` — documentation content, mounted under `/docs` (`basePath`).
 - `islands/` — React islands usable in any MDX page (`<DelegationDiagram />`, `<WorkflowRun />`).
-- `ui/` — styles shared by the islands.
+- `ui/` — styles shared by the islands, plus the static `<Logos set="hosts|providers" />` MDX component (registered in `components.ts`).
+- `logos/` — brand marks for hosts and providers, the `HOSTS`/`PROVIDERS` lists, and `Logo` components for Astro and React. The SVGs come from the GitCMS marketing site; dark fills were changed to `currentColor` so they follow the theme.
 - `pages/` — custom Astro routes. `/` and `/v1`–`/v3` are landing explorations.
 - `landing/` — landing page components. `content.ts` holds the copy every variant shares.
 

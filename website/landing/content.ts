@@ -6,33 +6,24 @@ export const GITHUB = "https://github.com/Waishnav/devspace";
 export const NPM = "https://www.npmjs.com/package/@waishnav/devspace";
 export const DOCS = "/docs";
 
-export const HOSTS = ["ChatGPT", "Claude", "Codex", "Claude Code", "OpenCode", "Pi", "Cursor"];
-
-export const PROVIDERS = [
-  { id: "codex", name: "Codex", via: "app-server" },
-  { id: "claude", name: "Claude Code", via: "Agent SDK" },
-  { id: "opencode", name: "OpenCode", via: "SDK" },
-  { id: "pi", name: "Pi", via: "embedded SDK" },
-  { id: "cursor", name: "Cursor", via: "ACP" },
-  { id: "copilot", name: "Copilot", via: "ACP" },
-  { id: "grok", name: "Grok Build", via: "ACP" },
-];
+import type { LogoId } from "../logos";
+export { HOSTS, PROVIDERS } from "../logos";
 
 // The model-per-task matrix people already maintain by hand.
-export const MATRIX = [
-  { task: "Plan", profile: "codex · xhigh", why: "long-horizon reasoning" },
-  { task: "Implement", profile: "claude-implementer", why: "careful multi-file edits" },
-  { task: "Explore", profile: "opencode-explorer", why: "cheap, fast discovery" },
-  { task: "Review", profile: "copilot-reviewer", why: "a second vendor's eyes" },
-  { task: "QA", profile: "codex-qa-tester", why: "drives the browser" },
+export const MATRIX: ReadonlyArray<{ task: string; profile: string; why: string; logo: LogoId }> = [
+  { task: "Plan", profile: "codex · xhigh", why: "long-horizon reasoning", logo: "openai" },
+  { task: "Implement", profile: "claude-implementer", why: "careful multi-file edits", logo: "claude" },
+  { task: "Explore", profile: "opencode-explorer", why: "cheap, fast discovery", logo: "opencode" },
+  { task: "Review", profile: "copilot-reviewer", why: "a second vendor's eyes", logo: "github" },
+  { task: "QA", profile: "codex-qa-tester", why: "drives the browser", logo: "openai" },
 ];
 
 export const PILLARS = [
   {
     key: "harness",
     kicker: "Harness over MCP",
-    title: "A coding agent inside ChatGPT and Claude.",
-    body: "Open a workspace, read, patch, run tests, and review a diff card — against your real checkout, through a tunnel you own.",
+    title: "A coding harness inside your chat app.",
+    body: "ChatGPT, Claude, Grok Bot, OpenClaw, Hermes — open a workspace, read, patch, run tests, and review a diff card against your real checkout, through a tunnel you own.",
     href: "/docs/connect/mcp-hosts",
   },
   {
@@ -80,8 +71,12 @@ export const FAQ = [
     a: "Codex, Claude Code, OpenCode, Pi, Cursor, Copilot, and Grok Build — integrated natively through their SDKs, app-server, or ACP. It uses the CLIs and logins you already have.",
   },
   {
-    q: "Do I need ChatGPT or a tunnel?",
-    a: "Only if you want ChatGPT or Claude to drive it over MCP. Coding agents call the devspace CLI directly: install one skill and no server is needed.",
+    q: "Where can I orchestrate from?",
+    a: "Any MCP host with remote connectors — ChatGPT and Claude, or MCP-capable Grok Bot, OpenClaw, Hermes, and Muse setups — through a tunnel you own. Coding agents like Codex and Claude Code orchestrate too, straight from their shell.",
+  },
+  {
+    q: "Do I need a tunnel?",
+    a: "Only if you want a chat app to drive it over MCP. Coding agents call the devspace CLI directly: install one skill and no server is needed.",
   },
   {
     q: "Does my code leave my machine?",

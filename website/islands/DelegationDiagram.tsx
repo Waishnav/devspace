@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import "../ui/diagrams.css";
+import { Logo } from "../logos/Logo";
+import { providerLogo, type LogoId } from "../logos";
 
 type Status = "idle" | "running" | "completed";
 type Line = { kind: "cmd" | "out"; text: string };
 type Frame = { statuses?: Partial<Record<string, Status>>; line?: Line; wire?: "out" | "back" };
-type Scenario = { host: string; frames: Frame[] };
+type Scenario = { host: string; logo: LogoId; frames: Frame[] };
 
 const PROVIDERS = [
   { id: "codex", role: "planner · reviewer" },
@@ -20,6 +22,7 @@ const PROVIDERS = [
 const SCENARIOS: Scenario[] = [
   {
     host: "ChatGPT",
+    logo: "openai",
     frames: [
       { line: { kind: "cmd", text: 'devspace agents run codex --effort xhigh "Plan CSV export…"' }, statuses: { codex: "running" }, wire: "out" },
       { line: { kind: "out", text: '<agent id="agt_P1an" status="running"/>' } },
@@ -32,6 +35,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     host: "Claude Code",
+    logo: "claude",
     frames: [
       { line: { kind: "cmd", text: 'devspace agents run codex "Review the staged diff…"' }, statuses: { codex: "running" }, wire: "out" },
       { line: { kind: "cmd", text: 'devspace agents run opencode-explorer "Find callers of…"' }, statuses: { opencode: "running" } },
@@ -40,6 +44,17 @@ const SCENARIOS: Scenario[] = [
       { statuses: { opencode: "completed" } },
       { statuses: { copilot: "completed" } },
       { statuses: { codex: "completed" }, line: { kind: "out", text: "3 × <agent status=\"completed\">…</agent>" }, wire: "back" },
+    ],
+  },
+  {
+    host: "Hermes",
+    logo: "hermes",
+    frames: [
+      { line: { kind: "cmd", text: 'devspace agents run cursor-agent-worker "Polish the settings UI…"' }, statuses: { cursor: "running" }, wire: "out" },
+      { line: { kind: "cmd", text: 'devspace agents run pi-reviewer "Sanity-check the change…"' }, statuses: { pi: "running" } },
+      { line: { kind: "cmd", text: "devspace agents wait agt_Ux1 agt_Pi2" } },
+      { statuses: { cursor: "completed" } },
+      { statuses: { pi: "completed" }, line: { kind: "out", text: '2 × <agent status="completed">…</agent>' }, wire: "back" },
     ],
   },
 ];
@@ -84,7 +99,7 @@ export default function DelegationDiagram() {
       <div className="ds-deleg">
         <div className="ds-node">
           <div className="ds-node__label">host</div>
-          <div className="ds-node__title">{scenario.host}</div>
+          <div className="ds-node__title ds-node__host"><Logo id={scenario.logo} size={16} />{scenario.host}</div>
           <div className="ds-node__label" style={{ textTransform: "none", letterSpacing: 0 }}>
             translates intent → briefs
           </div>
@@ -106,7 +121,7 @@ export default function DelegationDiagram() {
             return (
               <div key={provider.id} className={`ds-prov ds-prov--${status}`}>
                 <span className="ds-prov__name">
-                  {provider.id} <span className="ds-prov__role">{provider.role}</span>
+                  <Logo id={providerLogo(provider.id)} size={14} /> {provider.id} <span className="ds-prov__role">{provider.role}</span>
                 </span>
                 <span className={`ds-status ds-status--${status}`}>{status}</span>
               </div>

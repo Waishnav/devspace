@@ -4,13 +4,14 @@ import "@fontsource/instrument-serif/400-italic.css";
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/ibm-plex-mono/400.css";
 import Shell from "../Shell.astro";
-import { DOCS, GITHUB, INSTALL, PROVIDERS, FAQ } from "../content";
+import Logo from "../../logos/Logo.astro";
+import { DOCS, GITHUB, HOSTS, INSTALL, PROVIDERS, FAQ } from "../content";
 
 const steps = [
   {
     n: "i.",
     title: "You describe the outcome",
-    body: "In ChatGPT, Claude, Codex, or Claude Code — whichever you already live in. That model becomes the orchestrator.",
+    body: "In ChatGPT, Claude, Grok Bot, OpenClaw, Hermes — or a coding agent like Codex. Wherever you already live, that model becomes the orchestrator.",
   },
   {
     n: "ii.",
@@ -74,6 +75,10 @@ const compare = [
           <code>$ {INSTALL}</code><span><i>copy</i><i>copied</i></span>
         </button>
       </div>
+      <div class="hosts">
+        <span>Orchestrate from</span>
+        <ul>{HOSTS.map((h) => <li><Logo id={h.logo} size={22} />{h.name}</li>)}</ul>
+      </div>
     </section>
 
     <section class="sheet" aria-label="Illustration: one request routed to three agents">
@@ -83,24 +88,24 @@ const compare = [
         <path d="M500 118 C 500 190, 810 180, 820 262" />
       </svg>
       <div class="slip slip--root">
-        <span class="slip__label">you, in ChatGPT</span>
+        <span class="slip__label"><Logo id="openai" size={13} /> you, in ChatGPT</span>
         <p>“Add CSV export to billing. Plan it properly, build it, and have someone else check it.”</p>
       </div>
       <div class="cards">
         <article class="card c1">
-          <header><span>Codex</span><span class="stamp">done</span></header>
+          <header><span class="who"><Logo id="openai" size={18} />Codex</span><span class="stamp">done</span></header>
           <h3>Plan</h3>
           <p>codex · effort xhigh</p>
           <code>agt_P1an</code>
         </article>
         <article class="card c2">
-          <header><span>Claude Code</span><span class="stamp stamp--live">working</span></header>
+          <header><span class="who"><Logo id="claude" size={18} />Claude Code</span><span class="stamp stamp--live">working</span></header>
           <h3>Build</h3>
           <p>claude-implementer</p>
           <code>agt_Bu1d</code>
         </article>
         <article class="card c3">
-          <header><span>Copilot</span><span class="stamp stamp--live">working</span></header>
+          <header><span class="who"><Logo id="github" size={18} />Copilot</span><span class="stamp stamp--live">working</span></header>
           <h3>Review</h3>
           <p>copilot-reviewer</p>
           <code>agt_R3vw</code>
@@ -140,8 +145,11 @@ const compare = [
         <div class="band__grid">
           <div><b>No DevSpace cloud.</b><p>There is no service to upload to. Agents run locally with the logins you already have.</p></div>
           <div><b>Explicit authority.</b><p>MCP hosts connect through your tunnel, approved with an Owner password, inside roots you choose.</p></div>
-          <div><b>Seven harnesses, natively.</b><p>{PROVIDERS.map((p) => p.name).join(", ")} — via SDKs, app-server, and ACP.</p></div>
+          <div><b>Seven harnesses, natively.</b><p>Through their SDKs, app-server, and ACP — not by scraping a terminal.</p></div>
         </div>
+        <ul class="band__logos">
+          {PROVIDERS.map((p) => <li><span class="chip"><Logo id={p.logo} size={26} /></span>{p.name}</li>)}
+        </ul>
       </div>
     </section>
 
@@ -290,6 +298,17 @@ const compare = [
   .band__grid b { font-weight: 500; }
   .band__grid p { margin: 8px 0 0; color: #b9b2a3; font-size: 15px; }
 
+
+  .hosts { display: flex; align-items: center; gap: 22px; margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+  .hosts > span { font: 12px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .hosts ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 26px; flex-wrap: wrap; }
+  .hosts li { display: flex; align-items: center; gap: 9px; font-size: 16px; }
+  .slip__label { display: inline-flex; align-items: center; gap: 6px; }
+  .who { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; }
+  .band__logos { list-style: none; padding: 0; margin: 56px 0 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+  .band__logos li { display: grid; justify-items: center; gap: 10px; color: #b9b2a3; font-size: 13.5px; }
+  .chip { width: 58px; height: 58px; border-radius: 14px; background: #f2eee5; color: #1c1a16; display: grid; place-items: center; }
+
   .later {
     display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: end;
     margin: 110px 0 0; padding: 50px; border: 1.5px dashed #b9ae98; border-radius: 6px;
@@ -319,6 +338,7 @@ const compare = [
     .sheet__wires { display: none; }
     .slip { margin-bottom: 28px; }
     .later { padding: 30px; gap: 24px; }
+    .band__logos { grid-template-columns: repeat(4, 1fr); }
     .card code { position: static; display: block; margin-top: 8px; }
   }
   @media (prefers-reduced-motion: reduce) {

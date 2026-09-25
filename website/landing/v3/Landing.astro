@@ -6,9 +6,28 @@ import "@fontsource-variable/instrument-sans";
 import { Code } from "astro:components";
 import Shell from "../Shell.astro";
 import Terminal from "./Terminal.astro";
+import Logo from "../../logos/Logo.astro";
+import type { LogoId } from "../../logos";
 import { DOCS, FAQ, GITHUB, HOSTS, INSTALL, PROVIDERS, WORKFLOW_SNIPPET } from "../content";
 
-const rotating = ["Codex", "Claude Code", "ChatGPT", "OpenCode", "Cursor"];
+const rotating: Array<{ word: string; logo: LogoId }> = [
+  { word: "ChatGPT", logo: "openai" },
+  { word: "Claude", logo: "claude" },
+  { word: "Grok Bot", logo: "grok" },
+  { word: "OpenClaw", logo: "openclaw" },
+  { word: "Hermes", logo: "hermes" },
+  { word: "Muse", logo: "muse" },
+  { word: "Claude Code", logo: "claude" },
+  { word: "Codex", logo: "openai" },
+];
+const pairs: Array<[LogoId, string, LogoId, string]> = [
+  ["claude", "Claude Code", "openai", "Codex"],
+  ["openai", "Codex", "claude", "Claude Code"],
+  ["openai", "ChatGPT", "github", "Copilot"],
+  ["hermes", "Hermes", "opencode", "OpenCode"],
+  ["openclaw", "OpenClaw", "pi", "Pi"],
+  ["grok", "Grok Bot", "cursor", "Cursor"],
+];
 
 const features = [
   {
@@ -20,7 +39,7 @@ const features = [
   {
     kicker: "Agent-agnostic",
     title: "Any harness, either direction.",
-    body: "Claude Code calls Codex. Codex calls Claude Code. ChatGPT calls both. There is no privileged vendor — just targets you configure.",
+    body: "Claude Code calls Codex. Codex calls Claude Code. ChatGPT, Hermes, or OpenClaw call any of them. There is no privileged vendor — just targets you configure.",
     mesh: "b",
   },
   {
@@ -57,7 +76,7 @@ const features = [
     <section class="hero">
       <h1>
         <span>The orchestration layer for</span>
-        <span class="rot" data-rotate={JSON.stringify(rotating)}><span data-word>{rotating[0]}</span><b class="cursor"></b></span>
+        <span class="rot" data-rotate={JSON.stringify(rotating.map((r) => r.word))}><span class="rot__logos">{rotating.map((r, i) => <Logo id={r.logo} size="0.9em" class={i === 0 ? "on" : ""} />)}</span><span data-word>{rotating[0]!.word}</span><b class="cursor"></b></span>
       </h1>
       <p>Let any coding agent delegate to any other — as bounded subagents or replayable multi-agent workflows. Local, open source, agent-agnostic.</p>
       <div class="hero__cta">
@@ -73,11 +92,11 @@ const features = [
     <section class="matrix">
       <div class="matrix__row">
         <h3>Orchestrate from</h3>
-        <ul>{HOSTS.map((h) => <li>{h}</li>)}</ul>
+        <ul class="hosts">{HOSTS.map((h) => <li><Logo id={h.logo} size={22} />{h.name}</li>)}</ul>
       </div>
       <div class="matrix__row">
         <h3>Delegate to</h3>
-        <ul>{PROVIDERS.map((p) => <li>{p.name}<small>{p.via}</small></li>)}</ul>
+        <ul>{PROVIDERS.map((p) => <li><Logo id={p.logo} size={22} />{p.name}<small>{p.via}</small></li>)}</ul>
       </div>
     </section>
 
@@ -95,8 +114,8 @@ const features = [
             )}
             {f.mesh === "b" && (
               <div class="mini mini--grid">
-                {["claude-code → codex", "codex → claude", "chatgpt → codex", "chatgpt → claude", "opencode → pi", "cursor → copilot"].map((pair) => (
-                  <span>{pair}</span>
+                {pairs.map(([a, an, b, bn]) => (
+                  <span><Logo id={a} size={15} />{an}<i>→</i><Logo id={b} size={15} />{bn}</span>
                 ))}
               </div>
             )}
@@ -183,6 +202,7 @@ const features = [
   const word = el?.querySelector<HTMLElement>("[data-word]");
   if (el && word && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     const words: string[] = JSON.parse(el.dataset.rotate!);
+    const logos = [...el.querySelectorAll<HTMLElement>(".rot__logos > *")];
     let i = 0;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     (async () => {
@@ -191,6 +211,7 @@ const features = [
         const current = words[i]!;
         for (let n = current.length; n >= 0; n--) { word.textContent = current.slice(0, n); await sleep(38); }
         i = (i + 1) % words.length;
+        logos.forEach((l, j) => l.classList.toggle("on", j === i));
         const next = words[i]!;
         for (let n = 1; n <= next.length; n++) { word.textContent = next.slice(0, n); await sleep(70); }
       }
@@ -251,6 +272,9 @@ const features = [
   }
   h1 { font-size: clamp(30px, 4.6vw, 58px); line-height: 1.12; display: flex; flex-direction: column; align-items: center; }
   .rot { color: var(--lime); display: inline-flex; align-items: center; min-height: 1.15em; }
+  .rot__logos { display: inline-grid; margin-right: 0.3em; }
+  .rot__logos > :global(*) { grid-area: 1 / 1; opacity: 0; transform: scale(0.6); transition: opacity 0.3s, transform 0.3s; }
+  .rot__logos > :global(.on) { opacity: 1; transform: none; }
   .cursor { display: inline-block; width: 0.08em; height: 0.95em; background: var(--lime); margin-left: 6px; animation: blink 0.7s infinite alternate; }
   .hero p { max-width: 56ch; margin: 26px auto 34px; color: var(--muted); font-size: 16.5px; }
   .hero__cta { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
@@ -261,9 +285,10 @@ const features = [
   .matrix__row { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 24px; }
   .matrix h3 { margin: 0; font: 500 13px "Martian Mono", monospace; color: var(--muted); }
   .matrix ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+  .matrix .hosts { grid-template-columns: repeat(6, 1fr); }
   .matrix li {
     border: 1px solid var(--line); background: #0d0d11; border-radius: 8px; padding: 14px 8px; text-align: center;
-    font-size: 13.5px; display: grid; gap: 2px; transition: border-color 0.2s, background 0.2s;
+    font-size: 13.5px; display: grid; justify-items: center; gap: 4px; transition: border-color 0.2s, background 0.2s;
   }
   .matrix li:hover { border-color: #3a3a42; background: #121217; }
   .matrix small { color: #5d5d66; font: 10px "Martian Mono", monospace; }
@@ -294,7 +319,8 @@ const features = [
   .mini p { margin: 0; display: flex; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mini .r { margin-left: auto; }
   .mini--grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .mini--grid span { border: 1px solid #25252b; border-radius: 5px; padding: 6px 8px; text-align: center; }
+  .mini--grid span { border: 1px solid #25252b; border-radius: 5px; padding: 7px 8px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; }
+  .mini--grid i { font-style: normal; color: #6d6d76; }
 
   .script { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 60px; align-items: center; padding: 60px 0 130px; border-top: 1px solid var(--line); }
   .script h2 { font-size: clamp(22px, 2.3vw, 30px); line-height: 1.2; margin: 12px 0 14px; }
@@ -332,7 +358,8 @@ const features = [
     .nav { justify-content: space-between; }
     .matrix__row, .feature, .script, .faq { grid-template-columns: 1fr; gap: 24px; }
     .feature--rev .mesh { order: 0; }
-    .matrix ul { grid-template-columns: repeat(3, 1fr); }
+    .matrix ul, .matrix .hosts { grid-template-columns: repeat(3, 1fr); }
+    .mini--grid { grid-template-columns: 1fr; }
     .lime--lg code { display: none; }
     .foot__cols { gap: 36px; }
     .mesh { padding: 18px; min-height: 0; }

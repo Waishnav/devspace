@@ -1,4 +1,5 @@
 ---
+import Logo from "../../logos/Logo.astro";
 // Illustrative host session: ChatGPT driving DevSpace over MCP and delegating
 // to other harnesses. Tool names and output shapes mirror the real contract.
 ---
@@ -6,7 +7,7 @@
 <div class="mock" role="img" aria-label="Illustration: ChatGPT opening a workspace through DevSpace, delegating planning to Codex and implementation to Claude Code, then showing a review card">
   <div class="mock__bar">
     <span class="mock__dots"><i></i><i></i><i></i></span>
-    <span class="mock__title">ChatGPT · <b>DevSpace</b> connector</span>
+    <span class="mock__title"><Logo id="openai" size={14} /> ChatGPT · <b>DevSpace</b> connector</span>
     <span class="mock__pill">~/work/billing</span>
   </div>
 
@@ -54,18 +55,18 @@
     <aside class="mock__agents">
       <div class="agents__title">Subagents <span class="dim">devspace agents ls</span></div>
       <div class="agent a1">
-        <div><b>agt_P1an</b> <span class="dim">codex · xhigh</span></div>
+        <div class="agent__who"><Logo id="openai" size={14} /><b>agt_P1an</b> <span class="dim">codex · xhigh</span></div>
         <span class="st st--done">completed</span>
         <p>Plan CSV export</p>
       </div>
       <div class="agent a2">
-        <div><b>agt_Bu1d</b> <span class="dim">claude-implementer</span></div>
+        <div class="agent__who"><Logo id="claude" size={14} /><b>agt_Bu1d</b> <span class="dim">claude-implementer</span></div>
         <span class="st st--run">running</span>
         <p>Implement steps 1–4</p>
         <div class="bar"><span></span></div>
       </div>
       <div class="agent a3">
-        <div><b>agt_R3vw</b> <span class="dim">copilot-reviewer</span></div>
+        <div class="agent__who"><Logo id="github" size={14} /><b>agt_R3vw</b> <span class="dim">copilot-reviewer</span></div>
         <span class="st st--run">running</span>
         <p>Review for regressions</p>
         <div class="bar"><span></span></div>
@@ -95,7 +96,8 @@
   .mock__dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; display: block; }
   .mock__dots i:nth-child(2) { background: #febc2e; }
   .mock__dots i:nth-child(3) { background: #28c840; }
-  .mock__title { flex: 1; color: var(--m-dim); }
+  .mock__title { flex: 1; color: var(--m-dim); display: inline-flex; align-items: center; gap: 7px; }
+  .agent__who { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
   .mock__title b { color: var(--m-fg); font-weight: 500; }
   .mock__pill { border: 1px solid var(--m-line); padding: 1px 8px; border-radius: 4px; color: var(--m-dim); }
 

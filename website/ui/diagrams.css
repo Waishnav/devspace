@@ -75,7 +75,9 @@
   opacity: 0.55;
 }
 .ds-prov--running, .ds-prov--completed { opacity: 1; border-color: color-mix(in oklab, var(--ds-fg) 35%, var(--ds-border)); }
-.ds-prov__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-node__host { display: flex; align-items: center; gap: 7px; }
+.ds-logo svg { width: 100%; height: 100%; border-radius: 22%; }
+.ds-prov__name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-prov__role { color: var(--ds-muted); font-size: 10.5px; }
 .ds-status { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ds-muted); }
 .ds-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ds-border); }

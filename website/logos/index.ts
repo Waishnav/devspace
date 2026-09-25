@@ -1,0 +1,34 @@
+// Brand marks, inlined as raw SVG so `currentColor` marks follow the theme.
+// Sourced from the GitCMS marketing site; see README for provenance.
+const files = import.meta.glob<string>("./*.svg", { query: "?raw", import: "default", eager: true });
+
+export type LogoId = "openai" | "claude" | "grok" | "muse" | "openclaw" | "hermes" | "opencode" | "pi" | "cursor" | "github";
+
+export function logoSvg(id: LogoId): string {
+  const svg = files[`./${id}.svg`];
+  if (!svg) throw new Error(`Unknown logo: ${id}`);
+  return svg;
+}
+
+/** Orchestration interfaces: where people talk to the model that delegates. */
+export const HOSTS: ReadonlyArray<{ name: string; logo: LogoId }> = [
+  { name: "ChatGPT", logo: "openai" },
+  { name: "Claude", logo: "claude" },
+  { name: "Grok Bot", logo: "grok" },
+  { name: "Muse", logo: "muse" },
+  { name: "OpenClaw", logo: "openclaw" },
+  { name: "Hermes", logo: "hermes" },
+];
+
+/** Coding harnesses DevSpace can run as subagents. */
+export const PROVIDERS: ReadonlyArray<{ id: string; name: string; via: string; logo: LogoId }> = [
+  { id: "codex", name: "Codex", via: "app-server", logo: "openai" },
+  { id: "claude", name: "Claude Code", via: "Agent SDK", logo: "claude" },
+  { id: "opencode", name: "OpenCode", via: "SDK", logo: "opencode" },
+  { id: "pi", name: "Pi", via: "embedded SDK", logo: "pi" },
+  { id: "cursor", name: "Cursor", via: "ACP", logo: "cursor" },
+  { id: "copilot", name: "Copilot", via: "ACP", logo: "github" },
+  { id: "grok", name: "Grok Build", via: "ACP", logo: "grok" },
+];
+
+export const providerLogo = (id: string): LogoId => PROVIDERS.find((p) => p.id === id)?.logo ?? "openai";

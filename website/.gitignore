@@ -1,3 +1,5 @@
 node_modules/
 .blume/
 dist/
+.blume-verify/
+.blume-verify/

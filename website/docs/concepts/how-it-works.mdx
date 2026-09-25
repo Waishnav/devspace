@@ -8,7 +8,7 @@ own; it exposes explicit capabilities and execution state so the model you are
 already talking to can orchestrate.
 
 ```txt
- you ──▶ host (ChatGPT, Claude, Codex, Claude Code, …)
+ you ──▶ host (ChatGPT, Claude, Hermes, OpenClaw, Codex, Claude Code, …)
            │  MCP tools or the devspace CLI
            ▼
         DevSpace ──▶ workspace (checkout or worktree)
@@ -35,9 +35,10 @@ already talking to can orchestrate.
 
 ### Host
 
-The MCP client or coding harness presenting the agent experience. ChatGPT and
-Claude connect over MCP. Codex, Claude Code, OpenCode, Pi, and others call the
-`devspace` CLI from their own shell tool.
+The MCP client or coding harness presenting the agent experience. ChatGPT,
+Claude, Grok Bot, OpenClaw, Hermes, and Muse connect over MCP. Codex, Claude
+Code, OpenCode, Pi, and others call the `devspace` CLI from their own shell
+tool.
 
 ### Server
 

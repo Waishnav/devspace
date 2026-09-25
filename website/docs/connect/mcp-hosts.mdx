@@ -1,12 +1,19 @@
 ---
-title: ChatGPT and Claude (MCP)
-description: Give ChatGPT, Claude, or any MCP host a minimal Codex-style coding harness on your own machine, through a tunnel you control.
+title: Chat apps over MCP
+description: Give ChatGPT, Claude, Grok Bot, OpenClaw, Hermes, or any MCP host a minimal Codex-style coding harness on your own machine, through a tunnel you control.
 ---
+
+<Logos set="hosts" />
 
 `devspace serve` turns an MCP host into a coding agent for your local projects:
 it can open a workspace, read and patch files, run tests and builds, and show
 you a review card of what changed. With subagents enabled, the same host can
 delegate to Codex, Claude Code, and the rest.
+
+ChatGPT and Claude connect through their custom connector settings. Grok Bot,
+OpenClaw, and Hermes work when your setup can add a remote MCP server with
+OAuth. Muse applies only to environments that expose MCP configuration;
+consumer Muse currently documents connectors through APIs and CLIs.
 
 ## Connect
 
@@ -64,7 +71,7 @@ Protocol compatibility is automatic: the same `/mcp` endpoint serves the
 
 See [Tool surfaces](/connect/tool-surfaces) for the exact tools.
 
-## Delegating from ChatGPT
+## Delegating from a chat app
 
 There are no dedicated subagent MCP tools. The host runs
 `devspace agents …` through its ordinary shell or process tool, and DevSpace

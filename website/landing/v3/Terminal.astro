@@ -1,4 +1,5 @@
 ---
+import Logo from "../../logos/Logo.astro";
 // Three illustrative terminal scenes that autoplay. Commands and XML output
 // mirror the real CLI; ids, timings, and results are made up.
 ---
@@ -6,8 +7,8 @@
 <div class="term" data-term>
   <div class="term__tabs" role="tablist">
     <button role="tab" aria-selected="true" data-scene="0">Workflow run</button>
-    <button role="tab" aria-selected="false" data-scene="1">Subagents</button>
-    <button role="tab" aria-selected="false" data-scene="2">Over MCP</button>
+    <button role="tab" aria-selected="false" data-scene="1"><Logo id="claude" size={13} />Subagents</button>
+    <button role="tab" aria-selected="false" data-scene="2"><Logo id="openai" size={13} />Over MCP</button>
   </div>
 
   <div class="term__win">
@@ -32,11 +33,11 @@
         </div>
         <div class="tui__col tui__calls">
           <h4>CALLS</h4>
-          <div class="call r1"><span>0 plan</span><em>codex · xhigh</em><span class="c-ok">✓ 41s</span></div>
-          <div class="call r2"><span>1 implement</span><em>claude-implementer</em><span class="c-ok">✓ 3m12s</span></div>
-          <div class="call r3 sel"><span>2 review</span><em>copilot-reviewer</em><span class="c-live">● running</span><i class="prog"><b></b></i></div>
-          <div class="call r4"><span>3 qa</span><em>codex-qa-tester</em><span class="c-live">● running</span><i class="prog"><b style="animation-duration:7s"></b></i></div>
-          <div class="call r5"><span>4 summary</span><em>pi-reviewer</em><span class="c-dim">○ queued</span></div>
+          <div class="call r1"><span>0 plan</span><em><Logo id="openai" size={13} />codex · xhigh</em><span class="c-ok">✓ 41s</span></div>
+          <div class="call r2"><span>1 implement</span><em><Logo id="claude" size={13} />claude-implementer</em><span class="c-ok">✓ 3m12s</span></div>
+          <div class="call r3 sel"><span>2 review</span><em><Logo id="github" size={13} />copilot-reviewer</em><span class="c-live">● running</span><i class="prog"><b></b></i></div>
+          <div class="call r4"><span>3 qa</span><em><Logo id="openai" size={13} />codex-qa-tester</em><span class="c-live">● running</span><i class="prog"><b style="animation-duration:7s"></b></i></div>
+          <div class="call r5"><span>4 summary</span><em><Logo id="pi" size={13} />pi-reviewer</em><span class="c-dim">○ queued</span></div>
         </div>
         <div class="tui__col tui__insp">
           <h4>CALL 2 · ACTIVITY</h4>
@@ -125,6 +126,7 @@
   .term__tabs button {
     background: transparent; border: 1px solid transparent; color: #8b8b93; cursor: pointer;
     padding: 7px 14px; border-radius: 6px; font: 12.5px "Instrument Sans Variable", sans-serif;
+    display: inline-flex; align-items: center; gap: 7px;
   }
   .term__tabs button[aria-selected="true"] { background: #1a1a1f; border-color: #2a2a31; color: #f2f2f4; }
 
@@ -154,7 +156,7 @@
   .tui p { white-space: nowrap; margin: 0; padding: 3px 6px; display: flex; justify-content: space-between; gap: 8px; border-radius: 4px; }
   .sel { background: #17171c; }
   .call { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 7px 8px; border-radius: 4px; border-bottom: 1px dashed #1e1e23; }
-  .call em { font-style: normal; color: #6d6d76; grid-column: 1; grid-row: 2; }
+  .call em { font-style: normal; color: #6d6d76; grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 6px; }
   .call > span:last-of-type { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
   .prog { grid-column: 1 / -1; height: 2px; background: #1e1e23; display: block; margin-top: 4px; border-radius: 2px; overflow: hidden; }
   .prog b { display: block; height: 100%; width: 10%; background: #ffc15e; animation: grow 5s ease-out forwards; }

@@ -6,7 +6,8 @@ import "@fontsource-variable/hanken-grotesk";
 import Shell from "../Shell.astro";
 import PixelField from "./PixelField.astro";
 import ChatMock from "./ChatMock.astro";
-import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
+import Logo from "../../logos/Logo.astro";
+import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
 ---
 
 <Shell variant={1} bodyClass="v1">
@@ -47,10 +48,16 @@ import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FA
     </section>
 
     <section class="works">
-      <p>Delegates<br />to</p>
+      <p>Orchestrate<br />from</p>
+      <ul class="works__hosts">
+        {HOSTS.map((h) => (
+          <li><Logo id={h.logo} size={22} /><b>{h.name}</b></li>
+        ))}
+      </ul>
+      <p>Delegate<br />to</p>
       <ul>
         {PROVIDERS.map((p) => (
-          <li><b>{p.name}</b><span>{p.via}</span></li>
+          <li><Logo id={p.logo} size={22} /><b>{p.name}</b><span>{p.via}</span></li>
         ))}
       </ul>
     </section>
@@ -90,7 +97,7 @@ import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FA
             {MATRIX.map((row) => (
               <tr>
                 <td>{row.task}</td>
-                <td><b>{row.profile}</b></td>
+                <td><b class="prof"><Logo id={row.logo} size={16} />{row.profile}</b></td>
                 <td class="dim">{row.why}</td>
               </tr>
             ))}
@@ -210,11 +217,12 @@ effort: high
   .hero__right p { margin: 0 0 30px; max-width: 46ch; font-size: 14.5px; }
   .hero__cta { display: flex; flex-wrap: wrap; gap: 10px; }
 
-  .works { display: grid; grid-template-columns: 140px 1fr; align-items: center; padding: 26px 44px; gap: 24px; }
+  .works { display: grid; grid-template-columns: 140px 1fr; align-items: center; padding: 26px 44px; gap: 14px 24px; }
   .works p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
   .works ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+  .works__hosts { grid-template-columns: repeat(6, 1fr) !important; }
   .works li {
-    background: #ececea; padding: 18px 10px; text-align: center; display: grid; gap: 2px;
+    background: #ececea; padding: 16px 10px 14px; text-align: center; display: grid; justify-items: center; gap: 4px;
     transition: background 0.2s;
   }
   .works li:hover { background: #e3e3e0; }
@@ -253,6 +261,7 @@ effort: high
   table { width: 100%; border-collapse: collapse; }
   td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
   td b { font-weight: 500; }
+  .prof { display: inline-flex; align-items: center; gap: 8px; }
   .card__file { margin: 0; padding: 14px 16px; background: #f7f7f5; font: inherit; white-space: pre-wrap; }
   .split__card--code { background: #151515; color: #e7e5df; border-color: #151515; }
   .split__card--code .card__head { border-color: #2c2c2a; }
@@ -280,7 +289,7 @@ effort: high
     .hero, .split, .faq { grid-template-columns: 1fr; gap: 32px; }
     .split--rev .split__text { order: 0; }
     .works { grid-template-columns: 1fr; }
-    .works ul { grid-template-columns: repeat(4, 1fr); }
+    .works ul, .works__hosts { grid-template-columns: repeat(4, 1fr) !important; }
     .pillars { grid-template-columns: 1fr; }
     .pillar + .pillar { border-left: 0; border-top: 1px solid var(--line); }
     .stage { padding: 56px 30px; }
@@ -292,7 +301,7 @@ effort: high
     .nav__left a:not(.brand) { display: none; }
     .hero { padding: 64px 20px 48px; }
     .works, .split, .faq, .cta, .pillar { padding-left: 20px; padding-right: 20px; }
-    .works ul { grid-template-columns: repeat(2, 1fr); }
+    .works ul, .works__hosts { grid-template-columns: repeat(2, 1fr) !important; }
     .btn--lg code { font-size: 12px; }
   }
 </style>

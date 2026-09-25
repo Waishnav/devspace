@@ -1,0 +1,34 @@
+---
+// Static logo strip for docs pages: <Logos set="hosts" /> or <Logos set="providers" />.
+import Logo from "../logos/Logo.astro";
+import { HOSTS, PROVIDERS } from "../logos";
+
+interface Props { set: "hosts" | "providers" }
+const { set } = Astro.props;
+const items = set === "hosts"
+  ? HOSTS.map((h) => ({ name: h.name, logo: h.logo, note: undefined as string | undefined }))
+  : PROVIDERS.map((p) => ({ name: p.name, logo: p.logo, note: `${p.id} · ${p.via}` }));
+---
+
+<ul class="ds-logos">
+  {items.map((item) => (
+    <li>
+      <Logo id={item.logo} size={26} />
+      <span>{item.name}</span>
+      {item.note && <small>{item.note}</small>}
+    </li>
+  ))}
+</ul>
+
+<style>
+  .ds-logos {
+    list-style: none; margin: 1.5rem 0; padding: 0;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px;
+  }
+  .ds-logos li {
+    margin: 0; display: grid; justify-items: center; gap: 6px; text-align: center;
+    padding: 14px 8px 12px; border: 1px solid var(--blume-border); border-radius: var(--blume-radius);
+    font-size: 13.5px; font-weight: 500;
+  }
+  .ds-logos small { font-family: var(--blume-font-mono); font-size: 10.5px; color: var(--blume-muted-foreground); font-weight: 400; }
+</style>
