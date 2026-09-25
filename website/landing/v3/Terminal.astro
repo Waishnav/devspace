@@ -1,0 +1,199 @@
+---
+// Three illustrative terminal scenes that autoplay. Commands and XML output
+// mirror the real CLI; ids, timings, and results are made up.
+---
+
+<div class="term" data-term>
+  <div class="term__tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-scene="0">Workflow run</button>
+    <button role="tab" aria-selected="false" data-scene="1">Subagents</button>
+    <button role="tab" aria-selected="false" data-scene="2">Over MCP</button>
+  </div>
+
+  <div class="term__win">
+    <div class="term__bar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span class="term__title" data-title>devspace workflow tui ship</span>
+      <span class="term__live"><b></b>live</span>
+    </div>
+
+    <!-- Scene 0: workflow navigator -->
+    <div class="scene is-active" data-panel="0">
+      <div class="tui">
+        <div class="tui__col">
+          <h4>RUNS</h4>
+          <p class="sel">▸ ship <span class="c-live">running</span></p>
+          <p>review-auth <span class="c-ok">completed</span></p>
+          <p>migrate-v2 <span class="c-err">failed</span></p>
+          <h4>PHASES</h4>
+          <p class="ph ph1">Plan <span>1/1</span></p>
+          <p class="ph ph2">Build <span>1/1</span></p>
+          <p class="ph ph3 sel">Verify <span data-count>0/3</span></p>
+        </div>
+        <div class="tui__col tui__calls">
+          <h4>CALLS</h4>
+          <div class="call r1"><span>0 plan</span><em>codex · xhigh</em><span class="c-ok">✓ 41s</span></div>
+          <div class="call r2"><span>1 implement</span><em>claude-implementer</em><span class="c-ok">✓ 3m12s</span></div>
+          <div class="call r3 sel"><span>2 review</span><em>copilot-reviewer</em><span class="c-live">● running</span><i class="prog"><b></b></i></div>
+          <div class="call r4"><span>3 qa</span><em>codex-qa-tester</em><span class="c-live">● running</span><i class="prog"><b style="animation-duration:7s"></b></i></div>
+          <div class="call r5"><span>4 summary</span><em>pi-reviewer</em><span class="c-dim">○ queued</span></div>
+        </div>
+        <div class="tui__col tui__insp">
+          <h4>CALL 2 · ACTIVITY</h4>
+          <p class="l l1"><span class="c-dim">read</span> src/routes/billing/export.ts</p>
+          <p class="l l2"><span class="c-dim">read</span> src/lib/csv.ts</p>
+          <p class="l l3"><span class="c-dim">exec</span> pnpm test billing-export</p>
+          <p class="l l4 c-ok">  12 passed</p>
+          <p class="l l5"><span class="c-dim">note</span> CSV escaping misses embedded quotes</p>
+          <p class="l l6 c-dim">tokens ≈ 38.2k · 1m04s</p>
+        </div>
+      </div>
+      <div class="tui__foot"><span>↑↓ navigate · tab pane · enter open · q quit</span><span>2/5 calls · phase Verify</span></div>
+    </div>
+
+    <!-- Scene 1: plain subagents from Claude Code -->
+    <div class="scene" data-panel="1">
+      <div class="sh">
+        <p class="l l1"><span class="c-dim">claude-code ›</span> get Codex and Copilot to review this before I merge</p>
+        <p class="l l2"><span class="c-lime">$</span> devspace agents targets</p>
+        <p class="l l3 c-xml">&lt;provider name="codex" model="gpt-5.4" effort="high"/&gt;</p>
+        <p class="l l3 c-xml">&lt;profile name="copilot-reviewer" provider="copilot"&gt;Severity-ordered findings…&lt;/profile&gt;</p>
+        <p class="l l4"><span class="c-lime">$</span> devspace agents run codex "Review the staged diff for correctness…"</p>
+        <p class="l l5 c-xml">&lt;agent id="agt_7Kq2" status="running"/&gt;</p>
+        <p class="l l6"><span class="c-lime">$</span> devspace agents run copilot-reviewer "Check the staged diff for test gaps…"</p>
+        <p class="l l7 c-xml">&lt;agent id="agt_Q9m4" status="running"/&gt;</p>
+        <p class="l l8"><span class="c-lime">$</span> devspace agents wait agt_7Kq2 agt_Q9m4</p>
+        <p class="l l9 c-xml">&lt;agent id="agt_7Kq2" status="completed"&gt;<span class="c-fg">1 finding: export.ts:48 unescaped quote</span>&lt;/agent&gt;</p>
+        <p class="l l10 c-xml">&lt;agent id="agt_Q9m4" status="completed"&gt;<span class="c-fg">missing test: empty invoice list</span>&lt;/agent&gt;</p>
+        <p class="l l11"><span class="c-dim">claude-code ›</span> Both reviews are in. Fixing export.ts:48 and adding the empty-list test.<span class="caret"></span></p>
+      </div>
+    </div>
+
+    <!-- Scene 2: ChatGPT via MCP -->
+    <div class="scene" data-panel="2">
+      <div class="mcp">
+        <p class="l l1 bubble">Open ~/work/billing in a fresh worktree and try two cache designs in parallel.</p>
+        <p class="l l2 tool"><span class="c-ok">✓</span> open_workspace <span class="c-dim">mode: worktree · base_ref: main → ws_c41e</span></p>
+        <p class="l l3 tool"><span class="c-ok">✓</span> exec_command <span class="c-dim">devspace workflow run --name bake-off --arg brief="cache layer" --json</span></p>
+        <p class="l l4 tool mono c-xml">{`{ "id": "wf_3n8", "status": "running", "phase": "Build" }`}</p>
+        <p class="l l5 tool"><span class="c-ok">✓</span> exec_command <span class="c-dim">devspace workflow status wf_3n8 --json</span></p>
+        <p class="l l6 tool mono c-xml">{`{ "status": "completed", "calls": 3, "result": { "pick": "B — TTL map" } }`}</p>
+        <p class="l l7 tool"><span class="c-ok">✓</span> show_changes <span class="c-dim">+148 −12 · 4 files</span></p>
+        <p class="l l8 bubble bubble--asst">Claude's LRU and Codex's TTL map both passed. Pi judged the TTL map simpler under your access pattern — its diff is above.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const root = document.querySelector<HTMLElement>("[data-term]");
+  if (root) {
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-scene]")];
+    const panels = [...root.querySelectorAll<HTMLElement>("[data-panel]")];
+    const title = root.querySelector<HTMLElement>("[data-title]")!;
+    const titles = ["devspace workflow tui ship", "claude-code · ~/work/billing", "ChatGPT · DevSpace connector"];
+    let current = 0;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const show = (i: number) => {
+      current = i;
+      tabs.forEach((t, j) => t.setAttribute("aria-selected", String(i === j)));
+      panels.forEach((p, j) => {
+        p.classList.remove("is-active");
+        if (i === j) {
+          void p.offsetWidth; // restart the staggered reveal
+          p.classList.add("is-active");
+        }
+      });
+      title.textContent = titles[i]!;
+    };
+    const autoplay = () => {
+      clearInterval(timer);
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      timer = setInterval(() => show((current + 1) % panels.length), 10000);
+    };
+    tabs.forEach((t, i) => t.addEventListener("click", () => { show(i); autoplay(); }));
+    const initial = Number(new URLSearchParams(location.search).get("scene"));
+    if (initial > 0 && initial < panels.length) show(initial);
+    autoplay();
+  }
+</script>
+
+<style>
+  .term { max-width: 1120px; margin: 0 auto; }
+  .term__tabs { display: flex; justify-content: center; gap: 4px; margin-bottom: 18px; }
+  .term__tabs button {
+    background: transparent; border: 1px solid transparent; color: #8b8b93; cursor: pointer;
+    padding: 7px 14px; border-radius: 6px; font: 12.5px "Instrument Sans Variable", sans-serif;
+  }
+  .term__tabs button[aria-selected="true"] { background: #1a1a1f; border-color: #2a2a31; color: #f2f2f4; }
+
+  .term__win {
+    border: 1px solid #25252b; border-radius: 12px; background: #0d0d10; overflow: hidden;
+    box-shadow: 0 40px 120px -40px rgba(198, 244, 50, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+    font: 12.5px/1.65 "Martian Mono", ui-monospace, monospace; color: #d9d9de; text-align: left;
+  }
+  .term__bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #1e1e23; color: #8b8b93; font-size: 11.5px; }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #2a2a30; display: block; }
+  .term__title { flex: 1; text-align: center; }
+  .term__live { display: flex; align-items: center; gap: 6px; color: var(--lime); }
+  .term__live b { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); animation: blink 1s infinite alternate; }
+
+  .scene { display: none; min-height: 400px; }
+  .scene.is-active { display: block; }
+
+  .c-dim { color: #6d6d76; } .c-ok { color: #7ee2a8; } .c-err { color: #ff7a7a; }
+  .c-live { color: #ffc15e; } .c-lime { color: var(--lime); } .c-xml { color: #e0a86a; } .c-fg { color: #ececf0; }
+
+  .tui { display: grid; grid-template-columns: 236px 1.25fr 1fr; min-height: 362px; }
+  .tui__col { padding: 12px 14px; border-right: 1px solid #1e1e23; }
+  .tui__col:last-child { border-right: 0; }
+  .tui h4 { margin: 4px 0 8px; font-size: 10.5px; color: #5d5d66; letter-spacing: 0.1em; font-weight: 400; }
+  .tui h4:not(:first-child) { margin-top: 18px; }
+  .tui p { white-space: nowrap; margin: 0; padding: 3px 6px; display: flex; justify-content: space-between; gap: 8px; border-radius: 4px; }
+  .sel { background: #17171c; }
+  .call { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 7px 8px; border-radius: 4px; border-bottom: 1px dashed #1e1e23; }
+  .call em { font-style: normal; color: #6d6d76; grid-column: 1; grid-row: 2; }
+  .call > span:last-of-type { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+  .prog { grid-column: 1 / -1; height: 2px; background: #1e1e23; display: block; margin-top: 4px; border-radius: 2px; overflow: hidden; }
+  .prog b { display: block; height: 100%; width: 10%; background: #ffc15e; animation: grow 5s ease-out forwards; }
+  .tui__insp p { display: block; white-space: normal; }
+  .tui__foot { display: flex; justify-content: space-between; padding: 8px 14px; border-top: 1px solid #1e1e23; color: #5d5d66; font-size: 11px; }
+
+  .sh { padding: 18px 20px; }
+  .sh p { margin: 0; word-break: break-word; }
+  .caret { display: inline-block; width: 7px; height: 14px; background: var(--lime); vertical-align: -2px; margin-left: 3px; animation: blink 0.8s infinite alternate; }
+
+  .mcp { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; font-family: "Instrument Sans Variable", sans-serif; font-size: 14px; }
+  .mcp .tool { font: 12px "Martian Mono", monospace; border: 1px solid #1e1e23; border-radius: 6px; padding: 7px 10px; background: #111115; margin: 0; }
+  .mcp .mono { background: #0b0b0d; }
+  .bubble { align-self: flex-end; background: #1d1d23; padding: 9px 14px; border-radius: 14px; margin: 0 0 4px; max-width: 80%; }
+  .bubble--asst { align-self: flex-start; background: transparent; padding: 6px 0 0; }
+
+  /* Staggered reveal whenever a scene becomes active. */
+  .is-active .l, .is-active .call, .is-active .ph { animation: in 0.4s ease-out both; }
+  .is-active .r1, .is-active .l1 { animation-delay: 0.1s; }
+  .is-active .r2, .is-active .l2 { animation-delay: 0.5s; }
+  .is-active .r3, .is-active .l3 { animation-delay: 1s; }
+  .is-active .r4, .is-active .l4 { animation-delay: 1.5s; }
+  .is-active .r5, .is-active .l5 { animation-delay: 2.2s; }
+  .is-active .l6 { animation-delay: 2.9s; }
+  .is-active .l7 { animation-delay: 3.5s; }
+  .is-active .l8 { animation-delay: 4.1s; }
+  .is-active .l9 { animation-delay: 5.6s; }
+  .is-active .l10 { animation-delay: 6.2s; }
+  .is-active .l11 { animation-delay: 7s; }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } }
+  @keyframes blink { to { opacity: 0.25; } }
+  @keyframes grow { to { width: 88%; } }
+
+  @media (max-width: 860px) {
+    .tui { grid-template-columns: 1fr; }
+    .tui__col { border-right: 0; border-bottom: 1px solid #1e1e23; }
+    .tui__insp { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .term * { animation: none !important; }
+  }
+</style>
