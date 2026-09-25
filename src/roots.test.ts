@@ -21,8 +21,43 @@ assert.equal(
 );
 
 assert.equal(
-  resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
-  resolve("/workspace", "~/file.txt"),
+  resolveAllowedPath("~/personal/devspace", "/some/other/cwd", [join(home, "personal")]),
+  resolve(home, "personal", "devspace"),
+);
+
+assert.equal(
+  resolveAllowedPath("~/personal/devspace", home, [join(home, "personal")]),
+  resolve(home, "personal", "devspace"),
+);
+
+assert.equal(
+  resolveAllowedPath("~/personal/devspace", "/some/other/cwd", ["~/personal"]),
+  resolve(home, "personal", "devspace"),
+);
+
+assert.throws(
+  () => resolveAllowedPath("~/outside", home, [join(home, "personal")]),
+  /Path is outside allowed roots/,
+);
+
+assert.throws(
+  () => resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
+  /Path is outside allowed roots/,
+);
+
+assert.equal(
+  resolveAllowedPath("relative/path", "/workspace", ["/workspace"]),
+  resolve("/workspace", "relative/path"),
+);
+
+assert.equal(
+  resolveAllowedPath("./file.txt", join(home, "personal"), [join(home, "personal")]),
+  resolve(home, "personal", "file.txt"),
+);
+
+assert.throws(
+  () => resolveAllowedPath("../outside", join(home, "personal"), [join(home, "personal")]),
+  /Path is outside allowed roots/,
 );
 
 if (process.platform === "win32") {
