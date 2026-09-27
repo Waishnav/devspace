@@ -470,6 +470,92 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
 });
 
+test("HTTP cached workspaceId arguments preserve canonical schemas and validation", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-cached-arguments-test-");
+  await writeFile(join(root, "note.txt"), "cached argument regression\n");
+  const opened = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "open_workspace", arguments: { path: root },
+  });
+  const workspaceId = (await opened.json()).result.structuredContent.workspace_id as string;
+  assert.equal(typeof workspaceId, "string");
+
+  for (const argumentsValue of [
+    { workspaceId, path: "note.txt" },
+    { workspaceId, workspace_id: workspaceId, path: "note.txt" },
+    { workspace_id: workspaceId, path: "note.txt" },
+  ]) {
+    const response = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+      name: "read", arguments: argumentsValue,
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.error, undefined, JSON.stringify(body));
+    assert.notEqual(body.result?.isError, true, JSON.stringify(body));
+    assert.match(JSON.stringify(body.result), /cached argument regression/);
+  }
+
+  const conflict = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "read", arguments: { workspaceId, workspace_id: "different", path: "note.txt" },
+  });
+  assert.equal(conflict.status, 400);
+  assert.equal((await conflict.json()).error.code, -32602);
+
+  for (const workspaceId of [null, 42, {}, []]) {
+    const invalid = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+      name: "read", arguments: { workspaceId, path: "note.txt" },
+    });
+    const body = await invalid.json();
+    assert.ok(body.error || body.result?.isError, JSON.stringify(body));
+    assert.notEqual(invalid.status, 500);
+  }
+
+  const unauthorized = await postModernMcp(localBaseUrl, undefined, "tools/call", {
+    name: "read", arguments: { workspaceId, workspace_id: "different", path: "note.txt" },
+  });
+  assert.equal(unauthorized.status, 401);
+  const outside = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "read", arguments: { workspaceId, path: "../outside.txt" },
+  });
+  assert.equal((await outside.json()).result.isError, true);
+
+  const listed = await postModernMcp(localBaseUrl, accessToken, "tools/list", {});
+  const tools = (await listed.json()).result.tools as Array<{ name: string; inputSchema: { properties?: Record<string, unknown> } }>;
+  const read = tools.find((tool) => tool.name === "read");
+  assert.ok(read?.inputSchema.properties?.workspace_id);
+  assert.equal(read?.inputSchema.properties?.workspaceId, undefined);
+});
+
+test("HTTP conflicting workspace aliases preserve request IDs and notification semantics", async (t) => {
+  const { localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-cached-id-test-");
+  for (const id of ["cached-request", 37, null, undefined]) {
+    await t.test(id === undefined ? "notification" : `request ID ${JSON.stringify(id)}`, async () => {
+      const response = await fetch(`${localBaseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+          "mcp-method": "tools/call",
+          "mcp-name": "read",
+          "mcp-protocol-version": "2026-07-28",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0", ...(id === undefined ? {} : { id }), method: "tools/call",
+          params: { name: "read", arguments: { workspaceId: "old", workspace_id: "new", path: "note.txt" } },
+        }),
+      });
+      if (id === undefined) {
+        assert.equal(response.status, 202);
+        assert.equal(await response.text(), "");
+      } else {
+        assert.equal(response.status, 400);
+        const body = await response.json();
+        assert.equal(body.error.code, -32602);
+        assert.equal(body.id, id);
+      }
+    });
+  }
+});
+
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(
     t,

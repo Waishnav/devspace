@@ -199,12 +199,33 @@ function sendJsonRpcError(
   status: number,
   code: number,
   message: string,
+  id: string | number | null = null,
 ): void {
   res.status(status).json({
     jsonrpc: "2.0",
     error: { code, message },
-    id: null,
+    id,
   });
+}
+
+// ChatGPT may retain the pre-snake_case workspace argument in cached tool calls.
+// Normalize only that known alias at the HTTP edge; the public schema remains canonical.
+function normalizeCachedWorkspaceArgument(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return true;
+  const request = body as Record<string, unknown>;
+  if (request.method !== "tools/call") return true;
+  const params = request.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return true;
+  const args = (params as Record<string, unknown>).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return true;
+  const values = args as Record<string, unknown>;
+  if (!Object.hasOwn(values, "workspaceId")) return true;
+  if (Object.hasOwn(values, "workspace_id") && values.workspace_id !== values.workspaceId) {
+    return false;
+  }
+  if (!Object.hasOwn(values, "workspace_id")) values.workspace_id = values.workspaceId;
+  delete values.workspaceId;
+  return true;
 }
 
 function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
@@ -945,6 +966,17 @@ export function createServer(
       requestId,
       method: req.method,
     });
+
+    if (!normalizeCachedWorkspaceArgument(req.body)) {
+      const body = req.body as Record<string, unknown>;
+      if (!Object.hasOwn(body, "id")) {
+        res.status(202).end();
+        return;
+      }
+      const id = typeof body.id === "string" || typeof body.id === "number" ? body.id : null;
+      sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments", id);
+      return;
+    }
 
     try {
       await mcpNodeHandler(req, res, req.body);
