@@ -48,6 +48,12 @@ Do not call `open_workspace` again for the same checkout folder unless:
 - work switches between checkout and worktree mode
 - the user asks for a new isolated worktree
 
+When a non-Git parent contains several immediate Git projects, its instruction
+discovery stays at the parent and immediate-project level. Use that workspace
+to list projects, then open the selected project before operating in its
+contents. Opening a concrete Git checkout retains recursive nested instruction
+discovery.
+
 ## Checkout Mode
 
 Checkout mode is the default. DevSpace opens the actual directory:
