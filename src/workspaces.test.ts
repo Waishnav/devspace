@@ -48,6 +48,64 @@ test("a checkout exposes initial and nested instruction context", async (t) => {
 
 });
 
+test("a multi-project parent exposes immediate instructions and selected projects keep nested context", async (t) => {
+  const context = await fixture(t);
+  for (const name of ["one", "two"]) {
+    const project = join(context.root, name);
+    await mkdir(join(project, "src"), { recursive: true });
+    await execFileAsync("git", ["init", "-q", project]);
+    await writeFile(join(project, "AGENTS.md"), `${name} instructions\n`);
+    await writeFile(join(project, "src", "AGENTS.md"), "nested project instructions\n");
+  }
+
+  const parent = await context.registry.openWorkspace(context.root);
+  assert.deepEqual(parent.availableAgentsFiles.map(({ path }) => path), [
+    join(context.root, "nested", "AGENTS.md"),
+    join(context.root, "one", "AGENTS.md"),
+    join(context.root, "two", "AGENTS.md"),
+  ]);
+  assert.deepEqual(parent.agentsFiles.map(({ content }) => content), [
+    "global instructions\n", "root instructions\n",
+  ]);
+
+  const selected = await context.registry.openWorkspace(join(context.root, "one"));
+  assert.deepEqual(selected.availableAgentsFiles.map(({ path }) => path), [
+    join(context.root, "one", "src", "AGENTS.md"),
+  ]);
+});
+
+test("a Git checkout with nested repositories retains recursive instruction discovery", async (t) => {
+  const context = await fixture(t);
+  await execFileAsync("git", ["init", "-q", context.root]);
+  for (const name of ["one", "two"]) {
+    const project = join(context.root, name);
+    await mkdir(join(project, "src"), { recursive: true });
+    await execFileAsync("git", ["init", "-q", project]);
+    await writeFile(join(project, "src", "AGENTS.md"), "nested instructions\n");
+  }
+
+  const opened = await context.registry.openWorkspace(context.root);
+  assert.deepEqual(opened.availableAgentsFiles.map(({ path }) => path), [
+    join(context.root, "nested", "AGENTS.md"),
+    join(context.root, "one", "src", "AGENTS.md"),
+    join(context.root, "two", "src", "AGENTS.md"),
+  ]);
+});
+
+test("a non-Git directory with only one Git child retains recursive discovery", async (t) => {
+  const context = await fixture(t);
+  const project = join(context.root, "one");
+  await mkdir(join(project, "src"), { recursive: true });
+  await execFileAsync("git", ["init", "-q", project]);
+  await writeFile(join(project, "src", "CLAUDE.md"), "nested instructions\n");
+
+  const opened = await context.registry.openWorkspace(context.root);
+  assert.deepEqual(opened.availableAgentsFiles.map(({ path }) => path), [
+    join(context.root, "nested", "AGENTS.md"),
+    join(context.root, "one", "src", "CLAUDE.md"),
+  ]);
+});
+
 test("global instruction symlinks may target user-managed files outside agentDir", {
   skip: platform() === "win32",
 }, async (t) => {

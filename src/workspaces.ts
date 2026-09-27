@@ -7,7 +7,7 @@ import type {
   WorkspaceSession,
   WorkspaceStore,
 } from "./workspace-store.js";
-import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, opendir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
@@ -627,7 +627,7 @@ export class WorkspaceRegistry {
       if (realPath && loadedRealPaths.has(realPath)) return;
 
       discovered.push({ path });
-    });
+    }, (await isMultiProjectParent(root)) ? 1 : Infinity);
 
     return discovered.sort((a, b) => a.path.localeCompare(b.path));
   }
@@ -723,9 +723,39 @@ async function tryRealpath(path: string): Promise<string | undefined> {
   }
 }
 
+// A non-Git parent with several direct Git children is a project catalogue.
+// Selected checkouts still discover all their nested instruction files.
+async function isMultiProjectParent(root: string): Promise<boolean> {
+  try {
+    await stat(join(root, ".git"));
+    return false;
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") return false;
+  }
+
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  let projects = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || SKIPPED_CONTEXT_DIRS.has(entry.name)) continue;
+    try {
+      await stat(join(root, entry.name, ".git"));
+      if (++projects >= 2) return true;
+    } catch {
+      // No accessible Git marker for this immediate child.
+    }
+  }
+  return false;
+}
+
 async function walkWorkspace(
   directory: string,
   visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
+  remainingDepth = Infinity,
 ): Promise<void> {
   let entries;
   try {
@@ -737,8 +767,8 @@ async function walkWorkspace(
   for await (const entry of entries) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
-        await walkWorkspace(path, visit);
+      if (remainingDepth > 0 && !SKIPPED_CONTEXT_DIRS.has(entry.name)) {
+        await walkWorkspace(path, visit, remainingDepth - 1);
       }
       continue;
     }
