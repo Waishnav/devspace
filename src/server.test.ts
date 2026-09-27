@@ -525,6 +525,37 @@ test("HTTP cached workspaceId arguments preserve canonical schemas and validatio
   assert.equal(read?.inputSchema.properties?.workspaceId, undefined);
 });
 
+test("HTTP conflicting workspace aliases preserve request IDs and notification semantics", async (t) => {
+  const { localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-cached-id-test-");
+  for (const id of ["cached-request", 37, null, undefined]) {
+    await t.test(id === undefined ? "notification" : `request ID ${JSON.stringify(id)}`, async () => {
+      const response = await fetch(`${localBaseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+          "mcp-method": "tools/call",
+          "mcp-name": "read",
+          "mcp-protocol-version": "2026-07-28",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0", ...(id === undefined ? {} : { id }), method: "tools/call",
+          params: { name: "read", arguments: { workspaceId: "old", workspace_id: "new", path: "note.txt" } },
+        }),
+      });
+      if (id === undefined) {
+        assert.equal(response.status, 202);
+        assert.equal(await response.text(), "");
+      } else {
+        assert.equal(response.status, 400);
+        const body = await response.json();
+        assert.equal(body.error.code, -32602);
+        assert.equal(body.id, id);
+      }
+    });
+  }
+});
+
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(
     t,

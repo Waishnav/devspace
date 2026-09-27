@@ -199,11 +199,12 @@ function sendJsonRpcError(
   status: number,
   code: number,
   message: string,
+  id: string | number | null = null,
 ): void {
   res.status(status).json({
     jsonrpc: "2.0",
     error: { code, message },
-    id: null,
+    id,
   });
 }
 
@@ -967,7 +968,13 @@ export function createServer(
     });
 
     if (!normalizeCachedWorkspaceArgument(req.body)) {
-      sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments");
+      const body = req.body as Record<string, unknown>;
+      if (!Object.hasOwn(body, "id")) {
+        res.status(202).end();
+        return;
+      }
+      const id = typeof body.id === "string" || typeof body.id === "number" ? body.id : null;
+      sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments", id);
       return;
     }
 
