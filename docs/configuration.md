@@ -89,6 +89,13 @@ or `[::1]`, with optional ports. Restart DevSpace after changing
 `oauth.allowedResourceUrls`: the provider reads this policy at server creation.
 After restarting, refresh tokens for removed aliases can no longer mint tokens.
 
+`server.trustProxy` controls how DevSpace derives the client IP used for
+request logs and OAuth rate limiting. `false` ignores forwarding headers.
+`"loopback"` trusts `X-Forwarded-For` only from a proxy on the same machine,
+such as `cloudflared` or a local reverse proxy; this is the recommended value
+for tunnel setups. `true` trusts every hop, so any client can choose its own IP
+by sending `X-Forwarded-For`.
+
 ## Tool modes and UI
 
 `tools.mode` accepts two values:

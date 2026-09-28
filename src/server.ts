@@ -862,7 +862,7 @@ export function createServer(
   });
 
   if (config.logging.trustProxy) {
-    app.set("trust proxy", true);
+    app.set("trust proxy", config.logging.trustProxy);
   }
 
   app.use((req, res, next) => {
@@ -1002,7 +1002,7 @@ if (await isMainModule()) {
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
-    console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    console.log(`trust proxy: ${config.logging.trustProxy === true ? "enabled" : config.logging.trustProxy || "disabled"}`);
     const artifactDownloadStatus = !config.artifactsEnabled
       ? "disabled"
       : isArtifactDownloadSupportedPlatform()
