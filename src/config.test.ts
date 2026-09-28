@@ -121,6 +121,13 @@ try {
   });
 
   assert.equal(loadConfig(env).oauth.ownerToken, env.DEVSPACE_OAUTH_OWNER_TOKEN);
+
+  writeDevspaceConfig({ configVersion: 1, server: { trustProxy: "loopback" } }, env);
+  assert.equal(loadConfig(env).logging.trustProxy, "loopback");
+  assert.throws(
+    () => writeDevspaceConfig({ configVersion: 1, server: { trustProxy: "uniquelocal" as never } }, env),
+    /trustProxy/,
+  );
 } finally {
   rmSync(configDir, { recursive: true, force: true });
 }

@@ -10,7 +10,7 @@ const serverConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(7676),
   publicBaseUrl: z.string().url().nullable().default(null),
   allowedHosts: z.array(z.string().trim().min(1)).default([]),
-  trustProxy: z.boolean().default(false),
+  trustProxy: z.union([z.boolean(), z.literal("loopback")]).default(false),
 }).strict().prefault({});
 
 const workspacesConfigSchema = z.object({
