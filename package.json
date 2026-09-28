@@ -36,6 +36,7 @@
     "dev": "tsx scripts/dev.ts",
     "dev:seed": "tsx scripts/dev-state.ts seed",
     "dev:reset": "tsx scripts/dev-state.ts reset",
+    "qa:browser": "tsx scripts/browser-qa.ts",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",

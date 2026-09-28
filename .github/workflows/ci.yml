@@ -62,3 +62,42 @@ jobs:
 
       - name: Doctor
         run: node dist/cli.js doctor
+
+  browser-qa:
+    name: Browser QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm and Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browser QA dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/agent-browser" agent-browser@0.38.1
+          echo "$RUNNER_TEMP/agent-browser/node_modules/.bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/agent-browser/node_modules/.bin/agent-browser" install --with-deps
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Run browser QA
+        run: pnpm qa:browser
+
+      - name: Upload browser QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-qa-${{ github.run_id }}
+          path: .devspace-dev/browser-qa/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -96,6 +96,37 @@ pnpm test
 pnpm build
 ```
 
+## Browser QA
+
+For MCP App changes and browser-visible issue reproduction, run the browser QA
+smoke:
+
+```bash
+pnpm qa:browser
+```
+
+It runs the current checkout through the official MCP Apps reference host and
+uses Agent Browser to exercise `open_workspace` and `show_changes` against an
+isolated dirty Git fixture. Evidence is written under the ignored
+`.devspace-dev/browser-qa/artifacts/` directory, including screenshots, a short
+video, browser console/errors, and a report.
+
+The first run downloads a pinned revision of the MCP Apps repository into the
+checkout-local QA directory and installs the `basic-host` dependencies there.
+It requires `agent-browser`, Chrome for Agent Browser, and `ffmpeg`; run
+`agent-browser doctor` to verify those prerequisites.
+
+For exploratory issue or PR QA, keep the reference host running instead:
+
+```bash
+pnpm qa:browser -- --serve
+```
+
+Then drive `http://127.0.0.1:8080` with a worktree-scoped Agent Browser session.
+Use this reference-host path for deterministic MCP App behavior. Use the seeded
+`pnpm dev` flow with the real ChatGPT host only when the behavior being checked
+is specifically host-dependent.
+
 ## Releases
 
 Releases are published by the manual `Release` GitHub Actions workflow. Do not
