@@ -11,7 +11,6 @@
     "@fontsource-variable/hanken-grotesk": "^5.3.0",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/instrument-serif": "^5.3.0",
     "@fontsource/martian-mono": "^5.3.0",
     "blume": "^2.0.3"
   }

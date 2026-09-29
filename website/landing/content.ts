@@ -59,8 +59,12 @@ await agent(\`Implement:\\n\${plan}\`, {
 
 phase("Verify");
 const [review, qa] = await parallel([
-  () => agent("Review the diff.", { provider: "pi", model: "fable-5.1", effort: "high" }),
-  () => agent("Test it in the browser.", { provider: "codex", model: "gpt-6-sol", effort: "medium" }),
+  () => agent("Review the diff.", {
+    provider: "pi", model: "fable-5.1", effort: "high",
+  }),
+  () => agent("Test it in the browser.", {
+    provider: "codex", model: "gpt-6-sol", effort: "medium",
+  }),
 ]);
 
 return { review, qa };`;

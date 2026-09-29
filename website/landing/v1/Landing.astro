@@ -3,11 +3,11 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import "@fontsource-variable/hanken-grotesk";
-import { Code } from "astro:components";
 import Shell from "../Shell.astro";
 import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import ChatMock from "./ChatMock.astro";
+import WorkflowStage from "./WorkflowStage.astro";
 import Logo from "../../logos/Logo.astro";
 import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
 ---
@@ -116,22 +116,23 @@ effort: high
       </div>
     </section>
 
-    <section class="split split--rev">
-      <div class="split__text">
-        <span class="eyebrow">Dynamic workflows · preview</span>
-        <h2>Program the loop. Resume from the step that failed.</h2>
-        <p>
-          The orchestrator writes a small script — plan with one vendor, build with
-          another, verify in parallel — launches it, and polls. Writers get isolated
-          worktrees. A failed run resumes from its first failed call, reusing
-          everything before it.
-        </p>
-        <a class="link" href="/docs/orchestration/dynamic-workflows">Dynamic workflows →</a>
+    <section class="flow">
+      <div class="flow__head">
+        <div>
+          <span class="eyebrow">Dynamic workflows · preview</span>
+          <h2>Program the loop. Resume from the step that failed.</h2>
+        </div>
+        <div>
+          <p>
+            The orchestrator writes a small script — plan with one vendor, build with
+            another, verify in parallel — launches it, and polls. Writers get isolated
+            worktrees. A failed run resumes from its first failed call, reusing
+            everything before it.
+          </p>
+          <a class="link" href="/docs/orchestration/dynamic-workflows">Dynamic workflows →</a>
+        </div>
       </div>
-      <div class="split__card split__card--code">
-        <div class="card__head"><span>.devspace/workflows/ship.js</span><span class="dim">js</span></div>
-        <Code code={WORKFLOW_SNIPPET} lang="js" theme="vesper" />
-      </div>
+      <WorkflowStage />
     </section>
 
     <section class="faq">
@@ -253,7 +254,6 @@ effort: high
   .pillar__more { margin-top: auto; padding-top: 12px; font-size: 13px; }
 
   .split { display: grid; grid-template-columns: 1fr 1.15fr; gap: 56px; padding: 88px 44px; align-items: center; }
-  .split--rev .split__text { order: 2; }
   .eyebrow { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .split h2 { font-size: clamp(26px, 2.6vw, 34px); line-height: 1.15; letter-spacing: -0.03em; margin: 14px 0 18px; font-weight: 600; }
   .split p { font-family: "Hanken Grotesk Variable", sans-serif; font-size: 16px; color: #3e3d3a; max-width: 50ch; margin: 0 0 24px; }
@@ -266,10 +266,10 @@ effort: high
   td b { font-weight: 500; }
   .prof { display: inline-flex; align-items: center; gap: 8px; line-height: 20px; }
   .card__file { margin: 0; padding: 14px 16px; background: #f7f7f5; font: inherit; white-space: pre-wrap; }
-  .split__card--code { background: #151515; color: #e7e5df; border-color: #151515; }
-  .split__card--code .card__head { border-color: #2c2c2a; }
-  .split__card--code :global(pre) { margin: 0; padding: 16px 18px; font: 12.5px/1.7 "IBM Plex Mono", monospace; overflow-x: auto; }
-  .split__card--code :global(pre code) { font: inherit; }
+  .flow { padding: 88px 44px 64px; }
+  .flow__head { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: end; margin-bottom: 40px; }
+  .flow h2 { font-size: clamp(26px, 2.6vw, 34px); line-height: 1.15; letter-spacing: -0.03em; margin: 14px 0 0; font-weight: 600; max-width: 20ch; }
+  .flow p { font-family: "Hanken Grotesk Variable", sans-serif; font-size: 16px; color: #3e3d3a; max-width: 50ch; margin: 0 0 20px; }
 
   .faq { display: grid; grid-template-columns: 1fr 2fr; gap: 56px; padding: 80px 44px; }
   .faq h2 { margin: 0; font-size: 30px; letter-spacing: -0.03em; font-weight: 600; }
@@ -290,8 +290,7 @@ effort: high
   }
 
   @media (max-width: 1000px) {
-    .hero, .split, .faq { grid-template-columns: 1fr; gap: 32px; }
-    .split--rev .split__text { order: 0; }
+    .hero, .split, .faq, .flow__head { grid-template-columns: 1fr; gap: 32px; }
     .works { grid-template-columns: 1fr; }
     .works ul, .works__hosts { grid-template-columns: repeat(4, 1fr) !important; }
     .pillars { grid-template-columns: 1fr; }
@@ -304,7 +303,7 @@ effort: high
   @media (max-width: 700px) {
     .nav__left a:not(.brand) { display: none; }
     .hero { padding: 64px 20px 48px; }
-    .works, .split, .faq, .cta, .pillar { padding-left: 20px; padding-right: 20px; }
+    .works, .split, .faq, .cta, .pillar, .flow { padding-left: 20px; padding-right: 20px; }
     .works ul, .works__hosts { grid-template-columns: repeat(2, 1fr) !important; }
     .btn--lg code { font-size: 12px; }
   }
