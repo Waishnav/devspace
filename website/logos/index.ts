@@ -2,7 +2,7 @@
 // Sourced from the GitCMS marketing site; see README for provenance.
 const files = import.meta.glob<string>("./*.svg", { query: "?raw", import: "default", eager: true });
 
-export type LogoId = "openai" | "claude" | "grok" | "muse" | "openclaw" | "hermes" | "opencode" | "pi" | "cursor" | "github";
+export type LogoId = "openai" | "claude" | "grok" | "muse" | "openclaw" | "hermes" | "opencode" | "pi" | "cursor" | "copilot";
 
 export function logoSvg(id: LogoId): string {
   const svg = files[`./${id}.svg`];
@@ -27,7 +27,7 @@ export const PROVIDERS: ReadonlyArray<{ id: string; name: string; via: string; l
   { id: "opencode", name: "OpenCode", via: "SDK", logo: "opencode" },
   { id: "pi", name: "Pi", via: "embedded SDK", logo: "pi" },
   { id: "cursor", name: "Cursor", via: "ACP", logo: "cursor" },
-  { id: "copilot", name: "Copilot", via: "ACP", logo: "github" },
+  { id: "copilot", name: "Copilot", via: "ACP", logo: "copilot" },
   { id: "grok", name: "Grok Build", via: "ACP", logo: "grok" },
 ];
 
