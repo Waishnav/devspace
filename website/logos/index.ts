@@ -7,7 +7,9 @@ export type LogoId = "openai" | "claude" | "grok" | "muse" | "openclaw" | "herme
 export function logoSvg(id: LogoId): string {
   const svg = files[`./${id}.svg`];
   if (!svg) throw new Error(`Unknown logo: ${id}`);
-  return svg;
+  // Marks with dedicated dark-background artwork ship both; variants.css picks one.
+  const dark = files[`./${id}-dark.svg`];
+  return dark ? `<span class="lv lv--light">${svg}</span><span class="lv lv--dark">${dark}</span>` : svg;
 }
 
 /** Orchestration interfaces: where people talk to the model that delegates. */

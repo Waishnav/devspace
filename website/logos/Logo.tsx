@@ -1,4 +1,5 @@
 import { logoSvg, type LogoId } from "./index";
+import "./variants.css";
 
 // React twin of Logo.astro for islands.
 export function Logo({ id, size = 16 }: { id: LogoId; size?: number }) {
