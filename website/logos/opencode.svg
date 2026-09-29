@@ -1,6 +1,1 @@
-
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="512" height="512" fill="#FDFCFC"/>
-<path d="M320 224V352H192V224H320Z" fill="#E6E5E6"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z" fill="#17181C"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="114 54 252 372"><title>OpenCode</title><rect x="126" y="66" width="228" height="348" fill="#fff" stroke="#4B4646" stroke-width="12"/><rect x="120" y="240" width="240" height="180" fill="#4B4646"/></svg>
