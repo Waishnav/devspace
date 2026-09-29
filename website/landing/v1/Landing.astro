@@ -3,7 +3,9 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import "@fontsource-variable/hanken-grotesk";
+import { Code } from "astro:components";
 import Shell from "../Shell.astro";
+import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import ChatMock from "./ChatMock.astro";
 import Logo from "../../logos/Logo.astro";
@@ -21,7 +23,7 @@ import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIP
     </div>
     <button class="btn btn--dark" data-copy={INSTALL}>
       <span class="btn__idle">Install</span><span class="btn__done">Copied</span>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8m0 0 3.5-3.5M8 10 4.5 6.5M3 13h10" /></svg>
+      <Icon name="download" size={18} />
     </button>
   </header>
 
@@ -40,7 +42,7 @@ import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIP
         <div class="hero__cta">
           <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
             <code>{INSTALL}</code>
-            <span class="btn__idle">⧉</span><span class="btn__done">✓</span>
+            <span class="btn__idle"><Icon name="copy" size={18} /></span><span class="btn__done"><Icon name="check" size={18} /></span>
           </button>
           <a class="btn btn--ghost btn--lg" href={DOCS}>Read the docs <span>→</span></a>
         </div>
@@ -97,7 +99,7 @@ import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIP
             {MATRIX.map((row) => (
               <tr>
                 <td>{row.task}</td>
-                <td><b class="prof"><Logo id={row.logo} size={16} />{row.profile}</b></td>
+                <td><b class="prof"><Logo id={row.logo} size={20} />{row.profile}</b></td>
                 <td class="dim">{row.why}</td>
               </tr>
             ))}
@@ -107,7 +109,8 @@ import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIP
 ---
 name: reviewer
 description: Read-only review for bugs and missing tests.
-provider: codex
+provider: pi
+model: fable-5.1
 effort: high
 ---</pre>
       </div>
@@ -127,7 +130,7 @@ effort: high
       </div>
       <div class="split__card split__card--code">
         <div class="card__head"><span>.devspace/workflows/ship.js</span><span class="dim">js</span></div>
-        <pre>{WORKFLOW_SNIPPET}</pre>
+        <Code code={WORKFLOW_SNIPPET} lang="js" theme="vesper" />
       </div>
     </section>
 
@@ -147,7 +150,7 @@ effort: high
       <h2>Stop deciding what to prompt next.</h2>
       <div class="hero__cta">
         <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
-          <code>{INSTALL}</code><span class="btn__idle">⧉</span><span class="btn__done">✓</span>
+          <code>{INSTALL}</code><span class="btn__idle"><Icon name="copy" size={18} /></span><span class="btn__done"><Icon name="check" size={18} /></span>
         </button>
         <a class="btn btn--ghost btn--lg" href={GITHUB}>Star on GitHub <span>→</span></a>
       </div>
@@ -185,15 +188,15 @@ effort: high
     display: inline-flex; align-items: center; gap: 12px; cursor: pointer;
     border: 1px solid var(--ink); padding: 11px 22px; font: 500 13px "IBM Plex Mono", monospace;
   }
-  .btn svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; }
   .btn--dark { background: var(--ink); color: #f5f5f3; }
   .btn--dark:hover { background: #2b2b2b; }
   .btn--ghost { background: var(--paper); border-color: var(--line); }
   .btn--ghost:hover { border-color: var(--ink); }
   .btn--lg { padding: 16px 24px; }
   .btn code { font: inherit; }
+  .btn__idle, .btn__done { display: inline-flex; }
   .btn__done, .btn[data-copied] .btn__idle { display: none; }
-  .btn[data-copied] .btn__done { display: inline; }
+  .btn[data-copied] .btn__done { display: inline-flex; }
 
   .frame {
     max-width: 1296px; margin: 0 auto; border: 1px solid var(--line); border-bottom: 0;
@@ -261,11 +264,12 @@ effort: high
   table { width: 100%; border-collapse: collapse; }
   td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
   td b { font-weight: 500; }
-  .prof { display: inline-flex; align-items: center; gap: 8px; }
+  .prof { display: inline-flex; align-items: center; gap: 8px; line-height: 20px; }
   .card__file { margin: 0; padding: 14px 16px; background: #f7f7f5; font: inherit; white-space: pre-wrap; }
   .split__card--code { background: #151515; color: #e7e5df; border-color: #151515; }
   .split__card--code .card__head { border-color: #2c2c2a; }
-  .split__card--code pre { margin: 0; padding: 16px; font: 12.5px/1.65 "IBM Plex Mono", monospace; overflow-x: auto; }
+  .split__card--code :global(pre) { margin: 0; padding: 16px 18px; font: 12.5px/1.7 "IBM Plex Mono", monospace; overflow-x: auto; }
+  .split__card--code :global(pre code) { font: inherit; }
 
   .faq { display: grid; grid-template-columns: 1fr 2fr; gap: 56px; padding: 80px 44px; }
   .faq h2 { margin: 0; font-size: 30px; letter-spacing: -0.03em; font-weight: 600; }

@@ -11,11 +11,11 @@ export { HOSTS, PROVIDERS } from "../logos";
 
 // The model-per-task matrix people already maintain by hand.
 export const MATRIX: ReadonlyArray<{ task: string; profile: string; why: string; logo: LogoId }> = [
-  { task: "Plan", profile: "codex · xhigh", why: "long-horizon reasoning", logo: "openai" },
-  { task: "Implement", profile: "claude-implementer", why: "careful multi-file edits", logo: "claude" },
-  { task: "Explore", profile: "opencode-explorer", why: "cheap, fast discovery", logo: "opencode" },
-  { task: "Review", profile: "copilot-reviewer", why: "a second vendor's eyes", logo: "github" },
-  { task: "QA", profile: "codex-qa-tester", why: "drives the browser", logo: "openai" },
+  { task: "Plan", profile: "codex/gpt-6-astra-xhigh", why: "long-horizon reasoning", logo: "openai" },
+  { task: "Implement", profile: "claude/opus-5.5-medium", why: "careful multi-file edits", logo: "claude" },
+  { task: "Explore", profile: "opencode/deepseek-v4.1-flash", why: "cheap, fast discovery", logo: "opencode" },
+  { task: "Review", profile: "pi/fable-5.1-high", why: "a second vendor's eyes", logo: "pi" },
+  { task: "QA", profile: "codex/gpt-6-sol-medium", why: "drives the browser", logo: "openai" },
 ];
 
 export const PILLARS = [
@@ -48,15 +48,19 @@ export const WORKFLOW_SNIPPET = `export const meta = {
 };
 
 phase("Plan");
-const plan = await agent(\`Plan: \${args.task}\`, { provider: "codex", effort: "xhigh" });
+const plan = await agent(\`Plan: \${args.task}\`, {
+  provider: "codex", model: "gpt-6-astra", effort: "xhigh",
+});
 
 phase("Build");
-await agent(\`Implement:\\n\${plan}\`, { profile: "claude-implementer" });
+await agent(\`Implement:\\n\${plan}\`, {
+  provider: "claude", model: "opus-5.5", effort: "medium",
+});
 
 phase("Verify");
 const [review, qa] = await parallel([
-  () => agent("Review the diff.", { profile: "copilot-reviewer" }),
-  () => agent("Test it in the browser.", { profile: "codex-qa-tester" }),
+  () => agent("Review the diff.", { provider: "pi", model: "fable-5.1", effort: "high" }),
+  () => agent("Test it in the browser.", { provider: "codex", model: "gpt-6-sol", effort: "medium" }),
 ]);
 
 return { review, qa };`;
