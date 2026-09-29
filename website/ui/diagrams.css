@@ -32,53 +32,7 @@
   background: var(--ds-border); display: block;
 }
 
-/* Delegation diagram */
-.ds-deleg {
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) 44px minmax(0, 0.7fr) 44px minmax(0, 1.6fr);
-  align-items: center;
-  padding: 1.25rem;
-  gap: 0;
-}
-.ds-node {
-  border: 1px solid var(--ds-border);
-  background: var(--blume-background, #fff);
-  border-radius: 3px;
-  padding: 0.7rem 0.8rem;
-  line-height: 1.4;
-}
-.ds-node__label { color: var(--ds-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; }
-.ds-node__title { font-weight: 600; font-size: 13px; }
-.ds-node--core { text-align: center; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ds-fg) 6%, transparent); }
-.ds-wire {
-  position: relative; height: 1px; background: var(--ds-border);
-  margin: 0 6px;
-}
-.ds-wire__pulse {
-  position: absolute; top: -2px; left: 0; width: 18px; height: 5px; border-radius: 3px;
-  background: var(--ds-fg); opacity: 0;
-}
-.ds-wire--active .ds-wire__pulse { animation: ds-pulse 0.9s ease-in-out infinite; }
-.ds-wire--back .ds-wire__pulse { animation-direction: reverse; }
-@keyframes ds-pulse {
-  0% { left: 0; opacity: 0; }
-  20% { opacity: 1; }
-  80% { opacity: 1; }
-  100% { left: calc(100% - 18px); opacity: 0; }
-}
-.ds-providers { display: grid; gap: 4px; }
-.ds-prov {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.3rem 0.55rem; border: 1px solid var(--ds-border); border-radius: 3px;
-  background: var(--blume-background, #fff);
-  transition: border-color 0.25s, opacity 0.25s;
-  opacity: 0.55;
-}
-.ds-prov--running, .ds-prov--completed { opacity: 1; border-color: color-mix(in oklab, var(--ds-fg) 35%, var(--ds-border)); }
-.ds-node__host { display: flex; align-items: center; gap: 7px; }
 .ds-logo svg { width: 100%; height: 100%; border-radius: 22%; }
-.ds-prov__name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ds-prov__role { color: var(--ds-muted); font-size: 10.5px; }
 .ds-status { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ds-muted); }
 .ds-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ds-border); }
 .ds-status--running { color: var(--ds-live); }
@@ -88,19 +42,6 @@
 .ds-status--failed { color: var(--ds-err); }
 .ds-status--failed::before { background: var(--ds-err); }
 @keyframes ds-blink { to { opacity: 0.25; } }
-
-.ds-log {
-  border-top: 1px solid var(--ds-border);
-  padding: 0.75rem 0.85rem;
-  min-height: 8.2em;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.ds-log__cmd { color: var(--ds-fg); }
-.ds-log__cmd::before { content: "$ "; color: var(--ds-muted); }
-.ds-log__out { color: var(--ds-muted); }
-.ds-log__line { animation: ds-in 0.25s ease-out both; }
 @keyframes ds-in { from { opacity: 0; transform: translateY(3px); } }
 
 /* Workflow run */
@@ -127,9 +68,6 @@
 }
 
 @media (max-width: 640px) {
-  .ds-deleg { grid-template-columns: 1fr; gap: 10px; }
-  .ds-wire { height: 18px; width: 1px; margin: 0 auto; }
-  .ds-wire__pulse { display: none; }
   .ds-wf { grid-template-columns: 1fr; }
   .ds-wf__phases { border-right: 0; border-bottom: 1px solid var(--ds-border); display: flex; overflow-x: auto; padding: 0; }
   .ds-wf__phase { white-space: nowrap; gap: 0.5rem; }

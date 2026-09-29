@@ -1,0 +1,54 @@
+/* Routing diagram (docs). Uses the shared --ds-* tokens, so it follows the theme. */
+.dm { --dm-chip: var(--blume-background, #fff); --dm-accent: var(--ds-live); background: var(--ds-bg); }
+.dm b { font-weight: 600; }
+.dm__caption { border: 1px solid var(--ds-border); border-radius: 4px; padding: 1px 8px; white-space: nowrap; }
+
+.dm__labels {
+  display: flex; justify-content: space-between; padding: 12px 16px 0;
+  color: var(--ds-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em;
+}
+.dm__canvas { position: relative; margin: 0 16px; }
+.dm__canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dm__canvas > svg path { fill: none; stroke: color-mix(in oklab, var(--ds-fg) 22%, transparent); stroke-width: 1.2; vector-effect: non-scaling-stroke; transition: stroke 0.3s; }
+.dm__canvas > svg path.on { stroke: var(--dm-accent); stroke-dasharray: 5 5; animation: dm-dash 0.8s linear infinite; }
+@keyframes dm-dash { to { stroke-dashoffset: -20; } }
+
+.dm__col { list-style: none; margin: 0; padding: 0; position: absolute; top: 0; bottom: 0; width: 22.5%; }
+.dm__col--l { left: 0; }
+.dm__col--r { right: 0; }
+.dm__col li {
+  position: absolute; left: 0; right: 0; transform: translateY(-50%); margin: 0;
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+  border: 1px solid var(--ds-border); border-radius: 6px; background: var(--dm-chip);
+  color: var(--ds-muted); font-size: 12px; transition: border-color 0.3s, color 0.3s, background 0.3s;
+}
+.dm__col li.on { color: var(--ds-fg); border-color: var(--dm-accent); background: color-mix(in oklab, var(--dm-accent) 9%, var(--dm-chip)); }
+.dm__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dm__st { flex: none; width: 7px; height: 7px; border-radius: 50%; background: transparent; }
+.dm__st--running { background: var(--ds-live); animation: ds-blink 0.7s infinite alternate; }
+.dm__st--completed { background: var(--ds-ok); }
+
+.dm__core {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 17%; min-width: 118px; text-align: center;
+  border: 1px solid var(--ds-border); border-radius: 8px; background: var(--dm-chip); padding: 12px 6px; display: grid; gap: 3px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.dm__core.on { border-color: var(--dm-accent); box-shadow: 0 0 0 4px color-mix(in oklab, var(--dm-accent) 14%, transparent); }
+.dm__core b { font-size: 13px; }
+.dm__core span { color: var(--ds-muted); font-size: 10px; line-height: 1.4; }
+
+.dm__log { border-top: 1px solid var(--ds-border); margin-top: 14px; padding: 10px 16px; min-height: 5.6em; line-height: 1.55; }
+.dm__line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: ds-in 0.25s ease-out both; }
+.dm__line--out { color: var(--ds-muted); }
+.dm__prompt { color: var(--ds-muted); }
+.dm__ok { color: var(--ds-ok); }
+
+@media (max-width: 640px) {
+  .dm__labels { display: none; }
+  .dm__canvas { height: auto !important; display: grid; gap: 10px; }
+  .dm__canvas > svg, .dm__core { display: none; }
+  .dm__col { position: static; width: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .dm__col li { position: static; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dm * { animation: none !important; transition: none !important; } }
