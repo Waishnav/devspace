@@ -78,7 +78,7 @@ export default function DelegationDiagram() {
 
         <div className={`dm__wire ${routed ? "on" : ""}`}><i /></div>
 
-        <div className="dm__core"><small>local</small><b>devspace</b><span>agentd</span></div>
+        <div className="dm__core"><b>devspace</b></div>
 
         <div className={`dm__wire ${phase === "running" ? "on" : ""}`}><i /></div>
 

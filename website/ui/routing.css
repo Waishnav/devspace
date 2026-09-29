@@ -42,11 +42,9 @@
 
 .dm__core {
   text-align: center; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--dm-chip);
-  padding: 16px 6px; display: grid; gap: 3px; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
+  padding: 22px 6px; display: grid; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
 }
-.dm__core small { color: var(--ds-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; }
-.dm__core b { font-size: 14px; }
-.dm__core span { color: var(--ds-muted); font-size: 11.5px; }
+.dm__core b { font-size: 15px; }
 
 .dm__agents { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
 .dm__agents li {
