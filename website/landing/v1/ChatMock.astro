@@ -48,7 +48,7 @@ import Logo from "../../logos/Logo.astro";
         </ul>
       </div>
 
-      <div class="composer r" style="--d:4.4s"><span><em class="mention">@DevSpace</em> now add CSV export to the billing page<i class="caret"></i></span></div>
+      <div class="composer" data-composer><span><em class="mention" data-mention></em><span data-rest></span><i class="caret"></i></span></div>
     </div>
 
     <aside class="machine">
@@ -71,6 +71,43 @@ import Logo from "../../logos/Logo.astro";
     </aside>
   </div>
 </div>
+
+<script>
+  // Types the next prompt once the rest of the session has played. Restarts
+  // whenever the tab is shown again.
+  const composer = document.querySelector<HTMLElement>("[data-composer]");
+  if (composer) {
+    const mention = composer.querySelector<HTMLElement>("[data-mention]")!;
+    const rest = composer.querySelector<HTMLElement>("[data-rest]")!;
+    const full = ["@DevSpace", " now add CSV export to the billing page"];
+    const panel = composer.closest<HTMLElement>(".panel");
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let timers: number[] = [];
+
+    const clear = () => { timers.forEach(clearTimeout); timers = []; };
+    const reset = () => { mention.textContent = ""; rest.textContent = ""; };
+    const play = () => {
+      clear();
+      reset();
+      if (reduced) { mention.textContent = full[0]!; rest.textContent = full[1]!; return; }
+      let delay = 4400;
+      full.forEach((chunk, part) => {
+        const target = part === 0 ? mention : rest;
+        for (let i = 1; i <= chunk.length; i++) {
+          delay += 40 + Math.random() * 45;
+          timers.push(window.setTimeout(() => (target.textContent = chunk.slice(0, i)), delay));
+        }
+        delay += 250;
+      });
+    };
+
+    play();
+    if (panel) {
+      new MutationObserver(() => { if (panel.classList.contains("is-active")) play(); else { clear(); reset(); } })
+        .observe(panel, { attributes: true, attributeFilter: ["class"] });
+    }
+  }
+</script>
 
 <style>
   .chat { display: grid; grid-template-columns: minmax(0, 1fr) 250px; }
@@ -96,6 +133,7 @@ import Logo from "../../logos/Logo.astro";
     border: 1px solid var(--m-line); border-radius: 12px; padding: 12px; color: var(--m-fg); font-size: 13.5px;
     font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
   }
+  .mention:empty { display: none; }
   .mention { color: #8ab4ff; background: rgba(138, 180, 255, 0.14); border-radius: 4px; padding: 0 4px; margin-right: 2px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
   .caret { display: inline-block; width: 1.5px; height: 15px; background: var(--m-fg); vertical-align: -3px; margin-left: 2px; animation: mock-blink 0.8s infinite alternate; }
 
