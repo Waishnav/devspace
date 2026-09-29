@@ -1,7 +1,7 @@
 /* Logos with separate light- and dark-background artwork render both variants;
    these rules show the one that suits the surrounding background. Dark
-   contexts: the V3 page, the hero's dark windows, and the docs' dark theme. */
+   contexts: the hero's dark windows and the docs' dark theme. */
 .lv { display: contents; }
 .lv--dark { display: none; }
-body.v3 .lv--light, .mock .lv--light, [data-theme="dark"] .lv--light { display: none; }
-body.v3 .lv--dark, .mock .lv--dark, [data-theme="dark"] .lv--dark { display: contents; }
+.mock .lv--light, [data-theme="dark"] .lv--light { display: none; }
+.mock .lv--dark, [data-theme="dark"] .lv--dark { display: contents; }

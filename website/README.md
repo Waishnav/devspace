@@ -20,19 +20,19 @@ If `blume dev` is already running, `blume build` refuses to run; use
 - `islands/` — React islands usable in any MDX page (`<DelegationDiagram />`, `<WorkflowRun />`).
 - `ui/` — styles shared by the islands, plus the static `<Logos set="hosts|providers" />` MDX component (registered in `components.ts`).
 - `logos/` — brand marks for hosts and providers, the `HOSTS`/`PROVIDERS` lists, and `Logo` components for Astro and React. The SVGs come from the GitCMS marketing site; dark fills were changed to `currentColor` so they follow the theme.
-- `pages/` — custom Astro routes. `/` and `/v1` and `/v3` are landing explorations.
-- `landing/` — landing page components. `content.ts` holds the copy every variant shares.
+- `pages/` — custom Astro routes (`/` is the landing page).
+- `landing/` — landing page components. `content.ts` holds the shared copy.
 
-## Landing explorations
+## Landing page
 
-| Route | Name | Direction |
-| --- | --- | --- |
-| `/v1` (also `/`) | Workbench | Light, hairline-framed, all-monospace; ChatGPT mockup over a pixel landscape. |
-| `/v3` | Night shift | Dark, rotating host headline, autoplaying terminal scenes, gradient-mesh feature rows. |
+The landing page is `pages/index.astro` (components in `landing/home/`): light,
+hairline-framed, all-monospace, with a tabbed hero (chat app, delegating, any
+host to any agent) over a pixel landscape, and a workflow script beside a live
+visualizer of its run.
 
-The floating V1/V3 switcher in `landing/Shell.astro` is for review only;
-remove it once a direction is chosen. `/v3?scene=1|2` opens a specific terminal
-scene.
+`landing/parked/TerminalScenes.astro` is a tabbed, autoplaying terminal kept from
+a retired dark exploration. No page uses it; see the comment at its top for what
+it needs.
 
 Dynamic workflows are documented as a v1.1 preview; they are implemented on the
 `codex/workflow-stack-main-reconciliation` branch, not yet on `main`.

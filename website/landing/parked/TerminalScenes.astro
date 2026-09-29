@@ -1,4 +1,12 @@
 ---
+// PARKED: not used by any page. Tabbed, autoplaying terminal from the retired
+// "Night shift" landing exploration, with three scenes: a workflow run in the
+// navigator, subagents from a coding agent, and ChatGPT over MCP.
+// Usage: import it in an .astro page. It needs the "Martian Mono" and
+// "Instrument Sans Variable" fonts (`@fontsource/martian-mono`,
+// `@fontsource-variable/instrument-sans`, no longer installed) and works best on
+// a near-black page. `?scene=1|2` opens a specific scene. Scene content still
+// references the retired copilot-reviewer profile.
 import Logo from "../../logos/Logo.astro";
 // Three illustrative terminal scenes that autoplay. Commands and XML output
 // mirror the real CLI; ids, timings, and results are made up.
@@ -121,7 +129,7 @@ import Logo from "../../logos/Logo.astro";
 </script>
 
 <style>
-  .term { max-width: 1120px; margin: 0 auto; }
+  .term { --lime: #c6f432; max-width: 1120px; margin: 0 auto; }
   .term__tabs { display: flex; justify-content: center; gap: 4px; margin-bottom: 18px; }
   .term__tabs button {
     background: transparent; border: 1px solid transparent; color: #8b8b93; cursor: pointer;
