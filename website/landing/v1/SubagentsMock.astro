@@ -1,10 +1,11 @@
 ---
 import Logo from "../../logos/Logo.astro";
 // Illustrative: a coding agent delegating reviews to two other agents. Commands
-// and XML fragments mirror the real `devspace agents` output; ids are made up.
+// and XML fragments mirror the real `devspace agents` output; ids and findings
+// are made up. Long results are truncated, as they would be in a terminal.
 ---
 
-<div class="mock" role="img" aria-label="Illustration: Claude Code delegating reviews to Codex and Pi with devspace agents, then waiting for both results">
+<div class="mock" role="img" aria-label="Illustration: Claude Code delegating reviews to Codex and Pi with devspace agents, then reading their findings">
   <div class="mock__bar">
     <span class="mock__dots"><i></i><i></i><i></i></span>
     <span class="mock__title"><Logo id="claude" size={14} /> Claude Code · <b>~/work/billing</b></span>
@@ -13,35 +14,58 @@ import Logo from "../../logos/Logo.astro";
 
   <div class="mock__body sh">
     <p class="r" style="--d:.2s"><span class="dim">›</span> get Codex and Pi to review this before I merge</p>
-    <p class="r" style="--d:.9s"><span class="prompt">$</span> devspace agents targets</p>
-    <p class="r xml" style="--d:1.2s">&lt;provider name="codex" model="gpt-6-astra" effort="xhigh"/&gt;</p>
-    <p class="r xml" style="--d:1.35s">&lt;provider name="pi" model="fable-5.1" effort="high"/&gt;</p>
-    <p class="r" style="--d:2s"><span class="prompt">$</span> devspace agents run codex "Review the staged diff for correctness…"</p>
-    <p class="r xml" style="--d:2.4s">&lt;agent id="agt_7Kq2" status="running"/&gt;</p>
-    <p class="r" style="--d:3s"><span class="prompt">$</span> devspace agents run pi "Check the staged diff for test gaps…"</p>
-    <p class="r xml" style="--d:3.4s">&lt;agent id="agt_Q9m4" status="running"/&gt;</p>
-    <p class="r" style="--d:4s"><span class="prompt">$</span> devspace agents wait agt_7Kq2 agt_Q9m4</p>
-    <p class="r xml" style="--d:5.2s">&lt;agent id="agt_7Kq2" status="completed"&gt;<span class="fg">1 finding: export.ts:48 unescaped quote</span>&lt;/agent&gt;</p>
-    <p class="r xml" style="--d:5.7s">&lt;agent id="agt_Q9m4" status="completed"&gt;<span class="fg">missing test: empty invoice list</span>&lt;/agent&gt;</p>
-    <p class="r" style="--d:6.4s"><span class="dim">›</span> Both reviews are in. Fixing export.ts:48 and adding the empty-list test.<i class="caret"></i></p>
+    <p class="r" style="--d:.8s"><span class="prompt">$</span> devspace agents run codex "Review the staged diff for correctness…"</p>
+    <p class="r xml" style="--d:1.2s">&lt;agent id="agt_7Kq2" status="running"/&gt;</p>
+    <p class="r" style="--d:1.8s"><span class="prompt">$</span> devspace agents run pi "Check the staged diff for test gaps…"</p>
+    <p class="r xml" style="--d:2.2s">&lt;agent id="agt_Q9m4" status="running"/&gt;</p>
+    <p class="r" style="--d:2.8s"><span class="prompt">$</span> devspace agents wait agt_7Kq2 agt_Q9m4</p>
 
-    <div class="agents">
-      <div class="agent r" style="--d:2.4s"><Logo id="openai" size={14} /><b>codex</b><span class="st">reviewing</span></div>
-      <div class="agent r" style="--d:3.4s"><Logo id="pi" size={14} /><b>pi</b><span class="st">reviewing</span></div>
+    <div class="results">
+      <article class="result r" style="--d:4s">
+        <header><Logo id="openai" size={15} /><b>codex</b><span class="dim">gpt-6-astra · xhigh</span><span class="done">✓ completed</span></header>
+        <pre><span class="xml">&lt;agent id="agt_7Kq2" status="completed"&gt;</span>
+<b>3 findings</b>
+1. export.ts:48  quotes in cell values aren't
+   escaped; breaks on names like O"Brien
+2. export.ts:71  UTF-8 BOM missing, Excel
+   misreads accented characters
+3. csv.ts:22  numeric strings lose leading
+   zeros (invoice ids)
+<span class="more">… +6 more lines</span></pre>
+      </article>
+
+      <article class="result r" style="--d:4.8s">
+        <header><Logo id="pi" size={15} /><b>pi</b><span class="dim">fable-5.1 · high</span><span class="done">✓ completed</span></header>
+        <pre><span class="xml">&lt;agent id="agt_Q9m4" status="completed"&gt;</span>
+<b>4 test gaps</b>
+- empty invoice list: no test for a
+  header-only export
+- 10k+ rows: streaming path is untested
+- JPY totals: currency formatting has no
+  zero-decimal case
+<span class="more">… +4 more lines</span></pre>
+      </article>
     </div>
+
+    <p class="r final" style="--d:5.8s"><span class="dim">›</span> Both reviews are in. Fixing export.ts:48 first, then adding the empty-list and JPY tests.<i class="caret"></i></p>
   </div>
 </div>
 
 <style>
-  .sh { padding: 18px 20px; position: relative; }
+  .sh { padding: 20px 22px; font-size: 13px; line-height: 1.6; display: flex; flex-direction: column; gap: 1px; }
   .sh p { margin: 0; word-break: break-word; }
   .prompt { color: #c9f26a; }
-  .fg { color: #ececf0; }
-  .caret { display: inline-block; width: 7px; height: 14px; background: #c9f26a; vertical-align: -2px; margin-left: 3px; animation: mock-blink 0.8s infinite alternate; }
-  .agents { position: absolute; right: 20px; top: 18px; display: grid; gap: 6px; }
-  .agent { display: flex; align-items: center; gap: 8px; border: 1px solid var(--m-line); background: var(--m-panel); border-radius: 6px; padding: 5px 10px; }
-  .agent b { font-weight: 500; }
-  .st { color: #f0a54a; font-size: 11px; }
-  .st::before { content: "● "; animation: mock-blink 0.9s infinite alternate; }
-  @media (max-width: 820px) { .agents { display: none; } }
+  .final { margin-top: 14px !important; color: #ececf0; }
+  .caret { display: inline-block; width: 8px; height: 15px; background: #c9f26a; vertical-align: -2px; margin-left: 3px; animation: mock-blink 0.8s infinite alternate; }
+
+  .results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+  .result { border: 1px solid var(--m-line); border-radius: 8px; background: var(--m-panel); overflow: hidden; min-width: 0; }
+  .result header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--m-line); font-size: 12px; }
+  .result header b { font-weight: 500; }
+  .result .done { margin-left: auto; color: #4ade80; }
+  .result pre { margin: 0; padding: 11px 12px 12px; font: 12.5px/1.6 "IBM Plex Mono", monospace; color: #d3d0c8; white-space: pre-wrap; word-break: break-word; }
+  .result pre b { color: #f4f2ec; font-weight: 500; }
+  .more { color: var(--m-dim); font-style: italic; }
+
+  @media (max-width: 820px) { .results { grid-template-columns: 1fr; } }
 </style>

@@ -70,9 +70,9 @@ const curve = (x1: number, y1: number, x2: number, y2: number) =>
 </script>
 
 <style>
-  .map { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .map { padding: 18px 20px 24px; display: flex; flex-direction: column; gap: 10px; }
   .map__labels { display: flex; justify-content: space-between; color: var(--m-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; }
-  .map__canvas { position: relative; height: 420px; }
+  .map__canvas { position: relative; flex: 1; min-height: 380px; }
   svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   path { fill: none; stroke: #33332f; stroke-width: 1.2; vector-effect: non-scaling-stroke; transition: stroke 0.3s; }
   path.on { stroke: #f0a54a; stroke-dasharray: 5 5; animation: dash 0.8s linear infinite; }
