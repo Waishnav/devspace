@@ -6,12 +6,12 @@ import "@fontsource-variable/hanken-grotesk";
 import Shell from "../Shell.astro";
 import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
-import ChatMock from "./ChatMock.astro";
+import HeroStage from "./HeroStage.astro";
 import WorkflowStage from "./WorkflowStage.astro";
 import { Code } from "astro:components";
 import { workbenchLightTheme } from "./theme";
 import Logo from "../../logos/Logo.astro";
-import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
+import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, FAQ } from "../content";
 
 const REVIEWER_PROFILE = `---
 name: reviewer
@@ -41,13 +41,13 @@ effort: high
     <section class="hero">
       <div class="hero__left">
         <a class="tag" href="/docs/orchestration/dynamic-workflows">v1.1 · dynamic workflows in preview <span>→</span></a>
-        <h1>Let your coding agents delegate to each other.</h1>
+        <h1>Give ChatGPT and Claude access to your computer.</h1>
       </div>
       <div class="hero__right">
         <p>
-          DevSpace turns any harness into an orchestrator. Codex can hand work to
-          Claude Code, ChatGPT can run both — as bounded subagents and replayable
-          workflows, on your own machine.
+          DevSpace connects the AI you already use to your own machine — it reads,
+          edits, runs tests, and shows you the diff. Then it lets that AI hand work
+          to Codex, Claude Code, and other agents.
         </p>
         <div class="hero__cta">
           <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
@@ -59,25 +59,10 @@ effort: high
       </div>
     </section>
 
-    <section class="works">
-      <p>Orchestrate<br />from</p>
-      <ul class="works__hosts">
-        {HOSTS.map((h) => (
-          <li><Logo id={h.logo} size={22} /><b>{h.name}</b></li>
-        ))}
-      </ul>
-      <p>Delegate<br />to</p>
-      <ul>
-        {PROVIDERS.map((p) => (
-          <li><Logo id={p.logo} size={22} /><b>{p.name}</b></li>
-        ))}
-      </ul>
-    </section>
-
     <section class="stage">
       <div class="stage__art"><PixelField /></div>
-      <div class="stage__mock"><ChatMock /></div>
-      <a class="stage__tag" href="/docs/orchestration/subagents">How subagents work <span>→</span></a>
+      <div class="stage__mock"><HeroStage /></div>
+      <a class="stage__tag" href="/docs/quickstart">Set it up in minutes <span>→</span></a>
     </section>
 
     <section class="pillars">
@@ -222,27 +207,15 @@ effort: high
   .tag:hover { border-color: var(--ink); }
   h1 {
     margin: 0; font-weight: 600; font-size: clamp(34px, 4.3vw, 54px); line-height: 1.1;
-    letter-spacing: -0.035em; max-width: 13ch;
+    letter-spacing: -0.035em; max-width: 16ch;
   }
   .hero__right p { margin: 0 0 30px; max-width: 46ch; font-size: 14.5px; }
   .hero__cta { display: flex; flex-wrap: wrap; gap: 10px; }
 
-  .works { display: grid; grid-template-columns: 140px 1fr; align-items: center; padding: 26px 44px; gap: 14px 24px; }
-  .works p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
-  .works ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
-  .works__hosts { grid-template-columns: repeat(6, 1fr) !important; }
-  .works li {
-    background: #ececea; padding: 16px 10px 14px; text-align: center; display: grid; justify-items: center; gap: 4px;
-    transition: background 0.2s;
-  }
-  .works li:hover { background: #e3e3e0; }
-  .works b { font-weight: 500; }
-  .works span { font-size: 11px; color: var(--muted); }
-
   .stage { position: relative; padding: 14px 14px 0; background: #ededea; }
-  .stage__art { height: 760px; }
+  .stage__art { height: 830px; }
   .stage__mock {
-    position: absolute; left: 50%; top: 90px; transform: translateX(-50%);
+    position: absolute; left: 50%; top: 60px; transform: translateX(-50%);
     width: min(940px, calc(100% - 60px));
   }
   .stage__tag {
@@ -299,8 +272,6 @@ effort: high
 
   @media (max-width: 1000px) {
     .hero, .split, .faq, .flow__head { grid-template-columns: 1fr; gap: 32px; }
-    .works { grid-template-columns: 1fr; }
-    .works ul, .works__hosts { grid-template-columns: repeat(4, 1fr) !important; }
     .pillars { grid-template-columns: 1fr; }
     .pillar + .pillar { border-left: 0; border-top: 1px solid var(--line); }
     .stage { padding: 56px 30px; }
@@ -311,8 +282,7 @@ effort: high
   @media (max-width: 700px) {
     .nav__left a:not(.brand) { display: none; }
     .hero { padding: 64px 20px 48px; }
-    .works, .split, .faq, .cta, .pillar, .flow { padding-left: 20px; padding-right: 20px; }
-    .works ul, .works__hosts { grid-template-columns: repeat(2, 1fr) !important; }
+    .split, .faq, .cta, .pillar, .flow { padding-left: 20px; padding-right: 20px; }
     .btn--lg code { font-size: 12px; }
   }
 </style>

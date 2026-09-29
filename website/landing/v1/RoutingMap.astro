@@ -1,0 +1,105 @@
+---
+// Any host to any agent: the orchestrate-from / delegate-to idea as a graphic.
+// Rows are placed on a fixed 420px canvas so the SVG curves meet the chips.
+import Logo from "../../logos/Logo.astro";
+import { HOSTS, PROVIDERS } from "../content";
+
+const H = 420;
+const hostY = HOSTS.map((_, i) => (H / HOSTS.length) * (i + 0.5));
+const provY = PROVIDERS.map((_, i) => (H / PROVIDERS.length) * (i + 0.5));
+const mid = H / 2;
+const curve = (x1: number, y1: number, x2: number, y2: number) =>
+  `M${x1} ${y1} C ${x1 + (x2 - x1) * 0.55} ${y1}, ${x2 - (x2 - x1) * 0.55} ${y2}, ${x2} ${y2}`;
+---
+
+<div class="mock" data-map role="img" aria-label="Illustration: any chat app or coding agent on the left routes through DevSpace to any of seven coding agents on the right">
+  <div class="mock__bar">
+    <span class="mock__dots"><i></i><i></i><i></i></span>
+    <span class="mock__title">devspace · <b>any host → any agent</b></span>
+    <span class="mock__pill" data-caption>ChatGPT → Codex</span>
+  </div>
+
+  <div class="mock__body map">
+    <div class="map__labels"><span>Orchestrate from</span><span>Delegate to</span></div>
+    <div class="map__canvas">
+      <svg viewBox={`0 0 1000 ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        {hostY.map((y, i) => <path data-host-path={i} d={curve(230, y, 430, mid)} />)}
+        {provY.map((y, i) => <path data-prov-path={i} d={curve(570, mid, 770, y)} />)}
+      </svg>
+
+      <ul class="col col--l">
+        {HOSTS.map((h, i) => (
+          <li data-host={i} data-name={h.name} style={`top:${(hostY[i]! / H) * 100}%`}><Logo id={h.logo} size={20} />{h.name}</li>
+        ))}
+      </ul>
+
+      <div class="core"><b>devspace</b><span>workspaces · subagents · workflows</span></div>
+
+      <ul class="col col--r">
+        {PROVIDERS.map((p, i) => (
+          <li data-prov={i} data-name={p.name} style={`top:${(provY[i]! / H) * 100}%`}><Logo id={p.logo} size={20} />{p.name}</li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  const root = document.querySelector<HTMLElement>("[data-map]");
+  if (root) {
+    const hosts = [...root.querySelectorAll<HTMLElement>("[data-host]")];
+    const provs = [...root.querySelectorAll<HTMLElement>("[data-prov]")];
+    const caption = root.querySelector<HTMLElement>("[data-caption]")!;
+    const set = (list: HTMLElement[], attr: string, on: number[]) =>
+      list.forEach((el, i) => el.classList.toggle("on", on.includes(i)));
+    const paint = (h: number, targets: number[]) => {
+      set(hosts, "host", [h]);
+      set(provs, "prov", targets);
+      root.querySelectorAll<SVGPathElement>("[data-host-path]").forEach((p, i) => p.classList.toggle("on", i === h));
+      root.querySelectorAll<SVGPathElement>("[data-prov-path]").forEach((p, i) => p.classList.toggle("on", targets.includes(i)));
+      caption.textContent = `${hosts[h]!.dataset.name} → ${targets.map((t) => provs[t]!.dataset.name).join(" + ")}`;
+    };
+    let step = 0;
+    const tick = () => {
+      paint(step % hosts.length, [(step * 2) % provs.length, (step * 2 + 3) % provs.length]);
+      step++;
+    };
+    tick();
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(tick, 1700);
+  }
+</script>
+
+<style>
+  .map { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .map__labels { display: flex; justify-content: space-between; color: var(--m-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; }
+  .map__canvas { position: relative; height: 420px; }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  path { fill: none; stroke: #33332f; stroke-width: 1.2; vector-effect: non-scaling-stroke; transition: stroke 0.3s; }
+  path.on { stroke: #f0a54a; stroke-dasharray: 5 5; animation: dash 0.8s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -20; } }
+
+  .col { list-style: none; margin: 0; padding: 0; position: absolute; top: 0; bottom: 0; width: 23%; }
+  .col--l { left: 0; }
+  .col--r { right: 0; }
+  .col li {
+    position: absolute; left: 0; right: 0; transform: translateY(-50%); display: flex; align-items: center; gap: 9px;
+    height: 40px; padding: 0 11px; border: 1px solid var(--m-line); border-radius: 7px; background: var(--m-panel);
+    color: #a3a19a; font-size: 12.5px; transition: border-color 0.3s, color 0.3s, background 0.3s;
+  }
+  .col li.on { color: var(--m-fg); border-color: #f0a54a; background: #24211b; }
+  .core {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 20%; min-width: 130px; text-align: center;
+    border: 1px solid #55534d; border-radius: 9px; background: #1d1d1c; padding: 14px 8px; display: grid; gap: 3px;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
+  }
+  .core b { font-size: 14px; font-weight: 600; }
+  .core span { color: var(--m-dim); font-size: 10.5px; line-height: 1.4; }
+
+  @media (max-width: 820px) {
+    .map__canvas { height: auto; display: grid; gap: 8px; }
+    svg, .map__labels { display: none; }
+    .col { position: static; width: auto; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .col li { position: static; transform: none; }
+    .core { position: static; transform: none; width: auto; }
+  }
+</style>
