@@ -48,7 +48,7 @@ import Logo from "../../logos/Logo.astro";
         </ul>
       </div>
 
-      <div class="composer"><span>Ask anything</span><span class="composer__chip">DevSpace</span></div>
+      <div class="composer r" style="--d:4.4s"><span><em class="mention">@DevSpace</em> now add CSV export to the billing page<i class="caret"></i></span></div>
     </div>
 
     <aside class="machine">
@@ -93,10 +93,11 @@ import Logo from "../../logos/Logo.astro";
 
   .composer {
     margin-top: auto; display: flex; justify-content: space-between; align-items: center;
-    border: 1px solid var(--m-line); border-radius: 12px; padding: 12px; color: var(--m-dim);
+    border: 1px solid var(--m-line); border-radius: 12px; padding: 12px; color: var(--m-fg); font-size: 13.5px;
     font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
   }
-  .composer__chip { font: 11px "IBM Plex Mono", monospace; border: 1px solid var(--m-line); padding: 2px 8px; border-radius: 999px; color: var(--m-fg); }
+  .mention { color: #8ab4ff; background: rgba(138, 180, 255, 0.14); border-radius: 4px; padding: 0 4px; margin-right: 2px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .caret { display: inline-block; width: 1.5px; height: 15px; background: var(--m-fg); vertical-align: -3px; margin-left: 2px; animation: mock-blink 0.8s infinite alternate; }
 
   .machine { border-left: 1px solid var(--m-line); background: #131313; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .machine__title { display: flex; justify-content: space-between; padding-bottom: 6px; border-bottom: 1px solid var(--m-line); }
