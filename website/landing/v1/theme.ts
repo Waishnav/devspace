@@ -21,3 +21,15 @@ export const workbenchTheme = {
     { scope: ["punctuation.definition.template-expression"], settings: { foreground: "#8f8d86" } },
   ],
 } as unknown as Theme;
+
+// Light counterpart for code shown on paper-coloured cards (profile files).
+export const workbenchLightTheme = {
+  name: "devspace-workbench-light",
+  type: "light",
+  colors: { "editor.background": "#f7f7f5", "editor.foreground": "#151515" },
+  tokenColors: [
+    { scope: ["entity.other.document.begin.yaml", "entity.other.document.end.yaml", "punctuation", "comment"], settings: { foreground: "#a3a19a" } },
+    { scope: ["entity.name.tag.yaml", "support.type.property-name"], settings: { foreground: "#6d6c67" } },
+    { scope: ["string", "string.unquoted", "constant.numeric", "constant.language"], settings: { foreground: "#9a5b13" } },
+  ],
+} as unknown as Theme;

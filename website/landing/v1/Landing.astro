@@ -8,8 +8,18 @@ import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import ChatMock from "./ChatMock.astro";
 import WorkflowStage from "./WorkflowStage.astro";
+import { Code } from "astro:components";
+import { workbenchLightTheme } from "./theme";
 import Logo from "../../logos/Logo.astro";
 import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIPPET, FAQ } from "../content";
+
+const REVIEWER_PROFILE = `---
+name: reviewer
+description: Read-only review for bugs and missing tests.
+provider: pi
+model: fable-5.1
+effort: high
+---`;
 ---
 
 <Shell variant={1} bodyClass="v1">
@@ -105,14 +115,10 @@ import { DOCS, GITHUB, HOSTS, INSTALL, MATRIX, PILLARS, PROVIDERS, WORKFLOW_SNIP
             ))}
           </tbody>
         </table>
-        <pre class="card__file"><span class="dim">.devspace/agents/reviewer.md</span>
----
-name: reviewer
-description: Read-only review for bugs and missing tests.
-provider: pi
-model: fable-5.1
-effort: high
----</pre>
+        <div class="card__file">
+          <span class="dim">.devspace/agents/reviewer.md</span>
+          <Code code={REVIEWER_PROFILE} lang="yaml" theme={workbenchLightTheme} />
+        </div>
       </div>
     </section>
 
@@ -265,7 +271,9 @@ effort: high
   td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
   td b { font-weight: 500; }
   .prof { display: inline-flex; align-items: center; gap: 8px; line-height: 20px; }
-  .card__file { margin: 0; padding: 14px 16px; background: #f7f7f5; font: inherit; white-space: pre-wrap; }
+  .card__file { padding: 14px 16px; background: #f7f7f5; }
+  .card__file :global(pre) { margin: 6px 0 0; padding: 0; font: 13px/1.6 "IBM Plex Mono", monospace; background: transparent !important; overflow-x: auto; }
+  .card__file :global(pre code) { font: inherit; }
   .flow { padding: 88px 44px 64px; }
   .flow__head { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: end; margin-bottom: 40px; }
   .flow h2 { font-size: clamp(26px, 2.6vw, 34px); line-height: 1.15; letter-spacing: -0.03em; margin: 14px 0 0; font-weight: 600; max-width: 20ch; }
