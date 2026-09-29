@@ -14,6 +14,13 @@ npx blume validate
 If `blume dev` is already running, `blume build` refuses to run; use
 `npx blume build --isolated` (output in `.blume-verify/dist`).
 
+## Staging deploy
+
+`staging.devspace.run` is a Cloudflare Worker serving the static build
+(`wrangler.jsonc`). To redeploy: build, copy the output to `.staging-dist`, add
+the noindex `_headers` and `robots.txt` (staging must not be indexed), then
+`npx wrangler deploy`.
+
 ## Layout
 
 - `docs/` — documentation content, mounted under `/docs` (`basePath`).

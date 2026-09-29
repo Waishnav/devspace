@@ -1,0 +1,12 @@
+{
+  // Staging deploy of the static site: build with `npx blume build`, copy the
+  // output to .staging-dist, add noindex headers, then `npx wrangler deploy`.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "devspace-staging",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./.staging-dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "staging.devspace.run", "custom_domain": true }]
+}

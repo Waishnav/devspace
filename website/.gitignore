@@ -3,3 +3,4 @@ node_modules/
 dist/
 .blume-verify/
 .blume-verify/
+.staging-dist/
