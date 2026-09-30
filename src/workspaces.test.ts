@@ -31,6 +31,7 @@ test("a checkout exposes initial and nested instruction context", async (t) => {
     opened.availableAgentsFiles.map((file) => file.path),
     [join(context.root, "nested", "AGENTS.md")],
   );
+  assert.equal(opened.agentsDiscoveryTruncated, false);
   assert.deepEqual(
     opened.workspace.agentProfiles.map((profile) => ({
       name: profile.name,
