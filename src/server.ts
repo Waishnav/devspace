@@ -445,6 +445,7 @@ function registerMcpSurface(
         workspace,
         agentsFiles,
         availableAgentsFiles,
+        agentsDiscoveryTruncated,
         workspaceReused,
         includeBootstrapContext,
       } = await workspaces.openWorkspace(
@@ -495,10 +496,14 @@ function registerMcpSurface(
       const visibleAgents = includeBootstrapContext ? cardAgents : [];
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
-      const cardInstruction = config.skillsEnabled
+      const discoveryInstruction = agentsDiscoveryTruncated
+        ? "Nested instruction discovery stopped at its scan limit; available_agents_files is incomplete. Before working in a nested directory, check its ancestor directories up to the workspace root for AGENTS.md, AGENTS.MD, CLAUDE.md or CLAUDE.MD and read applicable instructions, even when they are not listed. Opening the target project as its own workspace also loads its root instructions."
+        : "";
+      const cardInstruction = (config.skillsEnabled
         ? "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
-        : "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file.";
-      const workspaceInstruction = workspaceReused
+        : "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file.")
+        + (discoveryInstruction ? ` ${discoveryInstruction}` : "");
+      const workspaceInstruction = (workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
             "Continue with this workspace_id.",
@@ -506,7 +511,9 @@ function registerMcpSurface(
           ].join("\n\n")
         : workspace.mode === "worktree"
           ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
-          : cardInstruction;
+          : cardInstruction)
+        + (discoveryInstruction && (workspaceReused || workspace.mode === "worktree")
+          ? ` ${discoveryInstruction}` : "");
       const instruction = preloadedSubagentInstructions && includeBootstrapContext
         ? [
             workspaceInstruction,

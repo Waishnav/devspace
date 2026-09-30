@@ -383,6 +383,37 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.agents));
 });
 
+test("open_workspace warns about incomplete instruction discovery on initial and reused opens", async (t) => {
+  const context = await fixture(t);
+  const projects = Array.from({ length: 300 }, (_, index) => `project-${index}`);
+  for (const project of projects) {
+    await mkdir(join(context.project, project));
+    await writeFile(join(context.project, project, "AGENTS.md"), "nested instructions\n");
+  }
+
+  const opened = await callOpen(context.client, context.project, "large-workspace");
+  const first = structuredContent(opened);
+  assert.match(first.instruction as string, /available_agents_files is incomplete/);
+  assert.match(responseCard(opened).instruction as string, /ancestor directories/);
+  assert.match(textContent(opened), /even when they are not listed/);
+  assert.ok((first.agents_files as Array<{ content: string }>).some(
+    (file) => file.content === "project instructions\n",
+  ));
+  const available = first.available_agents_files as Array<{ path: string }>;
+  const omitted = projects.find((project) => !available.some(
+    (file) => file.path === `${project}/AGENTS.md`,
+  ));
+  assert.ok(omitted);
+  const read = await context.client.callTool({
+    name: "read", arguments: { workspace_id: first.workspace_id, path: `${omitted}/AGENTS.md` },
+  });
+  assert.match(textContent(read), /nested instructions/);
+
+  const repeated = structuredContent(await callOpen(context.client, context.project, "large-workspace"));
+  assert.equal(repeated.workspace_id, first.workspace_id);
+  assert.match(repeated.instruction as string, /available_agents_files is incomplete/);
+});
+
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
   const context = await fixture(t, {
@@ -968,6 +999,14 @@ async function callOpen(
 function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
   assert.ok(result.structuredContent);
   return result.structuredContent as Record<string, unknown>;
+}
+
+function textContent(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  assert.ok(Array.isArray(result.content));
+  return (result.content as Array<{ type: string; text?: string }>)
+    .filter((block) => block.type === "text")
+    .map((block) => block.text ?? "")
+    .join("\n");
 }
 
 function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
