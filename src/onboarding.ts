@@ -1,7 +1,8 @@
 import type { SubagentsConfig } from "./local-agent-config.js";
 import {
+  defaultDriverForProviderId,
+  LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
   isLocalAgentDriverKind,
-  LOCAL_AGENT_DRIVER_KINDS,
   type LocalAgentProviderInstanceId,
 } from "./local-agent-provider.js";
 
@@ -35,21 +36,22 @@ export function updateOnboardingSubagentsConfig(
   selectedProviders: readonly LocalAgentProviderInstanceId[],
 ): SubagentsConfig {
   const selected = new Set(selectedProviders);
+  const defaultIds = new Set<string>(LOCAL_AGENT_DEFAULT_PROVIDER_IDS);
   const customInstances = current.providers
-    .filter((provider) => !isLocalAgentDriverKind(provider.id))
+    .filter((provider) => !defaultIds.has(provider.id))
     .map((provider) => ({ ...provider, enabled: selected.has(provider.id) }));
   return {
     enabled: true,
     instructions: current.instructions,
     providers: [
-      ...LOCAL_AGENT_DRIVER_KINDS
+      ...LOCAL_AGENT_DEFAULT_PROVIDER_IDS
       .filter((id) => selected.has(id) || current.providers.some((provider) => provider.id === id))
       .map((id) => {
         const existing = current.providers.find((provider) => provider.id === id);
         return {
           ...existing,
           id,
-          driver: existing?.driver ?? id,
+          driver: existing?.driver ?? defaultDriverForProviderId(id)!,
           enabled: selected.has(id),
         };
       }),

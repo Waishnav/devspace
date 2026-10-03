@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
+  defaultDriverForProviderId,
   isLocalAgentDriverKind,
+  isLegacyAcpDriverKind,
+  LEGACY_ACP_DRIVER_KINDS,
   LOCAL_AGENT_DRIVER_KINDS,
   type LocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
@@ -25,13 +28,23 @@ const commandSchema = z.string()
   .min(1)
   .optional();
 
+const acpConfigSchema = z.object({
+  args: z.array(z.string()).optional(),
+  flavor: z.enum(LEGACY_ACP_DRIVER_KINDS).optional(),
+}).strict();
+
+const inputDriverKinds = [...LOCAL_AGENT_DRIVER_KINDS, ...LEGACY_ACP_DRIVER_KINDS] as const;
+
 const providerSchema = z.object({
   id: z.string().trim().min(1),
-  driver: z.enum(LOCAL_AGENT_DRIVER_KINDS).optional(),
+  driver: z.enum(inputDriverKinds).optional(),
   ...providerShape,
   command: commandSchema,
+  config: acpConfigSchema.optional(),
 }).strict().superRefine((provider, context) => {
-  const driver = provider.driver ?? (isLocalAgentDriverKind(provider.id) ? provider.id : undefined);
+  const driver = provider.driver
+    ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
+    : defaultDriverForProviderId(provider.id);
   if (!driver) {
     context.addIssue({
       code: "custom",
@@ -45,6 +58,20 @@ const providerSchema = z.object({
       code: "custom",
       path: ["command"],
       message: `${driver} does not support a command override.`,
+    });
+  }
+  if (driver !== "acp" && provider.config !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["config"],
+      message: `${driver} does not support ACP config.`,
+    });
+  }
+  if (driver === "acp" && !provider.command && !isLegacyAcpDriverKind(provider.id)) {
+    context.addIssue({
+      code: "custom",
+      path: ["command"],
+      message: `ACP provider instance ${provider.id} must declare a command.`,
     });
   }
 });
@@ -90,7 +117,12 @@ export function resolveSubagentsConfig(config: ParsedSubagentsConfig): Subagents
     ...config,
     providers: config.providers.map((provider) => ({
       ...provider,
-      driver: provider.driver ?? provider.id as LocalAgentDriverKind,
+      driver: provider.driver
+        ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
+        : defaultDriverForProviderId(provider.id)!,
+      ...(isLegacyAcpDriverKind(provider.id) && provider.config?.flavor === undefined
+        ? { config: { ...provider.config, flavor: provider.id } }
+        : {}),
     })),
   };
 }
@@ -137,11 +169,9 @@ export function providerCommandVariable(driver: LocalAgentDriverKind): string | 
   switch (driver) {
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
-    case "cursor": return "CURSOR_COMMAND";
-    case "copilot": return "COPILOT_COMMAND";
-    case "grok": return "GROK_COMMAND";
     case "opencode":
     case "pi":
+    case "acp":
       return undefined;
   }
 }
@@ -163,6 +193,7 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
             ),
           }
         : {}),
+      ...(provider.config ? { config: provider.config } : {}),
     }));
   return createHash("sha256")
     .update(JSON.stringify({ enabled: config.enabled, providers }))

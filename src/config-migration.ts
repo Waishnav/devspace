@@ -5,7 +5,7 @@ import {
   type DevspaceConfig,
 } from "./config-schema.js";
 import { storedSubagentsConfigSchema } from "./local-agent-config.js";
-import { LOCAL_AGENT_DRIVER_KINDS } from "./local-agent-provider.js";
+import { LOCAL_AGENT_DEFAULT_PROVIDER_IDS } from "./local-agent-provider.js";
 
 const legacyConfigSchema = z.object({
   host: z.string().optional(),
@@ -92,7 +92,7 @@ function migrateLegacySubagents(
   return {
     enabled: value,
     providers: value
-      ? LOCAL_AGENT_DRIVER_KINDS.map((id) => ({ id, enabled: true }))
+      ? LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => ({ id, enabled: true }))
       : [],
   };
 }

@@ -184,7 +184,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     "agt_legacy",
     join(root, "legacy-project"),
     "reviewer",
-    "codex",
+    "cursor",
     "high",
     "error",
     "old error",
@@ -198,8 +198,8 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   const legacyRecord = upgradedStore.getById("agt_legacy");
   assert.equal(legacyRecord?.error, "old error");
   assert.equal(legacyRecord?.effort, "high");
-  assert.equal(legacyRecord?.providerInstanceId, "codex");
-  assert.equal(legacyRecord?.driver, "codex");
+  assert.equal(legacyRecord?.providerInstanceId, "cursor");
+  assert.equal(legacyRecord?.driver, "acp");
   const inspect = new Database(databasePath(legacyStateDir), { readonly: true });
   const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)
     .find((column) => column.name === "driver");

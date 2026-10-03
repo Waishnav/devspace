@@ -115,6 +115,29 @@ assert.deepEqual(namedInstance.providers[0], {
   model: "gpt-work",
 });
 assert.equal(subagentProviderConfig(namedInstance, "codex-work")?.driver, "codex");
+const genericAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [{
+    id: "kiro",
+    driver: "acp",
+    enabled: true,
+    command: "kiro",
+    config: { args: ["acp"] },
+  }],
+});
+assert.deepEqual(genericAcp.providers[0], {
+  id: "kiro",
+  driver: "acp",
+  enabled: true,
+  command: "kiro",
+  config: { args: ["acp"] },
+});
+const legacyAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [{ id: "cursor", driver: "cursor", enabled: true }],
+});
+assert.equal(legacyAcp.providers[0]?.driver, "acp");
+assert.deepEqual(legacyAcp.providers[0]?.config, { flavor: "cursor" });
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,
