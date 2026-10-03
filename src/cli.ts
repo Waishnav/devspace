@@ -497,6 +497,7 @@ function printHelp(): void {
       "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
+      "  devspace agents stop <id> [--json]",
       "  devspace agents daemon <status|stop|logs>",
       "  devspace -v, --version   Print the installed version",
       "",
@@ -543,6 +544,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       return;
     case "wait":
       await runAgentWorkflowCommand(json, () => runAgentsWait(commandArgs, json));
+      return;
+    case "stop":
+      await runAgentWorkflowCommand(json, () => runAgentsStop(commandArgs, json));
       return;
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
@@ -663,6 +667,19 @@ async function runAgentsWait(args: string[], json: boolean): Promise<void> {
     return;
   }
   printAgentXml(results.map(formatAgentObservation).join("\n"));
+}
+
+async function runAgentsStop(args: string[], json: boolean): Promise<void> {
+  const [id, ...extra] = args;
+  if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
+  const config = loadConfig();
+  const client = createLocalAgentClient(config);
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const record = presentAgentWorkflowResult(await client.stopAgent(id, scope), json);
+  if (!record) return;
+  const observation = presentAgentObservation(record);
+  if (json) printJson(observation);
+  else printAgentXml(formatAgentObservation(observation));
 }
 
 function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: number } {
@@ -808,6 +825,7 @@ function printAgentsHelp(): void {
       "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
+      "  devspace agents stop <id> [--json]",
       "  devspace agents targets [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),
