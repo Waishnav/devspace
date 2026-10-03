@@ -12,6 +12,7 @@ import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
+import { isLocalAgentDriverKind } from "./local-agent-provider.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer, createServer } from "./server.js";
@@ -415,8 +416,8 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
       enabled: true,
       instructions: "on-demand",
       providers: [
-        { id: "codex", enabled: true },
-        { id: "claude", enabled: false },
+        { id: "codex", driver: "codex", enabled: true },
+        { id: "claude", driver: "claude", enabled: false },
       ],
     },
   });
@@ -445,7 +446,7 @@ test("open_workspace preloads subagent instructions when configured", async (t) 
     subagents: {
       enabled: true,
       instructions: "preload",
-      providers: [{ id: "codex", enabled: true }],
+      providers: [{ id: "codex", driver: "codex", enabled: true }],
     },
   });
 
@@ -775,10 +776,12 @@ async function fixture(
         subagents: options.subagents ?? {
           enabled: true,
           instructions: "on-demand",
-          providers: initialProviderAvailability.map((provider) => ({
-            id: provider.name,
-            enabled: true,
-          })),
+          providers: initialProviderAvailability.map((provider) => {
+            if (!isLocalAgentDriverKind(provider.name)) {
+              throw new Error(`Test provider instance requires explicit config: ${provider.name}`);
+            }
+            return { id: provider.name, driver: provider.name, enabled: true };
+          }),
         },
       }
     : modeConfig;

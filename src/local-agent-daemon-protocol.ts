@@ -10,6 +10,7 @@ import type {
 } from "./local-agent-manager.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
+import { isLocalAgentDriverKind } from "./local-agent-provider.js";
 
 export type LocalAgentDaemonMethod =
   | "hello"
@@ -213,12 +214,17 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
   const record = asRecord(value);
   const status = requiredString(record?.status, "status");
   if (!isLocalAgentStatus(status)) throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent status.");
+  const driver = requiredString(record?.driver, "driver");
+  if (!isLocalAgentDriverKind(driver)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent driver.");
+  }
   return {
     id: requiredString(record?.id, "id"),
     workspaceId: optionalString(record?.workspaceId),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
     profileName: requiredString(record?.profileName, "profileName"),
-    provider: requiredString(record?.provider, "provider"),
+    providerInstanceId: requiredString(record?.providerInstanceId, "providerInstanceId"),
+    driver,
     model: optionalString(record?.model),
     effort: optionalString(record?.effort),
     providerSessionId: optionalString(record?.providerSessionId),

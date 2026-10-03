@@ -65,6 +65,7 @@ const driver = new PiLocalAgentDriver(factory, { HARNESS_ENV: "pi" });
 const pool = new LocalAgentRuntimePool();
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_pi",
+  providerInstanceId: "pi",
   provider: "pi",
   workspaceRoot: "/tmp/project",
 };

@@ -230,6 +230,7 @@ async function waitForProcessExit(
 
 export class CodexLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "codex" as const;
+  readonly providerInstanceId = "codex";
   readonly idleTimeoutMs = 5 * 60_000;
 
   private commandResolved = false;

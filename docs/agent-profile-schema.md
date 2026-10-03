@@ -64,7 +64,7 @@ model can choose the right profile.
 
 ### `provider`
 
-Required built-in provider id:
+Required provider instance id. The default instance ids are:
 
 ```yaml
 provider: codex
@@ -76,8 +76,9 @@ provider: copilot
 provider: grok
 ```
 
-Unsupported or custom providers are rejected. DevSpace maps providers to their
-native integration:
+Profiles may also reference named provider instances configured under
+`subagents.providers`, such as `provider: codex-work`. Provider instances map
+to one of these built-in driver integrations:
 
 - `codex`: the host-installed `codex app-server` command
 - `claude`: Claude Code SDK

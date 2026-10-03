@@ -3,11 +3,12 @@ import {
   isSubagentProviderEnabled,
   localAgentProviderConfigRevision,
   localAgentProviderEnvironment,
+  parseSubagentsConfig,
   subagentProviderConfig,
   subagentsConfigSchema,
 } from "./local-agent-config.js";
 
-const config = subagentsConfigSchema.parse({
+const config = parseSubagentsConfig({
   enabled: true,
   providers: [
     {
@@ -27,13 +28,14 @@ assert.deepEqual(config, {
   providers: [
     {
       id: "codex",
+      driver: "codex",
       enabled: true,
       model: "gpt-5.4",
       effort: "high",
       command: "/opt/bin/codex-wrapper",
       env: { OPENAI_API_KEY: "configured", EMPTY_VALUE: "" },
     },
-    { id: "claude", enabled: false, model: "sonnet" },
+    { id: "claude", driver: "claude", enabled: false, model: "sonnet" },
   ],
 });
 assert.equal(isSubagentProviderEnabled(config, "codex"), true);
@@ -63,7 +65,7 @@ assert.deepEqual(inherited, {
 });
 assert.equal(
   localAgentProviderConfigRevision(config),
-  localAgentProviderConfigRevision(subagentsConfigSchema.parse({
+  localAgentProviderConfigRevision(parseSubagentsConfig({
     enabled: true,
     providers: [
       { id: "claude", enabled: false, model: "sonnet" },
@@ -81,7 +83,7 @@ assert.equal(
 );
 assert.notEqual(
   localAgentProviderConfigRevision(config),
-  localAgentProviderConfigRevision(subagentsConfigSchema.parse({
+  localAgentProviderConfigRevision(parseSubagentsConfig({
     ...config,
     providers: config.providers.map((provider) => provider.id === "codex"
       ? { ...provider, command: "/opt/bin/another-wrapper" }
@@ -100,8 +102,19 @@ assert.throws(
     enabled: true,
     providers: [{ id: "unknown", enabled: true }],
   }),
-  /Invalid discriminator value/,
+  /must declare a driver/,
 );
+const namedInstance = parseSubagentsConfig({
+  enabled: true,
+  providers: [{ id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" }],
+});
+assert.deepEqual(namedInstance.providers[0], {
+  id: "codex-work",
+  driver: "codex",
+  enabled: true,
+  model: "gpt-work",
+});
+assert.equal(subagentProviderConfig(namedInstance, "codex-work")?.driver, "codex");
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,
@@ -124,7 +137,7 @@ assert.throws(
   /Invalid environment variable name/,
 );
 for (const id of ["opencode", "pi"] as const) {
-  const embedded = subagentsConfigSchema.parse({
+  const embedded = parseSubagentsConfig({
     enabled: true,
     providers: [{ id, enabled: true, env: { HARNESS_ENV: id } }],
   });

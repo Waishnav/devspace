@@ -149,6 +149,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
 
 export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "opencode" as const;
+  readonly providerInstanceId = "opencode";
   readonly idleTimeoutMs = 5 * 60_000;
 
   constructor(

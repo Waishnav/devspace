@@ -13,7 +13,8 @@ const record: LocalAgentRecord = {
   workspaceId: "ws_private",
   workspaceRoot: "/private/project",
   profileName: "reviewer",
-  provider: "codex",
+  providerInstanceId: "codex",
+  driver: "codex",
   model: "gpt-5.4",
   effort: "high",
   providerSessionId: "provider_private",
@@ -65,9 +66,10 @@ assert.deepEqual(failed, {
 const catalog: LocalAgentCatalog = {
   enabled: true,
   providers: [
-    { id: "codex", enabled: true, available: true, usable: true, model: "gpt-5.4", effort: "high" },
+    { id: "codex", driver: "codex", enabled: true, available: true, usable: true, model: "gpt-5.4", effort: "high" },
     {
       id: "claude",
+      driver: "claude",
       enabled: true,
       available: false,
       usable: false,

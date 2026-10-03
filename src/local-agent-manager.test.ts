@@ -42,8 +42,9 @@ const subagents: SubagentsConfig = {
   enabled: true,
   instructions: "on-demand",
   providers: [
-    { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
-    { id: "claude", enabled: true },
+    { id: "codex", driver: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+    { id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" },
+    { id: "claude", driver: "claude", enabled: true },
   ],
 };
 
@@ -96,6 +97,7 @@ class FakeRuntime implements LocalAgentRuntime {
 
 const runtimes = new Map<string, FakeRuntime>();
 const driver: LocalAgentDriver = {
+  providerInstanceId: "codex",
   provider: "codex",
   runtimeKey: (context: LocalAgentRuntimeContext) => context.agentId,
   createRuntime: async (context) => {
@@ -104,6 +106,7 @@ const driver: LocalAgentDriver = {
     return Result.ok(runtime);
   },
 };
+const workDriver: LocalAgentDriver = { ...driver, providerInstanceId: "codex-work" };
 
 function providerFailure(message: string): AgentProviderExecutionError {
   return new AgentProviderExecutionError({
@@ -120,14 +123,15 @@ const stale = store.create({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
   profileName: "reviewer",
-  provider: "codex",
+  providerInstanceId: "codex",
+  driver: "codex",
 });
 const staleTurn = store.beginTurn(stale.id, { prompt: "interrupted turn" });
 store.update(stale.id, { latestResponse: "previous response" });
 
 const manager = new LocalAgentManager({
   store,
-  drivers: [driver],
+  drivers: [driver, workDriver],
   pool: new LocalAgentRuntimePool(),
   loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
@@ -174,6 +178,17 @@ const unknown = await manager.start({
 assert.equal(unknown.isErr(), true);
 if (unknown.isErr()) assert.equal(unknown.error.code, "UNKNOWN_TARGET");
 
+const namedInstance = unwrap(await manager.start({
+  target: "codex-work",
+  prompt: "inspect named instance",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+assert.equal(namedInstance.providerInstanceId, "codex-work");
+assert.equal(namedInstance.driver, "codex");
+assert.equal(namedInstance.model, "gpt-work");
+await waitFor(() => getRecord(namedInstance.id).status === "idle");
+
 const disabled = await manager.start({
   target: "disabled-reviewer",
   prompt: "inspect",
@@ -199,13 +214,14 @@ const disabledProvider = await manager.start({
   workspaceRoot: root,
 });
 assert.equal(disabledProvider.isErr(), true);
-if (disabledProvider.isErr()) assert.equal(disabledProvider.error.code, "PROVIDER_DISABLED");
+if (disabledProvider.isErr()) assert.equal(disabledProvider.error.code, "UNKNOWN_TARGET");
 
 const previouslyCreatedDisabled = store.create({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
   profileName: disabledProfile.name,
-  provider: "codex",
+  providerInstanceId: "codex",
+  driver: "codex",
 });
 store.update(previouslyCreatedDisabled.id, { status: "idle" });
 const disabledContinuation = await manager.continue(previouslyCreatedDisabled.id, "inspect", {}, scope);
@@ -277,7 +293,7 @@ const second = unwrap(await manager.start({
 }));
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
-assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
+assert.equal(runtimes.size, 3, "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
   target: "reviewer",

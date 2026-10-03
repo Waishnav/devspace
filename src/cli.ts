@@ -18,7 +18,7 @@ import {
   formatLocalAgentProviderStatusSummary,
 } from "./local-agent-catalog.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import { resolveSubagentsConfig } from "./local-agent-config.js";
 import {
   parseLocalAgentContinueArgs,
   parseLocalAgentRunArgs,
@@ -218,7 +218,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       }));
     }
 
-    const currentSubagents = files.config.subagents;
+    const currentSubagents = resolveSubagentsConfig(files.config.subagents);
     const availability = getLocalAgentProviderAvailabilitySnapshot(
       process.env,
       currentSubagents,
@@ -247,7 +247,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       required: true,
     });
     if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
-    const selectedProviders = providerAnswer as LocalAgentProvider[];
+    const selectedProviders = providerAnswer as string[];
     const subagents = updateOnboardingSubagentsConfig(
       currentSubagents,
       selectedProviders,

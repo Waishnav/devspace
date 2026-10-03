@@ -164,6 +164,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
 
 export class PiLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "pi" as const;
+  readonly providerInstanceId = "pi";
   readonly idleTimeoutMs = 3 * 60_000;
 
   constructor(

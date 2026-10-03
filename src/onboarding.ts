@@ -1,8 +1,9 @@
 import type { SubagentsConfig } from "./local-agent-config.js";
 import {
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
+  isLocalAgentDriverKind,
+  LOCAL_AGENT_DRIVER_KINDS,
+  type LocalAgentProviderInstanceId,
+} from "./local-agent-provider.js";
 
 export const SUBAGENT_SKILL_INSTALL_COMMAND =
   "npx skills add Waishnav/devspace --skill subagents --global";
@@ -31,21 +32,28 @@ export function usesCodingAgents(usage: OnboardingUsage): boolean {
 
 export function updateOnboardingSubagentsConfig(
   current: SubagentsConfig,
-  selectedProviders: readonly LocalAgentProvider[],
+  selectedProviders: readonly LocalAgentProviderInstanceId[],
 ): SubagentsConfig {
   const selected = new Set(selectedProviders);
+  const customInstances = current.providers
+    .filter((provider) => !isLocalAgentDriverKind(provider.id))
+    .map((provider) => ({ ...provider, enabled: selected.has(provider.id) }));
   return {
     enabled: true,
     instructions: current.instructions,
-    providers: LOCAL_AGENT_PROVIDERS
+    providers: [
+      ...LOCAL_AGENT_DRIVER_KINDS
       .filter((id) => selected.has(id) || current.providers.some((provider) => provider.id === id))
       .map((id) => {
         const existing = current.providers.find((provider) => provider.id === id);
         return {
           ...existing,
           id,
+          driver: existing?.driver ?? id,
           enabled: selected.has(id),
         };
       }),
+      ...customInstances,
+    ],
   };
 }

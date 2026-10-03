@@ -177,92 +177,56 @@
         "providers": {
           "type": "array",
           "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "enum": [
-                      "codex",
-                      "claude",
-                      "cursor",
-                      "copilot",
-                      "grok"
-                    ]
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "effort": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "env": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "command": {
-                    "type": "string",
-                    "minLength": 1,
-                    "pattern": "\\S"
-                  }
-                },
-                "required": [
-                  "id",
-                  "enabled"
-                ],
-                "additionalProperties": false
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
               },
-              {
+              "driver": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "opencode",
+                  "pi",
+                  "cursor",
+                  "copilot",
+                  "grok"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1
+              },
+              "env": {
                 "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "enum": [
-                      "opencode",
-                      "pi"
-                    ]
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "effort": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "env": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  }
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
                 },
-                "required": [
-                  "id",
-                  "enabled"
-                ],
-                "additionalProperties": false
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               }
-            ]
+            },
+            "required": [
+              "id",
+              "enabled"
+            ],
+            "additionalProperties": false
           }
         }
       },

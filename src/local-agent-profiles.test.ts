@@ -76,16 +76,17 @@ try {
     [
       "---",
       "name: custom",
-      "description: Unsupported custom agent.",
-      "provider: custom",
+      "description: Named provider instance.",
+      "provider: codex-work",
       "---",
       "",
       "Custom body.",
       "",
     ].join("\n"),
   );
-  const profilesWithInvalid = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
-  assert.deepEqual(profilesWithInvalid.map((profile) => profile.name), ["reviewer"]);
+  const profilesWithNamedInstance = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
+  assert.deepEqual(profilesWithNamedInstance.map((profile) => profile.name), ["custom", "reviewer"]);
+  assert.equal(profilesWithNamedInstance[0]?.provider, "codex-work");
 
   const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [workspaceRoot] },

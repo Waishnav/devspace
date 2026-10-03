@@ -11,9 +11,8 @@ import {
 } from "./local-agent-errors.js";
 import {
   type LocalAgentProfile,
-  type LocalAgentProvider,
-  isLocalAgentProvider,
 } from "./local-agent-profiles.js";
+import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import {
   resolveLocalAgentTarget,
 } from "./local-agent-targets.js";
@@ -34,6 +33,7 @@ import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { assertAllowedPath } from "./roots.js";
 import {
   isSubagentProviderEnabled,
+  subagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
 
@@ -92,7 +92,7 @@ interface ActiveLocalAgentTurn {
  */
 export class LocalAgentManager {
   private readonly store: LocalAgentStore;
-  private readonly drivers = new Map<LocalAgentProvider, LocalAgentDriver>();
+  private readonly drivers = new Map<string, LocalAgentDriver>();
   private readonly pool: LocalAgentRuntimePool;
   private readonly loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   private readonly agentDir?: string;
@@ -105,7 +105,7 @@ export class LocalAgentManager {
 
   constructor(options: LocalAgentManagerOptions) {
     this.store = options.store;
-    for (const driver of options.drivers) this.drivers.set(driver.provider, driver);
+    for (const driver of options.drivers) this.drivers.set(driver.providerInstanceId, driver);
     this.pool = options.pool;
     this.loadProfiles = options.loadProfiles;
     this.agentDir = options.agentDir;
@@ -153,12 +153,13 @@ export class LocalAgentManager {
         }));
       }
       yield* manager.providerEnabledResult(target.provider, target.name, "start");
-      yield* manager.driverResult(target.provider, "start");
+      const driver = yield* manager.driverResult(target.provider, "start");
       const record = yield* manager.store.createResult({
         workspaceId: input.workspaceId,
         workspaceRoot,
         profileName: target.name,
-        provider: target.provider,
+        providerInstanceId: target.provider,
+        driver: driver.provider,
         model: target.model,
         effort: target.effort,
       });
@@ -184,8 +185,8 @@ export class LocalAgentManager {
       yield* manager.agentWorkspaceResult(record, scope, "continue");
       const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
       yield* manager.profileForRecordResult(record, profiles);
-      yield* manager.providerEnabledResult(record.provider, record.profileName, "continue");
-      yield* manager.driverResult(record.provider, "continue", agentId);
+      yield* manager.providerEnabledResult(record.providerInstanceId, record.profileName, "continue");
+      yield* manager.driverResult(record.providerInstanceId, "continue", agentId, record.driver);
       return manager.begin(record, prompt, overrides, scope.workspaceId);
     });
   }
@@ -331,7 +332,8 @@ export class LocalAgentManager {
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
-      provider: record.provider,
+      providerInstanceId: record.providerInstanceId,
+      driver: record.driver,
       agentId: record.id,
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
     });
@@ -360,13 +362,14 @@ export class LocalAgentManager {
         this.persistRunError(record, turnId, input.error, startedAt);
         return;
       }
-      const driver = this.driverResult(record.provider, "run", record.id);
+      const driver = this.driverResult(record.providerInstanceId, "run", record.id, record.driver);
       if (driver.isErr()) {
         this.persistRunError(record, turnId, driver.error, startedAt);
         return;
       }
       const context: LocalAgentRuntimeContext = {
         agentId: record.id,
+        providerInstanceId: record.providerInstanceId,
         provider: driver.value.provider,
         workspaceRoot,
         providerSessionId: record.providerSessionId,
@@ -400,7 +403,8 @@ export class LocalAgentManager {
       });
       if (updated.isErr()) throw updated.error;
       this.log("info", "agent_run_completed", {
-        provider: updated.value.provider,
+        providerInstanceId: updated.value.providerInstanceId,
+        driver: updated.value.driver,
         agentId: updated.value.id,
         providerSessionIdPrefix: updated.value.providerSessionId?.slice(0, 8),
         durationMs: Math.max(0, Date.now() - startedAt),
@@ -417,7 +421,8 @@ export class LocalAgentManager {
         errorRetryable: false,
       });
       this.log("error", "agent_run_failed", {
-        provider: record.provider,
+        providerInstanceId: record.providerInstanceId,
+        driver: record.driver,
         agentId: record.id,
         providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
         durationMs: Math.max(0, Date.now() - startedAt),
@@ -444,7 +449,8 @@ export class LocalAgentManager {
       errorRetryable: error.retryable,
     });
     this.log("error", "agent_run_failed", {
-      provider: record.provider,
+      providerInstanceId: record.providerInstanceId,
+      driver: record.driver,
       agentId: record.id,
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
       durationMs: Math.max(0, Date.now() - startedAt),
@@ -461,12 +467,12 @@ export class LocalAgentManager {
     prompt: string,
     overrides: RunOverrides,
   ): BetterResult<LocalAgentRunInput, AgentTargetError> {
-    const isRawProvider = record.profileName === record.provider;
+    const isRawProvider = record.profileName === record.providerInstanceId;
     if (!profile && !isRawProvider) {
       return Result.err(new AgentTargetError({
         code: "UNKNOWN_TARGET",
         target: record.profileName,
-        provider: isLocalAgentProvider(record.provider) ? record.provider : undefined,
+        provider: record.providerInstanceId,
         retryable: false,
         message: `Subagent profile not found: ${record.profileName}.`,
       }));
@@ -489,13 +495,13 @@ export class LocalAgentManager {
     record: LocalAgentRecord,
     profiles: readonly LocalAgentProfile[],
   ): BetterResult<LocalAgentProfile | undefined, AgentTargetError> {
-    if (record.profileName === record.provider) return Result.ok(undefined);
+    if (record.profileName === record.providerInstanceId) return Result.ok(undefined);
     const profile = profiles.find((candidate) => candidate.name === record.profileName);
     if (!profile) {
       return Result.err(new AgentTargetError({
         code: "UNKNOWN_TARGET",
         target: record.profileName,
-        provider: isLocalAgentProvider(record.provider) ? record.provider : undefined,
+        provider: record.providerInstanceId,
         retryable: false,
         message: `Subagent profile not found: ${record.profileName}.`,
       }));
@@ -513,47 +519,59 @@ export class LocalAgentManager {
   }
 
   private driverResult(
-    provider: string,
+    providerInstanceId: string,
     operation: string,
     agentId?: string,
+    expectedDriver?: LocalAgentDriverKind,
   ): BetterResult<LocalAgentDriver, AgentTargetError> {
-    if (!isLocalAgentProvider(provider)) {
-      return Result.err(new AgentTargetError({
-        code: "PROVIDER_NOT_CONFIGURED",
-        target: provider,
-        operation,
-        retryable: false,
-        message: `No local agent driver is configured for provider: ${provider}.`,
-      }));
-    }
-    const driver = this.drivers.get(provider);
+    const driver = this.drivers.get(providerInstanceId);
     if (!driver) {
       return Result.err(new AgentTargetError({
         code: "PROVIDER_NOT_CONFIGURED",
-        target: agentId ?? provider,
-        provider,
+        target: agentId ?? providerInstanceId,
+        provider: providerInstanceId,
         operation,
         retryable: false,
-        message: `No local agent driver is configured for provider: ${provider}.`,
+        message: `No local agent driver is configured for provider instance: ${providerInstanceId}.`,
+      }));
+    }
+    if (expectedDriver && driver.provider !== expectedDriver) {
+      return Result.err(new AgentTargetError({
+        code: "PROVIDER_NOT_CONFIGURED",
+        target: agentId ?? providerInstanceId,
+        provider: providerInstanceId,
+        operation,
+        retryable: false,
+        message: `Provider instance ${providerInstanceId} now uses ${driver.provider}; this agent was created with ${expectedDriver}.`,
       }));
     }
     return Result.ok(driver);
   }
 
   private providerEnabledResult(
-    provider: string,
+    providerInstanceId: string,
     target: string,
     operation: string,
   ): BetterResult<void, AgentTargetError> {
-    if (!isLocalAgentProvider(provider)) return Result.ok(undefined);
-    if (isSubagentProviderEnabled(this.subagents, provider)) return Result.ok(undefined);
+    const configured = subagentProviderConfig(this.subagents, providerInstanceId);
+    if (!configured) {
+      return Result.err(new AgentTargetError({
+        code: "PROVIDER_NOT_CONFIGURED",
+        target,
+        provider: providerInstanceId,
+        operation,
+        retryable: false,
+        message: `Subagent provider instance is not configured: ${providerInstanceId}.`,
+      }));
+    }
+    if (isSubagentProviderEnabled(this.subagents, providerInstanceId)) return Result.ok(undefined);
     return Result.err(new AgentTargetError({
       code: "PROVIDER_DISABLED",
       target,
-      provider,
+      provider: providerInstanceId,
       operation,
       retryable: false,
-      message: `Subagent provider is disabled: ${provider}.`,
+      message: `Subagent provider is disabled: ${providerInstanceId}.`,
     }));
   }
 

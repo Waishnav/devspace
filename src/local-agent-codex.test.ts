@@ -12,7 +12,12 @@ import {
 } from "./local-agent-codex.js";
 import { toAgentErrorPayload } from "./local-agent-errors.js";
 
-const cachedContext = { agentId: "agt_test", provider: "codex" as const, workspaceRoot: "/tmp/project" };
+const cachedContext = {
+  agentId: "agt_test",
+  providerInstanceId: "codex",
+  provider: "codex" as const,
+  workspaceRoot: "/tmp/project",
+};
 
 assert.equal(parseCodexVersion("codex-cli 0.9.1"), "0.9.1");
 assert.equal(sandboxFor("read_only"), "read-only");

@@ -149,6 +149,26 @@ Subagent providers are explicit. Omitted providers are disabled:
 }
 ```
 
+`id` is the provider instance id used by profiles and `devspace agents run`.
+For the default built-in instance ids, `driver` is optional and defaults to the
+same value. Named instances declare the driver explicitly, which allows
+multiple independently configured instances of one integration:
+
+```jsonc
+{
+  "id": "codex-work",
+  "driver": "codex",
+  "enabled": true,
+  "env": {
+    "CODEX_HOME": "/home/alice/.codex-work",
+  },
+}
+```
+
+Profiles can then select that instance with `provider: codex-work`. The driver
+is the implementation (`codex`, `claude`, `opencode`, `pi`, `cursor`,
+`copilot`, or `grok`); provider-native session ids remain internal to DevSpace.
+
 `subagents.instructions` controls when ChatGPT receives the managed workflow:
 
 | Value | Behavior |

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
+import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped";
@@ -12,7 +13,8 @@ export interface LocalAgentRecord {
   workspaceId?: string;
   workspaceRoot: string;
   profileName: string;
-  provider: string;
+  providerInstanceId: string;
+  driver: LocalAgentDriverKind;
   model?: string;
   effort?: string;
   providerSessionId?: string;
@@ -29,7 +31,8 @@ export interface CreateLocalAgentRecordInput {
   workspaceId?: string;
   workspaceRoot: string;
   profileName: string;
-  provider: string;
+  providerInstanceId: string;
+  driver: LocalAgentDriverKind;
   model?: string;
   effort?: string;
 }
@@ -78,7 +81,8 @@ interface LocalAgentRow {
   workspace_id: string | null;
   workspace_root: string;
   profile_name: string;
-  provider: string;
+  provider_instance_id: string;
+  driver: LocalAgentDriverKind;
   model: string | null;
   effort: string | null;
   provider_session_id: string | null;
@@ -157,7 +161,8 @@ export class LocalAgentStore {
       workspaceId: input.workspaceId,
       workspaceRoot: resolve(input.workspaceRoot),
       profileName: input.profileName,
-      provider: input.provider,
+      providerInstanceId: input.providerInstanceId,
+      driver: input.driver,
       model: input.model,
       effort: input.effort,
       status: "starting",
@@ -172,20 +177,22 @@ export class LocalAgentStore {
           workspace_id,
           workspace_root,
           profile_name,
-          provider,
+          provider_instance_id,
+          driver,
           model,
           effort,
           status,
           created_at,
           updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
         record.workspaceId ?? null,
         record.workspaceRoot,
         record.profileName,
-        record.provider,
+        record.providerInstanceId,
+        record.driver,
         record.model ?? null,
         record.effort ?? null,
         record.status,
@@ -239,7 +246,8 @@ export class LocalAgentStore {
           workspace_id = ?,
           workspace_root = ?,
           profile_name = ?,
-          provider = ?,
+          provider_instance_id = ?,
+          driver = ?,
           model = ?,
           effort = ?,
           provider_session_id = ?,
@@ -255,7 +263,8 @@ export class LocalAgentStore {
         updated.workspaceId ?? null,
         resolve(updated.workspaceRoot),
         updated.profileName,
-        updated.provider,
+        updated.providerInstanceId,
+        updated.driver,
         updated.model ?? null,
         updated.effort ?? null,
         updated.providerSessionId ?? null,
@@ -463,7 +472,8 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     workspaceId: row.workspace_id ?? undefined,
     workspaceRoot: row.workspace_root,
     profileName: row.profile_name,
-    provider: row.provider,
+    providerInstanceId: row.provider_instance_id,
+    driver: row.driver,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
     providerSessionId: row.provider_session_id ?? undefined,

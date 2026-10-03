@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
+  isLocalAgentDriverKind,
+  LOCAL_AGENT_DRIVER_KINDS,
+  type LocalAgentDriverKind,
+  type LocalAgentProviderInstanceId,
+} from "./local-agent-provider.js";
 
 const environmentSchema = z.record(
   z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Invalid environment variable name"),
@@ -22,24 +25,36 @@ const commandSchema = z.string()
   .min(1)
   .optional();
 
-const providerSchema = z.discriminatedUnion("id", [
-  z.object({
-    id: z.enum(["codex", "claude", "cursor", "copilot", "grok"]),
-    ...providerShape,
-    command: commandSchema,
-  }).strict(),
-  z.object({
-    id: z.enum(["opencode", "pi"]),
-    ...providerShape,
-  }).strict(),
-]);
+const providerSchema = z.object({
+  id: z.string().trim().min(1),
+  driver: z.enum(LOCAL_AGENT_DRIVER_KINDS).optional(),
+  ...providerShape,
+  command: commandSchema,
+}).strict().superRefine((provider, context) => {
+  const driver = provider.driver ?? (isLocalAgentDriverKind(provider.id) ? provider.id : undefined);
+  if (!driver) {
+    context.addIssue({
+      code: "custom",
+      path: ["driver"],
+      message: `Subagent provider instance ${provider.id} must declare a driver.`,
+    });
+    return;
+  }
+  if ((driver === "opencode" || driver === "pi") && provider.command !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["command"],
+      message: `${driver} does not support a command override.`,
+    });
+  }
+});
 
 export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
   instructions: z.enum(["on-demand", "preload"]).default("on-demand"),
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
-  const seen = new Set<LocalAgentProvider>();
+  const seen = new Set<LocalAgentProviderInstanceId>();
   for (const [index, provider] of value.providers.entries()) {
     if (seen.has(provider.id)) {
       context.addIssue({
@@ -57,46 +72,69 @@ export const storedSubagentsConfigSchema = z.union([
   subagentsConfigSchema,
 ]);
 
-export type SubagentProviderConfig = z.infer<typeof providerSchema>;
-export type SubagentsConfig = z.infer<typeof subagentsConfigSchema>;
+type ParsedSubagentProviderConfig = z.infer<typeof providerSchema>;
+type ParsedSubagentsConfig = z.infer<typeof subagentsConfigSchema>;
+
+export interface SubagentProviderConfig extends Omit<ParsedSubagentProviderConfig, "driver"> {
+  driver: LocalAgentDriverKind;
+}
+
+export interface SubagentsConfig extends Omit<ParsedSubagentsConfig, "providers"> {
+  providers: SubagentProviderConfig[];
+}
+
 export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
+
+export function resolveSubagentsConfig(config: ParsedSubagentsConfig): SubagentsConfig {
+  return {
+    ...config,
+    providers: config.providers.map((provider) => ({
+      ...provider,
+      driver: provider.driver ?? provider.id as LocalAgentDriverKind,
+    })),
+  };
+}
+
+export function parseSubagentsConfig(value: unknown): SubagentsConfig {
+  return resolveSubagentsConfig(subagentsConfigSchema.parse(value));
+}
 
 export function subagentProviderConfig(
   config: SubagentsConfig,
-  provider: LocalAgentProvider,
+  providerInstanceId: LocalAgentProviderInstanceId,
 ): SubagentProviderConfig | undefined {
-  return config.providers.find((entry) => entry.id === provider);
+  return config.providers.find((entry) => entry.id === providerInstanceId);
 }
 
 export function isSubagentProviderEnabled(
   config: SubagentsConfig,
-  provider: LocalAgentProvider,
+  providerInstanceId: LocalAgentProviderInstanceId,
 ): boolean {
-  return config.enabled && subagentProviderConfig(config, provider)?.enabled === true;
+  return config.enabled && subagentProviderConfig(config, providerInstanceId)?.enabled === true;
 }
 
 export function localAgentProviderEnvironment(
   config: SubagentsConfig,
-  provider: LocalAgentProvider,
+  providerInstanceId: LocalAgentProviderInstanceId,
   inherited: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const providerConfig = subagentProviderConfig(config, provider);
+  const providerConfig = subagentProviderConfig(config, providerInstanceId);
   const env = { ...inherited, ...providerConfig?.env };
-  const commandVariable = providerCommandVariable(provider);
-  const command = providerConfig && "command" in providerConfig ? providerConfig.command : undefined;
+  const commandVariable = providerConfig ? providerCommandVariable(providerConfig.driver) : undefined;
+  const command = providerConfig?.command;
   if (commandVariable && command) env[commandVariable] = command;
   return env;
 }
 
 export function localAgentProviderEnvironmentOverrides(
   config: SubagentsConfig,
-  provider: LocalAgentProvider,
+  providerInstanceId: LocalAgentProviderInstanceId,
 ): Record<string, string> {
-  return { ...subagentProviderConfig(config, provider)?.env };
+  return { ...subagentProviderConfig(config, providerInstanceId)?.env };
 }
 
-export function providerCommandVariable(provider: LocalAgentProvider): string | undefined {
-  switch (provider) {
+export function providerCommandVariable(driver: LocalAgentDriverKind): string | undefined {
+  switch (driver) {
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
     case "cursor": return "CURSOR_COMMAND";
@@ -113,6 +151,7 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((provider) => ({
       id: provider.id,
+      driver: provider.driver,
       enabled: provider.enabled,
       ...(provider.model ? { model: provider.model } : {}),
       ...(provider.effort ? { effort: provider.effort } : {}),

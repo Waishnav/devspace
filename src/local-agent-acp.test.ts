@@ -256,6 +256,7 @@ await overlapRuntime.close();
 
 const cachedContext = {
   agentId: "agt_acp",
+  providerInstanceId: "cursor",
   provider: "cursor" as const,
   workspaceRoot: "/tmp/project",
   writeMode: "allowed" as const,
@@ -266,11 +267,13 @@ assert.deepEqual(acpCommandArgs("cursor", cachedContext), [
 ]);
 assert.deepEqual(acpCommandArgs("grok", {
   ...cachedContext,
+  providerInstanceId: "grok",
   provider: "grok",
   effort: "low",
 }), ["agent", "--reasoning-effort", "low", "stdio"]);
 assert.deepEqual(acpCommandArgs("grok", {
   ...cachedContext,
+  providerInstanceId: "grok",
   provider: "grok",
   effort: "low",
 }, { GROK_AGENT_PROFILE: " /tmp/grok-coding-only.md " }), [
@@ -314,7 +317,12 @@ if (process.platform === "win32") {
     );
     await writeFile(command, `@ECHO OFF\r\n"${process.execPath}" "${recorder}" %*\r\n`);
     const shimDriver = new AcpLocalAgentDriver("copilot", process.env, () => command);
-    const shimStartup = await shimDriver.createRuntime({ ...cachedContext, provider: "copilot", workspaceRoot });
+    const shimStartup = await shimDriver.createRuntime({
+      ...cachedContext,
+      providerInstanceId: "copilot",
+      provider: "copilot",
+      workspaceRoot,
+    });
     assert.equal(shimStartup.isErr(), true);
     if (shimStartup.isErr()) assert.equal(shimStartup.error.code, "PROVIDER_PROTOCOL_ERROR");
     const forwarded = JSON.parse(await readFile(marker, "utf8")) as string[];

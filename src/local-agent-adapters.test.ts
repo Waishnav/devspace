@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
+  createLocalAgentDrivers,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
   extractPiProviderError,
   resolveAcpModelConfigUpdate,
   resolveAcpEffortConfigUpdate,
 } from "./local-agent-adapters.js";
+import { parseSubagentsConfig } from "./local-agent-config.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 assert.deepEqual(
   resolveAcpModelConfigUpdate({
@@ -330,5 +332,31 @@ assert.equal(
     removeDevspaceNodeModulesBinFromPath([devspaceBin, userBin].join(delimiter)),
     userBin,
   );
+}
 
+{
+  const subagents = parseSubagentsConfig({
+    enabled: true,
+    providers: [
+      { id: "claude-work", driver: "claude", enabled: true },
+      { id: "claude-personal", driver: "claude", enabled: true },
+    ],
+  });
+  const drivers = createLocalAgentDrivers({ subagents });
+  assert.deepEqual(
+    drivers.map((driver) => [driver.providerInstanceId, driver.provider]),
+    [["claude-work", "claude"], ["claude-personal", "claude"]],
+  );
+  const context = {
+    agentId: "agt_test",
+    providerInstanceId: "claude-work",
+    provider: "claude" as const,
+    workspaceRoot: "/tmp/project",
+    writeMode: "allowed" as const,
+  };
+  assert.notEqual(
+    drivers[0]?.runtimeKey(context),
+    drivers[1]?.runtimeKey({ ...context, providerInstanceId: "claude-personal" }),
+    "provider instances sharing a driver must never share one runtime pool key",
+  );
 }

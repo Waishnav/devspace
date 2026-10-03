@@ -5,7 +5,7 @@ import {
   captureAgentProviderResult,
   isProgrammerDefect,
 } from "./local-agent-errors.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -77,7 +77,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
 }
 
 export class ClaudeQueryRuntime implements LocalAgentRuntime {
-  readonly provider: LocalAgentProvider = "claude";
+  readonly provider: LocalAgentDriverKind = "claude";
   private readonly iterator: AsyncIterator<unknown>;
   private alive = true;
   private closed = false;
@@ -213,6 +213,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
 
 export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "claude" as const;
+  readonly providerInstanceId = "claude";
   readonly idleTimeoutMs = 3 * 60_000;
 
   constructor(

@@ -47,6 +47,11 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 9,
+    name: "local-agent-provider-instances",
+    up: migrateLocalAgentProviderInstances,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -286,6 +291,22 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
 
     create index if not exists local_agent_turns_status_idx
       on local_agent_turns(status);
+  `);
+}
+
+function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
+  const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(columns.map((column) => column.name));
+  if (names.has("provider") && !names.has("provider_instance_id")) {
+    sqlite.exec("alter table local_agent_sessions rename column provider to provider_instance_id");
+  }
+  addColumnIfMissing(sqlite, "local_agent_sessions", "driver", "text");
+  sqlite.exec(`
+    update local_agent_sessions
+    set driver = provider_instance_id
+    where driver is null or driver = ''
   `);
 }
 

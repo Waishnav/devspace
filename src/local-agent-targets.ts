@@ -1,9 +1,5 @@
-import {
-  isLocalAgentProvider,
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProfile,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
+import type { LocalAgentProfile } from "./local-agent-profiles.js";
+import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
 import type { SubagentProviderConfig } from "./local-agent-config.js";
 
 export interface ParsedLocalAgentRunArgs {
@@ -24,15 +20,15 @@ export type LocalAgentTarget =
   | {
       kind: "profile";
       name: string;
-      provider: LocalAgentProvider;
+      provider: LocalAgentProviderInstanceId;
       model?: string;
       effort?: string;
       profile: LocalAgentProfile;
     }
   | {
       kind: "provider";
-      name: LocalAgentProvider;
-      provider: LocalAgentProvider;
+      name: LocalAgentProviderInstanceId;
+      provider: LocalAgentProviderInstanceId;
       model?: string;
       effort?: string;
     };
@@ -143,8 +139,8 @@ export function resolveLocalAgentTarget(
     };
   }
 
-  if (isLocalAgentProvider(target)) {
-    const providerConfig = providerConfigs.find((entry) => entry.id === target);
+  const providerConfig = providerConfigs.find((entry) => entry.id === target);
+  if (providerConfig) {
     return {
       kind: "provider",
       name: target,

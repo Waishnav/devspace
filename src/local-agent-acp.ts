@@ -410,6 +410,7 @@ export class AcpRuntime implements LocalAgentRuntime {
 
 export class AcpLocalAgentDriver implements LocalAgentDriver {
   readonly provider: AcpProvider;
+  readonly providerInstanceId: string;
   // Keep ACP warm briefly, then let the generic pool close the process so the
   // daemon can reach its own idle shutdown state.
   readonly idleTimeoutMs = 5 * 60_000;
@@ -422,6 +423,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
     private readonly commandResolver: AcpCommandResolver = resolveAcpCommand,
   ) {
     this.provider = provider;
+    this.providerInstanceId = provider;
   }
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
