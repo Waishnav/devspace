@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentConflictError,
+  AgentProviderCancelledError,
   AgentScopeError,
   AgentStoreError,
   AgentTargetError,
@@ -73,6 +74,7 @@ export type AgentContinueError = AgentStartError;
 export type AgentLookupError = AgentTargetError | AgentScopeError | AgentStoreError;
 export type AgentListError = AgentScopeError | AgentStoreError;
 export type AgentWaitError = AgentLookupError;
+export type AgentStopError = AgentLookupError | AgentConflictError;
 
 export type LocalAgentWaitResult =
   | { id: string; status: "running"; wait?: "timeout" }
@@ -83,6 +85,7 @@ export type LocalAgentWaitResult =
 interface ActiveLocalAgentTurn {
   turnId: number;
   completion: Promise<void>;
+  abortController: AbortController;
 }
 
 /**
@@ -260,6 +263,38 @@ export class LocalAgentManager {
     return Result.ok(results);
   }
 
+  async stop(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentStopError>> {
+    const record = this.get(agentId, scope);
+    if (record.isErr()) return record;
+    if (record.value.status === "stopped") return Result.ok(record.value);
+    const active = this.activeTurns.get(agentId);
+    if (!active) {
+      return Result.err(new AgentConflictError({
+        code: "AGENT_CONFLICT",
+        agentId,
+        operation: "stop",
+        retryable: false,
+        message: `Agent ${agentId} does not have a running turn.`,
+      }));
+    }
+    const driver = this.drivers.get(record.value.providerInstanceId);
+    if (!driver?.capabilities.turns.interrupt) {
+      return Result.err(new AgentConflictError({
+        code: "AGENT_CONFLICT",
+        agentId,
+        operation: "stop",
+        retryable: false,
+        message: `Agent ${agentId} provider does not support stopping an active turn.`,
+      }));
+    }
+    active.abortController.abort();
+    await active.completion;
+    return this.get(agentId, scope);
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.accepting = false;
@@ -315,10 +350,22 @@ export class LocalAgentManager {
     if (begun.isErr()) return begun;
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
+    const abortController = new AbortController();
     const turn = Promise.resolve().then(() => (
-      this.runTurn(begun.value.agent, begun.value.turn.id, prompt, overrides, workspaceId)
+      this.runTurn(
+        begun.value.agent,
+        begun.value.turn.id,
+        prompt,
+        overrides,
+        workspaceId,
+        abortController.signal,
+      )
     ));
-    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn });
+    this.activeTurns.set(record.id, {
+      turnId: begun.value.turn.id,
+      completion: turn,
+      abortController,
+    });
     void turn.catch(() => undefined);
     return Result.ok(begun.value.agent);
   }
@@ -329,6 +376,7 @@ export class LocalAgentManager {
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -387,7 +435,7 @@ export class LocalAgentManager {
           if (updated.isErr()) throw updated.error;
         },
       };
-      const result = await this.pool.run(driver.value, context, input.value, callbacks);
+      const result = await this.pool.run(driver.value, context, { ...input.value, signal }, callbacks);
       if (result.isErr()) {
         this.persistRunError(record, turnId, result.error, startedAt);
         return;
@@ -442,13 +490,14 @@ export class LocalAgentManager {
     error: LocalAgentError,
     startedAt: number,
   ): void {
+    const stopped = AgentProviderCancelledError.is(error);
     const persisted = this.store.finishTurnResult(record.id, turnId, {
-      status: "failed",
+      status: stopped ? "stopped" : "failed",
       error: error.message,
       errorCode: error.code,
       errorRetryable: error.retryable,
     });
-    this.log("error", "agent_run_failed", {
+    this.log(stopped ? "info" : "error", stopped ? "agent_run_stopped" : "agent_run_failed", {
       providerInstanceId: record.providerInstanceId,
       driver: record.driver,
       agentId: record.id,

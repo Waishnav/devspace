@@ -41,6 +41,8 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
     this.closeCount += 1;
   }
 
+  async interrupt(): Promise<void> {}
+
   async setPermissionMode(mode: string): Promise<void> {
     this.permissionModes.push(mode);
   }
@@ -207,6 +209,7 @@ const brokenStreamQuery: ClaudeQueryLike = {
     };
   },
   close() {},
+  async interrupt() {},
   async setPermissionMode() {},
   async applyFlagSettings() {},
 };

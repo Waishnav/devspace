@@ -16,6 +16,7 @@ const requests: Array<{ method: string; params?: unknown }> = [];
 const queues = new Map<string, { values: unknown[] }>();
 const connection = {
   agent: {
+    async notify(_method: string, _params?: unknown): Promise<void> {},
     async request(method: string, params?: unknown): Promise<unknown> {
       requests.push({ method, params });
       const input = params as { sessionId?: string } | undefined;
@@ -203,6 +204,7 @@ const overlappingPrompt = new Promise<void>((resolvePrompt) => { releaseOverlapp
 const promptEntered = new Promise<void>((resolveEntered) => { markPromptEntered = resolveEntered; });
 const overlapConnection = {
   agent: {
+    async notify(_method: string, _params?: unknown): Promise<void> {},
     async request(method: string, params?: unknown): Promise<unknown> {
       const input = params as { sessionId?: string } | undefined;
       if (method === "session/new") {
@@ -356,6 +358,7 @@ const grokQueues = new Map<string, { values: unknown[] }>();
 const grokCompletionRegistry = new GrokPromptCompletionRegistry();
 const grokConnection = {
   agent: {
+    async notify(_method: string, _params?: unknown): Promise<void> {},
     async request(method: string, params?: unknown): Promise<unknown> {
       grokRequests.push({ method, params });
       const input = params as { sessionId?: string; _meta?: { promptId?: string } } | undefined;
@@ -421,6 +424,7 @@ await grokRuntime.close();
 
 const grokConfigurationConnection = {
   agent: {
+    async notify(_method: string, _params?: unknown): Promise<void> {},
     async request(method: string): Promise<unknown> {
       if (method === "session/new") {
         return {

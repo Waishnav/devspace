@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentManager } from "./local-agent-manager.js";
 import {
+  AgentProviderCancelledError,
   AgentProviderExecutionError,
   type AgentProviderError,
 } from "./local-agent-errors.js";
@@ -16,6 +17,14 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+
+const TEST_CAPABILITIES = {
+  sessions: { resume: true, close: false },
+  turns: { interrupt: true },
+  configuration: { modelOverride: true, effortOverride: true },
+  permissions: { enforcement: "native" },
+  mcp: { supported: false },
+} as const;
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -76,6 +85,20 @@ class FakeRuntime implements LocalAgentRuntime {
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
+    if (input.prompt.includes("cancel-me")) {
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        if (input.signal?.aborted) done();
+        else input.signal?.addEventListener("abort", done, { once: true });
+      });
+      return Result.err(new AgentProviderCancelledError({
+        code: "PROVIDER_CANCELLED",
+        provider: "codex",
+        operation: "run",
+        retryable: false,
+        message: "codex agent turn was stopped.",
+      }));
+    }
     return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_test",
@@ -108,6 +131,7 @@ const driver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "agent" },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: async (context) => {
     const runtime = new FakeRuntime();
     runtimes.set(context.agentId, runtime);
@@ -186,6 +210,18 @@ const unknown = await manager.start({
 });
 assert.equal(unknown.isErr(), true);
 if (unknown.isErr()) assert.equal(unknown.error.code, "UNKNOWN_TARGET");
+
+const cancellable = unwrap(await manager.start({
+  target: "codex",
+  prompt: "cancel-me",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => getRecord(cancellable.id).status === "running");
+const stopped = unwrap(await manager.stop(cancellable.id, scope));
+assert.equal(stopped.status, "stopped");
+assert.equal(store.getLatestTurn(cancellable.id)?.status, "stopped");
+assert.equal(store.getLatestTurn(cancellable.id)?.errorCode, "PROVIDER_CANCELLED");
 
 const namedInstance = unwrap(await manager.start({
   target: "codex-work",

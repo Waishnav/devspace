@@ -6,6 +6,7 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -38,6 +39,7 @@ export type PiSessionLike = Pick<
   | "setModel"
   | "setThinkingLevel"
   | "dispose"
+  | "abort"
 >;
 
 export type PiSessionFactory = (
@@ -78,6 +80,8 @@ export class PiSessionRuntime implements LocalAgentRuntime {
             message: "Pi runtime is not running.",
           });
         }
+        const removeAbort = bindLocalAgentAbort(input.signal, () => this.session.abort());
+        try {
         await callbacks?.onSessionId?.(this.session.sessionId);
         await this.applyOverrides(input);
         this.events = [];
@@ -85,6 +89,10 @@ export class PiSessionRuntime implements LocalAgentRuntime {
         this.collectingEvents = true;
         try {
           await this.session.prompt(input.prompt);
+          if (input.signal?.aborted) throw localAgentCancelledError("pi", "run");
+        } catch (cause) {
+          if (input.signal?.aborted) throw localAgentCancelledError("pi", "run", cause);
+          throw cause;
         } finally {
           this.collectingEvents = false;
         }
@@ -116,6 +124,9 @@ export class PiSessionRuntime implements LocalAgentRuntime {
           finalResponse,
           items: [...this.events, ...currentMessages],
         };
+        } finally {
+          removeAbort();
+        }
       },
     });
   }
@@ -166,6 +177,13 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "pi" as const;
   readonly providerInstanceId = "pi";
   readonly runtimePolicy = { scope: "agent", idleTimeoutMs: 3 * 60_000 } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: false },
+    turns: { interrupt: true },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "client-boundary" },
+    mcp: { supported: false },
+  } as const;
 
   constructor(
     private readonly factory: PiSessionFactory = defaultPiSessionFactory,

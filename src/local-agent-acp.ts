@@ -8,6 +8,7 @@ import {
   captureAgentProviderResult,
   isProgrammerDefect,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import {
@@ -49,6 +50,7 @@ const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
 interface AcpConnectionLike {
   agent: {
     request(method: string, params?: unknown): Promise<unknown>;
+    notify(method: string, params?: unknown): Promise<void>;
   };
   close(error?: unknown): void;
   closed: Promise<void>;
@@ -142,6 +144,9 @@ export class AcpRuntime implements LocalAgentRuntime {
           throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
         }
         this.activeSessions.add(sessionId);
+        const removeAbort = bindLocalAgentAbort(input.signal, () => (
+          this.connection.agent.notify("session/cancel", { sessionId })
+        ));
         const queue = this.queues.get(sessionId) ?? { values: [] };
         this.queues.set(sessionId, queue);
         const promptId = this.provider === "grok" ? this.nextPromptId() : undefined;
@@ -166,9 +171,16 @@ export class AcpRuntime implements LocalAgentRuntime {
             prompt: [{ type: "text", text: input.prompt }],
             ...(promptId ? { _meta: { promptId, requestId: promptId } } : {}),
           });
-          const response = completion
-            ? await Promise.race([standardResponse, completion])
-            : await standardResponse;
+          let response: unknown;
+          try {
+            response = completion
+              ? await Promise.race([standardResponse, completion])
+              : await standardResponse;
+          } catch (cause) {
+            if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
+            throw cause;
+          }
+          if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
           if (completion && isGrokPromptCompletion(response)) {
             await yieldToAcpQueue();
           } else if (promptId) {
@@ -193,6 +205,7 @@ export class AcpRuntime implements LocalAgentRuntime {
             items: updates,
           };
         } finally {
+          removeAbort();
           if (promptId) this.grokCompletionRegistry?.remove(sessionId, promptId);
           this.activeSessions.delete(sessionId);
         }
@@ -415,6 +428,13 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
     scope: "workspace",
     authority: "write_mode",
     idleTimeoutMs: 5 * 60_000,
+  } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: true },
+    turns: { interrupt: true },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "native" },
+    mcp: { supported: true },
   } as const;
   private commandResolved = false;
   private resolvedCommand?: string;
