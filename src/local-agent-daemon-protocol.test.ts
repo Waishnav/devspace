@@ -194,6 +194,20 @@ const waitRequest = decodeLocalAgentDaemonRequest({
 });
 assert.equal(waitRequest.method, "agent.wait");
 if (waitRequest.method !== "agent.wait") throw new Error("expected agent.wait request");
+
+const stopRequest = decodeLocalAgentDaemonRequest({
+  requestId: "stop",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "secret",
+  method: "agent.stop",
+  params: {
+    id: "agt_stop",
+    scope: { workspaceId: "ws_test", workspaceRoot: "/tmp/project" },
+  },
+});
+assert.equal(stopRequest.method, "agent.stop");
+if (stopRequest.method !== "agent.stop") throw new Error("expected agent.stop request");
+assert.equal(stopRequest.params.id, "agt_stop");
 assert.deepEqual(waitRequest.params.ids, ["agt_one", "agt_two"]);
 assert.equal(waitRequest.params.timeoutMs, 5_000);
 

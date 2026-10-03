@@ -19,6 +19,7 @@ export type LocalAgentDaemonMethod =
   | "agent.get"
   | "agent.list"
   | "agent.wait"
+  | "agent.stop"
   | "daemon.status"
   | "daemon.stop"
   | "daemon.logs";
@@ -34,6 +35,7 @@ export type LocalAgentDaemonRequest =
       scope: LocalAgentWorkspaceScope;
       timeoutMs?: number;
     }>
+  | AgentDaemonRequestBase<"agent.stop", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.stop", { ifIdle?: boolean }>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
@@ -168,6 +170,17 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         authToken,
         method,
         params: decodeWaitParams(params),
+      } as LocalAgentDaemonRequest;
+    case "agent.stop":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: {
+          id: requiredString(asRecord(params)?.id, "id"),
+          scope: decodeWorkspaceScope(asRecord(params)?.scope),
+        },
       } as LocalAgentDaemonRequest;
     case "daemon.logs":
       return {

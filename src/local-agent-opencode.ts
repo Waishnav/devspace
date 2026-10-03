@@ -8,6 +8,7 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -125,6 +126,13 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+    const removeAbort = bindLocalAgentAbort(input.signal, async () => {
+      await this.client.session.abort({
+        sessionID: sessionId,
+        directory: input.workspaceRoot,
+      }, { throwOnError: false });
+      controller.abort();
+    });
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
@@ -132,6 +140,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     try {
       return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
     } catch (error) {
+      if (input.signal?.aborted) throw localAgentCancelledError("opencode", "prompt", error);
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -143,6 +152,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
       });
     } finally {
       clearTimeout(timer);
+      removeAbort();
       this.promptControllers.delete(controller);
     }
   }
@@ -152,6 +162,13 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "opencode" as const;
   readonly providerInstanceId = "opencode";
   readonly runtimePolicy = { scope: "instance", idleTimeoutMs: 5 * 60_000 } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: false },
+    turns: { interrupt: true },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "native" },
+    mcp: { supported: true },
+  } as const;
   private readonly factory: OpencodeFactory;
   private readonly v2Factory: OpencodeV2Factory;
   private readonly env: NodeJS.ProcessEnv;

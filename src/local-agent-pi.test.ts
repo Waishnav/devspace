@@ -28,6 +28,8 @@ class FakePiSession implements PiSessionLike {
     for (const listener of this.listeners) listener({ type: "agent_end" } as AgentSessionEvent);
   }
 
+  async abort(): Promise<void> {}
+
   subscribe(listener: AgentSessionEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

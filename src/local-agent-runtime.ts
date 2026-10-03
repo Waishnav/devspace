@@ -16,6 +16,7 @@ export interface LocalAgentRunInput {
   effort?: string;
   modelOverrideRequested?: boolean;
   effortOverrideRequested?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface LocalAgentRunResult {
@@ -56,6 +57,14 @@ export interface LocalAgentRuntimePolicy {
   sessionIdleTimeoutMs?: number;
 }
 
+export interface LocalAgentCapabilities {
+  sessions: { resume: boolean; close: boolean };
+  turns: { interrupt: boolean };
+  configuration: { modelOverride: boolean; effortOverride: boolean };
+  permissions: { enforcement: "native" | "client-boundary" | "unsupported" };
+  mcp: { supported: boolean };
+}
+
 /**
  * A runtime is deliberately disposable. Nothing from this interface is
  * persisted; the provider session ID in LocalAgentStore is the continuation
@@ -76,5 +85,6 @@ export interface LocalAgentDriver {
   readonly providerInstanceId: LocalAgentProviderInstanceId;
   readonly provider: LocalAgentDriverKind;
   readonly runtimePolicy: LocalAgentRuntimePolicy;
+  readonly capabilities: LocalAgentCapabilities;
   createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
 }

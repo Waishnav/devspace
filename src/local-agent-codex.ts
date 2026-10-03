@@ -8,6 +8,7 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
@@ -147,7 +148,14 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
-        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        let completed: CodexTurnResult;
+        try {
+          completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal);
+        } catch (cause) {
+          if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
+          throw cause;
+        }
+        if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
@@ -232,6 +240,13 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "codex" as const;
   readonly providerInstanceId = "codex";
   readonly runtimePolicy = { scope: "instance", idleTimeoutMs: 5 * 60_000 } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: false },
+    turns: { interrupt: true },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "native" },
+    mcp: { supported: true },
+  } as const;
 
   private commandResolved = false;
   private resolvedCommand?: ResolvedCodexCommand;
@@ -354,7 +369,7 @@ class CodexAppServerRpc {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  async runTurn(threadId: string, params: unknown): Promise<CodexTurnResult> {
+  async runTurn(threadId: string, params: unknown, signal?: AbortSignal): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
@@ -370,12 +385,20 @@ class CodexAppServerRpc {
       reject: rejectTurn,
     };
     this.turns.set(threadId, turn);
+    const removeAbort = bindLocalAgentAbort(signal, async () => {
+      if (!turn.turnId) return;
+      await this.request("turn/interrupt", { threadId, turnId: turn.turnId });
+    });
     try {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
+      if (signal?.aborted && turn.turnId) {
+        await this.request("turn/interrupt", { threadId, turnId: turn.turnId });
+      }
       if (turn.completed) return { event: turn.completed, items: turn.items };
       return await completion;
     } finally {
+      removeAbort();
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
     }
   }

@@ -96,6 +96,11 @@ class FakeManager implements LocalAgentDaemonManager {
     return Result.ok(agentIds.map((id) => ({ id, status: "running" as const })));
   }
 
+  async stop(_agentId: string, _scope: unknown) {
+    this.activeTurnCount = 0;
+    return Result.ok({ ...record, status: "stopped" } as LocalAgentRecord);
+  }
+
   async evictIdle(): Promise<void> {}
 
   async close(): Promise<void> {
@@ -174,6 +179,7 @@ try {
   assert.deepEqual(unwrap(await client.wait([record.id], recordScope, 0)), [
     { id: record.id, status: "running" },
   ]);
+  assert.equal(unwrap(await client.stopAgent(record.id, recordScope)).status, "stopped");
   assert.equal(unwrap(await client.status()).state, "ready");
 
   unwrap(await client.stop());

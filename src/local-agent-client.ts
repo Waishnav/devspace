@@ -49,6 +49,7 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentStopError,
   AgentWaitError,
   LocalAgentWaitResult,
   RunOverrides,
@@ -158,6 +159,14 @@ export class LocalAgentClient {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     }, transportTimeoutMs);
     return decodeRequestResult(result, "agent.wait", decodeAgentWaitResults);
+  }
+
+  async stopAgent(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentStopError | AgentDaemonError>> {
+    const result = await this.request("agent.stop", { id: agentId, scope });
+    return decodeRequestResult(result, "agent.stop", decodeAgentRecord);
   }
 
   async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
@@ -695,6 +704,11 @@ function isRequestError(
     case "agent.get":
     case "agent.wait":
       return category === "target" || category === "scope" || category === "store";
+    case "agent.stop":
+      return category === "target"
+        || category === "scope"
+        || category === "conflict"
+        || category === "store";
     case "agent.list":
       return category === "scope" || category === "store";
     case "hello":

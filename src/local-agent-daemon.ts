@@ -37,6 +37,7 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentStopError,
   AgentWaitError,
   LocalAgentWaitResult,
   RunOverrides,
@@ -61,6 +62,7 @@ export interface LocalAgentDaemonManager {
     timeoutMs?: number,
     signal?: AbortSignal,
   ): Promise<Result<LocalAgentWaitResult[], AgentWaitError>>;
+  stop(agentId: string, scope: LocalAgentWorkspaceScope): Promise<Result<LocalAgentRecord, AgentStopError>>;
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
   readonly activeTurnCount: number;
@@ -338,6 +340,11 @@ export class LocalAgentDaemon {
           request.params.scope,
           request.params.timeoutMs,
           signal,
+        ));
+      case "agent.stop":
+        return unwrapManagerResult(await this.manager.stop(
+          request.params.id,
+          request.params.scope,
         ));
       case "daemon.status":
         return this.status();
