@@ -53,7 +53,7 @@ const providerSchema = z.object({
     });
     return;
   }
-  if ((driver === "opencode" || driver === "pi") && provider.command !== undefined) {
+  if (driver === "opencode" && provider.command !== undefined) {
     context.addIssue({
       code: "custom",
       path: ["command"],
@@ -169,8 +169,8 @@ export function providerCommandVariable(driver: LocalAgentDriverKind): string | 
   switch (driver) {
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
+    case "pi": return "PI_COMMAND";
     case "opencode":
-    case "pi":
     case "acp":
       return undefined;
   }

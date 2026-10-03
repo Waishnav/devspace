@@ -27,7 +27,7 @@ import {
   PiLocalAgentDriver,
   extractPiFinalResponse,
   extractPiProviderError,
-  type PiSessionFactory,
+  type PiRpcFactory,
 } from "./local-agent-pi.js";
 import type { LocalAgentDriver } from "./local-agent-runtime.js";
 import { LocalAgentProviderRegistry } from "./local-agent-provider-registry.js";
@@ -39,7 +39,7 @@ export interface LocalAgentDriverOptions {
   subagents?: SubagentsConfig;
   claudeQueryFactory?: ClaudeQueryFactory;
   opencodeFactory?: OpencodeFactory;
-  piSessionFactory?: PiSessionFactory;
+  piRpcFactory?: PiRpcFactory;
 }
 
 export function createLocalAgentDrivers(
@@ -62,7 +62,7 @@ export function createLocalAgentProviderRegistry(
     .register("codex", ({ env }) => new CodexLocalAgentDriver(env))
     .register("claude", ({ env }) => new ClaudeLocalAgentDriver(options.claudeQueryFactory, env))
     .register("opencode", ({ env }) => new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env }))
-    .register("pi", ({ envOverrides }) => new PiLocalAgentDriver(options.piSessionFactory, envOverrides))
+    .register("pi", ({ env }) => new PiLocalAgentDriver(options.piRpcFactory, env))
     .register("acp", ({ instance, env }) => new AcpLocalAgentDriver({
       env,
       command: instance.command,

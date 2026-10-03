@@ -192,14 +192,14 @@ does not expand `$NAME` references in these values.
 All subagent providers accept `env`. The daemon inherits its startup
 environment, then overlays the provider's `env` without mutating the daemon's
 process environment. OpenCode receives that environment on its managed server
-process; embedded Pi scopes it to its provider requests and command execution.
+process; Pi receives it on its managed RPC process.
 
 The `opencode` driver runs `opencode --version` before creating its first
 runtime and automatically selects the OpenCode 1.x or 2.x protocol. Both major
 versions use the same provider instance and profile configuration; `opencode2`
 is not a separate driver.
 
-Codex, Claude, and ACP instances also accept `command`. OpenCode and Pi do not
+Codex, Claude, Pi, and ACP instances also accept `command`. OpenCode does not
 expose a command override. Cursor, Copilot, and Grok retain their built-in ACP
 commands when `command` is omitted. An arbitrary ACP instance declares its
 executable and may provide fixed startup arguments under `config.args`:
@@ -216,6 +216,12 @@ executable and may provide fixed startup arguments under `config.args`:
 
 `config.flavor` is reserved for the small built-in protocol quirks currently
 needed by `cursor`, `copilot`, and `grok`; generic ACP agents normally omit it.
+
+Pi runs as the normal CLI in `--mode rpc`, so user-installed extensions,
+skills, context files, auth, models, and settings load normally. Restricted
+DevSpace modes inject a sandbox extension and pin Pi's active built-in tools to
+the matching read-only/workspace-safe set; `full_access` leaves Pi's normal
+tool configuration untouched.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
 `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,

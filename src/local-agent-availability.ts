@@ -53,7 +53,9 @@ function checkLocalAgentProviderAvailability(
     case "opencode":
       return commandAvailability(providerInstanceId, "opencode", providerEnv);
     case "pi":
-      return packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
+      return providerEnv.PI_COMMAND
+        ? commandAvailability(providerInstanceId, providerEnv.PI_COMMAND, providerEnv)
+        : packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
     case "acp": {
       const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
       const command = configured?.command
