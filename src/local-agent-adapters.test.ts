@@ -347,16 +347,5 @@ assert.equal(
     drivers.map((driver) => [driver.providerInstanceId, driver.provider]),
     [["claude-work", "claude"], ["claude-personal", "claude"]],
   );
-  const context = {
-    agentId: "agt_test",
-    providerInstanceId: "claude-work",
-    provider: "claude" as const,
-    workspaceRoot: "/tmp/project",
-    writeMode: "allowed" as const,
-  };
-  assert.notEqual(
-    drivers[0]?.runtimeKey(context),
-    drivers[1]?.runtimeKey({ ...context, providerInstanceId: "claude-personal" }),
-    "provider instances sharing a driver must never share one runtime pool key",
-  );
+  assert.deepEqual(drivers.map((driver) => driver.runtimePolicy.scope), ["agent", "agent"]);
 }

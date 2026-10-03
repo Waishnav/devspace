@@ -165,16 +165,12 @@ export class PiSessionRuntime implements LocalAgentRuntime {
 export class PiLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "pi" as const;
   readonly providerInstanceId = "pi";
-  readonly idleTimeoutMs = 3 * 60_000;
+  readonly runtimePolicy = { scope: "agent", idleTimeoutMs: 3 * 60_000 } as const;
 
   constructor(
     private readonly factory: PiSessionFactory = defaultPiSessionFactory,
     private readonly env: NodeJS.ProcessEnv = {},
   ) {}
-
-  runtimeKey(context: LocalAgentRuntimeContext): string {
-    return `pi:${context.agentId}`;
-  }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
     return captureAgentProviderResult({

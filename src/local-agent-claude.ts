@@ -214,17 +214,16 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
 export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "claude" as const;
   readonly providerInstanceId = "claude";
-  readonly idleTimeoutMs = 3 * 60_000;
+  readonly runtimePolicy = {
+    scope: "agent",
+    authority: "full_access_boundary",
+    idleTimeoutMs: 3 * 60_000,
+  } as const;
 
   constructor(
     private readonly factory: ClaudeQueryFactory = defaultClaudeQueryFactory,
     private readonly env: NodeJS.ProcessEnv = process.env,
   ) {}
-
-  runtimeKey(context: LocalAgentRuntimeContext): string {
-    const authority = context.writeMode === "full_access" ? "full_access" : "restricted";
-    return `claude:${context.agentId}:${authority}`;
-  }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
     return captureAgentProviderResult({

@@ -255,7 +255,7 @@ export class LocalAgentRuntimePool {
     driver: LocalAgentDriver,
     context: LocalAgentRuntimeContext,
   ): Promise<BetterResult<RuntimeEntry, AgentProviderError>> {
-    const key = driver.runtimeKey(context);
+    const key = runtimePoolKey(driver, context);
     while (true) {
       const existing = this.entries.get(key);
       if (existing && !existing.closing) {
@@ -311,8 +311,8 @@ export class LocalAgentRuntimePool {
       entry = {
         key,
         driver,
-        idleTimeoutMs: driver.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
-        sessionIdleTimeoutMs: this.sessionIdleTimeoutMs,
+        idleTimeoutMs: driver.runtimePolicy.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+        sessionIdleTimeoutMs: driver.runtimePolicy.sessionIdleTimeoutMs ?? this.sessionIdleTimeoutMs,
         createPromise,
         activeRuns: 0,
         lastUsedAt: this.now(),
@@ -494,6 +494,35 @@ export class LocalAgentRuntimePool {
   ): void {
     this.logger?.(level, event, fields);
   }
+}
+
+function runtimePoolKey(driver: LocalAgentDriver, context: LocalAgentRuntimeContext): string {
+  const policy = driver.runtimePolicy;
+  const parts: Array<string | undefined> = [
+    context.providerInstanceId,
+    policy.scope,
+  ];
+  switch (policy.scope) {
+    case "instance":
+      break;
+    case "workspace":
+      parts.push(context.workspaceRoot);
+      break;
+    case "agent":
+      parts.push(context.agentId);
+      break;
+  }
+  switch (policy.authority ?? "none") {
+    case "none":
+      break;
+    case "write_mode":
+      parts.push(context.writeMode ?? "allowed");
+      break;
+    case "full_access_boundary":
+      parts.push(context.writeMode === "full_access" ? "full_access" : "restricted");
+      break;
+  }
+  return JSON.stringify(parts);
 }
 
 function poolClosedError(

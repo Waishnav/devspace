@@ -151,7 +151,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
 export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "opencode" as const;
   readonly providerInstanceId = "opencode";
-  readonly idleTimeoutMs = 5 * 60_000;
+  readonly runtimePolicy = { scope: "instance", idleTimeoutMs: 5 * 60_000 } as const;
   private readonly factory: OpencodeFactory;
   private readonly v2Factory: OpencodeV2Factory;
   private readonly env: NodeJS.ProcessEnv;
@@ -167,10 +167,6 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
     this.v2Factory = options.v2Factory ?? defaultOpencodeV2Factory;
     this.env = options.env ?? process.env;
     this.runtimeProbe = options.runtimeProbe ?? createOpenCodeRuntimeProbe(this.env);
-  }
-
-  runtimeKey(_context: LocalAgentRuntimeContext): string {
-    return "opencode:default";
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
