@@ -30,7 +30,8 @@ import type {
 } from "./local-agent-runtime.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
 
-export type AcpProvider = "cursor" | "copilot" | "grok";
+export type AcpFlavor = "cursor" | "copilot" | "grok" | "generic";
+export type AcpProvider = AcpFlavor;
 
 const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
@@ -43,7 +44,7 @@ const spawn = require("cross-spawn") as typeof import("node:child_process").spaw
 
 const observeChildError = (): void => {};
 
-const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
+const ACP_COMMANDS: Partial<Record<AcpFlavor, [string, ...string[]]>> = {
   cursor: ["cursor-agent", "acp"],
   copilot: ["copilot", "--acp"],
   grok: ["grok", "agent", "stdio"],
@@ -69,7 +70,7 @@ interface AcpSessionQueue {
 }
 
 export interface AcpRuntimeOptions {
-  provider: AcpProvider;
+  flavor: AcpFlavor;
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -85,7 +86,8 @@ export interface AcpRuntimeOptions {
 }
 
 export class AcpRuntime implements LocalAgentRuntime {
-  readonly provider: AcpProvider;
+  readonly provider = "acp" as const;
+  private readonly flavor: AcpFlavor;
   private readonly child?: ChildProcessWithoutNullStreams;
   private readonly connection: AcpConnectionLike;
   private readonly capabilities: AcpCapabilities;
@@ -102,7 +104,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private closed = false;
 
   constructor(options: AcpRuntimeOptions, connection: AcpConnectionLike) {
-    this.provider = options.provider;
+    this.flavor = options.flavor;
     this.child = options.child;
     this.connection = connection;
     this.capabilities = options.capabilities ?? { resume: false, close: false };
@@ -172,7 +174,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         cancelDeadline?.catch(() => undefined);
         const queue = this.queues.get(sessionId) ?? { values: [] };
         this.queues.set(sessionId, queue);
-        const promptId = this.provider === "grok" ? this.nextPromptId() : undefined;
+        const promptId = this.flavor === "grok" ? this.nextPromptId() : undefined;
         const completion = promptId && this.grokCompletionRegistry
           ? this.grokCompletionRegistry.wait(
               sessionId,
@@ -336,7 +338,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   }
 
   private cacheSessionMetadata(sessionId: string, response: unknown): void {
-    if (hasAcpConfigOptions(response) || (this.provider === "grok" && readGrokSessionState(response))) {
+    if (hasAcpConfigOptions(response) || (this.flavor === "grok" && readGrokSessionState(response))) {
       this.sessionMetadata.set(sessionId, response);
     }
   }
@@ -348,7 +350,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     isNewSession = false,
   ): Promise<void> {
     const metadata = response ?? this.sessionMetadata.get(sessionId);
-    if (this.provider === "grok") {
+    if (this.flavor === "grok") {
       await this.configureGrokSession(sessionId, input, metadata, isNewSession);
       return;
     }
@@ -375,11 +377,11 @@ export class AcpRuntime implements LocalAgentRuntime {
       return;
     }
     if (input.model) {
-      const config = resolveAcpModelConfigUpdate(metadata, input.model, this.provider, sessionId);
+      const config = resolveAcpModelConfigUpdate(metadata, input.model, this.flavor, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
     }
     if (input.effort) {
-      const config = resolveAcpEffortConfigUpdate(metadata, input.effort, this.provider, sessionId);
+      const config = resolveAcpEffortConfigUpdate(metadata, input.effort, this.flavor, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
     }
   }
@@ -449,8 +451,8 @@ export class AcpRuntime implements LocalAgentRuntime {
 }
 
 export class AcpLocalAgentDriver implements LocalAgentDriver {
-  readonly provider: AcpProvider;
-  readonly providerInstanceId: string;
+  readonly provider = "acp" as const;
+  readonly providerInstanceId = "acp";
   readonly runtimePolicy = {
     scope: "workspace",
     authority: "write_mode",
@@ -465,14 +467,24 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
   } as const;
   private commandResolved = false;
   private resolvedCommand?: string;
+  private readonly flavor: AcpFlavor;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly configuredCommand?: string;
+  private readonly configuredArgs?: string[];
+  private readonly commandResolver: AcpCommandResolver;
 
-  constructor(
-    provider: AcpProvider,
-    private readonly env: NodeJS.ProcessEnv = process.env,
-    private readonly commandResolver: AcpCommandResolver = resolveAcpCommand,
-  ) {
-    this.provider = provider;
-    this.providerInstanceId = provider;
+  constructor(options: {
+    flavor?: Exclude<AcpFlavor, "generic">;
+    command?: string;
+    args?: string[];
+    env?: NodeJS.ProcessEnv;
+    commandResolver?: AcpCommandResolver;
+  } = {}) {
+    this.flavor = options.flavor ?? "generic";
+    this.env = options.env ?? process.env;
+    this.configuredCommand = options.command;
+    this.configuredArgs = options.args;
+    this.commandResolver = options.commandResolver ?? resolveAcpCommand;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -492,7 +504,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             message: `${this.provider} executable was not found.`,
           });
         }
-        const args = acpCommandArgs(this.provider, context, this.env);
+        const args = this.configuredArgs ?? acpCommandArgs(this.flavor, context, this.env);
         const child = spawn(command, args, {
           cwd: resolve(context.workspaceRoot),
           env: this.env,
@@ -534,13 +546,13 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
           const queues = new Map<string, AcpSessionQueue>();
           const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
-          const grokCompletionRegistry = this.provider === "grok"
+          const grokCompletionRegistry = this.flavor === "grok"
             ? new GrokPromptCompletionRegistry()
             : undefined;
           const app = client({ name: "DevSpace" })
             .onRequest(methods.client.session.requestPermission, (context) => {
               const writeMode = sessionWriteModes.get(context.params.sessionId);
-              const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
+              const selected = selectAcpPermissionOption(context.params.options, writeMode, this.flavor);
               return selected
                 ? { outcome: { outcome: "selected", optionId: selected.optionId } }
                 : { outcome: { outcome: "cancelled" } };
@@ -580,7 +592,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           );
           const capabilities = readAcpCapabilities(init);
           const runtime = new AcpRuntime({
-            provider: this.provider,
+            flavor: this.flavor,
             command,
             args,
             env: this.env,
@@ -626,7 +638,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
 
   private resolveCommand(): string | undefined {
     if (!this.commandResolved) {
-      this.resolvedCommand = this.commandResolver(this.provider, this.env);
+      this.resolvedCommand = this.commandResolver(this.flavor, this.env, this.configuredCommand);
       this.commandResolved = true;
     }
     return this.resolvedCommand;
@@ -653,22 +665,30 @@ async function waitForProcessExit(
 }
 
 export function resolveAcpCommand(
-  provider: AcpProvider,
+  provider: AcpFlavor,
   env: NodeJS.ProcessEnv = process.env,
+  explicitCommand?: string,
 ): string | undefined {
-  const configured = provider === "cursor"
+  const configured = explicitCommand ?? (provider === "cursor"
     ? env.CURSOR_COMMAND
     : provider === "copilot"
       ? env.COPILOT_COMMAND
-      : env.GROK_COMMAND;
-  const command = configured ?? ACP_COMMANDS[provider][0];
+      : provider === "grok"
+        ? env.GROK_COMMAND
+        : undefined);
+  const command = configured ?? ACP_COMMANDS[provider]?.[0];
+  if (!command) return undefined;
   return resolveExecutableCommand(command, env);
 }
 
-export type AcpCommandResolver = (provider: AcpProvider, env: NodeJS.ProcessEnv) => string | undefined;
+export type AcpCommandResolver = (
+  provider: AcpFlavor,
+  env: NodeJS.ProcessEnv,
+  explicitCommand?: string,
+) => string | undefined;
 
 export function acpCommandArgs(
-  provider: AcpProvider,
+  provider: AcpFlavor,
   context: LocalAgentRuntimeContext,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
@@ -694,6 +714,7 @@ export function acpCommandArgs(
       "stdio",
     ];
   }
+  if (provider === "generic") return [];
   const sandboxArgs = writeMode === "full_access"
     ? ["--no-sandbox"]
     : ["--experimental", "--sandbox"];
@@ -794,7 +815,7 @@ export function selectAcpAllowPermissionOption(
 export function selectAcpPermissionOption(
   options: Array<{ optionId: string; kind: string }>,
   writeMode: LocalAgentWriteMode | undefined,
-  provider?: AcpProvider,
+  provider?: AcpFlavor,
 ): { optionId: string } | undefined {
   if (!writeMode) return undefined;
   // Copilot's native sandbox has a per-command escape hatch enabled by
