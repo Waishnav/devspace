@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentManager } from "./local-agent-manager.js";
+import { verifyLocalAgentMcpCapability } from "./local-agent-mcp-capability.js";
 import {
   AgentProviderCancelledError,
   AgentProviderExecutionError,
@@ -160,6 +161,7 @@ const manager = new LocalAgentManager({
   loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
   subagents,
+  mcpCapabilitySecret: "test-mcp-secret",
 });
 
 const defectStore = new LocalAgentStore(join(root, "defect-state"));
@@ -213,6 +215,15 @@ const stopped = unwrap(await manager.stop(cancellable.id, scope));
 assert.equal(stopped.status, "stopped");
 assert.equal(store.getLatestTurn(cancellable.id)?.status, "stopped");
 assert.equal(store.getLatestTurn(cancellable.id)?.errorCode, "PROVIDER_CANCELLED");
+const capability = runtimes.get(cancellable.id)?.inputs[0]?.mcpCapability;
+assert.ok(capability);
+assert.deepEqual(verifyLocalAgentMcpCapability("test-mcp-secret", capability!), {
+  version: 1,
+  parentAgentId: cancellable.id,
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+  maxWriteMode: "allowed",
+});
 
 const namedInstance = unwrap(await manager.start({
   target: "codex-work",

@@ -9,6 +9,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentMcpLaunch } from "./local-agent-mcp-launch.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -19,6 +20,7 @@ import type {
 } from "./local-agent-runtime.js";
 import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
 import {
+  configureOpenCodeV2Mcp,
   defaultOpencodeV2Factory,
   OpencodeV2Runtime,
   type OpencodeV2Factory,
@@ -36,7 +38,9 @@ interface OpencodeModelRef {
   modelID: string;
 }
 
-export type OpencodeClientLike = Pick<OpencodeClient, "global" | "session">;
+export type OpencodeClientLike = Pick<OpencodeClient, "global" | "session"> & {
+  mcp?: Pick<OpencodeClient["mcp"], "add">;
+};
 
 export type OpencodeFactory = (
   context?: LocalAgentRuntimeContext,
@@ -55,6 +59,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
   constructor(
     private readonly client: OpencodeClientLike,
     private readonly server: OpencodeServerLike,
+    private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly promptTimeoutMs = OPENCODE_PROMPT_TIMEOUT_MS,
   ) {}
 
@@ -73,6 +78,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           });
         }
         try {
+          await configureOpenCodeV1Mcp(this.client, input, this.env);
           await assertOpencodeHealthy(this.client);
           const sessionId = input.providerSessionId
             ? requireOpenCodeV1NativeSessionId(input.providerSessionId)
@@ -195,13 +201,32 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
         const runtime = await this.runtimeProbe.get();
         if (runtime.generation === "v2") {
           const { client, server } = await this.v2Factory(context, this.env);
-          return new OpencodeV2Runtime(client, server);
+          return new OpencodeV2Runtime(client, server, this.env);
         }
         const { client, server } = await this.factory(context, this.env);
-        return new OpencodeRuntime(client, server);
+        return new OpencodeRuntime(client, server, this.env);
       },
     });
   }
+}
+
+async function configureOpenCodeV1Mcp(
+  client: OpencodeClientLike,
+  input: LocalAgentRunInput,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const mcp = localAgentMcpLaunch(input, env);
+  if (!mcp || !client.mcp) return;
+  await client.mcp.add({
+    directory: input.workspaceRoot,
+    name: mcp.name,
+    config: {
+      type: "local",
+      command: [mcp.command, ...mcp.args],
+      cwd: input.workspaceRoot,
+      environment: mcp.env,
+    },
+  }, { throwOnError: true });
 }
 
 async function defaultOpencodeFactory(

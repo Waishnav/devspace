@@ -50,6 +50,7 @@ if (process.platform !== "win32") {
   await writeFile(command, `#!/usr/bin/env node
 import readline from "node:readline";
 let turn = 0;
+let lastThreadParams = {};
 const output = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
@@ -58,6 +59,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (message.method === "thread/start" || message.method === "thread/resume") {
+    lastThreadParams = message.params;
     output({ id: message.id, result: { thread: { id: message.params.threadId || "thread_new" } } });
     return;
   }
@@ -86,6 +88,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       }
       const item = { type: "agentMessage", text: message.params.input[0].text === "policy"
         ? JSON.stringify(message.params.sandboxPolicy)
+        : message.params.input[0].text === "mcp"
+          ? JSON.stringify(lastThreadParams.config?.mcp_servers || null)
         : "fake response " + turn };
       output({ method: "item/completed", params: { threadId: message.params.threadId, turnId, item } });
       output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [item] } } });
@@ -163,6 +167,24 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(policy.isOk(), true);
     if (policy.isErr()) throw policy.error;
     assert.deepEqual(JSON.parse(policy.value.finalResponse), { type: "workspaceWrite", networkAccess: true });
+    const mcp = await runtime.run({
+      agentId: "agt_codex",
+      workspaceId: "ws_codex",
+      mcpCapability: "cap_codex",
+      prompt: "mcp",
+      workspaceRoot: "/tmp/project",
+      writeMode: "read_only",
+      providerSessionId: first.providerSessionId ?? undefined,
+    });
+    assert.equal(mcp.isOk(), true);
+    if (mcp.isErr()) throw mcp.error;
+    const mcpServers = JSON.parse(mcp.value.finalResponse) as Record<string, {
+      args?: string[];
+      env?: Record<string, string>;
+    }>;
+    const injected = mcpServers["devspace-agents-agt_codex"];
+    assert.deepEqual(injected?.args?.slice(-2), ["agents", "mcp"]);
+    assert.equal(injected?.env?.DEVSPACE_AGENT_MCP_CAPABILITY, "cap_codex");
     await runtime.releaseSession("thread_new");
   } finally {
     await runtime.close();

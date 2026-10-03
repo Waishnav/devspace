@@ -8,6 +8,9 @@ import type {
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 
 export interface LocalAgentRunInput {
+  agentId?: string;
+  workspaceId?: string;
+  mcpCapability?: string;
   prompt: string;
   workspaceRoot: string;
   providerSessionId?: string;
@@ -37,6 +40,8 @@ export interface LocalAgentRunCallbacks {
 
 export interface LocalAgentRuntimeContext {
   agentId: string;
+  workspaceId?: string;
+  mcpCapability?: string;
   providerInstanceId: LocalAgentProviderInstanceId;
   provider: LocalAgentDriverKind;
   workspaceRoot: string;

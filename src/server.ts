@@ -56,6 +56,7 @@ import {
   formatLocalAgentProviderStatusSummary,
   type LocalAgentProviderStatus,
 } from "./local-agent-catalog.js";
+import { registerLocalAgentMcpTools } from "./local-agent-mcp-tools.js";
 import { getToolSurface } from "./tool-surfaces/index.js";
 import {
   contentText,
@@ -130,13 +131,16 @@ function serverInstructions(
       : "";
   const showChangesInstruction =
     " If files are modified, call show_changes once after the final related change and before the final response.";
+  const subagentInstruction = config.subagents.enabled
+    ? " For delegated work, use agent_targets to discover targets, agent_spawn to start a bounded worker, agent_wait for dependencies, and agent_send for related follow-up. Do not poll agent_status when agent_wait can express the dependency."
+    : "";
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned skill path before proceeding. `
     : "";
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
   const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
 
-  return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
+  return `${common} ${toolSurface.instructions({ agents, skills })}${subagentInstruction}${artifactInstruction}${showChangesInstruction}`;
 }
 
 function formatVisibleAgent(agent: {
@@ -689,6 +693,14 @@ function registerMcpSurface(
       };
     },
   );
+
+  registerLocalAgentMcpTools(registrationTarget, {
+    config,
+    resolveScope: async (workspaceId) => {
+      const workspace = await workspaces.getWorkspace(workspaceId);
+      return { workspaceId, workspaceRoot: workspace.root };
+    },
+  });
 
   toolSurface.register({
     server: registrationTarget,

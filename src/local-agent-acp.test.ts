@@ -64,6 +64,9 @@ const runtime = new AcpRuntime({
 }, connection);
 
 const firstResult = await runtime.run({
+  agentId: "agt_cursor",
+  workspaceId: "ws_cursor",
+  mcpCapability: "cap_cursor",
   prompt: "first",
   workspaceRoot: "/tmp/project",
   model: "model-a",
@@ -99,6 +102,13 @@ assert.equal(
   Object.hasOwn(requests.find(({ method }) => method === "session/new")?.params as object, "additionalDirectories"),
   false,
 );
+const newSessionParams = requests.find(({ method }) => method === "session/new")?.params as {
+  mcpServers?: Array<{ name: string; env: Array<{ name: string; value: string }> }>;
+};
+assert.equal(newSessionParams.mcpServers?.[0]?.name, "devspace-agents-agt_cursor");
+assert.ok(newSessionParams.mcpServers?.[0]?.env.some((entry) => (
+  entry.name === "DEVSPACE_AGENT_MCP_CAPABILITY" && entry.value === "cap_cursor"
+)));
 
 await runtime.releaseSession("cursor_session_1");
 assert.equal(queues.has("cursor_session_1"), false);

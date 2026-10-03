@@ -50,6 +50,27 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }
 });
 
+test("enabled subagents expose provider-neutral agent control tools", async (t) => {
+  const context = await fixture(t, {
+    toolMode: "codex",
+    uiEnabled: false,
+    localAgentProviders: [{ name: "codex", available: true }],
+  });
+  const tools = await context.client.listTools();
+  const names = tools.tools.map((tool) => tool.name);
+  for (const name of [
+    "agent_targets",
+    "agent_spawn",
+    "agent_send",
+    "agent_status",
+    "agent_wait",
+    "agent_cancel",
+    "agent_list",
+  ]) {
+    assert.ok(names.includes(name), `expected ${name} in enabled subagent tool surface`);
+  }
+});
+
 test("model-facing tool schemas use snake_case recursively", async (t) => {
   for (const toolMode of ["claude", "codex"] as const) {
     await t.test(toolMode, async (nested) => {

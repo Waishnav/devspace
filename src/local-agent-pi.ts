@@ -13,6 +13,10 @@ import {
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
 import {
+  localAgentMcpLaunchFromContext,
+  type LocalAgentMcpLaunch,
+} from "./local-agent-mcp-launch.js";
+import {
   PiRpcConnection,
   parsePiModelSlug,
   piRecordString,
@@ -228,7 +232,7 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
     turns: { interrupt: true },
     configuration: { modelOverride: true, effortOverride: true },
     permissions: { enforcement: "client-boundary" },
-    mcp: { supported: false },
+    mcp: { supported: true },
   } as const;
 
   constructor(
@@ -258,12 +262,15 @@ async function defaultPiRpcFactory(
   const sandbox = writeMode === "full_access"
     ? undefined
     : await materializePiSandboxExtension(context.workspaceRoot, writeMode);
+  const mcp = localAgentMcpLaunchFromContext(context, env);
+  const mcpExtension = mcp ? await materializePiMcpExtension(mcp) : undefined;
   const args = [
     ...launch.args,
     "--mode",
     "rpc",
     "--approve",
     ...(writeMode === "full_access" ? [] : ["--extension", sandbox!.path]),
+    ...(mcpExtension ? ["--extension", mcpExtension.path] : []),
     ...(writeMode === "read_only"
       ? ["--tools", PI_READ_ONLY_TOOLS.join(",")]
       : writeMode === "allowed"
@@ -278,10 +285,18 @@ async function defaultPiRpcFactory(
         cwd: context.workspaceRoot,
         env,
       }),
-      ...(sandbox ? { cleanup: sandbox.cleanup } : {}),
+      ...((sandbox || mcpExtension)
+        ? {
+            cleanup: async () => {
+              await sandbox?.cleanup();
+              await mcpExtension?.cleanup();
+            },
+          }
+        : {}),
     };
   } catch (error) {
     await sandbox?.cleanup();
+    await mcpExtension?.cleanup();
     throw error;
   }
 }
@@ -312,6 +327,26 @@ async function materializePiSandboxExtension(
   const source = [
     `import { createPiSandboxExtension, createPiSandboxModeRef } from ${JSON.stringify(moduleUrl.href)};`,
     `export default createPiSandboxExtension(${JSON.stringify(resolve(workspaceRoot))}, createPiSandboxModeRef(${JSON.stringify(writeMode)}));`,
+    "",
+  ].join("\n");
+  await writeFile(extensionPath, source, "utf8");
+  return {
+    path: extensionPath,
+    cleanup: () => rm(directory, { recursive: true, force: true }),
+  };
+}
+
+async function materializePiMcpExtension(
+  launch: LocalAgentMcpLaunch,
+): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const directory = await mkdtemp(join(tmpdir(), "devspace-pi-mcp-"));
+  const extensionPath = join(directory, "devspace-agents.ts");
+  const jsModule = new URL("./local-agent-pi-mcp.js", import.meta.url);
+  const tsModule = new URL("./local-agent-pi-mcp.ts", import.meta.url);
+  const moduleUrl = existsSync(fileURLToPath(jsModule)) ? jsModule : tsModule;
+  const source = [
+    `import { createPiMcpBridgeExtension } from ${JSON.stringify(moduleUrl.href)};`,
+    `export default createPiMcpBridgeExtension(${JSON.stringify(launch)});`,
     "",
   ].join("\n");
   await writeFile(extensionPath, source, "utf8");

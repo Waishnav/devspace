@@ -30,6 +30,7 @@ import {
   type LocalAgentRuntimeContext,
   type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
+import { createLocalAgentMcpCapability } from "./local-agent-mcp-capability.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { assertAllowedPath } from "./roots.js";
 import {
@@ -67,6 +68,7 @@ export interface LocalAgentManagerOptions {
   allowedRoots?: readonly string[];
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
+  mcpCapabilitySecret?: string;
 }
 
 export type AgentStartError = AgentTargetError | AgentScopeError | AgentConflictError | AgentStoreError;
@@ -102,6 +104,7 @@ export class LocalAgentManager {
   private readonly allowedRoots?: readonly string[];
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
+  private readonly mcpCapabilitySecret?: string;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
   private accepting = true;
   private closePromise?: Promise<void>;
@@ -115,6 +118,7 @@ export class LocalAgentManager {
     this.allowedRoots = options.allowedRoots;
     this.logger = options.logger;
     this.subagents = options.subagents;
+    this.mcpCapabilitySecret = options.mcpCapabilitySecret;
   }
 
   reconcileActiveRuns(message?: string): BetterResult<number, AgentStoreError> {
@@ -415,8 +419,18 @@ export class LocalAgentManager {
         this.persistRunError(record, turnId, driver.error, startedAt);
         return;
       }
+      const mcpCapability = this.mcpCapabilitySecret && record.workspaceId
+        ? createLocalAgentMcpCapability(this.mcpCapabilitySecret, {
+            parentAgentId: record.id,
+            workspaceId: record.workspaceId,
+            workspaceRoot,
+            maxWriteMode: input.value.writeMode ?? "allowed",
+          })
+        : undefined;
       const context: LocalAgentRuntimeContext = {
         agentId: record.id,
+        workspaceId: record.workspaceId,
+        ...(mcpCapability ? { mcpCapability } : {}),
         providerInstanceId: record.providerInstanceId,
         provider: driver.value.provider,
         workspaceRoot,
@@ -435,7 +449,11 @@ export class LocalAgentManager {
           if (updated.isErr()) throw updated.error;
         },
       };
-      const result = await this.pool.run(driver.value, context, { ...input.value, signal }, callbacks);
+      const result = await this.pool.run(driver.value, context, {
+        ...input.value,
+        ...(mcpCapability ? { mcpCapability } : {}),
+        signal,
+      }, callbacks);
       if (result.isErr()) {
         this.persistRunError(record, turnId, result.error, startedAt);
         return;
@@ -529,6 +547,8 @@ export class LocalAgentManager {
     const body = profile?.body.trim();
     const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
     return Result.ok({
+      agentId: record.id,
+      workspaceId: record.workspaceId,
       prompt: fullPrompt,
       workspaceRoot: record.workspaceRoot,
       providerSessionId: record.providerSessionId,

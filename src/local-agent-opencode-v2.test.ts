@@ -18,6 +18,7 @@ const switchModelInputs: unknown[] = [];
 const promptInputs: unknown[] = [];
 const waitInputs: unknown[] = [];
 const messageInputs: unknown[] = [];
+const mcpAdds: unknown[] = [];
 let closeCalls = 0;
 
 const assistant: SessionMessageAssistant = {
@@ -35,6 +36,9 @@ const assistant: SessionMessageAssistant = {
 };
 
 const client = {
+  mcp: {
+    async add(input: unknown) { mcpAdds.push(input); },
+  },
   server: {
     async info() { return { version: "2.0.20", pid: 1, urls: [], paths: { tmp: "/tmp" } }; },
   },
@@ -205,14 +209,28 @@ const routedDriver = new OpencodeLocalAgentDriver({
 const routedPool = new LocalAgentRuntimePool();
 const routed = await routedPool.run(routedDriver, {
   agentId: "agt_v2",
+  workspaceId: "ws_v2",
+  mcpCapability: "cap_v2",
   providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
+  agentId: "agt_v2",
+  workspaceId: "ws_v2",
+  mcpCapability: "cap_v2",
   prompt: "route through v2",
   workspaceRoot: "/tmp/project",
 });
 assert.equal(routed.isOk(), true);
 assert.equal(v1FactoryCalls, 0);
 assert.equal(v2FactoryCalls, 1);
+assert.equal((mcpAdds[0] as { server?: string }).server, "devspace-agents-agt_v2");
+const routedMcpConfig = (mcpAdds[0] as {
+  config?: { type?: string; command?: string[]; cwd?: string; environment?: Record<string, string>; protocol?: string };
+}).config;
+assert.equal(routedMcpConfig?.type, "local");
+assert.deepEqual(routedMcpConfig?.command?.slice(-2), ["agents", "mcp"]);
+assert.equal(routedMcpConfig?.cwd, "/tmp/project");
+assert.equal(routedMcpConfig?.environment?.DEVSPACE_AGENT_MCP_CAPABILITY, "cap_v2");
+assert.equal(routedMcpConfig?.protocol, "auto");
 await routedPool.close();

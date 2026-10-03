@@ -6,6 +6,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentMcpLaunch, localAgentMcpLaunchFromContext } from "./local-agent-mcp-launch.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type {
   LocalAgentDriver,
@@ -30,6 +31,7 @@ const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
 export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
   interrupt(): Promise<void>;
+  setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
   applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
   setModel?(model?: string): Promise<void>;
@@ -84,13 +86,16 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
   private alive = true;
   private closed = false;
   private providerSessionId?: string;
+  private currentMcpCapability?: string;
 
   constructor(
     private readonly query: ClaudeQueryLike,
     private readonly inputQueue: AsyncInputQueue<ClaudeUserMessage>,
-    context: LocalAgentRuntimeContext,
+    private readonly context: LocalAgentRuntimeContext,
+    private readonly env: NodeJS.ProcessEnv,
   ) {
     this.providerSessionId = context.providerSessionId;
+    this.currentMcpCapability = context.mcpCapability;
     this.iterator = query[Symbol.asyncIterator]();
   }
 
@@ -111,6 +116,23 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         const removeAbort = bindLocalAgentAbort(input.signal, () => this.query.interrupt());
         try {
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
+        const mcp = localAgentMcpLaunch({
+          ...input,
+          agentId: input.agentId ?? this.context.agentId,
+          workspaceId: input.workspaceId ?? this.context.workspaceId,
+          mcpCapability: input.mcpCapability ?? this.context.mcpCapability,
+        }, this.env);
+        if (mcp && mcp.env.DEVSPACE_AGENT_MCP_CAPABILITY !== this.currentMcpCapability) {
+          await this.query.setMcpServers({
+            [mcp.name]: {
+              type: "stdio",
+              command: mcp.command,
+              args: mcp.args,
+              env: mcp.env,
+            },
+          });
+          this.currentMcpCapability = mcp.env.DEVSPACE_AGENT_MCP_CAPABILITY;
+        }
         const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
         if (input.effort) {
           Object.assign(flagSettings, {
@@ -261,7 +283,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
           options: claudeQueryOptions(context, input, this.env),
           prompt: inputQueue,
         });
-        return new ClaudeQueryRuntime(query, inputQueue, context);
+        return new ClaudeQueryRuntime(query, inputQueue, context, this.env);
       },
     });
   }
@@ -284,6 +306,7 @@ export function claudeQueryOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, unknown> {
   const executable = env.CLAUDE_COMMAND;
+  const mcp = localAgentMcpLaunchFromContext(context, env);
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
   return {
@@ -294,9 +317,31 @@ export function claudeQueryOptions(
     permissionMode,
     // Restricted runtimes stay warm across read_only/allowed turns. Keep the
     // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
+    ...(input.writeMode === "full_access" && !mcp
       ? {}
-      : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
+      : {
+          allowedTools: [
+            ...(input.writeMode === "full_access" ? [] : CLAUDE_WORKSPACE_ALLOWED_TOOLS),
+            ...(mcp ? [`mcp__${mcp.name}__*`] : []),
+          ],
+        }),
+    ...(mcp
+      ? {
+          mcpServers: {
+            [mcp.name]: {
+              type: "stdio",
+              command: mcp.command,
+              args: mcp.args,
+              env: mcp.env,
+            },
+          },
+          systemPrompt: {
+            type: "preset",
+            preset: "claude_code",
+            append: "Use the DevSpace agent MCP tools for bounded delegation when separate context or specialization materially helps. Discover targets before spawning; prefer waiting over polling; never request child authority above your current mode.",
+          },
+        }
+      : {}),
     sandbox: authority.sandbox,
     settings: authority.settings,
     ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),

@@ -5,6 +5,16 @@ frontmatter. They describe roles such as reviewer, explorer, or implementer.
 The internal on-demand `devspace-agentd` process owns provider invocation. The
 CLI and MCP server use it as clients when they need agent execution.
 
+When subagents are enabled, DevSpace also exposes provider-neutral MCP tools:
+`agent_targets`, `agent_spawn`, `agent_send`, `agent_status`, `agent_wait`,
+`agent_cancel`, and `agent_list`. Codex, Claude, OpenCode, Pi, and ACP-backed local
+agents receive a project-scoped copy of this control plane so they can perform
+bounded recursive or cross-provider delegation. Provider-native session ids
+remain internal. Child authority is monotonic: `read_only < allowed <
+full_access`, and a child cannot request a mode above its caller. Injected child
+control planes use a daemon-signed capability, so changing environment variables
+cannot widen workspace scope or write authority.
+
 When subagents are enabled, the internal `devspace-agentd` process owns the
 durable agent manager and live provider runtimes. `devspace agents run` is a
 thin local client that starts or reuses the daemon automatically; `devspace

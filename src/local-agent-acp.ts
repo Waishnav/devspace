@@ -9,6 +9,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentMcpLaunch } from "./local-agent-mcp-launch.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import {
@@ -249,6 +250,13 @@ export class AcpRuntime implements LocalAgentRuntime {
   }
 
   private async openSession(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<string> {
+    const mcp = localAgentMcpLaunch(input);
+    const mcpServers = mcp ? [{
+      name: mcp.name,
+      command: mcp.command,
+      args: mcp.args,
+      env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })),
+    }] : [];
     if (input.providerSessionId) {
       if (this.liveSessions.has(input.providerSessionId)) {
         this.sessionWriteModes.set(input.providerSessionId, input.writeMode ?? "allowed");
@@ -273,7 +281,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       const response = await this.connection.agent.request("session/resume", {
         sessionId: input.providerSessionId,
         cwd: input.workspaceRoot,
-        mcpServers: [],
+        mcpServers,
         ...this.additionalDirectoryParams(),
       });
       this.cacheSessionMetadata(input.providerSessionId, response);
@@ -287,7 +295,7 @@ export class AcpRuntime implements LocalAgentRuntime {
 
     const response = await this.connection.agent.request("session/new", {
       cwd: input.workspaceRoot,
-      mcpServers: [],
+      mcpServers,
       ...this.additionalDirectoryParams(),
     });
     const sessionId = readString(response, "sessionId");

@@ -24,6 +24,9 @@ import {
   parseLocalAgentRunArgs,
 } from "./local-agent-targets.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
+import { runLocalAgentMcpStdio } from "./local-agent-mcp-server.js";
+import { verifyLocalAgentMcpCapability } from "./local-agent-mcp-capability.js";
+import { ensureLocalAgentDaemonSecret, localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import {
   formatAgentCommandError,
@@ -551,6 +554,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
       return;
+    case "mcp":
+      await runAgentsMcp(commandArgs);
+      return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
       return;
@@ -563,6 +569,26 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     default:
       writeAgentWorkflowError(`Unknown agents command: ${subcommand}`, json);
   }
+}
+
+async function runAgentsMcp(args: string[]): Promise<void> {
+  if (args.length > 0) throw new Error("Usage: devspace agents mcp");
+  const config = loadConfig();
+  const token = requiredAgentMcpEnv("DEVSPACE_AGENT_MCP_CAPABILITY");
+  const secret = ensureLocalAgentDaemonSecret(localAgentDaemonPaths(config.stateDir));
+  const capability = verifyLocalAgentMcpCapability(secret, token);
+  await runLocalAgentMcpStdio(config, {
+    parentAgentId: capability.parentAgentId,
+    workspaceId: capability.workspaceId,
+    workspaceRoot: capability.workspaceRoot,
+    maxWriteMode: capability.maxWriteMode,
+  });
+}
+
+function requiredAgentMcpEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Missing ${name} for DevSpace agent MCP server.`);
+  return value;
 }
 
 async function runAgentsTargets(args: string[], json: boolean): Promise<void> {

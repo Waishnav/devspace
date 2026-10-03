@@ -9,6 +9,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentMcpLaunch } from "./local-agent-mcp-launch.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
@@ -133,7 +134,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
         const threadResponse = await this.rpc.request(
           input.providerSessionId ? "thread/resume" : "thread/start",
-          threadParams(input),
+          threadParams(input, this.options.env),
         );
         const threadId = readString(asRecord(threadResponse)?.thread, "id");
         if (!threadId) {
@@ -469,13 +470,27 @@ class CodexAppServerRpc {
   }
 }
 
-function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
+function threadParams(input: LocalAgentRunInput, env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const mcp = localAgentMcpLaunch(input, env);
   return {
     ...(input.providerSessionId ? { threadId: input.providerSessionId } : {}),
     cwd: input.workspaceRoot,
     approvalPolicy: "never",
     sandbox: sandboxFor(input.writeMode),
     ...(input.model ? { model: input.model } : {}),
+    ...(mcp
+      ? {
+          config: {
+            mcp_servers: {
+              [mcp.name]: {
+                command: mcp.command,
+                args: mcp.args,
+                env: mcp.env,
+              },
+            },
+          },
+        }
+      : {}),
   };
 }
 

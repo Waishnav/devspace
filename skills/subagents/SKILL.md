@@ -5,6 +5,12 @@ description: Delegate focused coding, research, review, or verification work to 
 
 # DevSpace subagents
 
+When the host exposes `agent_targets`, `agent_spawn`, `agent_send`, `agent_status`,
+`agent_wait`, `agent_cancel`, and `agent_list` directly, prefer those tools.
+They use the same durable agent manager as the CLI below, avoid shell parsing,
+and keep provider-native session ids internal. Use the CLI as the fallback
+surface when those tools are not available.
+
 Subagents are optional. Use the normal workspace tools for routine work; delegate only when a separate worker materially helps through independent context, specialization, or follow-up.
 
 Run the DevSpace CLI through the shell or process tool from the project the subagent should use. Agent commands print compact XML fragments by default. Read that output directly. Do not add `--json`.
@@ -67,6 +73,10 @@ devspace agents stop <id>
 ```
 
 Stopping is scoped to the current project and preserves the durable agent record as `stopped`.
+
+Child agents that receive the scoped DevSpace agent MCP can delegate again.
+Their child `write_mode` can be equal to or less permissive than their own
+authority, never more permissive.
 
 ## Good uses
 

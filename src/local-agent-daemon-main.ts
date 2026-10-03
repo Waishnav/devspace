@@ -4,6 +4,7 @@ import { createLocalAgentDrivers } from "./local-agent-adapters.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
 import { LocalAgentDaemon, writeLocalAgentDaemonLog } from "./local-agent-daemon.js";
 import {
+  ensureLocalAgentDaemonSecret,
   LocalAgentDaemonAlreadyRunningError,
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
@@ -21,6 +22,7 @@ const log = (
   fields: Record<string, unknown>,
 ) => writeLocalAgentDaemonLog(paths, level, event, fields);
 const store = new LocalAgentStore(paths.stateDir);
+const mcpCapabilitySecret = ensureLocalAgentDaemonSecret(paths);
 const manager = new LocalAgentManager({
   store,
   drivers: createLocalAgentDrivers({ subagents: config.subagents }),
@@ -30,6 +32,7 @@ const manager = new LocalAgentManager({
   allowedRoots: config.allowedRoots,
   logger: log,
   subagents: config.subagents,
+  mcpCapabilitySecret,
 });
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,

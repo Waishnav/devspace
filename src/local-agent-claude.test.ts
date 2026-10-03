@@ -15,6 +15,7 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   model?: string;
   permissionModes: string[] = [];
   flagSettings: Array<Record<string, unknown>> = [];
+  mcpServerUpdates: Array<Record<string, unknown>> = [];
 
   constructor(prompt: AsyncIterable<ClaudeUserMessage>) {
     this.iterator = prompt[Symbol.asyncIterator]();
@@ -43,6 +44,10 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
 
   async interrupt(): Promise<void> {}
 
+  async setMcpServers(servers: Record<string, unknown>): Promise<void> {
+    this.mcpServerUpdates.push(servers);
+  }
+
   async setPermissionMode(mode: string): Promise<void> {
     this.permissionModes.push(mode);
   }
@@ -58,6 +63,8 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
 
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_claude",
+  workspaceId: "ws_claude",
+  mcpCapability: "cap_claude",
   providerInstanceId: "claude",
   provider: "claude",
   workspaceRoot: "/tmp/project",
@@ -73,7 +80,7 @@ const driver = new ClaudeLocalAgentDriver(({ prompt, options }) => {
   lastOptions = options;
   query = new FakeClaudeQuery(prompt);
   return query;
-}, { PATH: "/usr/bin" });
+}, { PATH: "/usr/bin", DEVSPACE_CONFIG_DIR: "/tmp/devspace-config" });
 assert.deepEqual(driver.runtimePolicy, {
   scope: "agent",
   authority: "full_access_boundary",
@@ -100,6 +107,7 @@ const first = firstResult.value;
 const secondResult = await runtime.run({
   prompt: "second",
   workspaceRoot: "/tmp/project",
+  mcpCapability: "cap_claude_allowed",
   effort: "low",
   writeMode: "allowed",
 });
@@ -120,7 +128,18 @@ assert.equal(query?.model, "sonnet");
 assert.equal(lastOptions?.resume, undefined);
 assert.equal(lastOptions?.permissionMode, "dontAsk");
 assert.equal(lastOptions?.allowDangerouslySkipPermissions, undefined);
-assert.deepEqual(lastOptions?.allowedTools, ["Read(/**)", "Edit(/**)", "Bash"]);
+assert.deepEqual(lastOptions?.allowedTools, [
+  "Read(/**)",
+  "Edit(/**)",
+  "Bash",
+  "mcp__devspace-agents-agt_claude__*",
+]);
+const mcpServers = lastOptions?.mcpServers as Record<string, Record<string, unknown>>;
+assert.equal(mcpServers["devspace-agents-agt_claude"]?.type, "stdio");
+assert.deepEqual(mcpServers["devspace-agents-agt_claude"]?.env, {
+  DEVSPACE_CONFIG_DIR: "/tmp/devspace-config",
+  DEVSPACE_AGENT_MCP_CAPABILITY: "cap_claude",
+});
 assert.equal(lastOptions?.pathToClaudeCodeExecutable, undefined);
 const initialSandbox = lastOptions?.sandbox as Record<string, unknown>;
 assert.equal(initialSandbox.enabled, true);
@@ -160,6 +179,16 @@ assert.equal(
   "dontAsk",
 );
 assert.equal(query?.flagSettings[1]?.effortLevel, "low");
+assert.equal(
+  ((query?.mcpServerUpdates[0]?.["devspace-agents-agt_claude"] as Record<string, unknown>)?.env as Record<string, string>)
+    ?.DEVSPACE_AGENT_MCP_CAPABILITY,
+  "cap_claude_allowed",
+);
+assert.equal(
+  ((query?.mcpServerUpdates[1]?.["devspace-agents-agt_claude"] as Record<string, unknown>)?.env as Record<string, string>)
+    ?.DEVSPACE_AGENT_MCP_CAPABILITY,
+  "cap_claude",
+);
 assert.equal(
   ((query?.flagSettings[1]?.permissions as Record<string, unknown>).deny as string[]).includes("Edit"),
   false,
@@ -210,6 +239,7 @@ const brokenStreamQuery: ClaudeQueryLike = {
   },
   close() {},
   async interrupt() {},
+  async setMcpServers() {},
   async setPermissionMode() {},
   async applyFlagSettings() {},
 };

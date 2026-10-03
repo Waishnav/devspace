@@ -21,8 +21,12 @@ function v1Probe(): OpenCodeRuntimeProbe {
 let sessionNumber = 0;
 const createInputs: unknown[] = [];
 const promptInputs: unknown[] = [];
+const mcpAdds: unknown[] = [];
 let healthAvailable = true;
 const client = {
+  mcp: {
+    async add(input: unknown) { mcpAdds.push(input); return { data: {} }; },
+  },
   global: {
     async health() {
       if (!healthAvailable) throw new Error("server unavailable");
@@ -67,10 +71,15 @@ const pool = new LocalAgentRuntimePool();
 
 const first = await pool.run(driver, {
   agentId: "agt_one",
+  workspaceId: "ws_one",
+  mcpCapability: "cap_one",
   providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
   }, {
+    agentId: "agt_one",
+    workspaceId: "ws_one",
+    mcpCapability: "cap_one",
     prompt: "first",
     workspaceRoot: "/tmp/project",
     model: "anthropic/sonnet",
@@ -78,15 +87,24 @@ const first = await pool.run(driver, {
   });
 const second = await pool.run(driver, {
   agentId: "agt_two",
+  workspaceId: "ws_two",
+  mcpCapability: "cap_two",
   providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
+  agentId: "agt_two",
+  workspaceId: "ws_two",
+  mcpCapability: "cap_two",
   prompt: "second",
   workspaceRoot: "/tmp/project",
 });
 
 assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
+assert.deepEqual(driver.runtimePolicy, { scope: "instance", idleTimeoutMs: 5 * 60_000 });
+assert.equal(mcpAdds.length, 2);
+assert.equal((mcpAdds[0] as { name?: string }).name, "devspace-agents-agt_one");
+assert.equal((mcpAdds[1] as { name?: string }).name, "devspace-agents-agt_two");
 assert.equal(factoryEnv?.HARNESS_ENV, "opencode");
 assert.equal(first.isOk(), true);
 assert.equal(second.isOk(), true);
@@ -227,7 +245,7 @@ const timeoutClient = {
     },
   },
 } as unknown as OpencodeClientLike;
-const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 5);
+const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, process.env, 5);
 const timedOutPrompt = await timeoutRuntime.run({
   prompt: "never finishes",
   workspaceRoot: "/tmp/project",

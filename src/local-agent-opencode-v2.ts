@@ -13,6 +13,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentMcpLaunch } from "./local-agent-mcp-launch.js";
 import type {
   LocalAgentRunCallbacks,
   LocalAgentRunInput,
@@ -28,7 +29,9 @@ import {
 
 const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
 
-export type OpencodeV2ClientLike = Pick<OpenCodeClient, "server" | "session" | "message" | "model">;
+export type OpencodeV2ClientLike = Pick<OpenCodeClient, "server" | "session" | "message" | "model"> & {
+  mcp?: Pick<OpenCodeClient["mcp"], "add">;
+};
 
 export type OpencodeV2Factory = (
   context?: LocalAgentRuntimeContext,
@@ -47,6 +50,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
   constructor(
     private readonly client: OpencodeV2ClientLike,
     private readonly server: OpencodeServerLike,
+    private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly promptTimeoutMs = OPENCODE_PROMPT_TIMEOUT_MS,
   ) {}
 
@@ -65,6 +69,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
           });
         }
         try {
+          await configureOpenCodeV2Mcp(this.client, input, this.env);
           await this.client.server.info();
           const continuing = input.providerSessionId !== undefined;
           const nativeSessionId = input.providerSessionId
@@ -217,6 +222,26 @@ export function opencodeV2ServerEnvironment(
     ...rest
   } = env;
   return { ...rest, OPENCODE_PASSWORD: password };
+}
+
+export async function configureOpenCodeV2Mcp(
+  client: OpencodeV2ClientLike,
+  input: LocalAgentRunInput,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const mcp = localAgentMcpLaunch(input, env);
+  if (!mcp || !client.mcp) return;
+  await client.mcp.add({
+    server: mcp.name,
+    location: { directory: input.workspaceRoot },
+    config: {
+      type: "local",
+      command: [mcp.command, ...mcp.args],
+      cwd: input.workspaceRoot,
+      environment: mcp.env,
+      protocol: "auto",
+    },
+  });
 }
 
 export function opencodeV2Permissions(
