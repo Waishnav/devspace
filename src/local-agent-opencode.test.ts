@@ -11,7 +11,12 @@ import {
   type OpencodeClientLike,
   type OpencodeFactory,
 } from "./local-agent-opencode.js";
+import { OpenCodeRuntimeProbe } from "./local-agent-opencode-version.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
+
+function v1Probe(): OpenCodeRuntimeProbe {
+  return new OpenCodeRuntimeProbe(async () => ({ generation: "v1", version: "1.17.13" }));
+}
 
 let sessionNumber = 0;
 const createInputs: unknown[] = [];
@@ -53,7 +58,11 @@ const factory: OpencodeFactory = async (_context, env) => {
     server: { close: () => { closeCalls += 1; } },
   };
 };
-const driver = new OpencodeLocalAgentDriver(factory, { HARNESS_ENV: "opencode" });
+const driver = new OpencodeLocalAgentDriver({
+  factory,
+  env: { HARNESS_ENV: "opencode" },
+  runtimeProbe: v1Probe(),
+});
 const pool = new LocalAgentRuntimePool();
 
 const first = await pool.run(driver, {
@@ -131,16 +140,19 @@ if (process.platform !== "win32") {
       "",
     ].join("\n"));
     await chmod(command, 0o700);
-    const envDriver = new OpencodeLocalAgentDriver(undefined, {
-      PATH: commandRoot,
-      HARNESS_ENV: "opencode-child",
-      MARKER: marker,
-      ARGS_MARKER: argsMarker,
-      COLLISION_MARKER: collisionMarker,
-      HOLDER_READY: holderReady,
-      HOLDER_PROCESS: holderProcess,
-      HOLDER_LAUNCHER: holderLauncher,
-      NODE_EXECUTABLE: process.execPath,
+    const envDriver = new OpencodeLocalAgentDriver({
+      env: {
+        PATH: commandRoot,
+        HARNESS_ENV: "opencode-child",
+        MARKER: marker,
+        ARGS_MARKER: argsMarker,
+        COLLISION_MARKER: collisionMarker,
+        HOLDER_READY: holderReady,
+        HOLDER_PROCESS: holderProcess,
+        HOLDER_LAUNCHER: holderLauncher,
+        NODE_EXECUTABLE: process.execPath,
+      },
+      runtimeProbe: v1Probe(),
     });
     const created = await envDriver.createRuntime({
       agentId: "agt_env",
@@ -281,10 +293,13 @@ const applicationErrorClient = {
   },
 } as unknown as OpencodeClientLike;
 const applicationErrorPool = new LocalAgentRuntimePool();
-const applicationErrorDriver = new OpencodeLocalAgentDriver(async () => ({
-  client: applicationErrorClient,
-  server: { close: () => undefined },
-}));
+const applicationErrorDriver = new OpencodeLocalAgentDriver({
+  factory: async () => ({
+    client: applicationErrorClient,
+    server: { close: () => undefined },
+  }),
+  runtimeProbe: v1Probe(),
+});
 const applicationFailure = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
   providerInstanceId: "opencode",
@@ -310,10 +325,13 @@ assert.equal(recoveredApplicationTurn.value.finalResponse, "ok");
 await applicationErrorPool.close();
 
 let recoveringFactoryCalls = 0;
-const recoveringDriver = new OpencodeLocalAgentDriver(async () => {
-  recoveringFactoryCalls += 1;
-  healthAvailable = true;
-  return { client, server: { close: () => undefined } };
+const recoveringDriver = new OpencodeLocalAgentDriver({
+  factory: async () => {
+    recoveringFactoryCalls += 1;
+    healthAvailable = true;
+    return { client, server: { close: () => undefined } };
+  },
+  runtimeProbe: v1Probe(),
 });
 const recoveringPool = new LocalAgentRuntimePool();
 await recoveringPool.run(recoveringDriver, {
