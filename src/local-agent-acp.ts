@@ -411,9 +411,11 @@ export class AcpRuntime implements LocalAgentRuntime {
 export class AcpLocalAgentDriver implements LocalAgentDriver {
   readonly provider: AcpProvider;
   readonly providerInstanceId: string;
-  // Keep ACP warm briefly, then let the generic pool close the process so the
-  // daemon can reach its own idle shutdown state.
-  readonly idleTimeoutMs = 5 * 60_000;
+  readonly runtimePolicy = {
+    scope: "workspace",
+    authority: "write_mode",
+    idleTimeoutMs: 5 * 60_000,
+  } as const;
   private commandResolved = false;
   private resolvedCommand?: string;
 
@@ -424,12 +426,6 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
   ) {
     this.provider = provider;
     this.providerInstanceId = provider;
-  }
-
-  runtimeKey(context: LocalAgentRuntimeContext): string {
-    const command = this.resolveCommand() ?? ACP_COMMANDS[this.provider][0];
-    const writeMode = context.writeMode ?? "allowed";
-    return `acp:${this.provider}:${command}:${writeMode}:${resolve(context.workspaceRoot)}`;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {

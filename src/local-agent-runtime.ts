@@ -46,6 +46,16 @@ export interface LocalAgentRuntimeContext {
   agentDir?: string;
 }
 
+export type LocalAgentRuntimeScope = "instance" | "workspace" | "agent";
+export type LocalAgentRuntimeAuthority = "none" | "write_mode" | "full_access_boundary";
+
+export interface LocalAgentRuntimePolicy {
+  scope: LocalAgentRuntimeScope;
+  authority?: LocalAgentRuntimeAuthority;
+  idleTimeoutMs?: number;
+  sessionIdleTimeoutMs?: number;
+}
+
 /**
  * A runtime is deliberately disposable. Nothing from this interface is
  * persisted; the provider session ID in LocalAgentStore is the continuation
@@ -65,7 +75,6 @@ export interface LocalAgentRuntime {
 export interface LocalAgentDriver {
   readonly providerInstanceId: LocalAgentProviderInstanceId;
   readonly provider: LocalAgentDriverKind;
-  runtimeKey(context: LocalAgentRuntimeContext): string;
+  readonly runtimePolicy: LocalAgentRuntimePolicy;
   createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
-  readonly idleTimeoutMs?: number;
 }

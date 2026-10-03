@@ -231,7 +231,7 @@ async function waitForProcessExit(
 export class CodexLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "codex" as const;
   readonly providerInstanceId = "codex";
-  readonly idleTimeoutMs = 5 * 60_000;
+  readonly runtimePolicy = { scope: "instance", idleTimeoutMs: 5 * 60_000 } as const;
 
   private commandResolved = false;
   private resolvedCommand?: ResolvedCodexCommand;
@@ -240,13 +240,6 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly commandResolver: CodexCommandResolver = resolveCodexCommand,
   ) {}
-
-  runtimeKey(_context: LocalAgentRuntimeContext): string {
-    const command = this.resolveCommand();
-    const executable = command?.executable ?? this.env.CODEX_COMMAND ?? "codex";
-    const codexHome = resolve(this.env.CODEX_HOME ?? join(homedir(), ".codex"));
-    return `codex:${executable}:${codexHome}`;
-  }
 
   async createRuntime(_context: LocalAgentRuntimeContext) {
     return captureAgentProviderResult({
