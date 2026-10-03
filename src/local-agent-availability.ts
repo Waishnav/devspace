@@ -50,7 +50,7 @@ function checkLocalAgentProviderAvailability(
         ? commandAvailability(providerInstanceId, providerEnv.CLAUDE_COMMAND, providerEnv)
         : packageAvailability(providerInstanceId, "@anthropic-ai/claude-agent-sdk");
     case "opencode":
-      return packageAvailability(providerInstanceId, "@opencode-ai/sdk/v2");
+      return commandAvailability(providerInstanceId, "opencode", providerEnv);
     case "pi":
       return packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
     case "cursor":

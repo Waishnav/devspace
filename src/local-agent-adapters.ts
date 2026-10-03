@@ -76,7 +76,7 @@ function createDriver(
     case "claude":
       return new ClaudeLocalAgentDriver(options.claudeQueryFactory, env);
     case "opencode":
-      return new OpencodeLocalAgentDriver(options.opencodeFactory, env);
+      return new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env });
     case "pi":
       return new PiLocalAgentDriver(options.piSessionFactory, envOverrides);
     case "cursor":

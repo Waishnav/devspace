@@ -193,6 +193,11 @@ environment, then overlays the provider's `env` without mutating the daemon's
 process environment. OpenCode receives that environment on its managed server
 process; embedded Pi scopes it to its provider requests and command execution.
 
+The `opencode` driver runs `opencode --version` before creating its first
+runtime and automatically selects the OpenCode 1.x or 2.x protocol. Both major
+versions use the same provider instance and profile configuration; `opencode2`
+is not a separate driver.
+
 Codex, Claude, Cursor, Copilot, and Grok also accept `command`. OpenCode and Pi
 do not expose a command override. For providers that support it, an explicit
 `command` wins over both the inherited command override and a command override

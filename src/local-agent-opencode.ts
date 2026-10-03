@@ -1,5 +1,3 @@
-import { createRequire } from "node:module";
-import { createServer as createNetServer } from "node:net";
 import type {
   OpencodeClient,
   PermissionConfig,
@@ -18,14 +16,19 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
-import { terminateProcessTree } from "./process-platform.js";
+import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
+import {
+  defaultOpencodeV2Factory,
+  OpencodeV2Runtime,
+  type OpencodeV2Factory,
+} from "./local-agent-opencode-v2.js";
+import {
+  createOpenCodeRuntimeProbe,
+  requireOpenCodeV1NativeSessionId,
+  type OpenCodeRuntimeProbe,
+} from "./local-agent-opencode-version.js";
 
-const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
-const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
-const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
-const require = createRequire(import.meta.url);
-const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 interface OpencodeModelRef {
   providerID: string;
@@ -33,10 +36,6 @@ interface OpencodeModelRef {
 }
 
 export type OpencodeClientLike = Pick<OpencodeClient, "global" | "session">;
-
-export interface OpencodeServerLike {
-  close(): void;
-}
 
 export type OpencodeFactory = (
   context?: LocalAgentRuntimeContext,
@@ -74,7 +73,9 @@ export class OpencodeRuntime implements LocalAgentRuntime {
         }
         try {
           await assertOpencodeHealthy(this.client);
-          const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input);
+          const sessionId = input.providerSessionId
+            ? requireOpenCodeV1NativeSessionId(input.providerSessionId)
+            : await createOpencodeSession(this.client, input);
           await callbacks?.onSessionId?.(sessionId);
           const promptResult = await this.prompt(sessionId, input);
           assertOpenCodePromptSucceeded(promptResult);
@@ -151,11 +152,22 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "opencode" as const;
   readonly providerInstanceId = "opencode";
   readonly idleTimeoutMs = 5 * 60_000;
+  private readonly factory: OpencodeFactory;
+  private readonly v2Factory: OpencodeV2Factory;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly runtimeProbe: OpenCodeRuntimeProbe;
 
-  constructor(
-    private readonly factory: OpencodeFactory = defaultOpencodeFactory,
-    private readonly env: NodeJS.ProcessEnv = process.env,
-  ) {}
+  constructor(options: {
+    factory?: OpencodeFactory;
+    v2Factory?: OpencodeV2Factory;
+    env?: NodeJS.ProcessEnv;
+    runtimeProbe?: OpenCodeRuntimeProbe;
+  } = {}) {
+    this.factory = options.factory ?? defaultOpencodeFactory;
+    this.v2Factory = options.v2Factory ?? defaultOpencodeV2Factory;
+    this.env = options.env ?? process.env;
+    this.runtimeProbe = options.runtimeProbe ?? createOpenCodeRuntimeProbe(this.env);
+  }
 
   runtimeKey(_context: LocalAgentRuntimeContext): string {
     return "opencode:default";
@@ -167,6 +179,11 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       agentId: context.agentId,
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
+        const runtime = await this.runtimeProbe.get();
+        if (runtime.generation === "v2") {
+          const { client, server } = await this.v2Factory(context, this.env);
+          return new OpencodeV2Runtime(client, server);
+        }
         const { client, server } = await this.factory(context, this.env);
         return new OpencodeRuntime(client, server);
       },
@@ -186,122 +203,14 @@ async function defaultOpencodeFactory(
       devspace_full_access: opencodeAgentConfig("full_access"),
     },
   };
-  const server = await startOpencodeServer(env, config);
+  const server = await startOpencodeServer({
+    ...env,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+  });
   return {
     client: createOpencodeClient({ baseUrl: server.url }),
     server,
   };
-}
-
-async function startOpencodeServer(
-  env: NodeJS.ProcessEnv,
-  config: Record<string, unknown>,
-): Promise<OpencodeServerLike & { url: string }> {
-  for (let attempt = 1; attempt <= OPENCODE_SERVER_START_ATTEMPTS; attempt += 1) {
-    const port = await allocateOpencodePort();
-    try {
-      return await launchOpencodeServer(env, config, port);
-    } catch (error) {
-      if (attempt === OPENCODE_SERVER_START_ATTEMPTS || !await isOpencodePortInUse(port)) throw error;
-    }
-  }
-  throw new Error("OpenCode server failed to start.");
-}
-
-async function launchOpencodeServer(
-  env: NodeJS.ProcessEnv,
-  config: Record<string, unknown>,
-  port: number,
-): Promise<OpencodeServerLike & { url: string }> {
-  const detached = process.platform !== "win32";
-  const child = spawn("opencode", [
-    "serve",
-    `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
-    `--port=${port}`,
-  ], {
-    detached,
-    env: {
-      ...env,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    terminateProcessTree(child, "SIGTERM", detached);
-  };
-  const url = await new Promise<string>((resolve, reject) => {
-    let output = "";
-    let ready = false;
-    const timer = setTimeout(() => {
-      if (ready) return;
-      close();
-      reject(new Error(`Timeout waiting for OpenCode server after ${OPENCODE_SERVER_START_TIMEOUT_MS}ms`));
-    }, OPENCODE_SERVER_START_TIMEOUT_MS);
-    timer.unref();
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      if (ready) return;
-      output += chunk.toString();
-      for (const line of output.split("\n")) {
-        if (!line.startsWith("opencode server listening")) continue;
-        const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-        if (!match?.[1]) continue;
-        ready = true;
-        clearTimeout(timer);
-        resolve(match[1]);
-        return;
-      }
-    });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      if (!ready) output += chunk.toString();
-    });
-    child.once("error", (error) => {
-      if (ready) return;
-      clearTimeout(timer);
-      close();
-      reject(error);
-    });
-    child.once("exit", (code) => {
-      if (ready) return;
-      clearTimeout(timer);
-      close();
-      reject(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output.trim()}` : ""}`));
-    });
-  });
-  return { url, close };
-}
-
-async function allocateOpencodePort(): Promise<number> {
-  const server = createNetServer();
-  server.unref();
-  return new Promise<number>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port: 0, exclusive: true }, () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Failed to allocate an OpenCode server port."));
-        return;
-      }
-      server.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
-
-async function isOpencodePortInUse(port: number): Promise<boolean> {
-  const server = createNetServer();
-  server.unref();
-  return new Promise<boolean>((resolve, reject) => {
-    server.once("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "EADDRINUSE") resolve(true);
-      else reject(error);
-    });
-    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port, exclusive: true }, () => {
-      server.close((error) => error ? reject(error) : resolve(false));
-    });
-  });
 }
 
 export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {
