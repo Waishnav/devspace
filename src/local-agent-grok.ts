@@ -208,7 +208,7 @@ export function resolveGrokEffort(
 function grokConfigurationError(message: string): AgentProviderProtocolError {
   return new AgentProviderProtocolError({
     code: "PROVIDER_PROTOCOL_ERROR",
-    provider: "grok",
+    provider: "acp",
     operation: "configure_session",
     retryable: false,
     message,

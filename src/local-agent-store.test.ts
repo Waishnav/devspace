@@ -184,7 +184,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     "agt_legacy",
     join(root, "legacy-project"),
     "reviewer",
-    "codex",
+    "cursor",
     "high",
     "error",
     "old error",
@@ -198,8 +198,8 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   const legacyRecord = upgradedStore.getById("agt_legacy");
   assert.equal(legacyRecord?.error, "old error");
   assert.equal(legacyRecord?.effort, "high");
-  assert.equal(legacyRecord?.providerInstanceId, "codex");
-  assert.equal(legacyRecord?.driver, "codex");
+  assert.equal(legacyRecord?.providerInstanceId, "cursor");
+  assert.equal(legacyRecord?.driver, "acp");
   assert.equal(legacyRecord?.errorCode, undefined);
   assert.equal(legacyRecord?.errorRetryable, undefined);
   const upgradedRecord = upgradedStore.update("agt_legacy", {

@@ -52,6 +52,11 @@ const migrations: Migration[] = [
     name: "local-agent-provider-instances",
     up: migrateLocalAgentProviderInstances,
   },
+  {
+    version: 10,
+    name: "local-agent-generic-acp-driver",
+    up: migrateLocalAgentGenericAcpDriver,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -307,6 +312,14 @@ function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
     update local_agent_sessions
     set driver = provider_instance_id
     where driver is null or driver = ''
+  `);
+}
+
+function migrateLocalAgentGenericAcpDriver(sqlite: Database.Database): void {
+  sqlite.exec(`
+    update local_agent_sessions
+    set driver = 'acp'
+    where driver in ('cursor', 'copilot', 'grok')
   `);
 }
 

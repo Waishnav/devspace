@@ -85,9 +85,9 @@ to one of these built-in driver integrations:
 - `opencode`: the host-installed OpenCode CLI; DevSpace probes its major version
   and uses the matching 1.x or 2.x protocol internally
 - `pi`: the installed Pi coding-agent SDK, one in-process session per DevSpace agent
-- `cursor`: ACP
-- `copilot`: ACP
-- `grok`: Grok Build ACP (`grok agent stdio`)
+- `acp`: generic Agent Client Protocol integration. Cursor, Copilot, and Grok
+  are default provider instances using this driver; other ACP agents can be
+  configured without adding a DevSpace driver.
 
 Codex and OpenCode are resolved from the user's environment rather than bundled
 as executables. Run their normal login/setup flows before using them; set
@@ -124,8 +124,8 @@ DevSpace passes this through to providers that expose a matching control:
 - `codex`: app-server model reasoning effort.
 - `pi`: the AgentSession thinking-level control.
 - `opencode`: model variant.
-- `cursor` and `copilot`: ACP thought-level config when supported.
-- `grok`: `--reasoning-effort` on startup and xAI's ACP model metadata for resumed sessions.
+- ACP: standard model/thought-level config when advertised by the agent. The
+  Grok flavor also understands xAI's typed model metadata and startup effort.
 
 ### `disabled`
 
