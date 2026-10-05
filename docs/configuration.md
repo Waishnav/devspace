@@ -68,6 +68,7 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
   "oauth": {
     "accessTokenTtlSeconds": 3600,
     "refreshTokenTtlSeconds": 2592000,
+    "refreshTokenGraceSeconds": 0,
     "scopes": ["devspace"],
     "allowedResourceUrls": [],
     "allowedRedirectHosts": ["chatgpt.com", "localhost", "127.0.0.1"],
@@ -78,6 +79,19 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
 Omitted sections and keys use the defaults shown above. An empty
 `workspaces.allowedRoots` uses the current working directory. Unknown keys are
 rejected so spelling mistakes cannot silently alter behavior.
+
+`oauth.refreshTokenGraceSeconds` optionally allows a rotated refresh token to be
+retried for 0–600 seconds. The default, `0`, consumes the token immediately.
+For a trusted host that issues concurrent refreshes or retries after losing a
+response, set it to a bounded window such as `600` and restart DevSpace. On first
+use, the old token's expiry is shortened to the earlier of its original expiry
+and the grace deadline; retries never extend that deadline. New refresh tokens
+keep the configured `oauth.refreshTokenTtlSeconds`. The deadline persists across
+server restarts without a database migration.
+
+Enabling this option allows anyone holding the rotated token to reuse it during
+the window. Keep it disabled unless that compatibility behavior is needed;
+client, scope, resource, and token revocation checks still apply.
 
 `oauth.allowedResourceUrls` accepts exact alternate MCP resource URLs for
 clients that connect through a resource alias, such as a secure MCP tunnel.
