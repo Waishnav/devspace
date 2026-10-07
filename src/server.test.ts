@@ -387,6 +387,11 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   let available = false;
   const context = await fixture(t, {
     localAgentProviders: () => [{ name: "codex", available }],
+    subagents: {
+      enabled: true,
+      instructions: "on-demand",
+      providers: [{ id: "codex", enabled: true, model: "gpt-default", effort: "medium" }],
+    },
   });
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
@@ -399,10 +404,18 @@ test("open_workspace refreshes provider availability for each catalog", async (t
     (usable.agent_providers as Array<Record<string, unknown>>)[0]?.id,
     "codex",
   );
-  assert.equal(
-    (usable.agents as Array<Record<string, unknown>>)[0]?.name,
-    "reviewer",
+  const provider = (usable.agent_providers as Array<Record<string, unknown>>)[0];
+  assert.deepEqual(
+    { id: provider?.id, model: provider?.model, effort: provider?.effort },
+    { id: "codex", model: "gpt-default", effort: "medium" },
   );
+  assert.deepEqual((usable.agents as Array<Record<string, unknown>>)[0], {
+    name: "reviewer",
+    description: "Reviews project changes.",
+    provider: "codex",
+    model: "gpt-default",
+    effort: "medium",
+  });
 });
 
 test("open_workspace omits providers disabled by configuration", async (t) => {
@@ -461,11 +474,15 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   const repeated = await callOpen(context.client, context.project, "chat-1");
   const otherSession = await callOpen(context.client, context.project, "chat-2");
   const unscoped = await callOpen(context.client, context.project);
+  const emptySession = await callOpen(context.client, context.project, "");
+  const malformedSession = await callOpen(context.client, context.project, 42);
 
   assert.equal(structuredContent(repeated).workspace_id, structuredContent(first).workspace_id);
   assert.equal(structuredContent(repeated).agents_files, undefined);
   assert.notEqual(structuredContent(otherSession).workspace_id, structuredContent(first).workspace_id);
   assert.notEqual(structuredContent(unscoped).workspace_id, structuredContent(first).workspace_id);
+  assert.notEqual(structuredContent(emptySession).workspace_id, structuredContent(first).workspace_id);
+  assert.notEqual(structuredContent(malformedSession).workspace_id, structuredContent(first).workspace_id);
   assert.ok(Array.isArray(structuredContent(otherSession).agents_files));
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
 });
@@ -953,12 +970,12 @@ function recordValue(value: unknown): Record<string, unknown> {
 async function callOpen(
   client: Client,
   path: string,
-  conversationScopeId?: string,
+  conversationScopeId?: unknown,
 ): Promise<Awaited<ReturnType<Client["callTool"]>>> {
   const params = {
     name: "open_workspace",
     arguments: { path },
-    ...(conversationScopeId
+    ...(conversationScopeId !== undefined
       ? { _meta: { "openai/session": conversationScopeId } }
       : {}),
   } as Parameters<Client["callTool"]>[0];
