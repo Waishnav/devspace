@@ -393,6 +393,15 @@ test("open_workspace refreshes provider availability for each catalog", async (t
       providers: [{ id: "codex", enabled: true, model: "gpt-default", effort: "medium" }],
     },
   });
+  await writeFile(join(context.project, ".devspace", "agents", "custom.md"), [
+    "---",
+    "name: custom",
+    "description: Uses a custom model.",
+    "provider: codex",
+    "model: gpt-custom",
+    "---",
+    "Inspect.",
+  ].join("\n"));
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   assert.deepEqual(unavailable.agent_providers, []);
@@ -409,11 +418,19 @@ test("open_workspace refreshes provider availability for each catalog", async (t
     { id: provider?.id, model: provider?.model, effort: provider?.effort },
     { id: "codex", model: "gpt-default", effort: "medium" },
   );
-  assert.deepEqual((usable.agents as Array<Record<string, unknown>>)[0], {
+  const agents = usable.agents as Array<Record<string, unknown>>;
+  assert.deepEqual(agents.find((agent) => agent.name === "reviewer"), {
     name: "reviewer",
     description: "Reviews project changes.",
     provider: "codex",
     model: "gpt-default",
+    effort: "medium",
+  });
+  assert.deepEqual(agents.find((agent) => agent.name === "custom"), {
+    name: "custom",
+    description: "Uses a custom model.",
+    provider: "codex",
+    model: "gpt-custom",
     effort: "medium",
   });
 });
