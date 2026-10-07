@@ -9,7 +9,7 @@ import {
   loadWorkspaceSkills,
   resolveSkillReadPath,
 } from "./skills.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-skills-test-"));
 const originalHome = process.env.HOME;

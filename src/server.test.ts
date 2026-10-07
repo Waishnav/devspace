@@ -17,7 +17,7 @@ import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -386,8 +386,36 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
   const context = await fixture(t, {
-    localAgentProviders: () => [{ name: "codex", available }],
+    localAgentProviders: () => [
+      { name: "codex", available },
+      { name: "claude", available: false },
+    ],
+    subagents: {
+      enabled: true,
+      instructions: "on-demand",
+      providers: [
+        { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+        { id: "claude", enabled: true },
+      ],
+    },
   });
+  await writeFile(join(context.project, ".devspace", "agents", "custom.md"), [
+    "---",
+    "name: custom",
+    "description: Uses a custom model.",
+    "provider: codex",
+    "model: gpt-custom",
+    "---",
+    "Inspect.",
+  ].join("\n"));
+  await writeFile(join(context.project, ".devspace", "agents", "claude-reviewer.md"), [
+    "---",
+    "name: claude-reviewer",
+    "description: Uses an unavailable provider.",
+    "provider: claude",
+    "---",
+    "Review with Claude.",
+  ].join("\n"));
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   assert.deepEqual(unavailable.agent_providers, []);
@@ -395,14 +423,31 @@ test("open_workspace refreshes provider availability for each catalog", async (t
 
   available = true;
   const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
-  assert.equal(
-    (usable.agent_providers as Array<Record<string, unknown>>)[0]?.id,
-    "codex",
+  assert.deepEqual(
+    (usable.agent_providers as Array<Record<string, unknown>>).map((provider) => provider.id),
+    ["codex"],
   );
-  assert.equal(
-    (usable.agents as Array<Record<string, unknown>>)[0]?.name,
-    "reviewer",
+  const provider = (usable.agent_providers as Array<Record<string, unknown>>)[0];
+  assert.deepEqual(
+    { id: provider?.id, model: provider?.model, effort: provider?.effort },
+    { id: "codex", model: "gpt-default", effort: "medium" },
   );
+  const agents = usable.agents as Array<Record<string, unknown>>;
+  assert.deepEqual(agents.find((agent) => agent.name === "reviewer"), {
+    name: "reviewer",
+    description: "Reviews project changes.",
+    provider: "codex",
+    model: "gpt-default",
+    effort: "medium",
+  });
+  assert.deepEqual(agents.find((agent) => agent.name === "custom"), {
+    name: "custom",
+    description: "Uses a custom model.",
+    provider: "codex",
+    model: "gpt-custom",
+    effort: "medium",
+  });
+  assert.deepEqual(agents.map((agent) => agent.name).sort(), ["custom", "reviewer"]);
 });
 
 test("open_workspace omits providers disabled by configuration", async (t) => {
@@ -468,6 +513,17 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.notEqual(structuredContent(unscoped).workspace_id, structuredContent(first).workspace_id);
   assert.ok(Array.isArray(structuredContent(otherSession).agents_files));
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
+
+  for (const malformedSession of ["", 42, {}]) {
+    const firstMalformed = await callOpen(context.client, context.project, malformedSession);
+    const repeatedMalformed = await callOpen(context.client, context.project, malformedSession);
+    assert.notEqual(
+      structuredContent(repeatedMalformed).workspace_id,
+      structuredContent(firstMalformed).workspace_id,
+    );
+    assert.ok(Array.isArray(structuredContent(firstMalformed).agents_files));
+    assert.ok(Array.isArray(structuredContent(repeatedMalformed).agents_files));
+  }
 });
 
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
@@ -953,12 +1009,12 @@ function recordValue(value: unknown): Record<string, unknown> {
 async function callOpen(
   client: Client,
   path: string,
-  conversationScopeId?: string,
+  conversationScopeId?: unknown,
 ): Promise<Awaited<ReturnType<Client["callTool"]>>> {
   const params = {
     name: "open_workspace",
     arguments: { path },
-    ...(conversationScopeId
+    ...(conversationScopeId !== undefined
       ? { _meta: { "openai/session": conversationScopeId } }
       : {}),
   } as Parameters<Client["callTool"]>[0];
