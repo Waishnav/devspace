@@ -491,17 +491,24 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   const repeated = await callOpen(context.client, context.project, "chat-1");
   const otherSession = await callOpen(context.client, context.project, "chat-2");
   const unscoped = await callOpen(context.client, context.project);
-  const emptySession = await callOpen(context.client, context.project, "");
-  const malformedSession = await callOpen(context.client, context.project, 42);
 
   assert.equal(structuredContent(repeated).workspace_id, structuredContent(first).workspace_id);
   assert.equal(structuredContent(repeated).agents_files, undefined);
   assert.notEqual(structuredContent(otherSession).workspace_id, structuredContent(first).workspace_id);
   assert.notEqual(structuredContent(unscoped).workspace_id, structuredContent(first).workspace_id);
-  assert.notEqual(structuredContent(emptySession).workspace_id, structuredContent(first).workspace_id);
-  assert.notEqual(structuredContent(malformedSession).workspace_id, structuredContent(first).workspace_id);
   assert.ok(Array.isArray(structuredContent(otherSession).agents_files));
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
+
+  for (const malformedSession of ["", 42, {}]) {
+    const firstMalformed = await callOpen(context.client, context.project, malformedSession);
+    const repeatedMalformed = await callOpen(context.client, context.project, malformedSession);
+    assert.notEqual(
+      structuredContent(repeatedMalformed).workspace_id,
+      structuredContent(firstMalformed).workspace_id,
+    );
+    assert.ok(Array.isArray(structuredContent(firstMalformed).agents_files));
+    assert.ok(Array.isArray(structuredContent(repeatedMalformed).agents_files));
+  }
 });
 
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {

@@ -2,21 +2,32 @@ import assert from "node:assert/strict";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import {
   presentAgentObservation,
+  presentAgentReceipt,
   presentAgentTargetCatalog,
 } from "./local-agent-presentation.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 
-const failed: LocalAgentRecord = {
+const starting: LocalAgentRecord = {
   id: "agt_test",
   workspaceRoot: "/private/project",
   profileName: "reviewer",
   provider: "codex",
+  status: "starting",
+  createdAt: "2026-08-21T10:00:00.000Z",
+  updatedAt: "2026-08-21T10:01:00.000Z",
+};
+
+assert.deepEqual(presentAgentReceipt(starting), {
+  id: "agt_test",
+  status: "running",
+});
+
+const failed: LocalAgentRecord = {
+  ...starting,
   status: "error",
   error: "Provider disconnected.",
   errorCode: "PROVIDER_EXECUTION_ERROR",
   errorRetryable: true,
-  createdAt: "2026-08-21T10:00:00.000Z",
-  updatedAt: "2026-08-21T10:01:00.000Z",
 };
 
 assert.deepEqual(presentAgentObservation(failed), {
