@@ -9,7 +9,7 @@ import { loadConfig, type ServerConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 

@@ -13,7 +13,7 @@ import {
   type WorkspaceStoreError,
 } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 
