@@ -386,11 +386,17 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
   const context = await fixture(t, {
-    localAgentProviders: () => [{ name: "codex", available }],
+    localAgentProviders: () => [
+      { name: "codex", available },
+      { name: "claude", available: false },
+    ],
     subagents: {
       enabled: true,
       instructions: "on-demand",
-      providers: [{ id: "codex", enabled: true, model: "gpt-default", effort: "medium" }],
+      providers: [
+        { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+        { id: "claude", enabled: true },
+      ],
     },
   });
   await writeFile(join(context.project, ".devspace", "agents", "custom.md"), [
@@ -402,6 +408,14 @@ test("open_workspace refreshes provider availability for each catalog", async (t
     "---",
     "Inspect.",
   ].join("\n"));
+  await writeFile(join(context.project, ".devspace", "agents", "claude-reviewer.md"), [
+    "---",
+    "name: claude-reviewer",
+    "description: Uses an unavailable provider.",
+    "provider: claude",
+    "---",
+    "Review with Claude.",
+  ].join("\n"));
 
   const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   assert.deepEqual(unavailable.agent_providers, []);
@@ -409,9 +423,9 @@ test("open_workspace refreshes provider availability for each catalog", async (t
 
   available = true;
   const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
-  assert.equal(
-    (usable.agent_providers as Array<Record<string, unknown>>)[0]?.id,
-    "codex",
+  assert.deepEqual(
+    (usable.agent_providers as Array<Record<string, unknown>>).map((provider) => provider.id),
+    ["codex"],
   );
   const provider = (usable.agent_providers as Array<Record<string, unknown>>)[0];
   assert.deepEqual(
@@ -433,6 +447,7 @@ test("open_workspace refreshes provider availability for each catalog", async (t
     model: "gpt-custom",
     effort: "medium",
   });
+  assert.deepEqual(agents.map((agent) => agent.name).sort(), ["custom", "reviewer"]);
 });
 
 test("open_workspace omits providers disabled by configuration", async (t) => {
