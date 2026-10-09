@@ -5,6 +5,7 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { createModels, type Message } from "@earendil-works/pi-ai";
 import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai.js";
+import type { ProposalDiff } from "./domain.js";
 
 export { WorkspaceProxy, WorkspaceServiceProxy };
 
@@ -69,6 +70,57 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
     } finally {
       execution[Symbol.dispose]?.();
     }
+  }
+
+  async inspect(taskId: string, baseCommit: string): Promise<ProposalDiff> {
+    if (!/^[a-f0-9]{40}$/.test(baseCommit)) throw new Error("Invalid base commit");
+    const files = await this.git(sh`git -C ${PROJECT_DIR} diff --name-only ${baseCommit} HEAD`);
+    const patch = await this.git(sh`git -C ${PROJECT_DIR} diff ${baseCommit} HEAD --`);
+    const maxLength = 32_000;
+    return {
+      taskId, files: files ? files.split("\n").slice(0, 100) : [],
+      patch: patch.slice(0, maxLength), truncated: patch.length > maxLength,
+    };
+  }
+
+  private async native(command: string): Promise<{ exitCode: number; stdout: string }> {
+    const execution = await this.workspace.runtime.exec(command, { backend: "container", encoding: "utf8" });
+    try {
+      const result = await execution.result();
+      return { exitCode: result.exitCode, stdout: result.stdout.trim() };
+    } finally {
+      execution[Symbol.dispose]?.();
+    }
+  }
+
+  async integrate(input: {
+    baseRemote: string; forkRemote: string; baseCommit: string;
+    headCommit: string; branch: string; baseToken: string; forkToken: string;
+  }): Promise<{ status: "merged" | "conflicted"; commit?: string }> {
+    if (![input.baseCommit, input.headCommit].every((sha) => /^[a-f0-9]{40}$/.test(sha))) {
+      throw new Error("Invalid proposal commit");
+    }
+    const dir = "/workspace/integration";
+    const baseAuth = `http.extraHeader=Authorization: Bearer ${input.baseToken}`;
+    const forkAuth = `http.extraHeader=Authorization: Bearer ${input.forkToken}`;
+    const run = async (command: string) => {
+      const result = await this.native(command);
+      if (result.exitCode !== 0) throw new Error("Git integration command failed");
+      return result.stdout;
+    };
+    await run(sh`git -c ${baseAuth} clone ${input.baseRemote} ${dir}`);
+    const current = await run(sh`git -C ${dir} rev-parse HEAD`);
+    if (current !== input.baseCommit) throw new Error("Project baseline has changed");
+    await run(sh`git -C ${dir} -c ${forkAuth} fetch ${input.forkRemote} ${input.branch}`);
+    const applied = await this.native(sh`git -C ${dir} -c ${"user.name=DevSpace Integrator"} -c ${"user.email=merge@devspace.invalid"} cherry-pick ${input.headCommit}`);
+    if (applied.exitCode !== 0) {
+      const conflicts = await run(sh`git -C ${dir} diff --name-only --diff-filter=U`);
+      if (conflicts) return { status: "conflicted" };
+      throw new Error("Git integration command failed");
+    }
+    const commit = await run(sh`git -C ${dir} rev-parse HEAD`);
+    await run(sh`git -C ${dir} -c ${baseAuth} push origin ${`HEAD:${input.branch}`}`);
+    return { status: "merged", commit };
   }
 
   private async execute(input: AgentInput): Promise<void> {

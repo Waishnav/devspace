@@ -1,6 +1,7 @@
 import { ProjectCoordinator } from "./project.js";
 import { publicGitUrl, repoName, requirePrompt, type Project, type Task } from "./domain.js";
 import { TaskAgent, WorkspaceProxy, WorkspaceServiceProxy } from "./task-agent.js";
+import { overlappingFiles } from "./review.js";
 
 export { ProjectCoordinator, TaskAgent, WorkspaceProxy, WorkspaceServiceProxy };
 
@@ -81,6 +82,45 @@ async function compare(request: Request, env: AppEnv, projectId: string): Promis
   return Response.json({ tasks }, { status: 202 });
 }
 
+async function proposals(env: AppEnv, projectId: string): Promise<Response> {
+  const tasks = await projectStub(env, projectId).tasks();
+  const details = await Promise.all(tasks.map(async (task) => {
+    if (task.status !== "completed") return { task, diff: null };
+    const diff = await env.RUNS.get(env.RUNS.idFromName(task.id)).inspect(task.id, task.baseCommit);
+    return { task, diff };
+  }));
+  return Response.json({
+    proposals: details,
+    overlappingFiles: overlappingFiles(details.map(({ diff }) => diff?.files ?? [])),
+  });
+}
+
+async function accept(request: Request, env: AppEnv, projectId: string): Promise<Response> {
+  const coordinator = projectStub(env, projectId);
+  const project = await coordinator.load();
+  if (!project) return jsonError("Project not found", 404);
+  const body = (await request.json()) as { taskId?: string };
+  if (!body.taskId || !/^[a-f0-9]{12}$/.test(body.taskId)) return jsonError("Invalid task ID", 400);
+  const task = await coordinator.task(body.taskId);
+  if (!task || task.status !== "completed" || !task.headCommit) return jsonError("Proposal not ready", 409);
+  if (task.integrationStatus) return jsonError("Proposal already integrated or conflicted", 409);
+
+  using base = await env.ARTIFACTS.get(project.baseRepo);
+  using fork = await env.ARTIFACTS.get(task.forkRepo);
+  const [baseToken, forkToken] = await Promise.all([
+    base.createToken("write", 900), fork.createToken("read", 900),
+  ]);
+  const result = await env.RUNS.get(env.RUNS.idFromName(task.id)).integrate({
+    baseRemote: project.baseRemote, forkRemote: task.forkRemote,
+    baseCommit: task.baseCommit, headCommit: task.headCommit,
+    branch: project.defaultBranch, baseToken: baseToken.plaintext, forkToken: forkToken.plaintext,
+  });
+  await coordinator.updateTask(task.id, {
+    integrationStatus: result.status, integratedCommit: result.commit,
+  });
+  return Response.json(result);
+}
+
 export default {
   async fetch(request: Request, env: AppEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -97,6 +137,10 @@ export default {
       if (comparison && request.method === "POST") return await compare(request, env, comparison[1]);
       const tasks = /^\/api\/projects\/([a-f0-9]{16})\/tasks$/.exec(url.pathname);
       if (tasks && request.method === "GET") return Response.json({ tasks: await projectStub(env, tasks[1]).tasks() });
+      const proposalRoute = /^\/api\/projects\/([a-f0-9]{16})\/proposals$/.exec(url.pathname);
+      if (proposalRoute && request.method === "GET") return await proposals(env, proposalRoute[1]);
+      const acceptRoute = /^\/api\/projects\/([a-f0-9]{16})\/accept$/.exec(url.pathname);
+      if (acceptRoute && request.method === "POST") return await accept(request, env, acceptRoute[1]);
       return jsonError("Not found", 404);
     } catch (error) {
       return jsonError(error, error instanceof SyntaxError ? 400 : 502);
