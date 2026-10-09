@@ -2,6 +2,11 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "devspace-agent-changes-v0",
   "main": "src/worker.ts",
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health"]
+  },
   "compatibility_date": "2026-10-09",
   "compatibility_flags": ["nodejs_compat", "experimental"],
   "ai": {"binding": "AI", "remote": true},

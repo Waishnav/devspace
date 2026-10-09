@@ -1,14 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "ESNext.Disposable"],
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["worker-configuration.d.ts", "src/**/*.ts", "test/**/*.ts", "web/**/*.tsx", "vite.config.ts"]
 }
