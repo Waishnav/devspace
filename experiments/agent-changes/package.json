@@ -11,7 +11,8 @@
     "build:types": "wrangler types"
   },
   "dependencies": {
-    "@cloudflare/computer": "0.4.1"
+    "@cloudflare/computer": "0.4.1",
+    "@earendil-works/pi-ai": "0.99.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261009.1",
