@@ -128,7 +128,15 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
     try {
       await coordinator.updateTask(input.id, { status: "running" });
       const authorization = `http.extraHeader=Authorization: Bearer ${input.token}`;
-      await this.git(sh`git -c ${authorization} clone ${input.forkRemote} ${PROJECT_DIR}`);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          await this.git(sh`git -c ${authorization} clone ${input.forkRemote} ${PROJECT_DIR}`);
+          break;
+        } catch (error) {
+          if (attempt === 3) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
 
       const { tools, execute } = createPiTools({ workspace: this.workspace });
       const models = createModels();
@@ -138,7 +146,10 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
 
       const messages: Message[] = [{ role: "user", content: input.prompt, timestamp: Date.now() }];
       let response = "";
+      let toolCalls = 0;
+      const deadline = Date.now() + 4 * 60_000;
       for (let turn = 0; turn < 8; turn++) {
+        if (Date.now() > deadline) throw new Error("Agent run deadline reached");
         const reply = await models.complete(model, {
           systemPrompt: [
             `You are a coding agent working on a repository at ${PROJECT_DIR}.`,
@@ -151,6 +162,8 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
         });
         messages.push(reply);
         const calls = reply.content.filter((part) => part.type === "toolCall");
+        toolCalls += calls.length;
+        if (calls.length > 5 || toolCalls > 24) throw new Error("Agent tool budget exceeded");
         if (!calls.length) {
           response = reply.content.filter((part) => part.type === "text").map((part) => part.text).join("");
           break;

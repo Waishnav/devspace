@@ -22,7 +22,7 @@ pnpm wrangler secret put DEMO_TOKEN
 pnpm deploy
 ```
 
-Generate a long random `DEMO_TOKEN` and enter it using Wrangler's secret prompt. **Never place it in source, `.env`, a URL parameter, or commit history.** The browser prompts for the token and retains it in `sessionStorage` for the current tab session. A demo token gates all `/api/*` endpoints; this is intentionally not multi-user authentication.
+Generate a long random `DEMO_TOKEN` and enter it using Wrangler's secret prompt. **Never place it in source, `.env`, a URL parameter, or commit history.** The browser keeps this token only in React memory until page refresh. A demo token gates all `/api/*` endpoints; this is intentionally not multi-user authentication.
 
 If `wrangler artifacts namespaces list` reports **10004 Access denied**, first resolve Artifacts availability/permission on the account. No subsequent steps can validate real repository operations until this works.
 
@@ -52,7 +52,7 @@ All `/api/*` routes require `Authorization: Bearer <DEMO_TOKEN>`.
 | `POST /api/projects/:id/accept` | `{ "taskId": "..." }`, merges one completed proposal |
 | `GET /health` | Unauthenticated health response |
 
-Project IDs are durable and are kept in the browser URL (`?project=<id>`). All runnable task contexts are assigned their own DO storage. Only **two agents and one comparison per project** are supported in v0. Diff previews are capped at 32 KB; agent turns are capped at eight, and the Worker does not expose Git tokens in API responses.
+Project IDs are durable and are kept in the browser URL (`?project=<id>`). All runnable task contexts are assigned their own DO storage. Only **two agents and one comparison per project** are supported in v0. Diff previews are capped at 32 KB; agent turns are capped at eight, with a maximum of 24 tool calls and a four-minute deadline checked between turns. In-flight shell execution can exceed that deadline. The Worker does not expose Git tokens in API responses.
 
 ## Intentional limits
 

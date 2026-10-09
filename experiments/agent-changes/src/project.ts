@@ -15,6 +15,23 @@ export class ProjectCoordinator extends DurableObject {
     return (await this.ctx.storage.get<Project>("project")) ?? null;
   }
 
+  /** Claims at most one comparison so duplicate requests cannot launch extra paid runs. */
+  async claimComparison(): Promise<boolean> {
+    return this.ctx.storage.transaction(async (storage) => {
+      if (await storage.get("comparison:claimed")) return false;
+      await storage.put("comparison:claimed", true);
+      return true;
+    });
+  }
+
+  async claimIntegration(): Promise<boolean> {
+    return this.ctx.storage.transaction(async (storage) => {
+      if (await storage.get("integration:claimed")) return false;
+      await storage.put("integration:claimed", true);
+      return true;
+    });
+  }
+
   async addTask(task: Task): Promise<void> {
     if (await this.ctx.storage.get(`task:${task.id}`)) throw new Error("Duplicate task");
     await this.ctx.storage.put(`task:${task.id}`, task);
