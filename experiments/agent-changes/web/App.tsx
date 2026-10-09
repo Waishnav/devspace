@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, CircleDot, Code2, GitBranch, GitMerge, KeyRound, LoaderCircle, ShieldCheck, Terminal, TriangleAlert } from "lucide-react";
 import type { Task } from "../src/domain.js";
@@ -46,8 +46,8 @@ function TaskPanel({ task, selected, select }: { task: Task; selected: boolean; 
 
 export function App() {
   const queryClient = useQueryClient();
-  const [token, setToken] = useState(() => sessionStorage.getItem("devspace-demo-token") ?? "");
-  const [tokenDraft, setTokenDraft] = useState(token);
+  const [token, setToken] = useState("");
+  const [tokenDraft, setTokenDraft] = useState("");
   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get("project") ?? "");
   const [sourceUrl, setSourceUrl] = useState("");
   const [prompts, setPrompts] = useState<[string, string]>(["", ""]);
@@ -65,7 +65,7 @@ export function App() {
     queryFn: () => endpoints.proposals(token, projectId),
     enabled: enabled && taskList.some((t) => t.status === "completed"),
   });
-  const selected = useMemo(() => taskList.find((t) => t.id === selectedId) ?? taskList[0], [selectedId, taskList]);
+  const selected = taskList.find((t) => t.id === selectedId) ?? taskList[0];
   const selectedDiff = proposals.data?.proposals.find(({ task }) => task.id === selected?.id)?.diff;
 
   const createProject = useMutation({
@@ -111,8 +111,8 @@ export function App() {
           <section className="max-w-lg rounded-2xl border border-edge bg-panel p-7">
             <KeyRound className="mb-5 size-6 text-accent" />
             <h2 className="text-xl font-semibold">Unlock your workspace</h2>
-            <p className="mb-5 mt-2 text-sm leading-6 text-muted">Enter the demo access token configured on the Worker. It stays in this browser tab's session storage.</p>
-            <form onSubmit={(event) => { event.preventDefault(); sessionStorage.setItem("devspace-demo-token", tokenDraft); setToken(tokenDraft); }} className="flex gap-2">
+            <p className="mb-5 mt-2 text-sm leading-6 text-muted">Enter the demo access token configured on the Worker. It is kept only in page memory and cleared on refresh.</p>
+            <form onSubmit={(event) => { event.preventDefault(); setToken(tokenDraft); setTokenDraft(""); }} className="flex gap-2">
               <input type="password" aria-label="Demo access token" value={tokenDraft} onChange={(event) => setTokenDraft(event.target.value)} placeholder="Access token" className={field} required />
               <button className={primary} type="submit">Enter <ArrowRight className="size-4" /></button>
             </form>

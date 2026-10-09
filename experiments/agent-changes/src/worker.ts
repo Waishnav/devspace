@@ -61,6 +61,7 @@ async function compare(request: Request, env: AppEnv, projectId: string): Promis
   using source = await env.ARTIFACTS.get(project.baseRepo);
   const baseCommit = (await source.log({ ref: project.defaultBranch, limit: 1 }))[0]?.hash;
   if (!baseCommit) return jsonError("Source repository has no initial commit", 409);
+  if (!(await stub.claimComparison())) return jsonError("A comparison is already in progress", 409);
 
   const tasks: Task[] = [];
   for (const prompt of prompts) {
@@ -104,6 +105,7 @@ async function accept(request: Request, env: AppEnv, projectId: string): Promise
   const task = await coordinator.task(body.taskId);
   if (!task || task.status !== "completed" || !task.headCommit) return jsonError("Proposal not ready", 409);
   if (task.integrationStatus) return jsonError("Proposal already integrated or conflicted", 409);
+  if (!(await coordinator.claimIntegration())) return jsonError("Integration is already in progress", 409);
 
   using base = await env.ARTIFACTS.get(project.baseRepo);
   using fork = await env.ARTIFACTS.get(task.forkRepo);
@@ -143,6 +145,10 @@ export default {
       if (acceptRoute && request.method === "POST") return await accept(request, env, acceptRoute[1]);
       return jsonError("Not found", 404);
     } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (code === "IMPORT_IN_PROGRESS" || code === "FORK_IN_PROGRESS") {
+        return jsonError("Repository is still being prepared; retry shortly", 409);
+      }
       return jsonError(error, error instanceof SyntaxError ? 400 : 502);
     }
   },
