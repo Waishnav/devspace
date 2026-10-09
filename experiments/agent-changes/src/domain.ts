@@ -18,6 +18,15 @@ export interface Task {
   result?: string;
   headCommit?: string;
   error?: string;
+  integrationStatus?: "pending" | "merged" | "conflicted";
+  integratedCommit?: string;
+}
+
+export interface ProposalDiff {
+  taskId: string;
+  files: string[];
+  patch: string;
+  truncated: boolean;
 }
 
 export function publicGitUrl(value: unknown): string {
