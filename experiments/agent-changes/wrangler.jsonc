@@ -4,9 +4,16 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-09",
   "compatibility_flags": ["nodejs_compat", "experimental"],
+  "ai": {"binding": "AI", "remote": true},
+  "worker_loaders": [{"binding": "LOADER"}],
+  "containers": [{
+    "class_name": "TaskAgent",
+    "scheduling_policy": "durable_object",
+    "images": { "app": { "dockerfile": "./Dockerfile" } }
+  }],
   "artifacts": [{"binding": "ARTIFACTS", "namespace": "devspace-agent-changes", "remote": true}],
   "durable_objects": {
-    "bindings": [{"name": "PROJECTS", "class_name": "ProjectCoordinator"}]
+    "bindings": [{"name": "PROJECTS", "class_name": "ProjectCoordinator"}, {"name": "RUNS", "class_name": "TaskAgent"}]
   },
-  "migrations": [{"tag": "v1", "new_sqlite_classes": ["ProjectCoordinator"]}]
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["ProjectCoordinator"]}, {"tag": "v2", "new_sqlite_classes": ["TaskAgent"]}]
 }
