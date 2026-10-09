@@ -1,0 +1,23 @@
+{
+  "name": "@devspace/agent-changes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types >/dev/null && tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "build:types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "0.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261009.1",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.137.0"
+  }
+}

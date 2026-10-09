@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "devspace-agent-changes-v0",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-09",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "artifacts": [{"binding": "ARTIFACTS", "namespace": "devspace-agent-changes", "remote": true}],
+  "durable_objects": {
+    "bindings": [{"name": "PROJECTS", "class_name": "ProjectCoordinator"}]
+  },
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["ProjectCoordinator"]}]
+}
