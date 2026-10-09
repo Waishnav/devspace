@@ -4,3 +4,7 @@ releases/
 .devspace-dev/
 .env
 *.log
+experiments/agent-changes/.wrangler/
+experiments/agent-changes/worker-configuration.d.ts
+experiments/agent-changes/.dev.vars
+experiments/agent-changes/.env*
