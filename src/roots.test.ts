@@ -20,9 +20,20 @@ assert.equal(
   resolve(home, "personal", "devspace"),
 );
 
+// Home expansion applies before working-directory resolution, so a `~` path
+// resolves against the home directory rather than becoming a literal `~`
+// directory inside the workspace.
 assert.equal(
-  resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
-  resolve("/workspace", "~/file.txt"),
+  resolveAllowedPath("~/personal/devspace", "/workspace", [join(home, "personal")]),
+  resolve(home, "personal", "devspace"),
+);
+
+// A `~` path outside the allowed roots is denied instead of being silently
+// mapped inside the workspace. Skill reads rely on this: the denial lets the
+// read fall through to the skill-path resolver.
+assert.throws(
+  () => resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
+  /Path is outside allowed roots/,
 );
 
 if (process.platform === "win32") {
