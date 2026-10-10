@@ -42,7 +42,7 @@ export function assertAllowedPath(path: string, allowedRoots: string[]): string 
 }
 
 export function resolveAllowedPath(inputPath: string, cwd: string, allowedRoots: string[]): string {
-  const absolutePath = resolve(cwd, inputPath);
+  const absolutePath = resolve(cwd, expandHomePath(inputPath));
   return assertAllowedPath(absolutePath, allowedRoots);
 }
 
