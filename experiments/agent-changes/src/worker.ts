@@ -1,5 +1,5 @@
 import { ProjectCoordinator } from "./project.js";
-import { publicGitUrl, repoName, requirePrompt, type Project, type Task } from "./domain.js";
+import { InputError, publicGitUrl, repoName, requirePrompt, type Project, type Task } from "./domain.js";
 import { TaskAgent, WorkspaceProxy, WorkspaceServiceProxy } from "./task-agent.js";
 import { overlappingFiles } from "./review.js";
 
@@ -9,7 +9,7 @@ type AppEnv = Env & { DEMO_TOKEN: string };
 type ProjectStub = DurableObjectStub<ProjectCoordinator>;
 
 function jsonError(error: unknown, status = 400): Response {
-  return Response.json({ error: error instanceof Error ? error.message : "Unexpected error" }, { status });
+  return Response.json({ error: error instanceof Error ? error.message : typeof error === "string" ? error : "Unexpected error" }, { status });
 }
 
 function authorized(request: Request, env: AppEnv): boolean {
@@ -50,36 +50,59 @@ async function compare(request: Request, env: AppEnv, projectId: string): Promis
   const stub = projectStub(env, projectId);
   const project = await stub.load();
   if (!project) return jsonError("Project not found", 404);
-  if ((await stub.tasks()).length) return jsonError("V0 supports one comparison per project", 409);
 
   const body = (await request.json()) as { prompts?: unknown };
   if (!Array.isArray(body.prompts) || body.prompts.length !== 2) {
     return jsonError("Provide exactly two prompts", 400);
   }
-  const prompts = body.prompts.map(requirePrompt);
+  const prompts = body.prompts.map(requirePrompt) as [string, string];
 
   using source = await env.ARTIFACTS.get(project.baseRepo);
   const baseCommit = (await source.log({ ref: project.defaultBranch, limit: 1 }))[0]?.hash;
   if (!baseCommit) return jsonError("Source repository has no initial commit", 409);
-
-  const tasks: Task[] = [];
-  for (const prompt of prompts) {
-    const id = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
-    const forkRepo = repoName(projectId, id);
-    const fork = await source.fork(forkRepo, { defaultBranchOnly: true });
-    const task: Task = {
-      id, projectId, prompt, forkRepo, forkRemote: fork.remote,
-      baseCommit, status: "queued",
-    };
-    await stub.addTask(task);
-    tasks.push(task);
-    // The initial token is passed internally to the run DO, never to the browser.
-    await env.RUNS.get(env.RUNS.idFromName(id)).start({
-      id, projectId, prompt, forkRemote: fork.remote,
-      token: fork.token, branch: project.defaultBranch,
-    });
+  const ids = [crypto.randomUUID().replaceAll("-", "").slice(0, 12),
+    crypto.randomUUID().replaceAll("-", "").slice(0, 12)] as [string, string];
+  const claim = await stub.beginComparison(prompts, ids);
+  if (claim.state === "busy") return jsonError("A comparison is already being prepared", 409);
+  if (claim.state === "ready") return Response.json({ tasks: await stub.tasks() }, { status: 202 });
+  let finished = false;
+  try {
+    for (const [index, prompt] of prompts.entries()) {
+      const id = claim.taskIds[index];
+      const existing = await stub.task(id);
+      if (existing && existing.status !== "queued") continue;
+      const forkRepo = repoName(projectId, id);
+      let remote: string;
+      let token: string;
+      // If the fork completed but our request failed before saving the task, reuse it.
+      try {
+        using prior = await env.ARTIFACTS.get(forkRepo);
+        const info = await prior.info();
+        const access = await prior.createToken("write", 1800);
+        remote = info.remote;
+        token = access.plaintext;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "NOT_FOUND")) throw error;
+        const fork = await source.fork(forkRepo, { defaultBranchOnly: true });
+        remote = fork.remote;
+        token = fork.token;
+      }
+      const task: Task = existing ?? {
+        id, projectId, prompt, forkRepo, forkRemote: remote,
+        baseCommit, status: "queued",
+      };
+      await stub.addTask(task);
+      // The token crosses a DO RPC, not the browser API. The run owns its fork.
+      await env.RUNS.get(env.RUNS.idFromName(id)).start({
+        id, projectId, prompt, forkRemote: remote,
+        token, branch: project.defaultBranch,
+      });
+    }
+    finished = true;
+    return Response.json({ tasks: await stub.tasks() }, { status: 202 });
+  } finally {
+    await stub.finishComparison(finished);
   }
-  return Response.json({ tasks }, { status: 202 });
 }
 
 async function proposals(env: AppEnv, projectId: string): Promise<Response> {
@@ -104,21 +127,25 @@ async function accept(request: Request, env: AppEnv, projectId: string): Promise
   const task = await coordinator.task(body.taskId);
   if (!task || task.status !== "completed" || !task.headCommit) return jsonError("Proposal not ready", 409);
   if (task.integrationStatus) return jsonError("Proposal already integrated or conflicted", 409);
-
-  using base = await env.ARTIFACTS.get(project.baseRepo);
-  using fork = await env.ARTIFACTS.get(task.forkRepo);
-  const [baseToken, forkToken] = await Promise.all([
-    base.createToken("write", 900), fork.createToken("read", 900),
-  ]);
-  const result = await env.RUNS.get(env.RUNS.idFromName(task.id)).integrate({
-    baseRemote: project.baseRemote, forkRemote: task.forkRemote,
-    baseCommit: task.baseCommit, headCommit: task.headCommit,
-    branch: project.defaultBranch, baseToken: baseToken.plaintext, forkToken: forkToken.plaintext,
-  });
-  await coordinator.updateTask(task.id, {
-    integrationStatus: result.status, integratedCommit: result.commit,
-  });
-  return Response.json(result);
+  if (!(await coordinator.claimIntegration())) return jsonError("Integration is already in progress", 409);
+  try {
+    using base = await env.ARTIFACTS.get(project.baseRepo);
+    using fork = await env.ARTIFACTS.get(task.forkRepo);
+    const [baseToken, forkToken] = await Promise.all([
+      base.createToken("write", 900), fork.createToken("read", 900),
+    ]);
+    const result = await env.RUNS.get(env.RUNS.idFromName(task.id)).integrate({
+      baseRemote: project.baseRemote, forkRemote: task.forkRemote,
+      baseCommit: task.baseCommit, headCommit: task.headCommit,
+      branch: project.defaultBranch, baseToken: baseToken.plaintext, forkToken: forkToken.plaintext,
+    });
+    await coordinator.updateTask(task.id, {
+      integrationStatus: result.status, integratedCommit: result.commit,
+    });
+    return Response.json(result);
+  } finally {
+    await coordinator.releaseIntegration();
+  }
 }
 
 export default {
@@ -143,7 +170,11 @@ export default {
       if (acceptRoute && request.method === "POST") return await accept(request, env, acceptRoute[1]);
       return jsonError("Not found", 404);
     } catch (error) {
-      return jsonError(error, error instanceof SyntaxError ? 400 : 502);
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (code === "IMPORT_IN_PROGRESS" || code === "FORK_IN_PROGRESS") {
+        return jsonError("Repository is still being prepared; retry shortly", 409);
+      }
+      return jsonError(error, error instanceof SyntaxError || error instanceof InputError ? 400 : 502);
     }
   },
 } satisfies ExportedHandler<AppEnv>;

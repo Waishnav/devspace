@@ -6,6 +6,7 @@ import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { createModels, type Message } from "@earendil-works/pi-ai";
 import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai.js";
 import type { ProposalDiff } from "./domain.js";
+import { integrateGit, type GitIntegrationInput } from "./git-integration.js";
 
 export { WorkspaceProxy, WorkspaceServiceProxy };
 
@@ -55,14 +56,18 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
   }
 
   async start(input: AgentInput): Promise<void> {
-    if (await this.ctx.storage.get("started")) throw new Error("Agent already started");
-    await this.ctx.storage.put("started", true);
+    const claimed = await this.ctx.storage.transaction(async (storage) => {
+      if (await storage.get("started")) return false;
+      await storage.put("started", true);
+      return true;
+    });
+    if (!claimed) return;
     this.ctx.waitUntil(this.execute(input));
   }
 
-  /** Never expose command output from invocations carrying a Git credential. */
+  /** The Worker-shell Git shim does not implement -c or the full diff CLI. Use real Linux Git. */
   private async git(command: string): Promise<string> {
-    const execution = await this.workspace.runtime.exec(command, { backend: "shell", encoding: "utf8" });
+    const execution = await this.workspace.runtime.exec(command, { backend: "container", encoding: "utf8" });
     try {
       const result = await execution.result();
       if (result.exitCode !== 0) throw new Error("Git operation failed");
@@ -78,7 +83,7 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
     const patch = await this.git(sh`git -C ${PROJECT_DIR} diff ${baseCommit} HEAD --`);
     const maxLength = 32_000;
     return {
-      taskId, files: files ? files.split("\n").slice(0, 100) : [],
+      taskId, files: files ? files.split("\n") : [],
       patch: patch.slice(0, maxLength), truncated: patch.length > maxLength,
     };
   }
@@ -93,34 +98,8 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
     }
   }
 
-  async integrate(input: {
-    baseRemote: string; forkRemote: string; baseCommit: string;
-    headCommit: string; branch: string; baseToken: string; forkToken: string;
-  }): Promise<{ status: "merged" | "conflicted"; commit?: string }> {
-    if (![input.baseCommit, input.headCommit].every((sha) => /^[a-f0-9]{40}$/.test(sha))) {
-      throw new Error("Invalid proposal commit");
-    }
-    const dir = "/workspace/integration";
-    const baseAuth = `http.extraHeader=Authorization: Bearer ${input.baseToken}`;
-    const forkAuth = `http.extraHeader=Authorization: Bearer ${input.forkToken}`;
-    const run = async (command: string) => {
-      const result = await this.native(command);
-      if (result.exitCode !== 0) throw new Error("Git integration command failed");
-      return result.stdout;
-    };
-    await run(sh`git -c ${baseAuth} clone ${input.baseRemote} ${dir}`);
-    const current = await run(sh`git -C ${dir} rev-parse HEAD`);
-    if (current !== input.baseCommit) throw new Error("Project baseline has changed");
-    await run(sh`git -C ${dir} -c ${forkAuth} fetch ${input.forkRemote} ${input.branch}`);
-    const applied = await this.native(sh`git -C ${dir} -c ${"user.name=DevSpace Integrator"} -c ${"user.email=merge@devspace.invalid"} cherry-pick ${input.headCommit}`);
-    if (applied.exitCode !== 0) {
-      const conflicts = await run(sh`git -C ${dir} diff --name-only --diff-filter=U`);
-      if (conflicts) return { status: "conflicted" };
-      throw new Error("Git integration command failed");
-    }
-    const commit = await run(sh`git -C ${dir} rev-parse HEAD`);
-    await run(sh`git -C ${dir} -c ${baseAuth} push origin ${`HEAD:${input.branch}`}`);
-    return { status: "merged", commit };
+  async integrate(input: GitIntegrationInput): Promise<{ status: "merged" | "conflicted"; commit?: string }> {
+    return integrateGit(input, `/workspace/integration-${crypto.randomUUID()}`, (command) => this.native(command));
   }
 
   private async execute(input: AgentInput): Promise<void> {
@@ -128,9 +107,28 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
     try {
       await coordinator.updateTask(input.id, { status: "running" });
       const authorization = `http.extraHeader=Authorization: Bearer ${input.token}`;
-      await this.git(sh`git -c ${authorization} clone ${input.forkRemote} ${PROJECT_DIR}`);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          await this.git(sh`git -c ${authorization} clone ${input.forkRemote} ${PROJECT_DIR}`);
+          break;
+        } catch (error) {
+          if (attempt === 3) throw error;
+          await this.git(sh`rm -rf -- ${PROJECT_DIR}`);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
 
-      const { tools, execute } = createPiTools({ workspace: this.workspace });
+      const { tools, execute } = createPiTools({
+        workspace: this.workspace,
+        shell: {
+          backends: {
+            shell: { description: "Fast text and Git inspection using the Worker shell" },
+            container: { description: "Full Linux terminal with git, node, npm, and test runners" },
+          },
+          defaultBackend: "container",
+          maxBytes: 32_000,
+        },
+      });
       const models = createModels();
       models.setProvider(workersAI(this.env.AI, MODEL));
       const model = models.getModel(WORKERS_AI_PROVIDER, MODEL);
@@ -138,7 +136,11 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
 
       const messages: Message[] = [{ role: "user", content: input.prompt, timestamp: Date.now() }];
       let response = "";
+      let finished = false;
+      let toolCalls = 0;
+      const deadline = Date.now() + 4 * 60_000;
       for (let turn = 0; turn < 8; turn++) {
+        if (Date.now() > deadline) throw new Error("Agent run deadline reached");
         const reply = await models.complete(model, {
           systemPrompt: [
             `You are a coding agent working on a repository at ${PROJECT_DIR}.`,
@@ -149,13 +151,22 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
           ].join("\n"),
           messages, tools,
         });
+        if (Date.now() > deadline) throw new Error("Agent run deadline reached");
+        if (reply.stopReason === "error" || reply.stopReason === "aborted") {
+          throw new Error("Model response failed");
+        }
+        if (reply.stopReason === "length") throw new Error("Model response exceeded token budget");
         messages.push(reply);
         const calls = reply.content.filter((part) => part.type === "toolCall");
+        toolCalls += calls.length;
+        if (calls.length > 5 || toolCalls > 24) throw new Error("Agent tool budget exceeded");
         if (!calls.length) {
           response = reply.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+          finished = true;
           break;
         }
         for (const call of calls) {
+          if (Date.now() > deadline) throw new Error("Agent run deadline reached");
           const result = await execute(call);
           messages.push({
             role: "toolResult", toolCallId: call.id, toolName: call.name,
@@ -164,8 +175,11 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
         }
       }
 
+      if (!finished) throw new Error("Agent turn budget exceeded");
+      if (Date.now() > deadline) throw new Error("Agent run deadline reached");
+
       await this.git(sh`git -C ${PROJECT_DIR} add -A`);
-      const status = await this.workspace.runtime.exec(sh`git -C ${PROJECT_DIR} diff --cached --quiet`, { backend: "shell" });
+      const status = await this.workspace.runtime.exec(sh`git -C ${PROJECT_DIR} diff --cached --quiet`, { backend: "container" });
       const exitCode = (await status.result()).exitCode;
       status[Symbol.dispose]?.();
       if (exitCode !== 1) throw new Error(exitCode === 0 ? "Agent did not change files" : "Unable to inspect changes");
@@ -179,7 +193,7 @@ export class TaskAgent extends withWorkspaceContainer(AgentBase) {
       await coordinator.updateTask(input.id, {
         status: "failed",
         // Avoid returning raw provider and shell errors: some may contain repo credentials.
-        error: error instanceof Error && ["Git operation failed", "Agent did not change files", "Model unavailable", "Unable to inspect changes"].includes(error.message)
+        error: error instanceof Error && ["Git operation failed", "Agent did not change files", "Model unavailable", "Unable to inspect changes", "Agent run deadline reached", "Agent tool budget exceeded", "Agent turn budget exceeded", "Model response failed", "Model response exceeded token budget"].includes(error.message)
           ? error.message : "Agent execution failed; inspect Cloudflare logs",
       });
     }

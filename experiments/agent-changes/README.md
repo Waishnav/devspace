@@ -22,7 +22,9 @@ pnpm wrangler secret put DEMO_TOKEN
 pnpm deploy
 ```
 
-Generate a long random `DEMO_TOKEN` and enter it using Wrangler's secret prompt. **Never place it in source, `.env`, a URL parameter, or commit history.** The browser prompts for the token and retains it in `sessionStorage` for the current tab session. A demo token gates all `/api/*` endpoints; this is intentionally not multi-user authentication.
+Generate a long random `DEMO_TOKEN` and enter it using Wrangler's secret prompt. **Never place it in source, `.env`, a URL parameter, or commit history.** The browser keeps this token only in React memory until page refresh. A demo token gates all `/api/*` endpoints; this is intentionally not multi-user authentication.
+
+For local development, create an ignored `experiments/agent-changes/.dev.vars` file containing `DEMO_TOKEN=your-local-token`, run `pnpm build`, and then `pnpm dev`. Local Durable Object state is not shared with deployed state, but the Artifacts binding uses `remote: true`: local requests still create repositories in the *real* `devspace-agent-changes` namespace. Use disposable repositories and clean up any test repos manually in Wrangler or the Cloudflare dashboard. `wrangler secret put` applies to the remote deployment and may publish a Worker version; it does not configure local secrets.
 
 If `wrangler artifacts namespaces list` reports **10004 Access denied**, first resolve Artifacts availability/permission on the account. No subsequent steps can validate real repository operations until this works.
 
@@ -52,7 +54,7 @@ All `/api/*` routes require `Authorization: Bearer <DEMO_TOKEN>`.
 | `POST /api/projects/:id/accept` | `{ "taskId": "..." }`, merges one completed proposal |
 | `GET /health` | Unauthenticated health response |
 
-Project IDs are durable and are kept in the browser URL (`?project=<id>`). All runnable task contexts are assigned their own DO storage. Only **two agents and one comparison per project** are supported in v0. Diff previews are capped at 32 KB; agent turns are capped at eight, and the Worker does not expose Git tokens in API responses.
+Project IDs are durable and are kept in the browser URL (`?project=<id>`). All runnable task contexts are assigned their own DO storage. Only **two agents and one comparison per project** are supported in v0. Diff previews are capped at 32 KB; agent turns are capped at eight, with a maximum of 24 tool calls and a four-minute deadline checked between turns. In-flight shell execution can exceed that deadline. The Worker does not expose Git tokens in API responses.
 
 ## Intentional limits
 
@@ -60,7 +62,7 @@ Project IDs are durable and are kept in the browser URL (`?project=<id>`). All r
 - No persisted full agent transcript or live tool-call log in the UI. Agent summaries and committed Git changes are exposed.
 - Automated test outcomes are **not recorded** as a verified separate artifact. The UI says so rather than claiming tests passed.
 - No AI conflict resolution. Accepting an outdated proposal returns an error; genuine cherry-pick conflicts remain local to the integration directory.
-- Compute retry/restart recovery, timeouts, quota enforcement, cleanup of stale forks, and private execution isolation need substantial hardening before any production use.
+- Agent execution can continue across container replacement because files live in Computer's DO-backed filesystem, but autonomous recovery of interrupted model loops is not implemented. In-flight shell commands can outlast the four-minute turn deadline; quota enforcement, fork garbage collection, and production-grade isolation need further hardening.
 - Cloudflare resource usage and Workers AI inference are billable. Do not expose this demo token publicly or use it with repositories containing secrets.
 
 The Workers AI transport adapter in `src/workers-ai.ts` is adapted from the MIT-licensed [`cloudflare/computer` pi-ai example](https://github.com/cloudflare/computer/tree/main/examples/pi-ai); the `Dockerfile` is based on its MIT-licensed Think/Linux example.
