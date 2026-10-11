@@ -63,7 +63,7 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
       koffi:
-        specifier: ^3.1.2
+        specifier: 3.2.1
         version: 3.2.1
       lucide:
         specifier: ^1.24.0
