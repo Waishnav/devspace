@@ -15,6 +15,11 @@ Authentication stays separate because it contains a secret:
 Run `devspace init` to create both files. `devspace config set publicBaseUrl
 <url|null>` updates the JSONC document without discarding its comments.
 
+DevSpace reads server configuration when `devspace serve` starts. After editing
+`config.jsonc` or running `devspace config set`, restart the running server to
+apply changes such as `workspaces.allowedRoots` or `server.publicBaseUrl`.
+Changes on disk do not automatically update a running server.
+
 ## Complete example
 
 ```jsonc

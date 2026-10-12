@@ -446,6 +446,7 @@ function runConfigCommand(args: string[]): void {
     normalizeOptionalPublicBaseUrl(value),
   );
   console.log(`Updated ${files.configPath}`);
+  console.log("Restart `devspace serve` to apply this change to a running server.");
 }
 
 async function runWorktreesCommand(args: string[]): Promise<void> {
