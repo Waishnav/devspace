@@ -102,6 +102,37 @@ The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each mode uses
 its shell tool with programs such as `rg`, `find`, and `ls` when it needs those
 operations.
 
+### Experimental Code Mode
+
+Set `DEVSPACE_EXPERIMENTAL_CODE_MODE=1` **when starting the server** to try
+JavaScript-based tool composition without changing `tools.mode`:
+
+```sh
+DEVSPACE_EXPERIMENTAL_CODE_MODE=1 pnpm dev
+```
+
+This overrides the model-facing coding tools with `open_workspace`, `execute`,
+`poll_execution`, `cancel_execution`, and `show_changes`. When native artifact
+download is enabled, `download_artifact` remains a separate tool. The existing
+Codex primitives are available *inside* `execute`, with their JavaScript signatures
+returned by `open_workspace` and `workspace_id` bound automatically. Scripts can
+use top-level `await` and `return`, but cannot import modules or access Node.js
+globals directly.
+
+`execute` returns a result immediately when possible, or an `execution_id` after
+its yield window (10 seconds by default, 12 seconds maximum). Use
+`poll_execution` with that ID to await completion without rerunning the script,
+or `cancel_execution` to stop it. Long-running nested `exec_command` calls return
+`session_id` for polling via `tools.write_stdin` inside the script.
+
+The experimental runtime has a five-minute script deadline, up to 32 nested tool
+calls and four simultaneous nested calls. Sessions and results are in memory only
+and are lost on server restart. Tool calls already performed are **not rolled
+back** when a script fails or is cancelled.
+
+Unset the variable or set it to `0` and restart to restore the configured tool
+surface. This experimental switch is not a persistent config key.
+
 DevSpace attaches Apps UI metadata only to `open_workspace` and `show_changes`.
 This avoids rendering an iframe for every read, edit, search, or command call.
 Setting `ui.enabled` to `false` removes the metadata but does not remove the
@@ -197,7 +228,9 @@ Windows; the tool is not registered on BSD.
 
 ## Environment boundary
 
-Only two user-facing DevSpace environment variables remain:
+Only two persistent user-facing DevSpace environment variables remain
+(apart from temporary experiment switches such as
+`DEVSPACE_EXPERIMENTAL_CODE_MODE`):
 
 | Variable | Purpose |
 | --- | --- |

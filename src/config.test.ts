@@ -19,6 +19,9 @@ try {
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
   assert.equal(defaults.toolMode, "codex");
+  assert.equal(defaults.experimentalCodeMode, false);
+  assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "1" }).experimentalCodeMode, true);
+  assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "0" }).experimentalCodeMode, false);
   assert.equal(defaults.uiEnabled, true);
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);

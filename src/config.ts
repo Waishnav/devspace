@@ -17,6 +17,7 @@ export interface ServerConfig {
   allowedHosts: string[];
   publicBaseUrl: string;
   toolMode: ToolMode;
+  experimentalCodeMode: boolean;
   uiEnabled: boolean;
   stateDir: string;
   worktreeRoot: string;
@@ -66,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
     toolMode: stored.tools.mode,
+    experimentalCodeMode: env.DEVSPACE_EXPERIMENTAL_CODE_MODE === "1",
     uiEnabled: stored.ui.enabled,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),

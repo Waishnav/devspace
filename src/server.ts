@@ -17,6 +17,8 @@ import {
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
+import { CodeModeRegistry } from "./code-mode-registry.js";
+import { CodeModeExecutions, MAX_CODE_MODE_YIELD_MS, type ExecutionSnapshot } from "./code-mode-executions.js";
 import {
   isArtifactDownloadSupportedPlatform,
   registerArtifactTools,
@@ -124,6 +126,9 @@ function serverInstructions(
   config: ServerConfig,
   toolSurface: ToolSurface,
 ): string {
+  if (config.experimentalCodeMode) {
+    return "Call open_workspace once per project or worktree, then use the returned Code Mode tool signatures to call workspace primitives through execute. Await relevant operations; use poll_execution for long-running scripts and cancel_execution when no longer needed. Call show_changes after file modifications.";
+  }
   const artifactInstruction =
     config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
       ? " When the user provides an attached or generated file that needs to be added to the workspace, pass the provided file directly to download_artifact with the existing workspace_id and a suitable relative destination path. Do not reconstruct attached files manually."
@@ -314,7 +319,7 @@ export function createMcpServer(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
 ): McpServer {
-  const toolSurface = getToolSurface(config.toolMode);
+  const toolSurface = getToolSurface(config.experimentalCodeMode ? "codex" : config.toolMode);
   const server = new McpServer(
     mcpServerInfo(),
     {
@@ -322,6 +327,8 @@ export function createMcpServer(
     },
   );
 
+  const codeModeRegistry = config.experimentalCodeMode ? new CodeModeRegistry() : undefined;
+  const codeModeExecutions = codeModeRegistry ? new CodeModeExecutions(codeModeRegistry, processSessions) : undefined;
   registerMcpSurface(
     server,
     config,
@@ -331,6 +338,8 @@ export function createMcpServer(
     resolveLocalAgentProviders,
     incomingArtifactAdapters,
     trackToolActivity,
+    codeModeRegistry,
+    codeModeExecutions,
   );
   return server;
 }
@@ -344,11 +353,14 @@ function registerMcpSurface(
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
+  codeModeRegistry?: CodeModeRegistry,
+  codeModeExecutions?: CodeModeExecutions,
 ): void {
   const registrationTarget = trackToolActivity
     ? withTrackedToolHandlers(server, trackToolActivity)
     : server;
-  const toolSurface = getToolSurface(config.toolMode);
+  const toolSurface = getToolSurface(config.experimentalCodeMode ? "codex" : config.toolMode);
+  const internalTarget = codeModeRegistry?.registrationTarget ?? registrationTarget;
 
   registerAppResource(
     registrationTarget,
@@ -434,6 +446,10 @@ function registerMcpSurface(
           }),
         ]),
         instruction: z.string(),
+        code_mode: z.object({
+          language: z.literal("javascript"),
+          tool_signatures: z.string(),
+        }).optional(),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
@@ -514,6 +530,9 @@ function registerMcpSurface(
             preloadedSubagentInstructions,
           ].join("\n\n")
         : workspaceInstruction;
+      const codeMode = codeModeRegistry
+        ? { language: "javascript" as const, tool_signatures: codeModeRegistry.signatures() }
+        : undefined;
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -541,6 +560,13 @@ function registerMcpSurface(
               ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
               : undefined,
             instruction,
+            codeMode ? [
+              "Code Mode: tools below are available inside execute({code}) as tools.name(args), with workspace_id automatically bound.",
+              "Scripts are JavaScript async function bodies: top-level await and return work. No Node APIs, filesystem, imports, or network.",
+              "Use Promise.allSettled for independent calls; await operations whose completion matters. Check running process results and poll them using tools.write_stdin.",
+              "Scripts longer than the initial yield return execution_id; use poll_execution. Native show_changes remains a separate MCP tool.",
+              codeMode.tool_signatures,
+            ].join("\n") : undefined,
           ].filter(Boolean).join("\n"),
         },
       ];
@@ -608,12 +634,13 @@ function registerMcpSurface(
               }
             : {}),
           instruction,
+          ...(codeMode ? { code_mode: codeMode } : {}),
         },
       };
     },
   );
 
-  registrationTarget.registerTool(
+  internalTarget.registerTool(
     toolNames.read,
     {
       title: "Read file",
@@ -691,11 +718,14 @@ function registerMcpSurface(
   );
 
   toolSurface.register({
-    server: registrationTarget,
+    server: internalTarget,
     config,
     workspaces,
     processSessions,
   });
+  if (codeModeExecutions) {
+    registerCodeModeTools(registrationTarget, workspaces, codeModeExecutions);
+  }
 
   registerAppTool(
     registrationTarget,
@@ -771,6 +801,82 @@ function registerMcpSurface(
   }
 }
 
+function executionResponse(snapshot: ExecutionSnapshot) {
+  const calls = snapshot.calls?.map(({ name, status, durationMs }) => ({
+    tool: name,
+    status,
+    duration_ms: Math.round(durationMs),
+  }));
+  const structured = {
+    ...snapshot,
+    calls,
+    value: snapshot.result ?? null,
+    result: snapshot.result ?? null,
+    output: snapshot.output ?? [],
+  };
+  return {
+    content: [textBlock(JSON.stringify(structured))],
+    structuredContent: { ...structured, result: JSON.stringify(structured.result) },
+  };
+}
+
+function registerCodeModeTools(
+  target: McpRegistrationTarget,
+  workspaces: WorkspaceRegistry,
+  executions: CodeModeExecutions,
+): void {
+  const yieldSchema = z.number().int().min(0).max(MAX_CODE_MODE_YIELD_MS).optional();
+  const outputSchema = resultOutputSchema({
+    execution_id: z.string(),
+    running: z.boolean(),
+    status: z.enum(["running", "completed", "failed", "cancelled"]),
+    value: z.unknown().optional(),
+    output: z.array(z.string()).optional(),
+    error: z.string().optional(),
+    calls: z.array(z.object({
+      tool: z.string(),
+      status: z.enum(["ok", "error", "cancelled"]),
+      duration_ms: z.number(),
+    })).optional(),
+  });
+  target.registerTool("execute", {
+    title: "Execute JavaScript",
+    description: "Execute confined JavaScript using tools declared by open_workspace. If still running after the yield window, returns execution_id for poll_execution.",
+    inputSchema: {
+      workspace_id: z.string(),
+      code: z.string().min(1),
+      yield_time_ms: yieldSchema,
+    },
+    outputSchema,
+  }, async ({ workspace_id, code, yield_time_ms }) => {
+    await workspaces.getWorkspace(workspace_id);
+    return executionResponse(await executions.start(workspace_id, code, yield_time_ms));
+  });
+  target.registerTool("poll_execution", {
+    title: "Poll JavaScript execution",
+    description: "Wait for the result of an existing execute invocation without restarting its script.",
+    inputSchema: {
+      workspace_id: z.string(),
+      execution_id: z.string(),
+      yield_time_ms: yieldSchema,
+    },
+    outputSchema,
+    annotations: { readOnlyHint: true },
+  }, async ({ workspace_id, execution_id, yield_time_ms }) => {
+    await workspaces.getWorkspace(workspace_id);
+    return executionResponse(await executions.poll(workspace_id, execution_id, yield_time_ms));
+  });
+  target.registerTool("cancel_execution", {
+    title: "Cancel JavaScript execution",
+    description: "Request cancellation of a running JavaScript execution and owned subprocesses.",
+    inputSchema: { workspace_id: z.string(), execution_id: z.string() },
+    outputSchema,
+  }, async ({ workspace_id, execution_id }) => {
+    await workspaces.getWorkspace(workspace_id);
+    return executionResponse(executions.cancel(workspace_id, execution_id));
+  });
+}
+
 function withTrackedToolHandlers(
   server: McpRegistrationTarget,
   trackToolActivity: TrackToolActivity,
@@ -818,6 +924,8 @@ export function createServer(
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
+  const codeModeRegistry = config.experimentalCodeMode ? new CodeModeRegistry() : undefined;
+  const codeModeExecutions = codeModeRegistry ? new CodeModeExecutions(codeModeRegistry, processSessions) : undefined;
   const toolActivities = new ToolActivityTracker();
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
@@ -838,6 +946,8 @@ export function createServer(
       resolveLocalAgentProviders,
       incomingArtifactAdapters,
       toolActivities.track,
+      codeModeRegistry,
+      codeModeExecutions,
     );
   });
   const logMcpHandlerError = (error: Error) => logEvent(
@@ -973,6 +1083,7 @@ export function createServer(
             error: error instanceof Error ? error.message : String(error),
           });
         }
+        await codeModeExecutions?.shutdown();
         await toolActivities.waitForIdle();
         processSessions.shutdown();
         oauthProvider.close();
