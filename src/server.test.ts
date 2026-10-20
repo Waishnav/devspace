@@ -632,7 +632,13 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
   assert.equal(shutdownFinished, false);
 
   await writeFile(join(root, "release"), "");
-  await toolCall;
+  const response = await toolCall;
+  assert.equal(response.status, 200, await response.clone().text());
+  const responseBody = await response.json() as {
+    result?: { structuredContent?: { exit_code?: number; running?: boolean } };
+  };
+  assert.equal(responseBody.result?.structuredContent?.exit_code, 0);
+  assert.equal(responseBody.result?.structuredContent?.running, false);
   await shutdown;
   assert.equal(shutdownFinished, true);
 });

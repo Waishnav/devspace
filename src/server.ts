@@ -966,6 +966,12 @@ export function createServer(
     localAgentProviders,
     close: () => {
       closePromise ??= (async () => {
+        await toolActivities.waitForIdle();
+        // Tool handlers resolving only starts the JSON-RPC response chain;
+        // it settles several microtasks later. Yield to the macrotask queue
+        // so in-flight responses are delivered before mcpHandler.close()
+        // rejects their still-open exchanges (HTTP 499).
+        await new Promise<void>((resolve) => setImmediate(resolve));
         try {
           await mcpHandler.close();
         } catch (error) {
@@ -973,7 +979,6 @@ export function createServer(
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        await toolActivities.waitForIdle();
         processSessions.shutdown();
         oauthProvider.close();
         workspaceStore.close?.();
