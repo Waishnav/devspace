@@ -32,7 +32,10 @@ assert.equal(
 // mapped inside the workspace. Skill reads rely on this: the denial lets the
 // read fall through to the skill-path resolver.
 assert.throws(
-  () => resolveAllowedPath("~/file.txt", "/workspace", ["/workspace"]),
+  () => {
+    const workspace = resolve(home, "workspace");
+    return resolveAllowedPath("~/file.txt", workspace, [workspace]);
+  },
   /Path is outside allowed roots/,
 );
 
