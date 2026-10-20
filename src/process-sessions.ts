@@ -322,8 +322,16 @@ export class ProcessSessionManager {
 
   private startPipe(session: ProcessSession, input: StartCommandInput): void {
     const shell = resolveShellCommand(input.command);
-    const detached = process.platform !== "win32";
-    const child = spawn(input.command, {
+    const windows = process.platform === "win32";
+    const detached = !windows;
+    // Spawn the resolved shell directly (like the PTY path) so its full argument
+    // list survives: Node's `shell` option always invokes `<shell> -c <command>`,
+    // dropping the login-shell flag resolved for POSIX. On Windows, replicate
+    // what Node's `shell` option does for cmd.exe — verbatim arguments with the
+    // command wrapped in an extra pair of quotes — because cmd does not honor
+    // Node's default backslash escaping of embedded quotes.
+    const args = windows ? ["/d", "/s", "/c", `"${input.command}"`] : shell.args;
+    const child = spawn(shell.executable, args, {
       cwd: input.cwd,
       env: processEnvironment({
         workspaceId: input.workspaceId,
@@ -332,7 +340,7 @@ export class ProcessSessionManager {
       stdio: "pipe",
       windowsHide: true,
       detached,
-      shell: shell.executable,
+      windowsVerbatimArguments: windows,
     });
 
     session.process = {
@@ -340,6 +348,10 @@ export class ProcessSessionManager {
       kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
       resize: input.tty ? () => undefined : undefined,
     };
+    // A stdin write racing child exit surfaces as an EPIPE 'error' event with no
+    // listener, which would crash the process; the 'close' handler already
+    // reports the session as ended, so the error can be ignored.
+    child.stdin.on("error", () => undefined);
     child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
     child.stderr.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
     child.on("error", (error) => this.append(session, `${error.message}\n`));
@@ -378,7 +390,14 @@ export class ProcessSessionManager {
     };
     pty.onData((data) => this.append(session, data));
     pty.onExit(({ exitCode, signal }) => {
-      this.finish(session, exitCode, signal === 0 ? undefined : String(signal));
+      // node-pty only delivers a numeric signal on POSIX; on Windows it is
+      // undefined, and `String(undefined)` would record "undefined" for clean
+      // exits.
+      this.finish(
+        session,
+        exitCode,
+        typeof signal === "number" && signal !== 0 ? String(signal) : undefined,
+      );
     });
   }
 

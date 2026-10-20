@@ -178,6 +178,48 @@ if (!buffered.outputTruncated && buffered.sessionId) {
 assert.equal(buffered.outputTruncated, true);
 if (buffered.sessionId) manager.terminate("workspace-a", buffered.sessionId);
 
+if (process.platform !== "win32") {
+  // Regression: a stdin write racing child exit must not crash the process via
+  // an unhandled EPIPE 'error' event on the child's stdin. The shell exits
+  // immediately while the backgrounded `sleep` keeps stdout open, so the
+  // session stays running with an already-dead stdin.
+  const deadStdin = await manager.start({
+    workspaceId: "workspace-a",
+    cwd: process.cwd(),
+    command: "sleep 5 </dev/null & exit 0",
+    yieldTimeMs: 250,
+  });
+  assert.equal(deadStdin.running, true);
+  assert.ok(deadStdin.sessionId);
+
+  const deadStdinWrite = await manager.write({
+    workspaceId: "workspace-a",
+    sessionId: deadStdin.sessionId,
+    chars: "hello\n",
+    yieldTimeMs: 10,
+  });
+  assert.equal(deadStdinWrite.running, true);
+  manager.terminate("workspace-a", deadStdin.sessionId);
+
+  // Regression: pipe sessions must launch the resolved login shell (`-lc`),
+  // not a plain `-c` invocation, so PATH entries from ~/.zprofile etc. apply.
+  const previousShell = process.env.SHELL;
+  process.env.SHELL = "/bin/bash";
+  try {
+    const login = await manager.start({
+      workspaceId: "workspace-a",
+      cwd: process.cwd(),
+      command: "shopt -q login_shell && echo LOGIN_OK || echo LOGIN_MISSING",
+      yieldTimeMs: 2_000,
+    });
+    assert.equal(login.running, false);
+    assert.match(login.output, /LOGIN_OK/);
+  } finally {
+    if (previousShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previousShell;
+  }
+}
+
 try {
   if (process.platform === "win32") {
     const pty = await manager.start({
@@ -188,6 +230,7 @@ try {
       yieldTimeMs: 10_000,
     });
     assert.equal(pty.running, false);
+    assert.equal(pty.signal, undefined);
     assert.match(pty.output, /pty-ok/);
   } else {
     const pty = await manager.start({
@@ -210,6 +253,7 @@ try {
       yieldTimeMs: 2_000,
     });
     assert.equal(resizedPty.running, false);
+    assert.equal(resizedPty.signal, undefined);
     assert.match(resizedPty.output, /columns:120/);
   }
 } finally {
