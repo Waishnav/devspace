@@ -121,6 +121,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         await this.query.applyFlagSettings(flagSettings);
         await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
+        if (input.signal?.aborted) throw localAgentCancelledError("claude", "run");
         this.inputQueue.push({
           type: "user",
           message: { role: "user", content: input.prompt },

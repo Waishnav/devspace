@@ -477,3 +477,64 @@ await grokConfigurationRuntime.close();
 await resumedRuntime.close();
 await resumedRuntime.close();
 assert.equal(resumedRuntime.isAlive(), false);
+
+// Stop: a provider that never answers session/prompt after session/cancel is given up on.
+const stuckRequests: string[] = [];
+const stuckNotifications: string[] = [];
+const stuckRuntime = new AcpRuntime({
+  provider: "cursor",
+  command: "cursor-agent",
+  args: ["acp"],
+  env: {},
+  cancelGraceMs: 50,
+}, {
+  agent: {
+    async notify(method: string): Promise<void> { stuckNotifications.push(method); },
+    async request(method: string): Promise<unknown> {
+      stuckRequests.push(method);
+      if (method === "session/new") return { sessionId: "stuck_session" };
+      return new Promise(() => undefined);
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+});
+const stuckAbort = new AbortController();
+const stuckRun = stuckRuntime.run({ prompt: "never answers", workspaceRoot: "/tmp/project", signal: stuckAbort.signal });
+await new Promise((resolveTick) => setTimeout(resolveTick, 10));
+stuckAbort.abort();
+const stuckResult = await stuckRun;
+assert.equal(stuckResult.isErr(), true);
+if (stuckResult.isErr()) assert.equal(stuckResult.error.code, "PROVIDER_CANCELLED");
+assert.deepEqual(stuckNotifications, ["session/cancel"]);
+assert.equal(stuckRuntime.isAlive(), false, "an unresponsive provider is dropped from the pool");
+
+// Stop requested before the prompt is sent must not start provider work.
+const preAbortRequests: string[] = [];
+const preAbortRuntime = new AcpRuntime({
+  provider: "cursor",
+  command: "cursor-agent",
+  args: ["acp"],
+  env: {},
+}, {
+  agent: {
+    async notify(): Promise<void> {},
+    async request(method: string): Promise<unknown> {
+      preAbortRequests.push(method);
+      return method === "session/new" ? { sessionId: "pre_abort_session" } : { stopReason: "end_turn" };
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+});
+const preAborted = new AbortController();
+preAborted.abort();
+const preAbortResult = await preAbortRuntime.run({
+  prompt: "should not run",
+  workspaceRoot: "/tmp/project",
+  signal: preAborted.signal,
+});
+assert.equal(preAbortResult.isErr(), true);
+if (preAbortResult.isErr()) assert.equal(preAbortResult.error.code, "PROVIDER_CANCELLED");
+assert.equal(preAbortRequests.includes("session/prompt"), false);
+await preAbortRuntime.close();

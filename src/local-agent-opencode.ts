@@ -126,12 +126,14 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+    // Abort the local request first so a stalled provider abort cannot keep the turn pending.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
-      await this.client.session.abort({
+      const aborting = this.client.session.abort({
         sessionID: sessionId,
         directory: input.workspaceRoot,
       }, { throwOnError: false });
       controller.abort();
+      await aborting;
     });
     const timer = setTimeout(() => {
       timedOut = true;

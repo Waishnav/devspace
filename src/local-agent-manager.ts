@@ -58,6 +58,9 @@ export interface LocalAgentManagerLogger {
   (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void;
 }
 
+// Kept below the client's default request deadline so a slow stop is reported as a conflict, not a daemon timeout.
+const DEFAULT_STOP_TIMEOUT_MS = 20_000;
+
 export interface LocalAgentManagerOptions {
   store: LocalAgentStore;
   drivers: readonly LocalAgentDriver[];
@@ -67,6 +70,7 @@ export interface LocalAgentManagerOptions {
   allowedRoots?: readonly string[];
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
+  stopTimeoutMs?: number;
 }
 
 export type AgentStartError = AgentTargetError | AgentScopeError | AgentConflictError | AgentStoreError;
@@ -102,6 +106,7 @@ export class LocalAgentManager {
   private readonly allowedRoots?: readonly string[];
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
+  private readonly stopTimeoutMs: number;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
   private accepting = true;
   private closePromise?: Promise<void>;
@@ -115,6 +120,7 @@ export class LocalAgentManager {
     this.allowedRoots = options.allowedRoots;
     this.logger = options.logger;
     this.subagents = options.subagents;
+    this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
   reconcileActiveRuns(message?: string): BetterResult<number, AgentStoreError> {
@@ -291,8 +297,28 @@ export class LocalAgentManager {
       }));
     }
     active.abortController.abort();
-    await active.completion;
-    return this.get(agentId, scope);
+    const settled = await this.settledWithin(active.completion, this.stopTimeoutMs);
+    const refreshed = this.get(agentId, scope);
+    if (refreshed.isErr() || refreshed.value.status === "stopped") return refreshed;
+    return Result.err(new AgentConflictError({
+      code: "AGENT_CONFLICT",
+      agentId,
+      operation: "stop",
+      retryable: !settled,
+      message: settled
+        ? `Agent ${agentId} finished before it could be stopped.`
+        : `Agent ${agentId} did not stop within ${this.stopTimeoutMs}ms; its turn is still running.`,
+    }));
+  }
+
+  private async settledWithin(completion: Promise<void>, timeoutMs: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); });
+    try {
+      return await Promise.race([completion.then(() => true as const, () => true as const), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async close(): Promise<void> {

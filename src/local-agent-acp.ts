@@ -36,6 +36,8 @@ const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
 const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 const ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS = 10 * 60_000;
+// How long a provider gets to answer session/prompt after session/cancel before its process is dropped.
+const ACP_CANCEL_GRACE_MS = 10_000;
 const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
@@ -79,6 +81,7 @@ export interface AcpRuntimeOptions {
   sessionMetadata?: Map<string, unknown>;
   grokCompletionRegistry?: GrokPromptCompletionRegistry;
   promptCompletionTimeoutMs?: number;
+  cancelGraceMs?: number;
 }
 
 export class AcpRuntime implements LocalAgentRuntime {
@@ -92,6 +95,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private readonly sessionMetadata: Map<string, unknown>;
   private readonly grokCompletionRegistry?: GrokPromptCompletionRegistry;
   private readonly promptCompletionTimeoutMs: number;
+  private readonly cancelGraceMs: number;
   private readonly activeSessions = new Set<string>();
   private promptSequence = 0;
   private alive = true;
@@ -108,6 +112,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.sessionMetadata = options.sessionMetadata ?? new Map();
     this.grokCompletionRegistry = options.grokCompletionRegistry;
     this.promptCompletionTimeoutMs = options.promptCompletionTimeoutMs ?? ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS;
+    this.cancelGraceMs = options.cancelGraceMs ?? ACP_CANCEL_GRACE_MS;
     void this.connection.closed.then(() => {
       if (!this.closed) this.alive = false;
       this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP connection closed.`));
@@ -140,6 +145,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           });
         }
         const sessionId = await this.openSession(input, callbacks);
+        if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         if (this.activeSessions.has(sessionId)) {
           throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
         }
@@ -147,6 +153,23 @@ export class AcpRuntime implements LocalAgentRuntime {
         const removeAbort = bindLocalAgentAbort(input.signal, () => (
           this.connection.agent.notify("session/cancel", { sessionId })
         ));
+        // A provider that ignores session/cancel would leave the turn running forever:
+        // give up on it after a grace period and drop the process so the next turn starts clean.
+        let cancelTimer: NodeJS.Timeout | undefined;
+        let onAbort: (() => void) | undefined;
+        const cancelDeadline = input.signal && new Promise<never>((_, reject) => {
+          onAbort = () => {
+            cancelTimer = setTimeout(() => {
+              void this.close();
+              reject(localAgentCancelledError(this.provider, "run", new Error(
+                `${this.provider} did not acknowledge session/cancel within ${this.cancelGraceMs}ms.`,
+              )));
+            }, this.cancelGraceMs);
+          };
+          if (input.signal?.aborted) onAbort();
+          else input.signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        cancelDeadline?.catch(() => undefined);
         const queue = this.queues.get(sessionId) ?? { values: [] };
         this.queues.set(sessionId, queue);
         const promptId = this.provider === "grok" ? this.nextPromptId() : undefined;
@@ -173,9 +196,11 @@ export class AcpRuntime implements LocalAgentRuntime {
           });
           let response: unknown;
           try {
-            response = completion
-              ? await Promise.race([standardResponse, completion])
-              : await standardResponse;
+            response = await Promise.race([
+              standardResponse,
+              ...(completion ? [completion] : []),
+              ...(cancelDeadline ? [cancelDeadline] : []),
+            ]);
           } catch (cause) {
             if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
             throw cause;
@@ -206,6 +231,8 @@ export class AcpRuntime implements LocalAgentRuntime {
           };
         } finally {
           removeAbort();
+          clearTimeout(cancelTimer);
+          if (onAbort) input.signal?.removeEventListener("abort", onAbort);
           if (promptId) this.grokCompletionRegistry?.remove(sessionId, promptId);
           this.activeSessions.delete(sessionId);
         }

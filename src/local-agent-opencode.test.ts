@@ -237,6 +237,34 @@ if (timedOutPrompt.isErr()) {
 }
 await timeoutRuntime.close();
 
+// Stop cancels the local request even when the provider's abort call never returns.
+const stalledAbortClient = {
+  global: {
+    async health() { return { data: { healthy: true } }; },
+  },
+  session: {
+    async create() { return { data: { id: "session_stalled_abort" } }; },
+    abort() { return new Promise<never>(() => undefined); },
+    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      return new Promise<never>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    },
+  },
+} as unknown as OpencodeClientLike;
+const stalledAbortRuntime = new OpencodeRuntime(stalledAbortClient, { close: () => undefined });
+const stalledAbort = new AbortController();
+const stalledAbortRun = stalledAbortRuntime.run({
+  prompt: "stop me",
+  workspaceRoot: "/tmp/project",
+  signal: stalledAbort.signal,
+});
+setTimeout(() => stalledAbort.abort(), 10);
+const stalledAbortResult = await stalledAbortRun;
+assert.equal(stalledAbortResult.isErr(), true);
+if (stalledAbortResult.isErr()) assert.equal(stalledAbortResult.error.code, "PROVIDER_CANCELLED");
+await stalledAbortRuntime.close();
+
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
 assert.deepEqual(opencodePermissionFor("allowed"), {

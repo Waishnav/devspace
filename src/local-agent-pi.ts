@@ -84,6 +84,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
         try {
         await callbacks?.onSessionId?.(this.session.sessionId);
         await this.applyOverrides(input);
+        if (input.signal?.aborted) throw localAgentCancelledError("pi", "run");
         this.events = [];
         const messageStart = this.session.messages.length;
         this.collectingEvents = true;

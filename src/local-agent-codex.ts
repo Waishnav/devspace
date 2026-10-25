@@ -148,6 +148,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
+        if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         let completed: CodexTurnResult;
         try {
           completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal);
@@ -393,7 +394,9 @@ class CodexAppServerRpc {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
       if (signal?.aborted && turn.turnId) {
-        await this.request("turn/interrupt", { threadId, turnId: turn.turnId });
+        // A failed interrupt must not report the turn as stopped: keep waiting for the
+        // provider's terminal event; the manager bounds how long stop waits for it.
+        await this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
       }
       if (turn.completed) return { event: turn.completed, items: turn.items };
       return await completion;

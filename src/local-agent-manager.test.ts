@@ -85,6 +85,9 @@ class FakeRuntime implements LocalAgentRuntime {
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
+    if (input.prompt.includes("finish-despite-stop")) {
+      await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
+    }
     if (input.prompt.includes("cancel-me")) {
       await new Promise<void>((resolve) => {
         const done = () => resolve();
@@ -169,6 +172,7 @@ const manager = new LocalAgentManager({
   loadProfiles: async () => [profile, disabledProfile, shadowProfile],
   allowedRoots: [root],
   subagents,
+  stopTimeoutMs: 200,
 });
 
 const defectStore = new LocalAgentStore(join(root, "defect-state"));
@@ -222,6 +226,39 @@ const stopped = unwrap(await manager.stop(cancellable.id, scope));
 assert.equal(stopped.status, "stopped");
 assert.equal(store.getLatestTurn(cancellable.id)?.status, "stopped");
 assert.equal(store.getLatestTurn(cancellable.id)?.errorCode, "PROVIDER_CANCELLED");
+
+// A provider that ignores stop leaves the turn running; stop reports that instead of hanging.
+const stubborn = unwrap(await manager.start({
+  target: "codex",
+  prompt: "hold",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(stubborn.id)?.inputs.length === 1);
+const stubbornStop = await manager.stop(stubborn.id, scope);
+assert.equal(stubbornStop.isErr(), true);
+if (stubbornStop.isErr()) {
+  assert.equal(stubbornStop.error.code, "AGENT_CONFLICT");
+  assert.equal(stubbornStop.error.retryable, true);
+}
+assert.equal(getRecord(stubborn.id).status, "running");
+runtimes.get(stubborn.id)?.release();
+await waitFor(() => getRecord(stubborn.id).status === "idle");
+
+// A turn that completes normally despite the stop request is not reported as stopped.
+const finishing = unwrap(await manager.start({
+  target: "codex",
+  prompt: "finish-despite-stop",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => runtimes.get(finishing.id)?.inputs.length === 1);
+const finishingStop = await manager.stop(finishing.id, scope);
+assert.equal(finishingStop.isErr(), true);
+if (finishingStop.isErr()) {
+  assert.equal(finishingStop.error.code, "AGENT_CONFLICT");
+  assert.equal(finishingStop.error.retryable, false);
+}
 
 const namedInstance = unwrap(await manager.start({
   target: "codex-work",
@@ -354,7 +391,7 @@ const second = unwrap(await manager.start({
 }));
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
-assert.equal(runtimes.size, 4, "different agents receive independent logical runtimes");
+assert.equal(runtimes.size, 6, "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
   target: "reviewer",
