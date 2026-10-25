@@ -482,7 +482,7 @@ assert.equal(resumedRuntime.isAlive(), false);
 const stuckRequests: string[] = [];
 const stuckNotifications: string[] = [];
 const stuckRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -512,7 +512,7 @@ assert.equal(stuckRuntime.isAlive(), false, "an unresponsive provider is dropped
 // Stop requested before the prompt is sent must not start provider work.
 const preAbortRequests: string[] = [];
 const preAbortRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
