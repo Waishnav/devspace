@@ -416,6 +416,10 @@ async function startHost(
   const indexHtml = await readFile(join(hostDistRoot, "index.html"), "utf8");
 
   const host = createHttpServer(async (req, res) => {
+    if (!hasExpectedHost(req, hostPort)) {
+      res.writeHead(403).end("Forbidden");
+      return;
+    }
     const url = new URL(req.url ?? "/", hostOrigin);
     try {
       if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -466,6 +470,10 @@ async function startHost(
   });
 
   const sandbox = createHttpServer((req, res) => {
+    if (!hasExpectedHost(req, sandboxPort)) {
+      res.writeHead(403).end("Forbidden");
+      return;
+    }
     const url = new URL(req.url ?? "/", sandboxOrigin);
     const resource = url.pathname === "/resource" ? qaRun.resources[url.searchParams.get("uri") ?? ""] : undefined;
     if (!resource) {
@@ -484,6 +492,11 @@ async function startHost(
   await Promise.all([once(host, "listening"), once(sandbox, "listening")]);
   cleanups.push(() => closeHttpServer(host), () => closeHttpServer(sandbox));
   return { url: hostOrigin };
+}
+
+// Rejects DNS-rebound requests: the transcript and cards expose local code.
+function hasExpectedHost(req: IncomingMessage, port: number): boolean {
+  return req.headers.host === `127.0.0.1:${port}`;
 }
 
 interface SandboxCsp {
