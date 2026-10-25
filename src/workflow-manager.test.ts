@@ -64,7 +64,7 @@ async function fixture(runner?: typeof runWorkflowScript) {
     drivers: [{
       providerInstanceId: "codex", provider: "codex", runtimePolicy: { scope: "instance" },
       capabilities: {
-        sessions: { resume: true, close: false }, turns: { interrupt: true },
+        sessions: { resume: true, close: false }, turns: { interrupt: true, streaming: false },
         configuration: { modelOverride: true, effortOverride: true },
         permissions: { enforcement: "native" }, mcp: { supported: false },
       },
@@ -97,6 +97,13 @@ test("real JS pipeline runs in parallel, preserves order and durable turn owners
     assert.equal(f.maximum(), 2);
     assert.equal(f.workflows.calls(run.id, f.scope).length, 6);
     assert.ok(f.workflows.calls(run.id, f.scope).every((call) => call.turnId && call.agentId && call.status === "completed"));
+    // Workflow turns are ordinary agent turns: the call's turnId addresses their event log.
+    const first = f.workflows.calls(run.id, f.scope)[0]!;
+    const events = f.agents.events(first.agentId, f.scope, { turnId: first.turnId });
+    assert.ok(events.isOk());
+    assert.equal(events.value.turnId, first.turnId);
+    assert.equal(events.value.events[0]?.type, "turn_started");
+    assert.equal(events.value.events.at(-1)?.type, "turn_completed");
   } finally { await f.close(); }
 });
 
@@ -269,7 +276,7 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
     await until(() => f.workflows.calls(run.id, f.scope)[0]?.turnId !== undefined);
     const call = f.workflows.call(run.id, 0, f.scope);
     const runningTurn: LocalAgentTurnRecord = {
-      id: call.turnId!, agentId: call.agentId, prompt: call.prompt, status: "running", createdAt: "now",
+      id: 1, turnId: call.turnId!, agentId: call.agentId, prompt: call.prompt, status: "running", createdAt: "now",
     };
     f.agents.getTurn = () => Result.ok(runningTurn);
     f.agents.stop = async () => Result.err(new AgentConflictError({

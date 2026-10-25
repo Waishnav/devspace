@@ -493,7 +493,7 @@ export function decodeWorkflowCall(value: unknown): WorkflowCall {
     runId: requiredString(record?.runId, "runId"),
     index: requiredNonNegativeInteger(record?.index, "index"),
     agentId: requiredString(record?.agentId, "agentId"),
-    ...(record?.turnId === undefined ? {} : { turnId: requiredNonNegativeInteger(record.turnId, "turnId") }),
+    ...(record?.turnId === undefined ? {} : { turnId: requiredString(record.turnId, "turnId") }),
     status,
     prompt: requiredContentString(record?.prompt, "prompt"),
     options: decodedOptions,

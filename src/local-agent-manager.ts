@@ -566,7 +566,7 @@ export class LocalAgentManager {
       };
       // A stop that lands while the turn is still queued must not launch a provider runtime.
       if (signal?.aborted) {
-        this.persistRunError(record, turnId, localAgentCancelledError(driver.value.provider, "run"), startedAt);
+        persistRunError(localAgentCancelledError(driver.value.provider, "run"));
         return;
       }
       const result = await this.pool.run(driver.value, context, { ...input.value, signal }, callbacks);

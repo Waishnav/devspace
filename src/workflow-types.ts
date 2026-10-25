@@ -50,7 +50,7 @@ export interface WorkflowCall {
   runId: string;
   index: number;
   agentId: string;
-  turnId?: number;
+  turnId?: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
   prompt: string;
   options: WorkflowAgentOptions;

@@ -165,7 +165,7 @@ export class WorkflowManager {
         // Recover a crash between durable agent dispatch and saving the turn link.
         const turn = this.options.agents.getTurn(call.agentId, call);
         this.options.store.updateCall(run.id, call.index, {
-          status: "interrupted", turnId: turn.isOk() ? turn.value?.id : call.turnId,
+          status: "interrupted", turnId: turn.isOk() ? turn.value?.turnId : call.turnId,
           error: { code: "WORKFLOW_INTERRUPTED", message: "Daemon stopped before this call was finalized. Inspect the agent before retrying.", retryable: false },
         });
       }
@@ -293,10 +293,10 @@ export class WorkflowManager {
       let turn = this.options.agents.getTurn(call.agentId, call);
       if (turn.isErr()) throw turn.error;
       if (!turn.value) throw new WorkflowError("WORKFLOW_INTERNAL", "Agent dispatch returned without a durable turn.");
-      call.turnId = turn.value.id;
-      this.options.store.updateCall(call.runId, call.index, { status: "running", turnId: turn.value.id });
-      this.options.store.event(call.runId, "agent_turn", { index, agentId: call.agentId, turnId: turn.value.id, repair: false });
-      let response = await this.awaitTurn(active, call, turn.value.id);
+      call.turnId = turn.value.turnId;
+      this.options.store.updateCall(call.runId, call.index, { status: "running", turnId: turn.value.turnId });
+      this.options.store.event(call.runId, "agent_turn", { index, agentId: call.agentId, turnId: turn.value.turnId, repair: false });
+      let response = await this.awaitTurn(active, call, turn.value.turnId);
       let output: unknown = response;
       if (validate) {
         try { output = parseWorkflowOutput(response, validate); }
@@ -312,10 +312,10 @@ export class WorkflowManager {
           turn = this.options.agents.getTurn(call.agentId, call);
           if (turn.isErr()) throw turn.error;
           if (!turn.value) throw new WorkflowError("WORKFLOW_INTERNAL", "Schema repair has no durable turn.");
-          call.turnId = turn.value.id;
-          this.options.store.updateCall(call.runId, call.index, { turnId: turn.value.id });
-          this.options.store.event(call.runId, "agent_turn", { index, agentId: call.agentId, turnId: turn.value.id, repair: true });
-          response = await this.awaitTurn(active, call, turn.value.id);
+          call.turnId = turn.value.turnId;
+          this.options.store.updateCall(call.runId, call.index, { turnId: turn.value.turnId });
+          this.options.store.event(call.runId, "agent_turn", { index, agentId: call.agentId, turnId: turn.value.turnId, repair: true });
+          response = await this.awaitTurn(active, call, turn.value.turnId);
           output = parseWorkflowOutput(response, validate);
         }
       }
@@ -330,7 +330,7 @@ export class WorkflowManager {
       throw error;
     } finally { releaseGlobal?.(); releaseRun?.(); }
   }
-  private async awaitTurn(active: ActiveRun, call: WorkflowCall, turnId: number): Promise<string> {
+  private async awaitTurn(active: ActiveRun, call: WorkflowCall, turnId: string): Promise<string> {
     const signal = active.controller.signal;
     const waited = await this.options.agents.wait([call.agentId], call, undefined, signal);
     if (signal.aborted) {
@@ -357,8 +357,8 @@ export class WorkflowManager {
           uncertainty = current.error;
         } else {
           if (!current.value || current.value.status !== "running") return;
-          if (call.turnId !== undefined && current.value.id !== call.turnId) return;
-          call.turnId ??= current.value.id;
+          if (call.turnId !== undefined && current.value.turnId !== call.turnId) return;
+          call.turnId ??= current.value.turnId;
           const stopped = await this.options.agents.stop(call.agentId, call);
           if (stopped.isOk()) return;
           // stop() conflicts when the turn settled by itself; re-read before treating that as uncertainty.
