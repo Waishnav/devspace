@@ -86,3 +86,19 @@ assert.equal(
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+{
+  const directory = mkdtempSync(join(tmpdir(), "devspace-pi-availability-"));
+  try {
+    const pi = join(directory, "pi");
+    writeFileSync(pi, "#!/bin/sh\nexit 0\n");
+    chmodSync(pi, 0o700);
+    const availability = (env: NodeJS.ProcessEnv) => getLocalAgentProviderAvailabilitySnapshot(env)
+      .find((provider) => provider.name === "pi");
+    assert.equal(availability({ PATH: directory })?.available, true, "a system pi on PATH is launchable");
+    assert.equal(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.available, false);
+    assert.match(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.reason ?? "", /missing\/pi/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}

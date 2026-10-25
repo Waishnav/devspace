@@ -224,7 +224,7 @@ the matching read-only/workspace-safe set; `full_access` leaves Pi's normal
 tool configuration untouched.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
-`CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
+`CODEX_HOME`, `CLAUDE_COMMAND`, `PI_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
 `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. Provider configuration takes
 precedence where the same value is set in both places.
 

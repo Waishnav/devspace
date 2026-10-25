@@ -97,7 +97,8 @@ as executables. Run their normal login/setup flows before using them; set
 matching runtime implementations. OpenCode, Cursor, and Copilot runtimes are
 started and reused by the daemon internally. Pi is launched in RPC mode and
 uses its native persisted session file as DevSpace's continuation identity;
-`PI_COMMAND` (or a provider `command`) can select another Pi executable.
+`PI_COMMAND` selects another Pi executable (otherwise `pi` on `PATH`, then the
+bundled package). Pi 0.80.5 or newer is required for the `agent_settled` event.
 
 ### `model`
 
@@ -124,7 +125,7 @@ DevSpace passes this through to providers that expose a matching control:
 
 - `claude`: SDK effort with adaptive thinking.
 - `codex`: app-server model reasoning effort.
-- `pi`: the AgentSession thinking-level control.
+- `pi`: RPC `set_thinking_level`.
 - `opencode`: model variant.
 - ACP: standard model/thought-level config when advertised by the agent. The
   Grok flavor also understands xAI's typed model metadata and startup effort.
