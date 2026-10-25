@@ -48,6 +48,12 @@ jobs:
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+          # Ubuntu 26.04 enforces a bwrap profile that strips capabilities from
+          # bwrap's children, so the seccomp helper cannot create its nested
+          # user namespace (apply-seccomp: ... nested userns is capability-restricted).
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+          fi
 
       - name: Typecheck
         run: pnpm typecheck
