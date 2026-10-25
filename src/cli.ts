@@ -699,7 +699,7 @@ async function runAgentsStop(args: string[], json: boolean): Promise<void> {
   if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   const record = presentAgentWorkflowResult(await client.stopAgent(id, scope), json);
   if (!record) return;
   const observation = presentAgentObservation(record);
@@ -714,7 +714,7 @@ async function runAgentsEvents(args: string[], json: boolean): Promise<void> {
   const parsed = parseAgentsEventsArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const scope = resolveAgentCliWorkspaceContext(config);
   let turnId = parsed.turnId;
   let afterSeq = 0;
   for (;;) {
