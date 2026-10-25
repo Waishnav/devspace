@@ -31,8 +31,9 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "pnpm clean && pnpm build:app && tsc -p tsconfig.build.json",
+    "build": "pnpm clean && pnpm build:app && pnpm build:web && tsc -p tsconfig.build.json",
     "build:app": "vite build",
+    "build:web": "vite build -c vite.web.config.ts",
     "dev": "tsx scripts/dev.ts",
     "dev:seed": "tsx scripts/dev-state.ts seed",
     "dev:reset": "tsx scripts/dev-state.ts reset",
