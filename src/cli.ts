@@ -58,6 +58,7 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { logEvent } from "./logger.js";
 import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
 import { runWorkflowCommand } from "./workflow-cli.js";
+import { workflowsEnabled } from "./workflow-flag.js";
 import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
 
 type Command =
@@ -125,9 +126,9 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "config"
     || command === "worktrees"
     || command === "agents"
-    || command === "workflow"
     || command === "show-changes"
   ) return command;
+  if (command === "workflow" && workflowsEnabled()) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -510,7 +511,7 @@ function printHelp(): void {
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents daemon <status|stop|logs>",
-      "  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]",
+      ...(workflowsEnabled() ? ["  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]"] : []),
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
@@ -585,7 +586,7 @@ function resolveAgentCliWorkspaceContext(config: ServerConfig) {
     config.allowedRoots,
     process.env,
     process.cwd(),
-    (root, id) => isManagedWorkflowWorkspace(config, root, id),
+    workflowsEnabled() ? (root, id) => isManagedWorkflowWorkspace(config, root, id) : undefined,
   );
 }
 

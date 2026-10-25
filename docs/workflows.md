@@ -1,5 +1,7 @@
 # Workflows
 
+> **Experimental and hidden.** Workflows ship disabled in v1.1. Set `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` in the environment of both the CLI and the daemon (run `devspace agents daemon stop` first if a daemon is already running) to enable the `devspace workflow` commands and the managed `workflows` skill. There is no config-file option and no MCP tool for workflows yet.
+
 DevSpace workflows run persisted multi-agent plans through the same on-demand daemon as local subagents. A CLI process submits a run and exits immediately; the daemon remains alive until active workflows finish.
 
 Place reusable workflow scripts in `.devspace/workflows/` and run them by name, or provide a file directly:

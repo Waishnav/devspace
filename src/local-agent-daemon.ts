@@ -47,6 +47,7 @@ import type {
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import { WORKFLOWS_ENV } from "./workflow-flag.js";
 import { WorkflowError, type WorkflowCall, type WorkflowEvent, type WorkflowRun, type WorkflowRunInput } from "./workflow-types.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -448,7 +449,10 @@ export class LocalAgentDaemon {
   }
 
   private requireWorkflows(): LocalAgentDaemonWorkflowManager {
-    if (!this.workflows) throw new WorkflowError("WORKFLOWS_UNAVAILABLE", "Workflows are unavailable in this daemon.");
+    if (!this.workflows) throw new WorkflowError(
+      "WORKFLOWS_UNAVAILABLE",
+      `Workflows are experimental and disabled in this daemon. Set ${WORKFLOWS_ENV}=1 and restart it with \`devspace agents daemon stop\`.`,
+    );
     return this.workflows;
   }
 

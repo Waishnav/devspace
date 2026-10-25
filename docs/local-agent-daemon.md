@@ -22,7 +22,7 @@ functionality, but `devspace serve` is not required for local-agent execution.
 The daemon is scoped to one DevSpace `stateDir`, so one SQLite store and one
 runtime owner serve all clients using that configuration.
 
-Persisted workflows use the same daemon and local agent manager. Active
+Experimental persisted workflows (`DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`) use the same daemon and local agent manager. Active
 workflows keep it alive after the submitting CLI exits. Startup reconciles
 agent turns before workflow records; shutdown closes workflow supervisors
 before the agent manager.

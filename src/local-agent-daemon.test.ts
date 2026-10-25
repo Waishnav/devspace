@@ -353,6 +353,35 @@ try {
   await activeWorkflowDaemon.close();
 }
 
+// Hidden in v1.1: a daemon built without a workflow manager rejects workflow requests with guidance.
+const hiddenStateDir = join(root, "hidden-workflows-state");
+const hiddenManager = new FakeManager();
+hiddenManager.activeTurnCount = 0;
+const hiddenDaemon = new LocalAgentDaemon({
+  stateDir: hiddenStateDir,
+  configRevision: CONFIG_REVISION,
+  manager: hiddenManager,
+  idleShutdownMs: 60_000,
+});
+const hiddenClient = new LocalAgentClient({
+  stateDir: hiddenStateDir,
+  configRevision: CONFIG_REVISION,
+  startupTimeoutMs: 2_000,
+  requestTimeoutMs: 2_000,
+  spawnDaemon: () => { void hiddenDaemon.start(); },
+});
+try {
+  const rejected = await hiddenClient.runWorkflow({ workspaceId: record.workspaceId, workspaceRoot: record.workspaceRoot, name: "review" });
+  assert.equal(rejected.isErr(), true);
+  if (rejected.isErr()) {
+    assert.equal(rejected.error.code, "WORKFLOWS_UNAVAILABLE");
+    assert.match(rejected.error.message, /DEVSPACE_EXPERIMENTAL_WORKFLOWS=1/);
+  }
+  assert.equal(unwrap(await hiddenClient.status()).activeWorkflows, 0);
+} finally {
+  await hiddenDaemon.close();
+}
+
 const idleStateDir = join(root, "idle-state");
 const idleManager = new FakeManager();
 idleManager.activeTurnCount = 0;

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -224,9 +225,24 @@ try {
     await readFile(join(devspaceSkills, "subagents", "SKILL.md"), "utf8"),
     /# DevSpace subagents/,
   );
-  const managedWorkflows = experimentalSkills.find((skill) => skill.name === "workflows");
-  assert.ok(managedWorkflows);
-  assert.equal(managedWorkflows.filePath, join(devspaceSkills, "workflows", "SKILL.md"));
+  // Workflows stay hidden unless the experimental environment flag is set.
+  assert.equal(experimentalSkills.some((skill) => skill.name === "workflows"), false);
+  assert.equal(existsSync(join(devspaceSkills, "workflows")), false);
+  process.env.DEVSPACE_EXPERIMENTAL_WORKFLOWS = "1";
+  try {
+    const flagged = loadWorkspaceSkills(experimentalConfig, projectRoot).skills;
+    assert.equal(
+      flagged.find((skill) => skill.name === "workflows")?.filePath,
+      join(devspaceSkills, "workflows", "SKILL.md"),
+    );
+  } finally {
+    delete process.env.DEVSPACE_EXPERIMENTAL_WORKFLOWS;
+  }
+  assert.equal(
+    loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some((skill) => skill.name === "workflows"),
+    false,
+    "a managed copy synced while the flag was on is not advertised once it is off",
+  );
 
   const duplicateConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     server: { port: 1 },

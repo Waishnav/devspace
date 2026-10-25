@@ -95,6 +95,7 @@ try {
     env: {
       ...process.env,
       ...env,
+      DEVSPACE_EXPERIMENTAL_WORKFLOWS: "1",
       DEVSPACE_WORKSPACE_ID: "ws_test",
       DEVSPACE_WORKSPACE_ROOT: workspaceRoot,
     },
@@ -114,12 +115,34 @@ try {
     env: {
       ...process.env,
       ...env,
+      DEVSPACE_EXPERIMENTAL_WORKFLOWS: "1",
       DEVSPACE_WORKSPACE_ID: "ws_test",
       DEVSPACE_WORKSPACE_ROOT: workspaceRoot,
     },
   });
   assert.equal(status.stdout.includes("\u001b"), false);
   assert.match(status.stdout, /name="\\u001b\[31mreview\\u001b\[0m"/);
+
+  // Hidden by default: without the flag the command does not exist and help does not mention it.
+  const hiddenEnv = { ...process.env, ...env };
+  delete hiddenEnv.DEVSPACE_EXPERIMENTAL_WORKFLOWS;
+  const hidden = await execFileAsync("node", [
+    "--import", "tsx", "src/cli.ts", "workflow", "status", run.id,
+  ], { cwd: process.cwd(), env: hiddenEnv }).then(
+    () => assert.fail("workflow command must be rejected without the flag"),
+    (error: { stderr: string }) => error.stderr,
+  );
+  assert.match(hidden, /Unknown command: workflow/);
+  const hiddenHelp = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", "help"], {
+    cwd: process.cwd(),
+    env: hiddenEnv,
+  });
+  assert.doesNotMatch(hiddenHelp.stdout, /workflow/);
+  const flaggedHelp = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", "help"], {
+    cwd: process.cwd(),
+    env: { ...hiddenEnv, DEVSPACE_EXPERIMENTAL_WORKFLOWS: "1" },
+  });
+  assert.match(flaggedHelp.stdout, /devspace workflow </);
 } finally {
   await new Promise<void>((resolve) => daemon.close(() => resolve()));
   await rm(root, { recursive: true, force: true });
