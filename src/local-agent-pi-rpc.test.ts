@@ -36,3 +36,32 @@ const response = await connection.request({ type: "echo", value: "hello" });
 assert.deepEqual(response, { echoed: "hello" });
 assert.deepEqual(await connection.nextEvent(1_000), { type: "agent_start" });
 connection.close();
+
+// A Pi that writes a lot to stderr must not block on a full pipe, and a crash reports what it said.
+const noisyScript = String.raw`
+process.stderr.write("x".repeat(256 * 1024));
+process.stderr.write("fatal: broken extension\n", () => process.exit(3));
+`;
+const noisy = PiRpcConnection.spawn({
+  command: process.execPath,
+  args: ["-e", noisyScript],
+  cwd: process.cwd(),
+  env: process.env,
+});
+await assert.rejects(
+  () => noisy.nextEvent(5_000),
+  /exited with code 3[\s\S]*fatal: broken extension/,
+);
+assert.equal(noisy.isAlive(), false);
+
+// Events nobody consumed (for example the tail of a cancelled turn) can be dropped.
+const clearable = PiRpcConnection.spawn({
+  command: process.execPath,
+  args: ["-e", script],
+  cwd: process.cwd(),
+  env: process.env,
+});
+await clearable.request({ type: "echo", value: "again" });
+clearable.clearEvents();
+assert.equal(await clearable.nextEvent(100), undefined);
+clearable.close();

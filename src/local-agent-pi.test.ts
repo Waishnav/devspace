@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   PiLocalAgentDriver,
   type PiRpcFactory,
@@ -7,10 +10,19 @@ import {
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
+const sessionDirectory = mkdtempSync(join(tmpdir(), "devspace-pi-test-"));
+let sessionCount = 0;
+// Pi session references are real files; resuming validates that.
+function sessionFile(name = `session-${++sessionCount}`): string {
+  const path = join(sessionDirectory, `${name}.jsonl`);
+  writeFileSync(path, "");
+  return path;
+}
+
 class FakePiRpcConnection implements PiRpcRuntimeConnection {
   readonly requests: Array<Record<string, unknown>> = [];
   readonly events: Array<Record<string, unknown>> = [];
-  sessionFile = "/sessions/one.jsonl";
+  sessionFile = sessionFile("one");
   lastPrompt = "";
   alive = true;
   cleanupCount = 0;
@@ -19,7 +31,7 @@ class FakePiRpcConnection implements PiRpcRuntimeConnection {
     this.requests.push(record);
     switch (record.type) {
       case "new_session":
-        this.sessionFile = `/sessions/${this.requests.length}.jsonl`;
+        this.sessionFile = sessionFile();
         return { cancelled: false };
       case "switch_session":
         this.sessionFile = String(record.sessionPath);
@@ -54,8 +66,16 @@ class FakePiRpcConnection implements PiRpcRuntimeConnection {
 
   async send(_record: Record<string, unknown>): Promise<void> {}
 
-  async nextEvent(): Promise<Record<string, unknown> | undefined> {
-    return this.events.shift();
+  async nextEvent(timeoutMs = 0): Promise<Record<string, unknown> | undefined> {
+    const event = this.events.shift();
+    if (event) return event;
+    // Like the real connection, an empty queue waits instead of spinning on microtasks.
+    await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(timeoutMs, 5)));
+    return undefined;
+  }
+
+  clearEvents(): void {
+    this.events.length = 0;
   }
 
   isAlive(): boolean {
@@ -105,7 +125,7 @@ const first = await pool.run(driver, context, {
 assert.equal(factoryEnv?.HARNESS_ENV, "pi");
 assert.equal(first.isOk(), true);
 if (first.isErr()) throw first.error;
-assert.match(first.value.providerSessionId ?? "", /^\/sessions\/\d+\.jsonl$/);
+assert.match(first.value.providerSessionId ?? "", /session-\d+\.jsonl$/);
 assert.equal(first.value.finalResponse, "response:first");
 assert.deepEqual(sessionIds, [first.value.providerSessionId]);
 assert.deepEqual(
@@ -155,7 +175,7 @@ missingModel.request = async function(record: Record<string, unknown>): Promise<
   this.requests.push(record);
   if (record.type === "get_available_models") return { models: [] };
   if (record.type === "new_session") return { cancelled: false };
-  if (record.type === "get_state") return { sessionFile: "/sessions/missing.jsonl" };
+  if (record.type === "get_state") return { sessionFile: sessionFile("missing") };
   throw new Error(`unexpected request: ${String(record.type)}`);
 };
 const missingModelDriver = new PiLocalAgentDriver(async () => ({ connection: missingModel }));
@@ -173,3 +193,88 @@ if (missingResult.isErr()) {
   assert.match(missingResult.error.message, /missing-model/);
 }
 await missingRuntime.value.close();
+
+// A bare session id from before Pi ran over RPC must fail instead of opening an empty session.
+const legacyConnection = new FakePiRpcConnection();
+const legacyDriver = new PiLocalAgentDriver(async () => ({ connection: legacyConnection }));
+const legacyRuntime = await legacyDriver.createRuntime(context);
+if (legacyRuntime.isErr()) throw legacyRuntime.error;
+const legacyResult = await legacyRuntime.value.run({
+  prompt: "continue",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: "019f-legacy-session-id",
+});
+assert.equal(legacyResult.isErr(), true);
+if (legacyResult.isErr()) assert.match(legacyResult.error.message, /Start a new agent/);
+assert.equal(legacyConnection.requests.some((request) => request.type === "switch_session"), false);
+await legacyRuntime.value.close();
+
+// An exact model id wins over provider/model parsing (gateway providers use ids containing "/").
+const gatewayConnection = new FakePiRpcConnection();
+gatewayConnection.request = async function(record: Record<string, unknown>): Promise<unknown> {
+  if (record.type === "get_available_models") {
+    this.requests.push(record);
+    return { models: [{ provider: "openrouter", id: "openai/gpt-4o" }] };
+  }
+  return FakePiRpcConnection.prototype.request.call(this, record);
+};
+const gatewayRuntime = await new PiLocalAgentDriver(async () => ({ connection: gatewayConnection })).createRuntime(context);
+if (gatewayRuntime.isErr()) throw gatewayRuntime.error;
+const gatewayResult = await gatewayRuntime.value.run({
+  prompt: "inspect",
+  workspaceRoot: "/tmp/project",
+  model: "openai/gpt-4o",
+});
+assert.equal(gatewayResult.isOk(), true);
+assert.deepEqual(
+  gatewayConnection.requests.find((request) => request.type === "set_model"),
+  { type: "set_model", provider: "openrouter", modelId: "openai/gpt-4o" },
+);
+await gatewayRuntime.value.close();
+
+// Stop: Pi is aborted, a Pi that never settles is discarded, and stale events never reach the next turn.
+const stalledConnection = new FakePiRpcConnection();
+stalledConnection.request = async function(record: Record<string, unknown>): Promise<unknown> {
+  if (record.type === "prompt") {
+    this.requests.push(record);
+    this.events.push({ type: "agent_start" });
+    return undefined;
+  }
+  return FakePiRpcConnection.prototype.request.call(this, record);
+};
+const stalledRuntime = await new PiLocalAgentDriver(async () => ({ connection: stalledConnection })).createRuntime(context);
+if (stalledRuntime.isErr()) throw stalledRuntime.error;
+const stop = new AbortController();
+setTimeout(() => stop.abort(), 20);
+const stalledResult = await stalledRuntime.value.run({
+  prompt: "stop me",
+  workspaceRoot: "/tmp/project",
+  signal: stop.signal,
+});
+assert.equal(stalledResult.isErr(), true);
+if (stalledResult.isErr()) assert.equal(stalledResult.error.code, "PROVIDER_CANCELLED");
+assert.ok(stalledConnection.requests.some((request) => request.type === "abort"));
+assert.equal(stalledRuntime.value.isAlive(), false, "a Pi that does not settle after abort is discarded");
+
+const preAbortConnection = new FakePiRpcConnection();
+const preAbortRuntime = await new PiLocalAgentDriver(async () => ({ connection: preAbortConnection })).createRuntime(context);
+if (preAbortRuntime.isErr()) throw preAbortRuntime.error;
+const alreadyStopped = new AbortController();
+alreadyStopped.abort();
+const preAbortResult = await preAbortRuntime.value.run({
+  prompt: "never starts",
+  workspaceRoot: "/tmp/project",
+  signal: alreadyStopped.signal,
+});
+assert.equal(preAbortResult.isErr(), true);
+assert.equal(preAbortConnection.requests.some((request) => request.type === "prompt"), false);
+await preAbortRuntime.value.close();
+
+const staleConnection = new FakePiRpcConnection();
+staleConnection.events.push({ type: "agent_start" }, { type: "agent_settled" });
+const staleRuntime = await new PiLocalAgentDriver(async () => ({ connection: staleConnection })).createRuntime(context);
+if (staleRuntime.isErr()) throw staleRuntime.error;
+const staleResult = await staleRuntime.value.run({ prompt: "fresh", workspaceRoot: "/tmp/project" });
+if (staleResult.isErr()) throw staleResult.error;
+assert.ok(staleResult.value.items.some((event: any) => event.type === "agent_end"), "leftover events from an earlier turn do not settle this one");
+await staleRuntime.value.close();

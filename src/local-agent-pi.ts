@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   AgentProviderExecutionError,
@@ -10,7 +10,7 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
-import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { localAgentCancelledError } from "./local-agent-cancellation.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
 import {
   PiRpcConnection,
@@ -32,12 +32,14 @@ const PI_READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
 const PI_ALLOWED_TOOLS = [...PI_READ_ONLY_TOOLS, "edit", "write", "bash"] as const;
 const PI_TURN_TIMEOUT_MS = 5 * 60_000;
 const PI_STATE_POLL_MS = 200;
+const PI_ABORT_SETTLE_MS = 2_000;
 const MAX_PI_EVENTS = 10_000;
 
 export interface PiRpcRuntimeConnection {
   request(record: PiRpcRecord, timeoutMs?: number): Promise<unknown>;
   send(record: PiRpcRecord): Promise<void>;
   nextEvent(timeoutMs?: number): Promise<PiRpcRecord | undefined>;
+  clearEvents(): void;
   isAlive(): boolean;
   close(): void;
 }
@@ -75,15 +77,18 @@ export class PiRpcRuntime implements LocalAgentRuntime {
         const providerSessionId = await this.ensureSession(input.providerSessionId);
         await callbacks?.onSessionId?.(providerSessionId);
         await this.applyOverrides(input);
+        if (input.signal?.aborted) throw localAgentCancelledError("pi", "run");
 
         const events: PiRpcRecord[] = [];
-        const removeAbort = bindLocalAgentAbort(input.signal, async () => {
-          await this.connection.request({ type: "abort" }, 2_000).catch(() => undefined);
-        });
+        // Events left over from an earlier turn must not settle this one.
+        this.connection.clearEvents();
         try {
           await this.connection.request({ type: "prompt", message: input.prompt });
           await this.waitForSettlement(events, input.signal);
-          if (input.signal?.aborted) throw localAgentCancelledError("pi", "run");
+          if (input.signal?.aborted) {
+            await this.abortTurn();
+            throw localAgentCancelledError("pi", "run");
+          }
           const response = await this.connection.request({ type: "get_last_assistant_text" });
           const finalResponse = piRecordString(response, "text")?.trim();
           if (!finalResponse) {
@@ -115,8 +120,6 @@ export class PiRpcRuntime implements LocalAgentRuntime {
         } catch (cause) {
           if (input.signal?.aborted) throw localAgentCancelledError("pi", "run", cause);
           throw cause;
-        } finally {
-          removeAbort();
         }
       },
     });
@@ -139,6 +142,14 @@ export class PiRpcRuntime implements LocalAgentRuntime {
 
   private async ensureSession(providerSessionId?: string): Promise<string> {
     if (providerSessionId && this.sessionFile !== providerSessionId) {
+      // Agents created before Pi ran over RPC stored a bare session id; switch_session would
+      // silently open an empty session for it instead of failing.
+      if (!isAbsolute(providerSessionId) || !existsSync(providerSessionId)) {
+        throw piProtocolError(
+          "resume_session",
+          `Pi session ${providerSessionId} is not a session file DevSpace can resume. Start a new agent.`,
+        );
+      }
       const result = await this.connection.request({ type: "switch_session", sessionPath: providerSessionId });
       if (recordBoolean(result, "cancelled")) {
         throw piProtocolError("resume_session", "A Pi extension cancelled the session switch.");
@@ -171,8 +182,7 @@ export class PiRpcRuntime implements LocalAgentRuntime {
   }
 
   private async resolveModel(model: string): Promise<{ provider: string; modelId: string }> {
-    const parsed = parsePiModelSlug(model);
-    if (parsed) return parsed;
+    // Gateway providers have model ids that contain "/", so an exact id wins over provider/model.
     const available = await this.connection.request({ type: "get_available_models" });
     const models = recordArray(available, "models");
     const matches = models.filter((entry) => piRecordString(entry, "id") === model);
@@ -181,7 +191,30 @@ export class PiRpcRuntime implements LocalAgentRuntime {
       const modelId = piRecordString(matches[0], "id");
       if (provider && modelId) return { provider, modelId };
     }
+    const parsed = parsePiModelSlug(model);
+    if (parsed) return parsed;
     throw piProtocolError("configure_model", `Pi model not found or ambiguous: ${model}.`);
+  }
+
+  /**
+   * Asks Pi to stop and waits for it to settle. A Pi that does not settle is
+   * discarded so its late events cannot be mistaken for the next turn's.
+   */
+  private async abortTurn(): Promise<void> {
+    await this.connection.request({ type: "abort" }, PI_ABORT_SETTLE_MS).catch(() => undefined);
+    const deadline = Date.now() + PI_ABORT_SETTLE_MS;
+    try {
+      while (Date.now() < deadline) {
+        const event = await this.connection.nextEvent(PI_STATE_POLL_MS);
+        if (event?.type === "agent_settled") {
+          this.connection.clearEvents();
+          return;
+        }
+      }
+    } catch {
+      // The connection already failed; closing below is idempotent.
+    }
+    this.connection.close();
   }
 
   private async waitForSettlement(events: PiRpcRecord[], signal?: AbortSignal): Promise<void> {
@@ -190,6 +223,7 @@ export class PiRpcRuntime implements LocalAgentRuntime {
     for (;;) {
       if (signal?.aborted) return;
       if (Date.now() >= deadline) {
+        await this.abortTurn();
         throw piProtocolError("prompt", "Pi did not settle before the provider timeout.", true);
       }
       const event = await this.connection.nextEvent(PI_STATE_POLL_MS);
@@ -286,7 +320,7 @@ async function defaultPiRpcFactory(
   }
 }
 
-function resolvePiCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } {
+export function resolvePiCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } {
   const configured = env.PI_COMMAND?.trim();
   if (configured) {
     const command = resolveExecutableCommand(configured, env);

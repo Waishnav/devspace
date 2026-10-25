@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RECORD_CHARS = 8 * 1024 * 1024;
+const MAX_STDERR_CHARS = 8 * 1024;
 
 export type PiRpcRecord = Record<string, unknown>;
 
@@ -27,13 +28,24 @@ export class PiRpcConnection {
   private buffer = "";
   private closed = false;
   private failure?: Error;
+  private stderrTail = "";
 
   private constructor(private readonly child: ChildProcessWithoutNullStreams) {
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.consume(chunk));
+    // Drain stderr so a chatty Pi or extension cannot fill the pipe and block; keep the tail for diagnostics.
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-MAX_STDERR_CHARS);
+    });
+    // A write racing with process exit emits EPIPE here; fail this connection instead of the daemon.
+    child.stdin.on("error", (error) => this.fail(error));
     child.once("error", (error) => this.fail(error));
-    child.once("exit", (code) => {
-      if (!this.closed) this.fail(new Error(`Pi RPC process exited with code ${code}.`));
+    // "close" (not "exit") so stderr is fully drained before it is reported.
+    child.once("close", (code) => {
+      if (this.closed) return;
+      const stderr = this.stderrTail.trim();
+      this.fail(new Error(`Pi RPC process exited with code ${code}.${stderr ? `\n${stderr}` : ""}`));
     });
   }
 
@@ -107,6 +119,11 @@ export class PiRpcConnection {
       }
       this.eventWaiters.push(waiter);
     });
+  }
+
+  /** Drops events that were not consumed, e.g. the tail of a cancelled turn. */
+  clearEvents(): void {
+    this.queuedEvents.length = 0;
   }
 
   isAlive(): boolean {
