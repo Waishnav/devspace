@@ -560,7 +560,8 @@ async function captureBrowserEvidence(
     await browser("set", "viewport", "1280", String(Math.min(Math.max(pageHeight, 900), RENDER_VIEWPORT_HEIGHT)));
     await browser("wait", "500");
     const page = join(artifacts, "page.png");
-    await browser("screenshot", page);
+    // --full only matters past the viewport cap, where later cards may not be painted.
+    await browser("screenshot", "--full", page);
     screenshots.push(page);
     for (const step of qaRun.steps.filter((item) => item.resourceUri)) {
       const shot = join(artifacts, `step-${step.index}-${step.tool}.png`);
