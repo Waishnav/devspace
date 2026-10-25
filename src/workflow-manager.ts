@@ -393,10 +393,16 @@ export class WorkflowManager {
     return run;
   }
   private async authorize(scope: LocalAgentWorkspaceScope): Promise<LocalAgentWorkspaceScope> {
-    const root = await realpath(scope.workspaceRoot);
-    if (this.options.allowedRoots) {
-      const managed = this.options.config && scope.workspaceId && isManagedWorkflowWorkspace(this.options.config, root, scope.workspaceId);
-      if (!managed) await resolveCanonicalAllowedPath(root, root, [...this.options.allowedRoots]);
+    let root: string;
+    try {
+      root = await realpath(scope.workspaceRoot);
+      if (this.options.allowedRoots) {
+        const managed = this.options.config && scope.workspaceId && isManagedWorkflowWorkspace(this.options.config, root, scope.workspaceId);
+        if (!managed) await resolveCanonicalAllowedPath(root, root, [...this.options.allowedRoots]);
+      }
+    } catch (error) {
+      // Keep the reason visible across the daemon boundary instead of DAEMON_INTERNAL_ERROR.
+      throw new WorkflowError("WORKSPACE_NOT_ALLOWED", `Workspace is not available for workflows: ${workflowFailure(error).message}`);
     }
     return { workspaceRoot: root, ...(scope.workspaceId ? { workspaceId: scope.workspaceId } : {}) };
   }

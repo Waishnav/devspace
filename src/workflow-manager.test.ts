@@ -107,6 +107,23 @@ test("real JS pipeline runs in parallel, preserves order and durable turn owners
   } finally { await f.close(); }
 });
 
+test("workspaces outside the allowed roots are rejected with a workflow error", async () => {
+  const f = await fixture();
+  try {
+    const outside = await mkdtemp(join(tmpdir(), "devspace-workflow-outside-"));
+    try {
+      await assert.rejects(
+        f.workflows.run({ workspaceRoot: outside, source: "return 1;" }),
+        (error) => error instanceof WorkflowError && error.code === "WORKSPACE_NOT_ALLOWED" && /outside|allowed/i.test(error.message),
+      );
+      await assert.rejects(
+        f.workflows.run({ workspaceRoot: join(outside, "missing"), source: "return 1;" }),
+        (error) => error instanceof WorkflowError && error.code === "WORKSPACE_NOT_ALLOWED",
+      );
+    } finally { await rm(outside, { recursive: true, force: true }); }
+  } finally { await f.close(); }
+});
+
 test("shared daemon capacity bounds simultaneous workflows", async () => {
   const f = await fixture(async ({ onAgent }) => {
     await Promise.all(Array.from({ length: 16 }, (_, i) => onAgent(String(i), { target: "codex" })));
