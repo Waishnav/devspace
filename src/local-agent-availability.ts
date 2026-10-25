@@ -1,12 +1,13 @@
 import { resolveExecutableCommand } from "./local-agent-command.js";
+import { resolveAcpCommand } from "./local-agent-acp.js";
 import {
   localAgentProviderEnvironment,
+  subagentAcpFlavor,
   subagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
 import {
   defaultDriverForProviderId,
-  isLocalAgentDriverKind,
   LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
   type LocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
@@ -24,9 +25,10 @@ export function getLocalAgentProviderAvailabilitySnapshot(
   config?: SubagentsConfig,
 ): LocalAgentProviderAvailability[] {
   const configured = new Map(config?.providers.map((provider) => [provider.id, provider]) ?? []);
+  const defaultIds = new Set<string>(LOCAL_AGENT_DEFAULT_PROVIDER_IDS);
   const instances = [
     ...LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => configured.get(id) ?? { id, driver: defaultDriverForProviderId(id)! }),
-    ...(config?.providers.filter((provider) => !isLocalAgentDriverKind(provider.id)) ?? []),
+    ...(config?.providers.filter((provider) => !defaultIds.has(provider.id)) ?? []),
   ];
   return instances.map((instance) => checkLocalAgentProviderAvailability(
     instance.id,
@@ -55,15 +57,21 @@ function checkLocalAgentProviderAvailability(
     case "pi":
       return packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
     case "acp": {
+      // Resolve exactly as the driver does, so preflight and startup agree on the executable.
       const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
-      const command = configured?.command
-        ?? (providerInstanceId === "cursor" ? providerEnv.CURSOR_COMMAND ?? "cursor-agent"
-          : providerInstanceId === "copilot" ? providerEnv.COPILOT_COMMAND ?? "copilot"
-            : providerInstanceId === "grok" ? providerEnv.GROK_COMMAND ?? "grok"
-              : undefined);
-      return command
-        ? commandAvailability(providerInstanceId, command, providerEnv)
-        : { name: providerInstanceId, available: false, reason: "ACP command is not configured" };
+      const flavor = subagentAcpFlavor({ id: providerInstanceId, config: configured?.config });
+      if (resolveAcpCommand(flavor ?? "generic", providerEnv, configured?.command)) {
+        return { name: providerInstanceId, available: true };
+      }
+      return {
+        name: providerInstanceId,
+        available: false,
+        reason: configured?.command
+          ? `${configured.command} executable not found`
+          : flavor
+            ? `${flavor} executable not found`
+            : "ACP command is not configured",
+      };
     }
   }
 }

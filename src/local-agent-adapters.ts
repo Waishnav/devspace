@@ -1,4 +1,5 @@
 import {
+  subagentAcpFlavor,
   type SubagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
@@ -67,7 +68,7 @@ export function createLocalAgentProviderRegistry(
       env,
       command: instance.command,
       args: instance.config?.args,
-      flavor: instance.config?.flavor,
+      flavor: subagentAcpFlavor(instance),
     }));
 }
 

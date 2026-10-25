@@ -115,16 +115,28 @@ export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 export function resolveSubagentsConfig(config: ParsedSubagentsConfig): SubagentsConfig {
   return {
     ...config,
-    providers: config.providers.map((provider) => ({
-      ...provider,
-      driver: provider.driver
+    providers: config.providers.map((provider) => {
+      const driver = provider.driver
         ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
-        : defaultDriverForProviderId(provider.id)!,
-      ...(isLegacyAcpDriverKind(provider.id) && provider.config?.flavor === undefined
-        ? { config: { ...provider.config, flavor: provider.id } }
-        : {}),
-    })),
+        : defaultDriverForProviderId(provider.id)!;
+      // `driver: "cursor"` (or a built-in id) predates generic ACP; keep it as the ACP flavor.
+      const flavor = provider.config?.flavor
+        ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
+        ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+      return {
+        ...provider,
+        driver,
+        ...(driver === "acp" && flavor ? { config: { ...provider.config, flavor } } : {}),
+      };
+    }),
   };
+}
+
+/** Built-in ids (`cursor`, `copilot`, `grok`) imply their flavor even when a config object omits it. */
+export function subagentAcpFlavor(
+  provider: Pick<SubagentProviderConfig, "id" | "config">,
+): typeof LEGACY_ACP_DRIVER_KINDS[number] | undefined {
+  return provider.config?.flavor ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
 }
 
 export function parseSubagentsConfig(value: unknown): SubagentsConfig {

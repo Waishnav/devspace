@@ -138,6 +138,16 @@ const legacyAcp = parseSubagentsConfig({
 });
 assert.equal(legacyAcp.providers[0]?.driver, "acp");
 assert.deepEqual(legacyAcp.providers[0]?.config, { flavor: "cursor" });
+const namedLegacyAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [
+    { id: "cursor-work", driver: "cursor", enabled: true, command: "cursor-agent" },
+    { id: "grok", driver: "codex", enabled: true },
+  ],
+});
+assert.equal(namedLegacyAcp.providers[0]?.driver, "acp");
+assert.deepEqual(namedLegacyAcp.providers[0]?.config, { flavor: "cursor" }, "a named legacy-driver instance keeps its flavor");
+assert.equal(namedLegacyAcp.providers[1]?.config, undefined, "a built-in id with another driver is not an ACP provider");
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,
