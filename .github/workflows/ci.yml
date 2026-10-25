@@ -52,7 +52,9 @@ jobs:
           # bwrap's children, so the seccomp helper cannot create its nested
           # user namespace (apply-seccomp: ... nested userns is capability-restricted).
           if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
-            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+            # Removal fails when the profile exists but is not loaded; the
+            # required sandbox test below still catches a real denial.
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || echo "bwrap-userns-restrict is not loaded"
           fi
 
       - name: Typecheck
