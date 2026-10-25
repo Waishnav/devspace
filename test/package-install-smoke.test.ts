@@ -49,8 +49,8 @@ function testPackedPackageLaunchers(): void {
       ...process.env,
       ...env,
     });
-    const config = JSON.parse(cliOutput) as { tools?: { mode?: string } };
-    assert.equal(config.tools?.mode, "codex");
+    const config = JSON.parse(cliOutput) as { configVersion?: number };
+    assert.equal(config.configVersion, 1);
 
     execInstalledBin(installRoot, "devspace-agentd", [], {
       ...process.env,
