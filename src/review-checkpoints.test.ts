@@ -101,6 +101,26 @@ test("historical review refs survive later reviews and manager restarts", async 
   assert.doesNotMatch(restoredFirst.patch, /\+second/);
 });
 
+test("pinned checkpoints stay reviewable after the baseline history is rewritten", async (t) => {
+  const root = await committedRepository(t);
+  const manager = createReviewCheckpointManager();
+  await manager.initializeWorkspace({ workspaceId: "ws_pinned", root });
+
+  await writeFile(join(root, "README.md"), "hello\nfirst\n");
+  const first = await manager.reviewChanges({ workspaceId: "ws_pinned", root });
+
+  // Losing the baseline makes the next review restart from workspace open, so
+  // the first checkpoint is no longer an ancestor of the baseline.
+  await deleteReviewRef(root, "ws_pinned", "baseline");
+  const restarted = createReviewCheckpointManager();
+  await writeFile(join(root, "README.md"), "hello\nfirst\nsecond\n");
+  await restarted.reviewChanges({ workspaceId: "ws_pinned", root });
+
+  const restored = await restarted.reviewByRef({ workspaceId: "ws_pinned", root, reviewRef: first.reviewRef });
+  assert.equal(restored.patch, first.patch);
+  assert.equal((await readReviewRef(root, first.reviewRef)).patch, first.patch);
+});
+
 test("review refs are scoped to the workspace review history", async (t) => {
   const root = await committedRepository(t);
   const manager = createReviewCheckpointManager();
