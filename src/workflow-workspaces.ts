@@ -9,16 +9,20 @@ import { SqliteWorkspaceStore } from "./workspace-store.js";
 import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { WorkflowError } from "./workflow-types.js";
 
+// Native realpath expands Windows 8.3 short names (RUNNER~1), matching the async realpath in roots.ts.
+// The JS-implemented realpathSync does not, so mixing the two makes equal paths look unrelated.
+const canonical = realpathSync.native;
+
 export function isManagedWorkflowWorkspace(config: ServerConfig, root: string, id: string): boolean {
   const store = new SqliteWorkspaceStore(config.stateDir);
   try {
     const workspace = store.getSession(id);
     if (!workspace || workspace.status !== "active" || !workspace.managed || workspace.mode !== "worktree" || !workspace.sourceRoot) return false;
-    const canonical = realpathSync(root);
-    return canonical === realpathSync(workspace.root)
-      && isPathInsideRoot(canonical, realpathSync(config.worktreeRoot))
+    const path = canonical(root);
+    return path === canonical(workspace.root)
+      && isPathInsideRoot(path, canonical(config.worktreeRoot))
       && config.allowedRoots.some((allowed) => {
-        try { return isPathInsideRoot(realpathSync(workspace.sourceRoot!), realpathSync(allowed)); }
+        try { return isPathInsideRoot(canonical(workspace.sourceRoot!), canonical(allowed)); }
         catch { return false; }
       });
   } catch { return false; }

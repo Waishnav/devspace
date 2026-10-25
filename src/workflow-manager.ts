@@ -434,7 +434,7 @@ export class WorkflowManager {
 
 function summary({ source: _source, args: _args, contextHash: _hash, ...run }: WorkflowSnapshot): WorkflowRun { return run; }
 function canonicalRoot(root: string): string {
-  try { return realpathSync(root); } catch { return resolve(root); }
+  try { return realpathSync.native(root); } catch { return resolve(root); }
 }
 function jsonValue(value: unknown, bytes: number, label: string): unknown {
   let encoded: string | undefined;
