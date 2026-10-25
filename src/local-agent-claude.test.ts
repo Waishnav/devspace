@@ -11,6 +11,7 @@ import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
 class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   private readonly iterator: AsyncIterator<ClaudeUserMessage>;
+  private readonly pending: unknown[] = [];
   closeCount = 0;
   model?: string;
   permissionModes: string[] = [];
@@ -25,8 +26,23 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   }
 
   async next(): Promise<IteratorResult<unknown>> {
+    if (this.pending.length > 0) return { done: false, value: this.pending.shift() };
     const next = await this.iterator.next();
     if (next.done) return { done: true, value: undefined };
+    if (next.value.message.content === "use tools") {
+      this.pending.push(
+        { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] } },
+        { type: "assistant", message: { content: [{ type: "text", text: "The tests fail." }] } },
+        { type: "result", session_id: "claude_session_1", result: "done" },
+      );
+      return {
+        done: false,
+        value: {
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "pnpm test" } }] },
+        },
+      };
+    }
     return {
       done: false,
       value: {
@@ -265,4 +281,17 @@ assert.deepEqual(configuredOptions?.env, {
   INHERITED: "yes",
   EMPTY_VALUE: "",
 });
+
+// Complete SDK messages map onto tool and message events; tool results resolve their tool_use.
+assert.equal(configuredDriver.capabilities.turns.streaming, true);
+const claudeEvents: unknown[] = [];
+const streamed = await configuredRuntime.value.run({ prompt: "use tools", workspaceRoot: "/tmp/project" }, {
+  onEvent: (event) => { claudeEvents.push(event); },
+});
+assert.equal(streamed.isOk() && streamed.value.finalResponse, "done");
+assert.deepEqual(claudeEvents, [
+  { type: "tool_started", tool: "Bash", summary: "pnpm test" },
+  { type: "tool_completed", tool: "Bash", summary: "pnpm test", status: "failed" },
+  { type: "message", text: "The tests fail." },
+]);
 await configuredRuntime.value.close();
