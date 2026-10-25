@@ -12,6 +12,7 @@ import {
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type {
   LocalAgentDriver,
+  LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
   LocalAgentRuntime,
@@ -20,7 +21,7 @@ import type {
 
 const TEST_CAPABILITIES = {
   sessions: { resume: true, close: false },
-  turns: { interrupt: true },
+  turns: { interrupt: true, streaming: true },
   configuration: { modelOverride: true, effortOverride: true },
   permissions: { enforcement: "native" },
   mcp: { supported: false },
@@ -73,9 +74,30 @@ class FakeRuntime implements LocalAgentRuntime {
 
   async run(
     input: LocalAgentRunInput,
-    callbacks?: { onSessionId?: (id: string) => void | Promise<void> },
+    callbacks?: LocalAgentRunCallbacks,
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.inputs.push(input);
+    if (input.prompt.includes("stream")) {
+      callbacks?.onEvent?.({ type: "tool_started", tool: "bash", summary: "curl -H 'Authorization: Bearer abcdefghijklmnop' x" });
+      callbacks?.onEvent?.({ type: "tool_completed", tool: "bash", summary: "curl", status: "failed" });
+      callbacks?.onEvent?.({ type: "message", text: "  checked it  " });
+      callbacks?.onEvent?.({ type: "message", text: "   " });
+    }
+    if (input.prompt.includes("flood")) {
+      for (let index = 0; index < 600; index += 1) {
+        callbacks?.onEvent?.({ type: "tool_started", tool: "read", summary: `file-${index}` });
+      }
+    }
+    if (input.prompt.includes("detail-fail")) {
+      return Result.err(new AgentProviderExecutionError({
+        code: "PROVIDER_EXECUTION_ERROR",
+        provider: "codex",
+        operation: "run",
+        retryable: false,
+        cause: new Error("Quota exceeded for api_key=sk-test-abcdefghijklmnopqrstuvwx."),
+        message: "Codex agent turn failed.",
+      }));
+    }
     if (input.prompt.includes("early-fail")) {
       await callbacks?.onSessionId?.("thread_early");
       return Result.err(providerFailure("provider failed after session creation"));
@@ -162,7 +184,7 @@ const stale = store.create({
   providerInstanceId: "codex",
   driver: "codex",
 });
-const staleTurn = store.beginTurn(stale.id, { prompt: "interrupted turn" });
+const staleTurn = store.beginTurn(stale.id, { turnId: "trn_stale", prompt: "interrupted turn" });
 store.update(stale.id, { latestResponse: "previous response" });
 
 const manager = new LocalAgentManager({
@@ -538,6 +560,87 @@ const defect = unwrap(await manager.start({
 await waitFor(() => getRecord(defect.id).status === "error");
 assert.equal(getRecord(defect.id).errorCode, "AGENT_INTERNAL_ERROR");
 assert.notEqual(getRecord(defect.id).errorCode, "PROVIDER_EXECUTION_ERROR");
+
+// Each turn gets an app-owned id, and its activity is persisted as a bounded, redacted log.
+const streamed = unwrap(await manager.start({
+  target: "codex",
+  prompt: "stream",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+assert.match(streamed.latestTurnId ?? "", /^trn_[0-9a-f]{8}$/);
+await manager.wait([streamed.id], scope);
+const streamedEvents = unwrap(manager.events(streamed.id, scope));
+assert.equal(streamedEvents.turnId, streamed.latestTurnId);
+assert.equal(streamedEvents.status, "completed");
+assert.deepEqual(
+  streamedEvents.events.map(({ at: _at, ...event }) => event),
+  [
+    { type: "turn_started", turnId: streamed.latestTurnId, seq: 1 },
+    { type: "tool_started", tool: "bash", summary: "curl -H 'Authorization: [redacted]' x", turnId: streamed.latestTurnId, seq: 2 },
+    { type: "tool_completed", tool: "bash", summary: "curl", status: "failed", turnId: streamed.latestTurnId, seq: 3 },
+    { type: "message", text: "checked it", turnId: streamed.latestTurnId, seq: 4 },
+    { type: "turn_completed", status: "completed", turnId: streamed.latestTurnId, seq: 5 },
+  ],
+);
+assert.deepEqual(unwrap(manager.events(streamed.id, scope, { afterSeq: 4 })).events.map((event) => event.seq), [5]);
+
+unwrap(await manager.continue(streamed.id, "second turn", {}, scope));
+await manager.wait([streamed.id], scope);
+const secondTurnId = getRecord(streamed.id).latestTurnId;
+assert.notEqual(secondTurnId, streamed.latestTurnId);
+assert.equal(unwrap(manager.events(streamed.id, scope)).turnId, secondTurnId);
+assert.equal(unwrap(manager.events(streamed.id, scope, { turnId: streamed.latestTurnId })).events.length, 5);
+const foreignTurn = manager.events(stale.id, scope, { turnId: streamed.latestTurnId });
+assert.equal(foreignTurn.isErr() && foreignTurn.error.code, "AGENT_NOT_FOUND");
+
+const flooded = unwrap(await manager.start({
+  target: "codex",
+  prompt: "flood",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await manager.wait([flooded.id], scope);
+const floodedEvents = unwrap(manager.events(flooded.id, scope)).events;
+assert.equal(floodedEvents.length, 500);
+assert.deepEqual(floodedEvents.at(-1), {
+  type: "turn_completed",
+  status: "completed",
+  droppedEvents: 102,
+  turnId: flooded.latestTurnId,
+  seq: 500,
+  at: floodedEvents.at(-1)?.at,
+});
+
+// A failed turn keeps the provider's own explanation, redacted, next to the generic message.
+const detailed = unwrap(await manager.start({
+  target: "codex",
+  prompt: "detail-fail",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+assert.deepEqual(unwrap(await manager.wait([detailed.id], scope)), [{
+  id: detailed.id,
+  status: "failed",
+  error: {
+    code: "PROVIDER_EXECUTION_ERROR",
+    message: "Codex agent turn failed.",
+    retryable: false,
+    detail: "Quota exceeded for api_key=[redacted]",
+  },
+}]);
+assert.equal(getRecord(detailed.id).errorDetail, "Quota exceeded for api_key=[redacted]");
+assert.deepEqual(
+  unwrap(manager.events(detailed.id, scope)).events.at(-1),
+  {
+    type: "turn_completed",
+    status: "failed",
+    errorCode: "PROVIDER_EXECUTION_ERROR",
+    turnId: detailed.latestTurnId,
+    seq: 2,
+    at: unwrap(manager.events(detailed.id, scope)).events.at(-1)?.at,
+  },
+);
 
 const shuttingDown = unwrap(await manager.start({
   target: "reviewer",

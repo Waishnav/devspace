@@ -231,7 +231,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   } as const;
   readonly capabilities = {
     sessions: { resume: true, close: false },
-    turns: { interrupt: true },
+    turns: { interrupt: true, streaming: true },
     configuration: { modelOverride: true, effortOverride: true },
     permissions: { enforcement: "native" },
     mcp: { supported: true },

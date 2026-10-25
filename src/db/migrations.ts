@@ -57,6 +57,11 @@ const migrations: Migration[] = [
     name: "local-agent-generic-acp-driver",
     up: migrateLocalAgentGenericAcpDriver,
   },
+  {
+    version: 11,
+    name: "local-agent-turn-events",
+    up: migrateLocalAgentTurnEvents,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -323,9 +328,40 @@ function migrateLocalAgentGenericAcpDriver(sqlite: Database.Database): void {
   `);
 }
 
+function migrateLocalAgentTurnEvents(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_turns", "turn_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "error_detail", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "latest_turn_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_detail", "text");
+  sqlite.exec(`
+    update local_agent_turns set turn_id = 'trn_' || id where turn_id is null;
+
+    update local_agent_sessions
+    set latest_turn_id = (
+      select turn_id from local_agent_turns
+      where local_agent_turns.agent_id = local_agent_sessions.id
+      order by id desc limit 1
+    )
+    where latest_turn_id is null;
+
+    create unique index if not exists local_agent_turns_turn_id_idx
+      on local_agent_turns(turn_id);
+
+    create table if not exists local_agent_turn_events (
+      turn_row_id integer not null,
+      seq integer not null,
+      type text not null,
+      data text not null,
+      created_at text not null,
+      primary key (turn_row_id, seq),
+      foreign key (turn_row_id) references local_agent_turns(id) on delete cascade
+    );
+  `);
+}
+
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions",
+  table: "workspace_sessions" | "local_agent_sessions" | "local_agent_turns",
   column: string,
   definition: string,
 ): void {

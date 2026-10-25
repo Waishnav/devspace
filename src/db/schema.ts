@@ -108,6 +108,8 @@ export const localAgentSessions = sqliteTable(
     error: text("error"),
     errorCode: text("error_code"),
     errorRetryable: text("error_retryable"),
+    errorDetail: text("error_detail"),
+    latestTurnId: text("latest_turn_id"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },

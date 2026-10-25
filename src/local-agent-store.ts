@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
+import type { LocalAgentTurnEvent, LocalAgentTurnEventBody } from "./local-agent-events.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
@@ -23,6 +24,8 @@ export interface LocalAgentRecord {
   error?: string;
   errorCode?: string;
   errorRetryable?: boolean;
+  errorDetail?: string;
+  latestTurnId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,7 +41,10 @@ export interface CreateLocalAgentRecordInput {
 }
 
 export interface LocalAgentTurnRecord {
+  /** Store row identity; never leaves the daemon. */
   id: number;
+  /** App-owned turn identity shown to hosts and attached to turn events. */
+  turnId: string;
   agentId: string;
   prompt: string;
   status: LocalAgentTurnStatus;
@@ -46,11 +52,13 @@ export interface LocalAgentTurnRecord {
   error?: string;
   errorCode?: string;
   errorRetryable?: boolean;
+  errorDetail?: string;
   createdAt: string;
   completedAt?: string;
 }
 
 export interface BeginLocalAgentTurnInput {
+  turnId: string;
   prompt: string;
   model?: string;
   effort?: string;
@@ -58,8 +66,8 @@ export interface BeginLocalAgentTurnInput {
 
 export type FinishLocalAgentTurnInput =
   | { status: "completed"; response?: string; providerSessionId?: string }
-  | { status: "failed"; error: string; errorCode: string; errorRetryable: boolean }
-  | { status: "stopped"; error?: string; errorCode?: string; errorRetryable?: boolean };
+  | { status: "failed"; error: string; errorCode: string; errorRetryable: boolean; errorDetail?: string }
+  | { status: "stopped"; error?: string; errorCode?: string; errorRetryable?: boolean; errorDetail?: string };
 
 export interface BegunLocalAgentTurn {
   agent: LocalAgentRecord;
@@ -91,12 +99,15 @@ interface LocalAgentRow {
   error: string | null;
   error_code: string | null;
   error_retryable: string | null;
+  error_detail: string | null;
+  latest_turn_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
 interface LocalAgentTurnRow {
   id: number;
+  turn_id: string;
   agent_id: string;
   prompt: string;
   status: string;
@@ -104,9 +115,20 @@ interface LocalAgentTurnRow {
   error: string | null;
   error_code: string | null;
   error_retryable: string | null;
+  error_detail: string | null;
   created_at: string;
   completed_at: string | null;
 }
+
+interface LocalAgentTurnEventRow {
+  seq: number;
+  type: string;
+  data: string;
+  created_at: string;
+}
+
+// Older turns keep their history row but drop their event log.
+const TURNS_WITH_EVENTS_PER_AGENT = 20;
 
 export class LocalAgentStore {
   private readonly database: DatabaseHandle;
@@ -256,6 +278,8 @@ export class LocalAgentStore {
           error = ?,
           error_code = ?,
           error_retryable = ?,
+          error_detail = ?,
+          latest_turn_id = ?,
           updated_at = ?
          where id = ?`,
       )
@@ -273,6 +297,8 @@ export class LocalAgentStore {
         updated.error ?? null,
         updated.errorCode ?? null,
         updated.errorRetryable === undefined ? null : String(updated.errorRetryable),
+        updated.errorDetail ?? null,
+        updated.latestTurnId ?? null,
         updated.updatedAt,
         updated.id,
       );
@@ -302,17 +328,29 @@ export class LocalAgentStore {
         error: undefined,
         errorCode: undefined,
         errorRetryable: undefined,
+        errorDetail: undefined,
+        latestTurnId: input.turnId,
       });
       const result = this.database.sqlite
         .prepare(
           `insert into local_agent_turns (
+            turn_id,
             agent_id,
             prompt,
             status,
             created_at
-          ) values (?, ?, 'running', ?)`,
+          ) values (?, ?, ?, 'running', ?)`,
         )
-        .run(agentId, input.prompt, agent.updatedAt);
+        .run(input.turnId, agentId, input.prompt, agent.updatedAt);
+      this.database.sqlite
+        .prepare(
+          `delete from local_agent_turn_events
+           where turn_row_id in (
+             select id from local_agent_turns where agent_id = ?
+             order by id desc limit -1 offset ?
+           )`,
+        )
+        .run(agentId, TURNS_WITH_EVENTS_PER_AGENT);
       const turn = this.getTurnById(Number(result.lastInsertRowid));
       if (!turn) throw new Error(`Unable to load the new turn for subagent ${agentId}.`);
       return { agent, turn };
@@ -351,6 +389,7 @@ export class LocalAgentStore {
             error = ?,
             error_code = ?,
             error_retryable = ?,
+            error_detail = ?,
             completed_at = ?
            where id = ? and agent_id = ?`,
         )
@@ -362,6 +401,7 @@ export class LocalAgentStore {
           completion.status === "completed" || completion.errorRetryable === undefined
             ? null
             : String(completion.errorRetryable),
+          completion.status === "completed" ? null : completion.errorDetail ?? null,
           completedAt,
           turnId,
           agentId,
@@ -375,6 +415,7 @@ export class LocalAgentStore {
           error: undefined,
           errorCode: undefined,
           errorRetryable: undefined,
+          errorDetail: undefined,
         });
       }
       return this.update(agentId, {
@@ -383,6 +424,7 @@ export class LocalAgentStore {
         error: completion.error,
         errorCode: completion.errorCode,
         errorRetryable: completion.errorRetryable,
+        errorDetail: completion.errorDetail,
       });
     }).immediate();
   }
@@ -406,6 +448,60 @@ export class LocalAgentStore {
     turnId: number,
   ): BetterResult<LocalAgentTurnRecord | undefined, AgentStoreError> {
     return storeResult("get_turn", () => this.getTurnById(turnId));
+  }
+
+  getTurnByTurnId(turnId: string): LocalAgentTurnRecord | undefined {
+    const row = this.database.sqlite
+      .prepare("select * from local_agent_turns where turn_id = ? limit 1")
+      .get(turnId) as LocalAgentTurnRow | undefined;
+    return row ? rowToLocalAgentTurnRecord(row) : undefined;
+  }
+
+  getTurnByTurnIdResult(
+    turnId: string,
+  ): BetterResult<LocalAgentTurnRecord | undefined, AgentStoreError> {
+    return storeResult("get_turn", () => this.getTurnByTurnId(turnId));
+  }
+
+  appendTurnEvent(turn: LocalAgentTurnRecord, seq: number, event: LocalAgentTurnEventBody, at: string): void {
+    this.database.sqlite
+      .prepare(
+        `insert into local_agent_turn_events (turn_row_id, seq, type, data, created_at)
+         values (?, ?, ?, ?, ?)`,
+      )
+      .run(turn.id, seq, event.type, JSON.stringify(event), at);
+  }
+
+  appendTurnEventResult(
+    turn: LocalAgentTurnRecord,
+    seq: number,
+    event: LocalAgentTurnEventBody,
+    at: string,
+  ): BetterResult<void, AgentStoreError> {
+    return storeResult("append_turn_event", () => this.appendTurnEvent(turn, seq, event, at));
+  }
+
+  listTurnEvents(turn: LocalAgentTurnRecord, afterSeq = 0): LocalAgentTurnEvent[] {
+    const rows = this.database.sqlite
+      .prepare(
+        `select seq, type, data, created_at from local_agent_turn_events
+         where turn_row_id = ? and seq > ?
+         order by seq asc`,
+      )
+      .all(turn.id, afterSeq) as LocalAgentTurnEventRow[];
+    return rows.map((row) => ({
+      ...(JSON.parse(row.data) as LocalAgentTurnEventBody),
+      turnId: turn.turnId,
+      seq: row.seq,
+      at: row.created_at,
+    }));
+  }
+
+  listTurnEventsResult(
+    turn: LocalAgentTurnRecord,
+    afterSeq?: number,
+  ): BetterResult<LocalAgentTurnEvent[], AgentStoreError> {
+    return storeResult("list_turn_events", () => this.listTurnEvents(turn, afterSeq));
   }
 
   getLatestTurn(agentId: string): LocalAgentTurnRecord | undefined {
@@ -482,6 +578,8 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     error: row.error ?? undefined,
     errorCode: row.error_code ?? undefined,
     errorRetryable: readOptionalBoolean(row.error_retryable),
+    errorDetail: row.error_detail ?? undefined,
+    latestTurnId: row.latest_turn_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -490,6 +588,7 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
 function rowToLocalAgentTurnRecord(row: LocalAgentTurnRow): LocalAgentTurnRecord {
   return {
     id: row.id,
+    turnId: row.turn_id,
     agentId: row.agent_id,
     prompt: row.prompt,
     status: readTurnStatus(row.status),
@@ -497,6 +596,7 @@ function rowToLocalAgentTurnRecord(row: LocalAgentTurnRow): LocalAgentTurnRecord
     error: row.error ?? undefined,
     errorCode: row.error_code ?? undefined,
     errorRetryable: readOptionalBoolean(row.error_retryable),
+    errorDetail: row.error_detail ?? undefined,
     createdAt: row.created_at,
     completedAt: row.completed_at ?? undefined,
   };

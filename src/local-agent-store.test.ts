@@ -60,6 +60,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
 
   const begun = store.beginTurn(created.id, {
+    turnId: "trn_test1",
     prompt: "Review the current changes.",
     model: updated.model,
     effort: updated.effort,
@@ -71,6 +72,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(begun.turn.completedAt, undefined);
   assert.throws(
     () => store.beginTurn(created.id, {
+      turnId: "trn_test2",
       prompt: "Start overlapping work.",
       model: begun.agent.model,
       effort: begun.agent.effort,
@@ -94,6 +96,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.ok(completedTurn?.completedAt);
 
   const failing = store.beginTurn(created.id, {
+    turnId: "trn_test3",
     prompt: "Retry the review.",
     model: completed.model,
     effort: completed.effort,
@@ -218,11 +221,14 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(reloadedRecord?.errorCode, "DAEMON_TIMEOUT");
   assert.equal(reloadedRecord?.errorRetryable, true);
   const legacyTurn = upgradedStore.beginTurn("agt_legacy", {
+    turnId: "trn_test4",
     prompt: "Continue after upgrade.",
     model: reloadedRecord?.model,
     effort: reloadedRecord?.effort,
   });
   assert.equal(legacyTurn.turn.status, "running");
+  assert.equal(legacyTurn.turn.turnId, "trn_test4");
+  assert.equal(upgradedStore.getById("agt_legacy")?.latestTurnId, "trn_test4");
 } finally {
   for (const store of stores) {
     store.close();

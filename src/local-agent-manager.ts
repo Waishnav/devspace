@@ -11,6 +11,15 @@ import {
   type LocalAgentError,
 } from "./local-agent-errors.js";
 import {
+  createLocalAgentTurnId,
+  MAX_TURN_EVENT_BYTES,
+  MAX_TURN_EVENTS,
+  providerErrorDetail,
+  sanitizeActivityEvent,
+  type LocalAgentTurnEvent,
+  type LocalAgentTurnEventBody,
+} from "./local-agent-events.js";
+import {
   type LocalAgentProfile,
 } from "./local-agent-profiles.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
@@ -21,6 +30,7 @@ import {
   type LocalAgentRecord,
   type LocalAgentStore,
   type LocalAgentTurnRecord,
+  type LocalAgentTurnStatus,
   type LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import {
@@ -79,15 +89,36 @@ export type AgentLookupError = AgentTargetError | AgentScopeError | AgentStoreEr
 export type AgentListError = AgentScopeError | AgentStoreError;
 export type AgentWaitError = AgentLookupError;
 export type AgentStopError = AgentLookupError | AgentConflictError;
+export type AgentEventsError = AgentLookupError;
+
+export interface LocalAgentFailure {
+  code: string;
+  message: string;
+  retryable: boolean;
+  detail?: string;
+}
 
 export type LocalAgentWaitResult =
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
-  | { id: string; status: "failed"; error: { code: string; message: string; retryable: boolean } }
-  | { id: string; status: "stopped"; error?: { code: string; message: string; retryable: boolean } };
+  | { id: string; status: "failed"; error: LocalAgentFailure }
+  | { id: string; status: "stopped"; error?: LocalAgentFailure };
+
+export interface LocalAgentTurnEventsQuery {
+  /** Defaults to the agent's latest turn. */
+  turnId?: string;
+  afterSeq?: number;
+}
+
+export interface LocalAgentTurnEvents {
+  agentId: string;
+  turnId: string;
+  status: LocalAgentTurnStatus;
+  events: LocalAgentTurnEvent[];
+}
 
 interface ActiveLocalAgentTurn {
-  turnId: number;
+  turnRowId: number;
   completion: Promise<void>;
   abortController: AbortController;
 }
@@ -241,7 +272,7 @@ export class LocalAgentManager {
     for (const capture of captures) {
       if (capture.turn?.status !== "running") continue;
       const active = this.activeTurns.get(capture.agent.id);
-      if (active?.turnId !== capture.turn.id) {
+      if (active?.turnRowId !== capture.turn.id) {
         return Result.err(new AgentStoreError(
           "wait",
           new Error(`Turn ${capture.turn.id} is not active.`),
@@ -267,6 +298,36 @@ export class LocalAgentManager {
         : waitResultFromAgent(capture.agent, timedOut));
     }
     return Result.ok(results);
+  }
+
+  events(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+    query: LocalAgentTurnEventsQuery = {},
+  ): BetterResult<LocalAgentTurnEvents, AgentEventsError> {
+    const agent = this.get(agentId, scope);
+    if (agent.isErr()) return agent;
+    const lookup = query.turnId
+      ? this.store.getTurnByTurnIdResult(query.turnId)
+      : this.store.getLatestTurnResult(agentId);
+    if (lookup.isErr()) return lookup;
+    const turn = lookup.value;
+    if (!turn || turn.agentId !== agentId) {
+      return Result.err(new AgentTargetError({
+        code: "AGENT_NOT_FOUND",
+        target: agentId,
+        retryable: false,
+        message: query.turnId
+          ? `Unknown turn ${query.turnId} for subagent ${agentId}.`
+          : `Subagent ${agentId} has no turns.`,
+      }));
+    }
+    return this.store.listTurnEventsResult(turn, query.afterSeq).map((events) => ({
+      agentId,
+      turnId: turn.turnId,
+      status: turn.status,
+      events,
+    }));
   }
 
   async stop(
@@ -369,18 +430,24 @@ export class LocalAgentManager {
     }
 
     const begun = this.store.beginTurnResult(record.id, {
+      turnId: createLocalAgentTurnId(),
       prompt,
       model: overrides.model ?? record.model,
       effort: overrides.effort ?? record.effort,
     });
     if (begun.isErr()) return begun;
+    const events = new TurnEventLog(this.store, begun.value.turn, (fields) => (
+      this.log("warn", "agent_turn_event_failed", { agentId: record.id, ...fields })
+    ));
+    events.record({ type: "turn_started" });
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
     const abortController = new AbortController();
     const turn = Promise.resolve().then(() => (
       this.runTurn(
         begun.value.agent,
-        begun.value.turn.id,
+        begun.value.turn,
+        events,
         prompt,
         overrides,
         workspaceId,
@@ -388,7 +455,7 @@ export class LocalAgentManager {
       )
     ));
     this.activeTurns.set(record.id, {
-      turnId: begun.value.turn.id,
+      turnRowId: begun.value.turn.id,
       completion: turn,
       abortController,
     });
@@ -398,23 +465,27 @@ export class LocalAgentManager {
 
   private async runTurn(
     record: LocalAgentRecord,
-    turnId: number,
+    turn: LocalAgentTurnRecord,
+    events: TurnEventLog,
     prompt: string,
     overrides: RunOverrides,
     workspaceId?: string,
     signal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
+    const turnId = turn.id;
+    const persistRunError = (error: LocalAgentError) => this.persistRunError(record, turnId, events, error, startedAt);
     this.log("info", "agent_run_started", {
       providerInstanceId: record.providerInstanceId,
       driver: record.driver,
       agentId: record.id,
+      turnId: turn.turnId,
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
     });
     try {
       const authorized = this.authorizeWorkspace(record.workspaceRoot, workspaceId, "run");
       if (authorized.isErr()) {
-        this.persistRunError(record, turnId, authorized.error, startedAt);
+        persistRunError(authorized.error);
         return;
       }
       const workspaceRoot = authorized.value;
@@ -423,22 +494,22 @@ export class LocalAgentManager {
         : { ...record, workspaceRoot };
       const profiles = await this.loadProfilesResult(workspaceRoot, record.profileName);
       if (profiles.isErr()) {
-        this.persistRunError(record, turnId, profiles.error, startedAt);
+        persistRunError(profiles.error);
         return;
       }
       const profile = this.profileForRecordResult(record, profiles.value);
       if (profile.isErr()) {
-        this.persistRunError(record, turnId, profile.error, startedAt);
+        persistRunError(profile.error);
         return;
       }
       const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides);
       if (input.isErr()) {
-        this.persistRunError(record, turnId, input.error, startedAt);
+        persistRunError(input.error);
         return;
       }
       const driver = this.driverResult(record.providerInstanceId, "run", record.id, record.driver);
       if (driver.isErr()) {
-        this.persistRunError(record, turnId, driver.error, startedAt);
+        persistRunError(driver.error);
         return;
       }
       const context: LocalAgentRuntimeContext = {
@@ -460,16 +531,18 @@ export class LocalAgentManager {
           const updated = this.store.updateResult(record.id, { providerSessionId });
           if (updated.isErr()) throw updated.error;
         },
+        onEvent: (event) => events.recordActivity(event),
       };
       const result = await this.pool.run(driver.value, context, { ...input.value, signal }, callbacks);
       if (result.isErr()) {
-        this.persistRunError(record, turnId, result.error, startedAt);
+        persistRunError(result.error);
         return;
       }
       const runResult = result.value;
       const current = this.store.getByIdResult(record.id);
       if (current.isErr()) throw current.error;
       if (!current.value) return;
+      events.record({ type: "turn_completed", status: "completed" });
       const updated = this.store.finishTurnResult(record.id, turnId, {
         providerSessionId: runResult.providerSessionId ?? current.value.providerSessionId,
         status: "completed",
@@ -485,9 +558,10 @@ export class LocalAgentManager {
       });
     } catch (error) {
       if (isLocalAgentError(error)) {
-        this.persistRunError(record, turnId, error, startedAt);
+        persistRunError(error);
         return;
       }
+      events.record({ type: "turn_completed", status: "failed", errorCode: "AGENT_INTERNAL_ERROR" });
       const persisted = this.store.finishTurnResult(record.id, turnId, {
         status: "failed",
         error: "Unexpected internal subagent failure.",
@@ -513,15 +587,19 @@ export class LocalAgentManager {
   private persistRunError(
     record: LocalAgentRecord,
     turnId: number,
+    events: TurnEventLog,
     error: LocalAgentError,
     startedAt: number,
   ): void {
     const stopped = AgentProviderCancelledError.is(error);
+    const status = stopped ? "stopped" : "failed";
+    events.record({ type: "turn_completed", status, errorCode: error.code });
     const persisted = this.store.finishTurnResult(record.id, turnId, {
-      status: stopped ? "stopped" : "failed",
+      status,
       error: error.message,
       errorCode: error.code,
       errorRetryable: error.retryable,
+      errorDetail: stopped ? undefined : providerErrorDetail(error),
     });
     this.log(stopped ? "info" : "error", stopped ? "agent_run_stopped" : "agent_run_failed", {
       providerInstanceId: record.providerInstanceId,
@@ -737,6 +815,49 @@ export function createLocalAgentManager(options: LocalAgentManagerOptions): Loca
   return new LocalAgentManager(options);
 }
 
+/**
+ * Appends one turn's events to the store within fixed count and size bounds.
+ * The last slot is reserved so a follower always sees turn_completed.
+ */
+class TurnEventLog {
+  private seq = 0;
+  private bytes = 0;
+  private dropped = 0;
+  private completed = false;
+
+  constructor(
+    private readonly store: LocalAgentStore,
+    private readonly turn: LocalAgentTurnRecord,
+    private readonly warn: (fields: Record<string, unknown>) => void,
+  ) {}
+
+  recordActivity(event: Parameters<NonNullable<LocalAgentRunCallbacks["onEvent"]>>[0]): void {
+    try {
+      const sanitized = sanitizeActivityEvent(event);
+      if (sanitized) this.record(sanitized);
+    } catch (error) {
+      // Visibility must never fail the turn it observes.
+      this.warn({ turnId: this.turn.turnId, error: errorMessage(error) });
+    }
+  }
+
+  record(event: LocalAgentTurnEventBody): void {
+    if (this.completed) return;
+    const terminal = event.type === "turn_completed";
+    this.completed = terminal;
+    const body = terminal && this.dropped > 0 ? { ...event, droppedEvents: this.dropped } : event;
+    const size = JSON.stringify(body).length;
+    if (!terminal && (this.seq >= MAX_TURN_EVENTS - 1 || this.bytes + size > MAX_TURN_EVENT_BYTES)) {
+      this.dropped += 1;
+      return;
+    }
+    this.seq += 1;
+    this.bytes += size;
+    const appended = this.store.appendTurnEventResult(this.turn, this.seq, body, new Date().toISOString());
+    if (appended.isErr()) this.warn({ turnId: this.turn.turnId, error: appended.error.message });
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -835,6 +956,7 @@ function waitResultFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalA
           code: agent.errorCode ?? "AGENT_FAILED",
           message: agent.error ?? "Subagent failed without an error message.",
           retryable: agent.errorRetryable ?? false,
+          ...(agent.errorDetail ? { detail: agent.errorDetail } : {}),
         },
       };
     case "stopped":
@@ -856,10 +978,11 @@ function hasTurnFailure(turn: LocalAgentTurnRecord): boolean {
   return turn.error !== undefined || turn.errorCode !== undefined || turn.errorRetryable !== undefined;
 }
 
-function turnFailure(turn: LocalAgentTurnRecord): { code: string; message: string; retryable: boolean } {
+function turnFailure(turn: LocalAgentTurnRecord): LocalAgentFailure {
   return {
     code: turn.errorCode ?? "AGENT_FAILED",
     message: turn.error ?? "Subagent failed without an error message.",
     retryable: turn.errorRetryable ?? false,
+    ...(turn.errorDetail ? { detail: turn.errorDetail } : {}),
   };
 }

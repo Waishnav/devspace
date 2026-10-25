@@ -1,5 +1,6 @@
 import type { Result } from "better-result";
 import type { AgentProviderError } from "./local-agent-errors.js";
+import type { LocalAgentActivityEvent } from "./local-agent-events.js";
 import type {
   LocalAgentDriverKind,
   LocalAgentProviderInstanceId,
@@ -33,6 +34,11 @@ export interface LocalAgentRunCallbacks {
    * could otherwise fail and lose that identity.
    */
   onSessionId?: (providerSessionId: string) => void | Promise<void>;
+  /**
+   * Receives normalized activity while the turn runs. It never throws, so
+   * drivers may call it inline from their provider event loop.
+   */
+  onEvent?: (event: LocalAgentActivityEvent) => void;
 }
 
 export interface LocalAgentRuntimeContext {
@@ -59,7 +65,8 @@ export interface LocalAgentRuntimePolicy {
 
 export interface LocalAgentCapabilities {
   sessions: { resume: boolean; close: boolean };
-  turns: { interrupt: boolean };
+  /** `streaming` means the driver reports messages and tool activity while a turn runs. */
+  turns: { interrupt: boolean; streaming: boolean };
   configuration: { modelOverride: boolean; effortOverride: boolean };
   permissions: { enforcement: "native" | "client-boundary" | "unsupported" };
   mcp: { supported: boolean };
