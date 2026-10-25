@@ -359,9 +359,12 @@ export class WorkflowManager {
           if (!current.value || current.value.status !== "running") return;
           if (call.turnId !== undefined && current.value.id !== call.turnId) return;
           call.turnId ??= current.value.id;
-          const stopped = await this.options.agents.cancel(call.agentId, call.turnId, call);
-          if (stopped.isOk() && stopped.value.status !== "running") return;
-          uncertainty = stopped.isErr() ? stopped.error : new Error("Provider has not confirmed stopping.");
+          const stopped = await this.options.agents.stop(call.agentId, call);
+          if (stopped.isOk()) return;
+          // stop() conflicts when the turn settled by itself; re-read before treating that as uncertainty.
+          const settled = this.options.agents.getTurn(call.agentId, call);
+          if (settled.isOk() && settled.value?.status !== "running") return;
+          uncertainty = stopped.error;
         }
       } catch (error) { uncertainty = error; }
       const error = new WorkflowError("RECOVERY_REQUIRED", `Waiting to confirm agent ${call.agentId} stopped: ${workflowFailure(uncertainty).message}`, true);

@@ -36,7 +36,8 @@ try {
     workspaceId: "ws_dispatch",
     workspaceRoot: join(root, "dispatch-project"),
     profileName: "reviewer",
-    provider: "codex",
+    providerInstanceId: "codex",
+    driver: "codex",
     writeMode: "read_only",
   });
   assert.equal(ownedDispatch.id, "workflow-dispatch-store");
@@ -46,7 +47,8 @@ try {
     workspaceId: "ws_dispatch",
     workspaceRoot: join(root, "dispatch-project"),
     profileName: "reviewer",
-    provider: "codex",
+    providerInstanceId: "codex",
+    driver: "codex",
     writeMode: "read_only",
   }).id, ownedDispatch.id);
   assert.throws(() => store.create({
@@ -54,7 +56,8 @@ try {
     workspaceId: "ws_dispatch",
     workspaceRoot: join(root, "other"),
     profileName: "reviewer",
-    provider: "codex",
+    providerInstanceId: "codex",
+    driver: "codex",
     writeMode: "read_only",
   }), /different dispatch/);
 

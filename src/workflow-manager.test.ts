@@ -60,15 +60,23 @@ async function fixture(runner?: typeof runWorkflowScript) {
   };
   const agents = new LocalAgentManager({
     store: new LocalAgentStore(stateDir), pool: new LocalAgentRuntimePool(), loadProfiles: async () => [],
-    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", enabled: true }] },
-    drivers: [{ provider: "codex", runtimeKey: () => "shared", createRuntime: async () => Result.ok(runtime) }],
+    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
+    drivers: [{
+      providerInstanceId: "codex", provider: "codex", runtimePolicy: { scope: "instance" },
+      capabilities: {
+        sessions: { resume: true, close: false }, turns: { interrupt: true },
+        configuration: { modelOverride: true, effortOverride: true },
+        permissions: { enforcement: "native" }, mcp: { supported: false },
+      },
+      createRuntime: async () => Result.ok(runtime),
+    }],
     allowedRoots: [root],
     authorizeManagedWorkspace: (path, id) => isManagedWorkflowWorkspace(config, path, id),
   });
   const store = new WorkflowStore(stateDir);
   const workflows = new WorkflowManager({
     store, agents, runner, config, loadProfiles: async () => [], allowedRoots: [root],
-    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", enabled: true }] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
   });
   const scope = { workspaceRoot: root };
   return {
@@ -253,7 +261,7 @@ test("parallel unnamed isolated calls receive distinct worktrees", async () => {
 test("shutdown stops retrying unconfirmed provider cancellation and preserves recovery state", async () => {
   const f = await fixture(async ({ onAgent }) => await onAgent("hold", { target: "codex" }) as string);
   const originalGetTurn = f.agents.getTurn.bind(f.agents);
-  const originalCancel = f.agents.cancel.bind(f.agents);
+  const originalStop = f.agents.stop.bind(f.agents);
   let close: Promise<void> | undefined;
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
@@ -264,8 +272,8 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
       id: call.turnId!, agentId: call.agentId, prompt: call.prompt, status: "running", createdAt: "now",
     };
     f.agents.getTurn = () => Result.ok(runningTurn);
-    f.agents.cancel = async () => Result.err(new AgentConflictError({
-      code: "AGENT_CONFLICT", agentId: call.agentId, operation: "cancel", retryable: true,
+    f.agents.stop = async () => Result.err(new AgentConflictError({
+      code: "AGENT_CONFLICT", agentId: call.agentId, operation: "stop", retryable: true,
       message: "Provider cancellation is unavailable.",
     }));
     close = f.workflows.close();
@@ -281,7 +289,7 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
     } finally { reopened.close(); }
   } finally {
     f.agents.getTurn = originalGetTurn;
-    f.agents.cancel = originalCancel;
+    f.agents.stop = originalStop;
     f.release();
     await close?.catch(() => {});
     await f.agents.close();

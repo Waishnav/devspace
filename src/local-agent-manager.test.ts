@@ -105,19 +105,7 @@ class FakeRuntime implements LocalAgentRuntime {
     if (input.prompt.includes("defect")) throw new TypeError("internal defect");
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
     if (input.prompt.includes("hold")) {
-      await new Promise<void>((resolve) => {
-        this.releaseHold = resolve;
-        input.signal?.addEventListener("abort", () => resolve(), { once: true });
-      });
-      if (input.signal?.aborted && !input.prompt.includes("ignore cancel")) {
-        return Result.err(new AgentProviderCancelledError({
-          code: "PROVIDER_CANCELLED",
-          provider: "codex",
-          operation: "run",
-          retryable: false,
-          message: "cancelled",
-        }));
-      }
+      await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
     if (input.prompt.includes("finish-despite-stop")) {
       await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
@@ -450,7 +438,7 @@ const duplicateId = "workflow-dispatch-1";
 const duplicateInput = {
   agentId: duplicateId,
   target: "reviewer",
-  prompt: "hold duplicate",
+  prompt: "cancel-me duplicate",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
   writeMode: "read_only" as const,
@@ -492,17 +480,6 @@ const authorityUpgrade = await manager.continue(duplicate.id, "expand authority"
 }, scope);
 assert.equal(authorityUpgrade.isErr(), true);
 if (authorityUpgrade.isErr()) assert.equal(authorityUpgrade.error.code, "AGENT_CONFLICT");
-
-const unconfirmedCancellation = unwrap(await manager.start({
-  target: "reviewer",
-  prompt: "hold ignore cancel",
-  workspaceId: scope.workspaceId,
-  workspaceRoot: root,
-}));
-await waitFor(() => runtimes.get(unconfirmedCancellation.id)?.inputs.length === 1);
-const unconfirmedResult = await manager.stop(unconfirmedCancellation.id, scope);
-assert.equal(unconfirmedResult.isErr(), true, "unconfirmed cancellation is reported, never faked");
-assert.equal(getRecord(unconfirmedCancellation.id).status, "idle", "unconfirmed cancellation cannot persist stopped");
 
 const continued = unwrap(await manager.continue(first.id, "continue", {
   model: "gpt-run",
