@@ -43,7 +43,7 @@ devspace workflow ls
 
 `wait` accepts a timeout from 0 to 60 seconds and returns the latest durable run state on timeout. `calls` returns compact call summaries without prompts, results, or fingerprints. `call` returns the full stored record for one zero-based call index. `events` returns up to 100 persisted log and phase entries after the supplied sequence. All commands accept `--json` for scripts.
 
-Workflow records, calls, and provider continuation state survive CLI exits and daemon restarts. A daemon restart marks unfinished workflows interrupted for explicit inspection or resume; it does not dispatch calls automatically. At startup the daemon first reconciles local agent turns, then workflow runs. During shutdown it closes workflows before the local agent manager so supervisors can stop their child turns cleanly.
+Workflow records, calls, and provider continuation state survive CLI exits and daemon restarts. A daemon restart marks unfinished workflows interrupted for explicit inspection or resume; it does not dispatch calls automatically. At startup the daemon first reconciles local agent turns, then workflow runs. During shutdown it closes workflows before the local agent manager so supervisors can stop their child turns cleanly. Both phases share one shutdown budget, and workflows get at most half of it so the agent manager always gets time to close.
 
 Named workflows and their arguments are workspace scoped. IDs from another checkout, workspace, or managed worktree are rejected even when the caller can read the shared DevSpace state directory.
 
@@ -57,7 +57,7 @@ An agent call may include an inline JSON Schema in `options.schema`. DevSpace co
 
 ## Resume and worktrees
 
-Resume reuses only a matching prefix of completed read-only calls. Any call with write authority, isolation, or a named workflow workspace disables replay for the run. DevSpace also hashes the complete workspace root before the original and resumed runs. More than 20,000 entries, more than 64 MiB of files, any symlink, special file, unreadable path, or other hash failure produces `RECOVERY_CONTEXT_CHANGED`. Large generated trees such as `node_modules` can therefore conservatively disable resume.
+Resume reuses only a matching prefix of completed read-only calls. Any call with write authority, isolation, or a named workflow workspace disables replay for the run. DevSpace also hashes the workspace context before the original and resumed runs: `HEAD`, the staged diff, and every file Git tracks or would add (`git ls-files --cached --others --exclude-standard`). Ignored files such as `node_modules` or build output are not part of the context, so changing them does not block resume. More than 20,000 entries, more than 64 MiB of files, any symlink, special file, unreadable path, or other hash failure produces `RECOVERY_CONTEXT_CHANGED`.
 
 An isolated call creates a managed worktree and records it as a workspace. DevSpace retains those worktrees after the run for inspection. Normal stale-worktree cleanup preserves recovery snapshots for commits and dirty tracked changes and skips worktrees with untracked files.
 

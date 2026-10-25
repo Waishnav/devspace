@@ -9,7 +9,13 @@ export function workflowHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-/** No guessed cache hits: large/linked/unreadable contexts disable replay. */
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * No guessed cache hits: large/linked/unreadable contexts disable replay.
+ * Only files Git tracks or would add (not ignored) are hashed, so build output such as
+ * `node_modules` neither exhausts the bounds nor invalidates a resume.
+ */
 export async function workflowContextHash(root: string): Promise<string | undefined> {
   const hash = createHash("sha256");
   let count = 0;
@@ -17,7 +23,7 @@ export async function workflowContextHash(root: string): Promise<string | undefi
   try {
     const head = await exec("git", ["rev-parse", "HEAD"], { cwd: root, timeout: 5_000 });
     hash.update(JSON.stringify({ head: head.stdout }));
-    const staged = await exec("git", ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"], { cwd: root, timeout: 5_000 });
+    const staged = await exec("git", ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"], { cwd: root, timeout: 5_000, maxBuffer: GIT_MAX_BUFFER });
     hash.update(JSON.stringify({ staged: staged.stdout }));
     async function visit(path: string, relative: string): Promise<void> {
       if (++count > 20_000) throw new Error("context too large");
@@ -50,7 +56,19 @@ export async function workflowContextHash(root: string): Promise<string | undefi
         } finally { await file.close(); }
       } else throw new Error("special file context");
     }
-    await visit(root, "");
+    // `-z` output is NUL separated with forward slashes on every platform (no CRLF or quoting).
+    const listed = await exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, timeout: 5_000, maxBuffer: GIT_MAX_BUFFER });
+    const paths = [...new Set(listed.stdout.split("\0").filter(Boolean))].sort();
+    for (const relative of paths) {
+      const path = join(root, relative);
+      // Tracked but deleted from the worktree: the deletion is part of the context.
+      const present = await lstat(path).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (present) await visit(path, relative);
+      else hash.update(JSON.stringify({ path: relative, deleted: true }));
+    }
     return hash.digest("hex");
   } catch { return undefined; }
 }

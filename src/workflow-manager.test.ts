@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -199,6 +199,31 @@ test("resume reuses only compatible read-only prefix and rejects changed context
     await writeFile(join(f.root, "changed"), "changed");
     await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
     assert.throws(() => f.workflows.get(first.id, { workspaceRoot: f.dir }), /not in this workspace/);
+  } finally { await f.close(); }
+});
+
+test("resume hashes only files Git does not ignore", async () => {
+  const f = await fixture(async () => null);
+  try {
+    await writeFile(join(f.root, ".gitignore"), "node_modules/\n");
+    await writeFile(join(f.root, "tracked.txt"), "tracked");
+    execFileSync("git", ["add", ".gitignore", "tracked.txt"], { cwd: f.root });
+    execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "ignore"], { cwd: f.root });
+    await mkdir(join(f.root, "node_modules", "dep"), { recursive: true });
+    await writeFile(join(f.root, "node_modules", "dep", "index.js"), "one");
+    const first = await f.workflows.run({ ...f.scope, source: "return null;" });
+    await f.workflows.wait(first.id, f.scope);
+    // Ignored changes (even a symlink, which would otherwise disable hashing) leave resume available.
+    await writeFile(join(f.root, "node_modules", "dep", "index.js"), "two");
+    await symlink(join(f.root, "node_modules", "dep"), join(f.root, "node_modules", "link"), "junction");
+    const resumed = await f.workflows.run({ ...f.scope, resume: first.id });
+    await f.workflows.wait(resumed.id, f.scope);
+    // Deleting a tracked file or adding an unignored one still changes the context.
+    await writeFile(join(f.root, "new.txt"), "x");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
+    await rm(join(f.root, "new.txt"));
+    await rm(join(f.root, "tracked.txt"));
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
   } finally { await f.close(); }
 });
 
