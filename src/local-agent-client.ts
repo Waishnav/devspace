@@ -514,8 +514,8 @@ export class LocalAgentClient {
 
 function isObservationRequest(
   method: LocalAgentDaemonRequest["method"],
-): method is "agent.get" | "agent.list" | "agent.wait" {
-  return method === "agent.get" || method === "agent.list" || method === "agent.wait";
+): method is "agent.get" | "agent.list" | "agent.wait" | "agent.events" {
+  return method === "agent.get" || method === "agent.list" || method === "agent.wait" || method === "agent.events";
 }
 
 export function createLocalAgentClient(

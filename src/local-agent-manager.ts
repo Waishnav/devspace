@@ -98,11 +98,12 @@ export interface LocalAgentFailure {
   detail?: string;
 }
 
-export type LocalAgentWaitResult =
+export type LocalAgentWaitResult = { turnId?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: LocalAgentFailure }
-  | { id: string; status: "stopped"; error?: LocalAgentFailure };
+  | { id: string; status: "stopped"; error?: LocalAgentFailure }
+);
 
 export interface LocalAgentTurnEventsQuery {
   /** Defaults to the agent's latest turn. */
@@ -917,6 +918,10 @@ async function waitForTurns(
 }
 
 function waitResultFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): LocalAgentWaitResult {
+  return { ...waitBodyFromTurn(turn, timedOut), turnId: turn.turnId };
+}
+
+function waitBodyFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): LocalAgentWaitResult {
   switch (turn.status) {
     case "running":
       return { id: turn.agentId, status: "running", ...(timedOut ? { wait: "timeout" } : {}) };
@@ -938,6 +943,11 @@ function waitResultFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): Loca
 }
 
 function waitResultFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalAgentWaitResult {
+  const body = waitBodyFromAgent(agent, timedOut);
+  return agent.latestTurnId ? { ...body, turnId: agent.latestTurnId } : body;
+}
+
+function waitBodyFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalAgentWaitResult {
   switch (agent.status) {
     case "starting":
     case "running":

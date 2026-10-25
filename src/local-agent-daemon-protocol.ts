@@ -278,32 +278,37 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
   }
   return value.map((entry): LocalAgentWaitResult => {
     const record = asRecord(entry);
-    const id = requiredString(record?.id, "id");
-    const status = requiredString(record?.status, "status");
-    switch (status) {
-      case "running": {
-        const wait = optionalString(record?.wait);
-        if (wait !== undefined && wait !== "timeout") {
-          throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
-        }
-        return { id, status, ...(wait ? { wait } : {}) };
-      }
-      case "completed": {
-        const response = typeof record?.response === "string" ? record.response : undefined;
-        return { id, status, ...(response === undefined ? {} : { response }) };
-      }
-      case "failed":
-        return { id, status, error: decodeWaitError(record?.error) };
-      case "stopped":
-        return {
-          id,
-          status,
-          ...(record?.error === undefined ? {} : { error: decodeWaitError(record.error) }),
-        };
-      default:
-        throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
-    }
+    const turnId = optionalString(record?.turnId);
+    return turnId === undefined ? decodeWaitBody(record) : { ...decodeWaitBody(record), turnId };
   });
+}
+
+function decodeWaitBody(record: Record<string, unknown> | undefined): LocalAgentWaitResult {
+  const id = requiredString(record?.id, "id");
+  const status = requiredString(record?.status, "status");
+  switch (status) {
+    case "running": {
+      const wait = optionalString(record?.wait);
+      if (wait !== undefined && wait !== "timeout") {
+        throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
+      }
+      return { id, status, ...(wait ? { wait } : {}) };
+    }
+    case "completed": {
+      const response = typeof record?.response === "string" ? record.response : undefined;
+      return { id, status, ...(response === undefined ? {} : { response }) };
+    }
+    case "failed":
+      return { id, status, error: decodeWaitError(record?.error) };
+    case "stopped":
+      return {
+        id,
+        status,
+        ...(record?.error === undefined ? {} : { error: decodeWaitError(record.error) }),
+      };
+    default:
+      throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
+  }
 }
 
 export function decodeTurnEvents(value: unknown): LocalAgentTurnEvents {
