@@ -93,7 +93,8 @@
       "type": "object",
       "properties": {
         "mode": {
-          "default": "codex",
+          "deprecated": true,
+          "description": "Deprecated and ignored. DevSpace picks the tool surface from the connecting MCP host.",
           "type": "string",
           "enum": [
             "claude",

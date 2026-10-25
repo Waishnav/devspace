@@ -56,7 +56,11 @@ import {
   formatLocalAgentProviderStatusSummary,
   type LocalAgentProviderStatus,
 } from "./local-agent-catalog.js";
-import { getToolSurface } from "./tool-surfaces/index.js";
+import {
+  detectToolSurface,
+  getToolSurface,
+  type ToolSurfaceName,
+} from "./tool-surfaces/index.js";
 import {
   contentText,
   logFailedToolResponse,
@@ -307,6 +311,7 @@ async function assertWorkspaceAppAssets(): Promise<void> {
 
 export function createMcpServer(
   config: ServerConfig,
+  surface: ToolSurfaceName,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
@@ -314,7 +319,7 @@ export function createMcpServer(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
 ): McpServer {
-  const toolSurface = getToolSurface(config.toolMode);
+  const toolSurface = getToolSurface(surface);
   const server = new McpServer(
     mcpServerInfo(),
     {
@@ -325,6 +330,7 @@ export function createMcpServer(
   registerMcpSurface(
     server,
     config,
+    toolSurface,
     workspaces,
     reviewCheckpoints,
     processSessions,
@@ -338,6 +344,7 @@ export function createMcpServer(
 function registerMcpSurface(
   server: McpRegistrationTarget,
   config: ServerConfig,
+  toolSurface: ToolSurface,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
@@ -348,7 +355,6 @@ function registerMcpSurface(
   const registrationTarget = trackToolActivity
     ? withTrackedToolHandlers(server, trackToolActivity)
     : server;
-  const toolSurface = getToolSurface(config.toolMode);
 
   registerAppResource(
     registrationTarget,
@@ -827,31 +833,57 @@ export function createServer(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
-  const modernToolSurface = getToolSurface(config.toolMode);
-  const bindModernMcpSurface = compileMcpRegistrationSurface((target) => {
-    registerMcpSurface(
-      target,
-      config,
-      workspaces,
-      reviewCheckpoints,
-      processSessions,
-      resolveLocalAgentProviders,
-      incomingArtifactAdapters,
-      toolActivities.track,
-    );
-  });
+  const compileModernSurface = (name: ToolSurfaceName) => {
+    const toolSurface = getToolSurface(name);
+    const bind = compileMcpRegistrationSurface((target) => {
+      registerMcpSurface(
+        target,
+        config,
+        toolSurface,
+        workspaces,
+        reviewCheckpoints,
+        processSessions,
+        resolveLocalAgentProviders,
+        incomingArtifactAdapters,
+        toolActivities.track,
+      );
+    });
+    return { toolSurface, bind };
+  };
+  const modernSurfaces = {
+    codex: compileModernSurface("codex"),
+    claude: compileModernSurface("claude"),
+  } satisfies Record<ToolSurfaceName, unknown>;
+  if (config.ignoredToolsMode) {
+    logEvent(config.logging, "warn", "tools_mode_deprecated", {
+      toolsMode: config.ignoredToolsMode,
+      message:
+        "tools.mode is deprecated and ignored: DevSpace now picks the tool surface from the connecting MCP host. Remove it from config.jsonc.",
+    });
+  }
   const logMcpHandlerError = (error: Error) => logEvent(
     config.logging,
     "error",
     "mcp_handler_error",
     modernMcpAdapterErrorLogFields(error),
   );
-  const mcpHandler = createMcpHandler(() => {
+  // The registered OAuth client identifies the connector, so a host keeps the
+  // same tool list across requests. The User-Agent only fills in when the
+  // client name and redirect hosts are unrecognised.
+  const mcpHandler = createMcpHandler(async ({ authInfo, requestInfo }) => {
+    const client = authInfo
+      ? await oauthProvider.clientsStore.getClient(authInfo.clientId)
+      : undefined;
+    const { toolSurface, bind } = modernSurfaces[detectToolSurface({
+      clientName: client?.client_name,
+      redirectUris: client?.redirect_uris.map(String),
+      userAgent: requestInfo?.headers.get("user-agent") ?? undefined,
+    })];
     const adapter = createModernMcpServerAdapter(
       mcpServerInfo(),
-      { instructions: serverInstructions(config, modernToolSurface) },
+      { instructions: serverInstructions(config, toolSurface) },
     );
-    bindModernMcpSurface(adapter.registrationTarget);
+    bind(adapter.registrationTarget);
     return adapter.server;
   }, {
     legacy: "stateless",

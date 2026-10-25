@@ -23,7 +23,11 @@ const storageConfigSchema = z.object({
 }).strict().prefault({});
 
 const toolsConfigSchema = z.object({
-  mode: z.enum(["claude", "codex"]).default("codex"),
+  mode: z.enum(["claude", "codex"]).optional().meta({
+    deprecated: true,
+    description:
+      "Deprecated and ignored. DevSpace picks the tool surface from the connecting MCP host.",
+  }),
 }).strict().prefault({});
 
 const uiConfigSchema = z.object({
@@ -89,7 +93,6 @@ export const devspaceConfigSchema = z.object({
 
 export type DevspaceConfig = z.output<typeof devspaceConfigSchema>;
 export type DevspaceConfigInput = z.input<typeof devspaceConfigSchema>;
-export type ToolMode = DevspaceConfig["tools"]["mode"];
 
 export function defaultDevspaceConfig(): DevspaceConfig {
   return devspaceConfigSchema.parse({ configVersion: DEVSPACE_CONFIG_VERSION });

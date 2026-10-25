@@ -1,9 +1,11 @@
-import type { ToolMode } from "../config.js";
 import { codexInstructions, registerCodexTools } from "./codex.js";
 import { claudeInstructions, registerClaudeTools } from "./claude.js";
-import { type ToolSurface } from "./types.js";
+import { type ToolSurface, type ToolSurfaceName } from "./types.js";
 
-const TOOL_SURFACES: Record<ToolMode, ToolSurface> = {
+export type { ToolSurfaceName } from "./types.js";
+export { DEFAULT_TOOL_SURFACE, detectToolSurface, type HostHints } from "./detect.js";
+
+const TOOL_SURFACES: Record<ToolSurfaceName, ToolSurface> = {
   claude: {
     register: registerClaudeTools,
     instructions: claudeInstructions,
@@ -14,6 +16,6 @@ const TOOL_SURFACES: Record<ToolMode, ToolSurface> = {
   },
 };
 
-export function getToolSurface(mode: ToolMode): ToolSurface {
-  return TOOL_SURFACES[mode];
+export function getToolSurface(name: ToolSurfaceName): ToolSurface {
+  return TOOL_SURFACES[name];
 }

@@ -18,7 +18,7 @@ try {
   assert.equal(defaults.publicBaseUrl, "http://127.0.0.1:7676");
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
-  assert.equal(defaults.toolMode, "codex");
+  assert.equal(defaults.ignoredToolsMode, undefined);
   assert.equal(defaults.uiEnabled, true);
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
@@ -93,7 +93,7 @@ try {
     "devspace.example.com",
     "example.internal",
   ]);
-  assert.equal(configured.toolMode, "claude");
+  assert.equal(configured.ignoredToolsMode, "claude");
   assert.equal(configured.uiEnabled, false);
   assert.equal(configured.stateDir, resolve(homedir(), "state"));
   assert.equal(configured.worktreeRoot, resolve(homedir(), "trees"));
