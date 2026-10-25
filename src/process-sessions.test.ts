@@ -238,9 +238,11 @@ if (process.platform === "linux") {
     assert.equal(unconfirmed, 1, "the escaped descendant's open pipe is reported");
     assert.ok(Date.now() - startedAt < 10_000, "termination stays bounded");
   } finally {
-    if (existsSync(pidFile)) {
+    // Only signal a real positive PID: kill(0) would signal this test's own process group.
+    const escapedPid = existsSync(pidFile) ? Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10) : NaN;
+    if (Number.isSafeInteger(escapedPid) && escapedPid > 0) {
       try {
-        process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+        process.kill(escapedPid, "SIGKILL");
       } catch {
         // Already gone.
       }
