@@ -1,7 +1,14 @@
 {
   "description": "Claude surface: open a checkout, write and edit files, run bash, and review the changes.",
-  "config": { "tools": { "mode": "claude" } },
-  "host": { "clientName": "Claude" },
+  "_comment": "tools.mode keeps this scenario on the Claude surface until host detection (#405) lands; drop it afterwards.",
+  "config": {
+    "tools": {
+      "mode": "claude"
+    }
+  },
+  "host": {
+    "clientName": "Claude"
+  },
   "fixture": {
     "files": {
       "README.md": "# QA fixture\n\nbaseline line\n",
@@ -11,14 +18,21 @@
   "steps": [
     {
       "tool": "open_workspace",
-      "arguments": { "path": "{{fixture}}" }
+      "arguments": {
+        "path": "{{fixture}}"
+      }
     },
     {
       "tool": "edit",
       "arguments": {
         "workspace_id": "{{workspace_id}}",
         "path": "notes/todo.md",
-        "edits": [{ "old_text": "- [ ] first", "new_text": "- [x] first" }]
+        "edits": [
+          {
+            "old_text": "- [ ] first",
+            "new_text": "- [x] first"
+          }
+        ]
       }
     },
     {
@@ -31,12 +45,22 @@
     },
     {
       "tool": "bash",
-      "arguments": { "workspace_id": "{{workspace_id}}", "command": "git status --short" },
-      "expect": { "text": ["notes/todo.md", "notes/new.md"] }
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "command": "git status --short"
+      },
+      "expect": {
+        "text": [
+          "notes/todo.md",
+          "notes/new.md"
+        ]
+      }
     },
     {
       "tool": "show_changes",
-      "arguments": { "workspace_id": "{{workspace_id}}" }
+      "arguments": {
+        "workspace_id": "{{workspace_id}}"
+      }
     }
   ]
 }
