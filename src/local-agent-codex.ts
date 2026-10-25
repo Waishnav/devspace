@@ -9,6 +9,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
@@ -151,7 +152,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         let completed: CodexTurnResult;
         try {
-          completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal);
+          completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal, callbacks?.onEvent);
         } catch (cause) {
           if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
           throw cause;
@@ -164,7 +165,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             provider: this.provider,
             operation: "run",
             retryable: false,
-            cause: completed.event.params,
+            cause: new Error(parsed.failure),
             message: "Codex agent turn failed.",
           });
         }
@@ -330,6 +331,7 @@ interface CodexTurnAccumulator {
   threadId: string;
   turnId?: string;
   items: unknown[];
+  onEvent?: (event: LocalAgentActivityEvent) => void;
   completed?: CodexEvent;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
@@ -370,7 +372,12 @@ class CodexAppServerRpc {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  async runTurn(threadId: string, params: unknown, signal?: AbortSignal): Promise<CodexTurnResult> {
+  async runTurn(
+    threadId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onEvent?: (event: LocalAgentActivityEvent) => void,
+  ): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
@@ -382,6 +389,7 @@ class CodexAppServerRpc {
     const turn: CodexTurnAccumulator = {
       threadId,
       items: [],
+      onEvent,
       resolve: resolveTurn,
       reject: rejectTurn,
     };
@@ -454,6 +462,7 @@ class CodexAppServerRpc {
     if (params?.item !== undefined) {
       turn.items.push(params.item);
       if (turn.items.length > MAX_TURN_ITEMS) turn.items.shift();
+      if (turn.onEvent) reportCodexActivity(event.method, params.item, turn.onEvent);
     }
     if (event.method !== "turn/completed" || !turnMatchesEvent(turn, event)) return;
     turn.completed = event;
@@ -469,6 +478,49 @@ class CodexAppServerRpc {
     if (threadId) return this.turns.get(threadId);
     if (!turnId) return undefined;
     return Array.from(this.turns.values()).find((turn) => turn.turnId === turnId);
+  }
+}
+
+export function reportCodexActivity(
+  method: string,
+  item: unknown,
+  onEvent: (event: LocalAgentActivityEvent) => void,
+): void {
+  if (method !== "item/started" && method !== "item/completed") return;
+  const record = asRecord(item);
+  if (!record) return;
+  if (record.type === "agentMessage" || record.type === "agent_message") {
+    if (method === "item/completed" && typeof record.text === "string") onEvent({ type: "message", text: record.text });
+    return;
+  }
+  const tool = codexTool(record);
+  if (!tool) return;
+  if (method === "item/started") {
+    onEvent({ type: "tool_started", ...tool });
+    return;
+  }
+  const failed = record.status === "failed" || record.status === "declined";
+  onEvent({ type: "tool_completed", ...tool, status: failed ? "failed" : "completed" });
+}
+
+function codexTool(item: Record<string, unknown>): { tool: string; summary?: string } | undefined {
+  switch (item.type) {
+    case "commandExecution":
+      return { tool: "shell", summary: summarizeToolInput(item) };
+    case "fileChange": {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const paths = changes.map((change) => readString(change, "path")).filter(Boolean);
+      return { tool: "edit", ...(paths.length > 0 ? { summary: paths.join(", ") } : {}) };
+    }
+    case "mcpToolCall": {
+      const server = directString(item.server);
+      const name = directString(item.tool) ?? "tool";
+      return { tool: server ? `${server}.${name}` : name, summary: summarizeToolInput(item.arguments) };
+    }
+    case "webSearch":
+      return { tool: "web_search", summary: summarizeToolInput(item) };
+    default:
+      return undefined;
   }
 }
 
