@@ -391,7 +391,7 @@ const second = unwrap(await manager.start({
 }));
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
-assert.equal(runtimes.size, 6, "different agents receive independent logical runtimes");
+assert.notEqual(runtimes.get(first.id), runtimes.get(second.id), "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
   target: "reviewer",
