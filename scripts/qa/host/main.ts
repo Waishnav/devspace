@@ -173,10 +173,21 @@ async function mountCard(
   }, CARD_TIMEOUT_MS);
 
   // Connect before loading so the card's ui/initialize request is not missed.
-  iframe.src = "about:blank";
-  await new Promise((resolveLoad) => iframe.addEventListener("load", resolveLoad, { once: true }));
-  await bridge.connect(new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!));
-  iframe.src = `${qaRun.sandboxOrigin}/resource?uri=${encodeURIComponent(step.resourceUri!)}`;
+  // Racing against `settled` lets the timeout end a setup that never loads.
+  const setup = async () => {
+    const loaded = new Promise((resolveLoad) => iframe.addEventListener("load", resolveLoad, { once: true }));
+    iframe.src = "about:blank";
+    await loaded;
+    await bridge.connect(new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!));
+    iframe.src = `${qaRun.sandboxOrigin}/resource?uri=${encodeURIComponent(step.resourceUri!)}`;
+  };
+  try {
+    await Promise.race([setup(), settled]);
+  } catch (error) {
+    status.state = "error";
+    status.error = error instanceof Error ? error.message : String(error);
+    finish();
+  }
 
   await settled;
   window.clearTimeout(timeout);

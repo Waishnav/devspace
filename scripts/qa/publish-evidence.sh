@@ -35,7 +35,8 @@ else
   git -C "$work" remote add origin "$remote_url"
 fi
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+# The temp dir suffix keeps two publications within one second apart.
+stamp="$(date -u +%Y%m%dT%H%M%SZ)-${work##*/}"
 mkdir -p "$work/$stamp"
 for image in "$@"; do
   cp "$image" "$work/$stamp/$(basename "$image")"

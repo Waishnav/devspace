@@ -234,14 +234,19 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
 
     const resourceUri = uiResourceUri(qaRun.tools.find((tool) => tool.name === step.tool));
     if (resourceUri && !qaRun.resources[resourceUri]) {
-      const read = await client.readResource({ uri: resourceUri });
-      const content = read.contents[0];
-      qaRun.resources[resourceUri] = {
-        mimeType: content?.mimeType,
-        html: content && "text" in content ? content.text : "",
-        meta: (content?._meta ?? {}) as Record<string, unknown>,
-      };
+      try {
+        const read = await client.readResource({ uri: resourceUri });
+        const content = read.contents[0];
+        qaRun.resources[resourceUri] = {
+          mimeType: content?.mimeType,
+          html: content && "text" in content ? content.text : "",
+          meta: (content?._meta ?? {}) as Record<string, unknown>,
+        };
+      } catch (caught) {
+        failures.push(`reading UI resource ${resourceUri} failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
     }
+    const cardResource = resourceUri && qaRun.resources[resourceUri] ? resourceUri : undefined;
 
     const qaStep: QaStep = {
       index,
@@ -251,7 +256,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
       result,
       error,
       durationMs,
-      resourceUri: result && !result.isError ? resourceUri : undefined,
+      resourceUri: result && !result.isError ? cardResource : undefined,
       failures,
     };
     qaRun.steps.push(qaStep);
@@ -618,7 +623,7 @@ function renderReport(
     "|---|---|---|---|---|",
     ...qaRun.steps.map((step) => {
       const card = context.browser?.cards.find((item) => item.step === step.index);
-      const status = step.error ? "call failed" : step.result?.isError ? "error" : "ok";
+      const status = step.error ? "call failed" : step.result?.isError ? "error" : step.failures.length ? "failed" : "ok";
       return `| ${step.index} | ${step.label ? `${step.tool} (${step.label})` : step.tool} | ${status}${step.failures.length ? " ✗" : ""} | ${step.durationMs} | ${card ? `${card.state}, ${card.height}px` : step.resourceUri ? "not captured" : "—"} |`;
     }),
     "",
