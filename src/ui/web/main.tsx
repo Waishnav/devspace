@@ -347,7 +347,7 @@ function TurnView({ workspaceId, turn, latest, theme }: {
         <h2 className="turn-title">{turnLabel(turn, latest)}</h2>
         <span className="muted turn-time">
           {formatTime(turn.startedAt)}
-          {turn.closedAt ? ` – ${formatTime(turn.closedAt)}` : " · in progress"}
+          {turn.closedAt ? ` – ${formatEnd(turn.startedAt, turn.closedAt)}` : " · in progress"}
         </span>
       </div>
       {state.status !== "ready" ? <LoadState state={state} /> : (
@@ -551,6 +551,10 @@ function fileAnchor(path: string): string {
 function argumentSummary(args: unknown): string {
   if (typeof args !== "object" || args === null) return "";
   const record = args as Record<string, unknown>;
+  if (typeof record.patch === "string") {
+    const files = [...record.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((match) => match[1]);
+    if (files.length > 0) return truncate(files.join(", "), 120);
+  }
   for (const key of ["cmd", "command", "path", "task", "query"]) {
     if (typeof record[key] === "string") return truncate(record[key] as string, 120);
   }
@@ -590,6 +594,12 @@ function formatDuration(ms: number): string {
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** Omits the date from a range end on the same day as its start. */
+function formatEnd(startIso: string, endIso: string): string {
+  const sameDay = new Date(startIso).toDateString() === new Date(endIso).toDateString();
+  return sameDay ? new Date(endIso).toLocaleTimeString(undefined, { timeStyle: "short" }) : formatTime(endIso);
 }
 
 function relativeTime(iso: string): string {

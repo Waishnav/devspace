@@ -224,13 +224,16 @@ function sessionCookie(req: Request): string | undefined {
   return undefined;
 }
 
-/** Browsers send Origin and Sec-Fetch-Site on form posts; accept only our own origin. */
+/**
+ * Browsers send Sec-Fetch-Site on form posts; older ones send only Origin.
+ * Accept a post only when one of them identifies our own origin.
+ */
 function isSameOriginRequest(req: Request, config: ServerConfig): boolean {
   const fetchSite = req.get("sec-fetch-site");
-  if (fetchSite && fetchSite !== "same-origin") return false;
+  if (fetchSite) return fetchSite === "same-origin";
 
   const origin = req.get("origin");
-  if (!origin) return fetchSite === "same-origin";
+  if (!origin) return false;
   if (origin === new URL(config.publicBaseUrl).origin) return true;
   try {
     return new URL(origin).host === req.get("host");
@@ -256,7 +259,7 @@ function setSecurityHeaders(res: Response): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader(

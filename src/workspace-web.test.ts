@@ -31,6 +31,9 @@ test("workspace pages require an owner session", async (t) => {
   assert.equal(crossSite.status, 403);
   assert.equal(crossSite.headers.get("set-cookie"), null);
 
+  const legacyCrossSite = await login(baseUrl, OWNER_TOKEN, { Origin: "https://evil.example" });
+  assert.equal(legacyCrossSite.status, 403);
+
   const accepted = await login(baseUrl, OWNER_TOKEN, sameOrigin, "/web/w/ws_web");
   assert.equal(accepted.status, 303);
   assert.equal(accepted.headers.get("location"), "/web/w/ws_web");
