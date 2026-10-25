@@ -1,13 +1,20 @@
 {
   "description": "Open an isolated worktree from a dirty checkout and review a change made inside it.",
   "fixture": {
-    "files": { "README.md": "# QA fixture\n\nbaseline line\n" },
-    "dirty": { "README.md": "# QA fixture\n\nuncommitted checkout edit\n" }
+    "files": {
+      "README.md": "# QA fixture\n\nbaseline line\n"
+    },
+    "dirty": {
+      "README.md": "# QA fixture\n\nuncommitted checkout edit\n"
+    }
   },
   "steps": [
     {
       "tool": "open_workspace",
-      "arguments": { "path": "{{fixture}}", "mode": "worktree" }
+      "arguments": {
+        "path": "{{fixture}}",
+        "mode": "worktree"
+      }
     },
     {
       "tool": "apply_patch",
@@ -18,7 +25,14 @@
     },
     {
       "tool": "show_changes",
-      "arguments": { "workspace_id": "{{workspace_id}}" }
+      "arguments": {
+        "workspace_id": "{{workspace_id}}"
+      },
+      "expect": {
+        "text": [
+          "Changed 1 file"
+        ]
+      }
     }
   ]
 }

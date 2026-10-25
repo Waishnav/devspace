@@ -14,6 +14,13 @@ fi
 
 pr="$1"
 shift
+
+# Names become URLs, so two files with one basename would silently share a link.
+duplicates="$(for image in "$@"; do basename "$image"; done | sort | uniq -d)"
+if [ -n "$duplicates" ]; then
+  echo "duplicate image names; rename before publishing: $duplicates" >&2
+  exit 2
+fi
 branch="qa-evidence/pr-${pr}"
 remote_url="$(git remote get-url origin)"
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"

@@ -183,7 +183,21 @@ async function runScenario(
 async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Promise<void> {
   const variables: Record<string, string | undefined> = { fixture: qaRun.fixture };
   for (const [index, step] of scenario.steps.entries()) {
-    const args = resolveTemplates(step.arguments, variables) as Record<string, unknown>;
+    let args: Record<string, unknown>;
+    try {
+      args = resolveTemplates(step.arguments, variables) as Record<string, unknown>;
+    } catch (caught) {
+      // Later steps depend on this one, so stop here but keep the evidence gathered so far.
+      qaRun.steps.push({
+        index,
+        label: step.label,
+        tool: step.tool,
+        arguments: step.arguments,
+        durationMs: 0,
+        failures: [caught instanceof Error ? caught.message : String(caught)],
+      });
+      break;
+    }
     const startedAt = performance.now();
     const failures: string[] = [];
     let result: CallToolResult | undefined;
@@ -275,7 +289,10 @@ async function startServer(checkout: string, logPath: string, env: NodeJS.Proces
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stderr?.pipe(log);
+  // Both streams write into one log, so neither may end it; close it when the process exits.
+  log.on("error", (error) => console.warn(`Could not write ${logPath}:`, error));
+  child.stderr?.on("data", (chunk: Buffer) => log.write(chunk));
+  child.once("close", () => log.end());
   let output = "";
   const listening = new Promise<void>((resolveListening, reject) => {
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -407,6 +424,11 @@ async function startHost(
         return;
       }
       if (url.pathname === "/api/call" && req.method === "POST") {
+        // The bridge proxies real tool calls such as exec_command, so only the host page may use it.
+        if (req.headers.origin !== hostOrigin || !req.headers["content-type"]?.startsWith("application/json")) {
+          res.writeHead(403).end("Forbidden");
+          return;
+        }
         const body = JSON.parse(await readBody(req)) as {
           step: number;
           name: string;

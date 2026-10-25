@@ -60,6 +60,11 @@
       "tool": "show_changes",
       "arguments": {
         "workspace_id": "{{workspace_id}}"
+      },
+      "expect": {
+        "text": [
+          "Changed 2 files (+4 -1)"
+        ]
       }
     }
   ]
