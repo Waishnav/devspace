@@ -1,0 +1,54 @@
+{
+  "description": "Experimental Code Mode (DEVSPACE_EXPERIMENTAL_CODE_MODE=1): open a checkout, run one execute script that reads, patches, and runs a command, then review the changes.",
+  "env": {
+    "DEVSPACE_EXPERIMENTAL_CODE_MODE": "1"
+  },
+  "host": {
+    "clientName": "ChatGPT",
+    "userAgent": "openai-mcp/1.0.0"
+  },
+  "fixture": {
+    "files": {
+      "AGENTS.md": "# Fixture\n\nKeep changes small.\n",
+      "README.md": "# QA fixture\n\nbaseline line\n",
+      "src/greet.ts": "export function greet(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+    }
+  },
+  "steps": [
+    {
+      "tool": "open_workspace",
+      "arguments": {
+        "path": "{{fixture}}"
+      },
+      "expect": {
+        "text": [
+          "declare const tools",
+          "apply_patch("
+        ]
+      }
+    },
+    {
+      "tool": "execute",
+      "label": "read, patch, and run git status in one script",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "yield_time_ms": 12000,
+        "code": "const readme = await tools.read({ path: \"README.md\" });\nawait tools.apply_patch({ patch: \"*** Begin Patch\\n*** Update File: src/greet.ts\\n@@\\n export function greet(name: string): string {\\n-  return `Hello, ${name}`;\\n+  return `Hello, ${name.trim()}!`;\\n }\\n*** Add File: src/farewell.ts\\n+export function farewell(name: string): string {\\n+  return `Goodbye, ${name}`;\\n+}\\n*** End Patch\" });\nconst status = await tools.exec_command({ cmd: \"git status --short\" });\nreturn { readme: readme.result.includes(\"baseline line\"), status: status.result.trim() };"
+      },
+      "expect": {
+        "text": [
+          "\"status\":\"completed\"",
+          "\"readme\":true",
+          "src/greet.ts",
+          "src/farewell.ts"
+        ]
+      }
+    },
+    {
+      "tool": "show_changes",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}"
+      }
+    }
+  ]
+}
