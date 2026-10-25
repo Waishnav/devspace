@@ -23,9 +23,9 @@ import {
   type OpencodeV2Factory,
 } from "./local-agent-opencode-v2.js";
 import {
-  createOpenCodeRuntimeProbe,
+  probeOpenCodeBinary,
   requireOpenCodeV1NativeSessionId,
-  type OpenCodeRuntimeProbe,
+  type OpenCodeRuntimeProbeFunction,
 } from "./local-agent-opencode-version.js";
 
 const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
@@ -155,18 +155,18 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   private readonly factory: OpencodeFactory;
   private readonly v2Factory: OpencodeV2Factory;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly runtimeProbe: OpenCodeRuntimeProbe;
+  private readonly probeRuntime: OpenCodeRuntimeProbeFunction;
 
   constructor(options: {
     factory?: OpencodeFactory;
     v2Factory?: OpencodeV2Factory;
     env?: NodeJS.ProcessEnv;
-    runtimeProbe?: OpenCodeRuntimeProbe;
+    probeRuntime?: OpenCodeRuntimeProbeFunction;
   } = {}) {
     this.factory = options.factory ?? defaultOpencodeFactory;
     this.v2Factory = options.v2Factory ?? defaultOpencodeV2Factory;
     this.env = options.env ?? process.env;
-    this.runtimeProbe = options.runtimeProbe ?? createOpenCodeRuntimeProbe(this.env);
+    this.probeRuntime = options.probeRuntime ?? (() => probeOpenCodeBinary(this.env));
   }
 
   runtimeKey(_context: LocalAgentRuntimeContext): string {
@@ -179,7 +179,8 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       agentId: context.agentId,
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
-        const runtime = await this.runtimeProbe.get();
+        // Probe on every runtime creation so an upgraded executable is routed to the matching protocol generation.
+        const runtime = await this.probeRuntime();
         if (runtime.generation === "v2") {
           const { client, server } = await this.v2Factory(context, this.env);
           return new OpencodeV2Runtime(client, server);

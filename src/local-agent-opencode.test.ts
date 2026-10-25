@@ -11,12 +11,9 @@ import {
   type OpencodeClientLike,
   type OpencodeFactory,
 } from "./local-agent-opencode.js";
-import { OpenCodeRuntimeProbe } from "./local-agent-opencode-version.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 
-function v1Probe(): OpenCodeRuntimeProbe {
-  return new OpenCodeRuntimeProbe(async () => ({ generation: "v1", version: "1.17.13" }));
-}
+const probeV1 = async () => ({ generation: "v1", version: "1.17.13" }) as const;
 
 let sessionNumber = 0;
 const createInputs: unknown[] = [];
@@ -61,7 +58,7 @@ const factory: OpencodeFactory = async (_context, env) => {
 const driver = new OpencodeLocalAgentDriver({
   factory,
   env: { HARNESS_ENV: "opencode" },
-  runtimeProbe: v1Probe(),
+  probeRuntime: probeV1,
 });
 const pool = new LocalAgentRuntimePool();
 
@@ -152,7 +149,7 @@ if (process.platform !== "win32") {
         HOLDER_LAUNCHER: holderLauncher,
         NODE_EXECUTABLE: process.execPath,
       },
-      runtimeProbe: v1Probe(),
+      probeRuntime: probeV1,
     });
     const created = await envDriver.createRuntime({
       agentId: "agt_env",
@@ -298,7 +295,7 @@ const applicationErrorDriver = new OpencodeLocalAgentDriver({
     client: applicationErrorClient,
     server: { close: () => undefined },
   }),
-  runtimeProbe: v1Probe(),
+  probeRuntime: probeV1,
 });
 const applicationFailure = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
@@ -331,7 +328,7 @@ const recoveringDriver = new OpencodeLocalAgentDriver({
     healthAvailable = true;
     return { client, server: { close: () => undefined } };
   },
-  runtimeProbe: v1Probe(),
+  probeRuntime: probeV1,
 });
 const recoveringPool = new LocalAgentRuntimePool();
 await recoveringPool.run(recoveringDriver, {

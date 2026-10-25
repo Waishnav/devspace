@@ -19,33 +19,6 @@ export type OpenCodeRuntimeProbeFunction = () => Promise<ProbedOpenCodeRuntime>;
 
 const OPENCODE_V2_SESSION_PREFIX = "opencode:v2:";
 
-export class OpenCodeRuntimeProbe {
-  private lastSuccessfulProbe?: ProbedOpenCodeRuntime;
-
-  constructor(private readonly probe: OpenCodeRuntimeProbeFunction) {}
-
-  async get(): Promise<ProbedOpenCodeRuntime> {
-    if (this.lastSuccessfulProbe) return this.lastSuccessfulProbe;
-    return this.refresh();
-  }
-
-  async refresh(): Promise<ProbedOpenCodeRuntime> {
-    const result = await this.probe();
-    this.lastSuccessfulProbe = result;
-    return result;
-  }
-
-  lastSuccess(): ProbedOpenCodeRuntime | undefined {
-    return this.lastSuccessfulProbe;
-  }
-}
-
-export function createOpenCodeRuntimeProbe(
-  env: NodeJS.ProcessEnv = process.env,
-): OpenCodeRuntimeProbe {
-  return new OpenCodeRuntimeProbe(() => probeOpenCodeBinary(env));
-}
-
 export function classifyOpenCodeCliVersion(output: string): ProbedOpenCodeRuntime | undefined {
   const match = output.trim().match(/(?:^|\s)v?((\d+)\.\d+\.\d+(?:[-+][^\s]+)?)(?:$|\s)/);
   if (!match?.[1] || !match[2]) return undefined;
@@ -135,7 +108,9 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
         operation: "probe_version",
         retryable: true,
         cause,
-        message: "OpenCode executable is unavailable.",
+        message: (cause as NodeJS.ErrnoException).code === "ENOENT"
+          ? "OpenCode executable is unavailable."
+          : `OpenCode version probe failed to start: ${cause.message}`,
       }));
     });
     child.once("exit", (code) => {

@@ -9,7 +9,6 @@ import {
 } from "./local-agent-opencode-v2.js";
 import type { SessionMessageAssistant } from "@opencode/client";
 import { OpencodeLocalAgentDriver } from "./local-agent-opencode.js";
-import { OpenCodeRuntimeProbe } from "./local-agent-opencode-version.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 
 const createInputs: unknown[] = [];
@@ -200,7 +199,7 @@ const routedDriver = new OpencodeLocalAgentDriver({
     v2FactoryCalls += 1;
     return { client, server: { close: () => undefined } };
   },
-  runtimeProbe: new OpenCodeRuntimeProbe(async () => ({ generation: "v2", version: "2.0.20" })),
+  probeRuntime: async () => ({ generation: "v2", version: "2.0.20" }),
 });
 const routedPool = new LocalAgentRuntimePool();
 const routed = await routedPool.run(routedDriver, {
@@ -216,3 +215,28 @@ assert.equal(routed.isOk(), true);
 assert.equal(v1FactoryCalls, 0);
 assert.equal(v2FactoryCalls, 1);
 await routedPool.close();
+
+// A runtime created after OpenCode is upgraded must follow the installed executable, not a stale probe.
+let installedGeneration: "v1" | "v2" = "v1";
+const calls = { v1: 0, v2: 0 };
+const upgradingDriver = new OpencodeLocalAgentDriver({
+  factory: async () => {
+    calls.v1 += 1;
+    throw new Error("stop after routing");
+  },
+  v2Factory: async () => {
+    calls.v2 += 1;
+    throw new Error("stop after routing");
+  },
+  probeRuntime: async () => ({ generation: installedGeneration, version: "x.y.z" }),
+});
+const upgradeContext = {
+  agentId: "agt_upgrade",
+  providerInstanceId: "opencode",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+} as const;
+await upgradingDriver.createRuntime(upgradeContext);
+installedGeneration = "v2";
+await upgradingDriver.createRuntime(upgradeContext);
+assert.deepEqual(calls, { v1: 1, v2: 1 });
