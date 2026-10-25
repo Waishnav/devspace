@@ -555,7 +555,8 @@ async function captureBrowserEvidence(
 
     // Shrink to the page so screenshots have no trailing blank space; every card
     // stays inside the viewport, so nothing needs scrolling or lazy painting.
-    const pageHeight = Number(JSON.parse(await browser("eval", "document.documentElement.scrollHeight")));
+    // scrollHeight never drops below the viewport, so measure the content itself.
+    const pageHeight = Number(JSON.parse(await browser("eval", "Math.ceil(document.body.getBoundingClientRect().height)")));
     await browser("set", "viewport", "1280", String(Math.min(Math.max(pageHeight, 900), RENDER_VIEWPORT_HEIGHT)));
     await browser("wait", "500");
     const page = join(artifacts, "page.png");
