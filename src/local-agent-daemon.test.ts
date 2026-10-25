@@ -101,6 +101,21 @@ class FakeManager implements LocalAgentDaemonManager {
     return Result.ok({ ...record, status: "stopped" } as LocalAgentRecord);
   }
 
+  lastEventsQuery?: unknown;
+
+  events(agentId: string, _scope: unknown, query?: { turnId?: string; afterSeq?: number }) {
+    this.lastEventsQuery = query;
+    return Result.ok({
+      agentId,
+      turnId: "trn_test",
+      status: "running" as const,
+      events: [
+        { type: "turn_started" as const, turnId: "trn_test", seq: 1, at: "now" },
+        { type: "tool_started" as const, tool: "bash", summary: "pnpm test", turnId: "trn_test", seq: 2, at: "now" },
+      ],
+    });
+  }
+
   async evictIdle(): Promise<void> {}
 
   async close(): Promise<void> {
@@ -180,6 +195,10 @@ try {
     { id: record.id, status: "running" },
   ]);
   assert.equal(unwrap(await client.stopAgent(record.id, recordScope)).status, "stopped");
+  const events = unwrap(await client.events(record.id, recordScope, { afterSeq: 0 }));
+  assert.deepEqual(manager.lastEventsQuery, { turnId: undefined, afterSeq: 0 });
+  assert.equal(events.turnId, "trn_test");
+  assert.deepEqual(events.events.map((event) => event.type), ["turn_started", "tool_started"]);
   assert.equal(unwrap(await client.status()).state, "ready");
 
   unwrap(await client.stop());

@@ -4,10 +4,14 @@ import type {
   LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import type {
+  LocalAgentFailure,
+  LocalAgentTurnEvents,
+  LocalAgentTurnEventsQuery,
   LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
+import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
 import { isLocalAgentDriverKind } from "./local-agent-provider.js";
@@ -20,6 +24,7 @@ export type LocalAgentDaemonMethod =
   | "agent.list"
   | "agent.wait"
   | "agent.stop"
+  | "agent.events"
   | "daemon.status"
   | "daemon.stop"
   | "daemon.logs";
@@ -36,6 +41,7 @@ export type LocalAgentDaemonRequest =
       timeoutMs?: number;
     }>
   | AgentDaemonRequestBase<"agent.stop", { id: string; scope: LocalAgentWorkspaceScope }>
+  | AgentDaemonRequestBase<"agent.events", { id: string; scope: LocalAgentWorkspaceScope } & LocalAgentTurnEventsQuery>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.stop", { ifIdle?: boolean }>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
@@ -182,6 +188,14 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
           scope: decodeWorkspaceScope(asRecord(params)?.scope),
         },
       } as LocalAgentDaemonRequest;
+    case "agent.events":
+      return {
+        requestId,
+        protocolVersion,
+        authToken,
+        method,
+        params: decodeEventsParams(params),
+      } as LocalAgentDaemonRequest;
     case "daemon.logs":
       return {
         requestId,
@@ -246,6 +260,8 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     error: optionalContentString(record?.error),
     errorCode: optionalString(record?.errorCode),
     errorRetryable: optionalBoolean(record?.errorRetryable),
+    errorDetail: optionalContentString(record?.errorDetail),
+    latestTurnId: optionalString(record?.latestTurnId),
     createdAt: requiredString(record?.createdAt, "createdAt"),
     updatedAt: requiredString(record?.updatedAt, "updatedAt"),
   };
@@ -288,6 +304,61 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
         throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait result status.");
     }
   });
+}
+
+export function decodeTurnEvents(value: unknown): LocalAgentTurnEvents {
+  const record = asRecord(value);
+  const status = requiredString(record?.status, "status");
+  if (status !== "running" && status !== "completed" && status !== "failed" && status !== "stopped") {
+    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid turn status.");
+  }
+  if (!Array.isArray(record?.events)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid turn events.");
+  }
+  return {
+    agentId: requiredString(record.agentId, "agentId"),
+    turnId: requiredString(record.turnId, "turnId"),
+    status,
+    events: record.events.map(decodeTurnEvent),
+  };
+}
+
+function decodeTurnEvent(value: unknown): LocalAgentTurnEvent {
+  const record = asRecord(value);
+  const base = {
+    turnId: requiredString(record?.turnId, "event.turnId"),
+    seq: requiredInteger(record?.seq, "event.seq"),
+    at: requiredString(record?.at, "event.at"),
+  };
+  const type = requiredString(record?.type, "event.type");
+  const summary = optionalContentString(record?.summary);
+  switch (type) {
+    case "turn_started":
+      return { type, ...base };
+    case "message":
+      return { type, text: requiredContentString(record?.text, "event.text"), ...base };
+    case "tool_started":
+      return { type, tool: requiredString(record?.tool, "event.tool"), ...(summary ? { summary } : {}), ...base };
+    case "tool_completed": {
+      const status = requiredString(record?.status, "event.status");
+      if (status !== "completed" && status !== "failed") break;
+      return { type, tool: requiredString(record?.tool, "event.tool"), ...(summary ? { summary } : {}), status, ...base };
+    }
+    case "turn_completed": {
+      const status = requiredString(record?.status, "event.status");
+      if (status !== "completed" && status !== "failed" && status !== "stopped") break;
+      const errorCode = optionalString(record?.errorCode);
+      const droppedEvents = typeof record?.droppedEvents === "number" ? record.droppedEvents : undefined;
+      return {
+        type,
+        status,
+        ...(errorCode ? { errorCode } : {}),
+        ...(droppedEvents ? { droppedEvents } : {}),
+        ...base,
+      };
+    }
+  }
+  throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid turn event.");
 }
 
 export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
@@ -418,12 +489,29 @@ function decodeWaitParams(value: unknown): {
   };
 }
 
-function decodeWaitError(value: unknown): { code: string; message: string; retryable: boolean } {
+function decodeWaitError(value: unknown): LocalAgentFailure {
   const record = asRecord(value);
+  const detail = optionalContentString(record?.detail);
   return {
     code: requiredString(record?.code, "error.code"),
     message: requiredContentString(record?.message, "error.message"),
     retryable: optionalBoolean(record?.retryable) ?? false,
+    ...(detail ? { detail } : {}),
+  };
+}
+
+function decodeEventsParams(value: unknown): { id: string; scope: LocalAgentWorkspaceScope } & LocalAgentTurnEventsQuery {
+  const record = asRecord(value);
+  const afterSeq = record?.afterSeq;
+  if (afterSeq !== undefined && (typeof afterSeq !== "number" || !Number.isSafeInteger(afterSeq) || afterSeq < 0)) {
+    throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "afterSeq must be a non-negative integer.");
+  }
+  const turnId = optionalString(record?.turnId);
+  return {
+    id: requiredString(record?.id, "id"),
+    scope: decodeWorkspaceScope(record?.scope),
+    ...(turnId ? { turnId } : {}),
+    ...(afterSeq === undefined ? {} : { afterSeq }),
   };
 }
 

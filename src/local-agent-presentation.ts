@@ -1,4 +1,5 @@
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
+import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentRecord, LocalAgentStatus } from "./local-agent-store.js";
 
 export type AgentCommandStatus = "running" | "completed" | "failed" | "stopped";
@@ -26,6 +27,7 @@ export interface AgentTargetCatalogOutput {
 export interface AgentReceiptOutput {
   id: string;
   status: AgentCommandStatus;
+  turnId?: string;
 }
 
 export interface AgentSummaryOutput extends AgentReceiptOutput {
@@ -36,6 +38,8 @@ export interface AgentFailureOutput {
   code: string;
   message: string;
   retryable: boolean;
+  /** The provider's own explanation, redacted and bounded. */
+  detail?: string;
 }
 
 export interface AgentCommandErrorOutput {
@@ -45,11 +49,12 @@ export interface AgentCommandErrorOutput {
   agentId?: string;
 }
 
-export type AgentObservationOutput =
+export type AgentObservationOutput = { turnId?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: AgentFailureOutput }
-  | { id: string; status: "stopped"; error?: AgentFailureOutput };
+  | { id: string; status: "stopped"; error?: AgentFailureOutput }
+);
 
 export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTargetCatalogOutput {
   return {
@@ -75,7 +80,11 @@ export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTarg
 }
 
 export function presentAgentReceipt(record: LocalAgentRecord): AgentReceiptOutput {
-  return { id: record.id, status: presentAgentStatus(record.status) };
+  return {
+    id: record.id,
+    status: presentAgentStatus(record.status),
+    ...(record.latestTurnId ? { turnId: record.latestTurnId } : {}),
+  };
 }
 
 export function presentAgentSummary(record: LocalAgentRecord): AgentSummaryOutput {
@@ -100,7 +109,7 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
         ...(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : {}),
       };
     case "running":
-      return { id: receipt.id, status: "running" };
+      return { ...receipt, status: "running" };
   }
 }
 
@@ -115,29 +124,67 @@ export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): str
 }
 
 export function formatAgentReceipt(receipt: AgentReceiptOutput): string {
-  return `<agent id="${escapeXmlAttribute(receipt.id)}" status="${receipt.status}"/>`;
+  return `<agent${agentAttributes(receipt)}/>`;
 }
 
 export function formatAgentSummary(summary: AgentSummaryOutput): string {
-  return `<agent id="${escapeXmlAttribute(summary.id)}" status="${summary.status}" target="${escapeXmlAttribute(summary.target)}"/>`;
+  return `<agent${agentAttributes(summary, { target: summary.target })}/>`;
 }
 
 export function formatAgentObservation(observation: AgentObservationOutput): string {
   if (observation.status === "running" && observation.wait) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="running" wait="${observation.wait}"/>`;
+    return `<agent${agentAttributes(observation, { wait: observation.wait })}/>`;
   }
   if (observation.status === "completed" && observation.response !== undefined) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="completed">${escapeXmlText(observation.response)}</agent>`;
+    return `<agent${agentAttributes(observation)}>${escapeXmlText(observation.response)}</agent>`;
   }
   if ((observation.status === "failed" || observation.status === "stopped") && observation.error) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="${observation.status}" code="${escapeXmlAttribute(observation.error.code)}" retryable="${observation.error.retryable}">${escapeXmlText(observation.error.message)}</agent>`;
+    const { code, retryable, message, detail } = observation.error;
+    const cause = detail ? `<cause>${escapeXmlText(detail)}</cause>` : "";
+    return `<agent${agentAttributes(observation, { code, retryable: String(retryable) })}>${escapeXmlText(message)}${cause}</agent>`;
   }
   return formatAgentReceipt(observation);
+}
+
+export function formatAgentTurnEvent(event: LocalAgentTurnEvent): string {
+  const base = { seq: String(event.seq), type: event.type, turn: event.turnId };
+  switch (event.type) {
+    case "turn_started":
+      return `<event${xmlAttributes({ ...base, at: event.at })}/>`;
+    case "message":
+      return `<event${xmlAttributes(base)}>${escapeXmlText(event.text)}</event>`;
+    case "tool_started":
+    case "tool_completed": {
+      const attributes = xmlAttributes({
+        ...base,
+        tool: event.tool,
+        status: event.type === "tool_completed" ? event.status : undefined,
+      });
+      return event.summary
+        ? `<event${attributes}>${escapeXmlText(event.summary)}</event>`
+        : `<event${attributes}/>`;
+    }
+    case "turn_completed":
+      return `<event${xmlAttributes({
+        ...base,
+        status: event.status,
+        code: event.errorCode,
+        dropped: event.droppedEvents === undefined ? undefined : String(event.droppedEvents),
+        at: event.at,
+      })}/>`;
+  }
 }
 
 export function formatAgentCommandError(error: AgentCommandErrorOutput): string {
   const agentId = error.agentId ? ` agent-id="${escapeXmlAttribute(error.agentId)}"` : "";
   return `<error code="${escapeXmlAttribute(error.code)}" retryable="${error.retryable ?? false}"${agentId}>${escapeXmlText(error.message)}</error>`;
+}
+
+function agentAttributes(
+  agent: { id: string; status: string; turnId?: string },
+  extra: Record<string, string | undefined> = {},
+): string {
+  return xmlAttributes({ id: agent.id, status: agent.status, turn: agent.turnId, ...extra });
 }
 
 function xmlAttributes(values: Record<string, string | undefined>): string {
@@ -186,5 +233,6 @@ function presentAgentFailure(record: LocalAgentRecord): AgentFailureOutput {
     code: record.errorCode ?? "AGENT_FAILED",
     message: record.error ?? "Subagent failed without an error message.",
     retryable: record.errorRetryable ?? false,
+    ...(record.errorDetail ? { detail: record.errorDetail } : {}),
   };
 }

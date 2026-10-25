@@ -28,7 +28,7 @@ devspace agents run <profile-or-provider> "<brief>"
 devspace agents run <profile-or-provider> --model <model> --effort <effort> "<brief>"
 ```
 
-The command returns an `<agent id="agt_..." status="running"/>` receipt. Keep the DevSpace agent ID for inspection, waiting, or follow-up.
+The command returns an `<agent id="agt_..." status="running" turn="trn_..."/>` receipt. Keep the DevSpace agent ID for inspection, waiting, or follow-up.
 
 ## Wait or inspect
 
@@ -40,7 +40,7 @@ devspace agents wait <id> <id> <id>
 devspace agents wait <id> <id> --timeout 60
 ```
 
-Without `--timeout`, the command waits until every named agent's current work finishes. A timeout returns one fragment per unique agent in first-seen order; unfinished work has `status="running" wait="timeout"`. Completed output is the element text. Failures include `code` and `retryable` attributes. The command does not stream partial results.
+Without `--timeout`, the command waits until every named agent's current work finishes. A timeout returns one fragment per unique agent in first-seen order; unfinished work has `status="running" wait="timeout"`. Completed output is the element text. Failures include `code` and `retryable` attributes, and a `<cause>` with the provider's explanation when one exists. The command does not stream partial results.
 
 Use `show` for an immediate snapshot. Do not poll it when `wait` can express the dependency.
 
@@ -50,6 +50,14 @@ devspace agents ls
 ```
 
 `ls` lists agents for the current project. Empty `targets` and `ls` results print nothing.
+
+To see what a running agent is doing, print its current turn's activity. Each `<event>` is a tool call, an assistant message, or the turn starting or ending:
+
+```bash
+devspace agents events <id>
+```
+
+`--follow` keeps printing until the turn ends. Use it when the user wants to watch progress, not as a substitute for `wait`.
 
 ## Continue related work
 
