@@ -37,6 +37,7 @@ let fatalError: ErrorPayload | undefined;
 let logBytes = 0;
 let logEntries = 0;
 let shuttingDown = false;
+let unflushed = 0;
 const parentPid = process.ppid;
 const pending = new Map<number, QuickJSDeferredPromise>();
 
@@ -405,14 +406,21 @@ function cleanup(): void {
   context = undefined;
   runtime = undefined;
   shuttingDown = true;
-  if (process.connected) process.disconnect?.();
+  disconnectWhenFlushed();
+}
+
+// Disconnecting before queued messages are written would drop the result the parent is waiting for.
+function disconnectWhenFlushed(): void {
+  if (shuttingDown && unflushed === 0 && process.connected) process.disconnect?.();
 }
 
 function send(message: unknown): void {
   if (!process.connected) return;
+  unflushed += 1;
   try {
-    process.send?.(message as never, () => undefined);
+    process.send?.(message as never, () => { unflushed -= 1; disconnectWhenFlushed(); });
   } catch {
+    unflushed -= 1;
     if (!shuttingDown) process.exit(1);
   }
 }

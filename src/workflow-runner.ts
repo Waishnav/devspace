@@ -91,6 +91,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
   let eventEntries = 0;
   let stderr = "";
   let eventChain = Promise.resolve();
+  let resultReceived = false;
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8_192); });
 
@@ -117,13 +118,21 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
     input.signal?.addEventListener("abort", abort, { once: true });
 
     child.once("error", (error) => fatal(new WorkflowError("WORKFLOW_RUNNER_FAILED", error.message)));
+    // The child sends its result and then disconnects; `exit` can be observed before the
+    // message is delivered, so report the exit only once the IPC channel has drained.
     child.once("exit", (code, signal) => {
-      if (settled) return;
-      const detail = stderr.trim() ? `: ${stderr.trim()}` : "";
-      fatal(new WorkflowError(
-        "WORKFLOW_RUNNER_EXITED",
-        `Workflow runner exited before returning a result (${signal ?? code ?? "unknown"})${detail}`,
-      ));
+      const report = () => {
+        if (settled || resultReceived) return;
+        const detail = stderr.trim() ? `: ${stderr.trim()}` : "";
+        fatal(new WorkflowError(
+          "WORKFLOW_RUNNER_EXITED",
+          `Workflow runner exited before returning a result (${signal ?? code ?? "unknown"})${detail}`,
+        ));
+      };
+      if (!child.connected) return void setImmediate(report);
+      const grace = setTimeout(report, 1_000);
+      grace.unref();
+      child.once("disconnect", () => { clearTimeout(grace); setImmediate(report); });
     });
     child.on("message", (message: unknown) => {
       if (settled || !isRecord(message) || typeof message.type !== "string") return;
@@ -165,6 +174,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
           fatal(error);
           return;
         }
+        resultReceived = true;
         void eventChain.then(() => finish(undefined, result), fatal);
       }
     });

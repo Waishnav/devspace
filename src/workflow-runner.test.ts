@@ -102,6 +102,15 @@ assert.equal(phased, "review");
 assert.deepEqual(events.map(({ type }) => type), ["phase_started", "phase_completed", "log"]);
 assert.deepEqual(events[2]?.data, ["done", "review"]);
 
+// A slow async onEvent must not turn the child's exit after its result into a runner failure.
+const slowEvents: string[] = [];
+assert.equal(await runWorkflowScript({
+  source: `log("late"); return "kept";`,
+  onAgent: () => null,
+  onEvent: async (type) => { await delay(150); slowEvents.push(type); },
+}), "kept");
+assert.deepEqual(slowEvents, ["log"]);
+
 const nested = await runWorkflowScript({
   source: `return workflow("child", { n: 1 });`,
   onAgent: () => null,
