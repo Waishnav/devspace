@@ -1,0 +1,36 @@
+name: Diag
+on:
+  pull_request:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep bubblewrap socat apparmor-utils
+      - name: Probe
+        continue-on-error: true
+        run: |
+          set +e
+          uname -a; cat /etc/os-release | head -3; bwrap --version; id
+          echo "--- sysctls"; sysctl -a 2>/dev/null | grep -Ei 'userns|max_user_namespaces|unprivileged|apparmor' 
+          echo "--- aa-status"; sudo aa-status 2>&1 | head -40
+          echo "--- apparmor.d"; ls /etc/apparmor.d | head -60; cat /etc/apparmor.d/bwrap* 2>/dev/null
+          echo "--- my label"; cat /proc/self/attr/current
+          SEC=$(ls -d node_modules/.pnpm/@anthropic-ai+sandbox-runtime@*/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp)
+          echo "--- bwrap plain user"; bwrap --unshare-user --ro-bind / / true; echo rc=$?
+          echo "--- bwrap userns + cap-drop ALL + unshare -U"; bwrap --unshare-user --cap-drop ALL --ro-bind / / --proc /proc unshare -U true; echo rc=$?
+          echo "--- bwrap exact (cap-drop ALL, --proc) + apply-seccomp"; bwrap --unshare-user --unshare-pid --cap-drop ALL --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
+          echo "--- bwrap weaker (no cap-drop, bind /proc) + apply-seccomp"; bwrap --unshare-user --unshare-pid --ro-bind / / --bind /proc /proc "$SEC" true; echo rc=$?
+          echo "--- bwrap unshare-user only + apply-seccomp"; bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
+          echo "--- direct apply-seccomp"; "$SEC" true; echo rc=$?
+          echo "--- dmesg"; sudo dmesg 2>&1 | grep -i 'apparmor\|userns' | tail -20
+          echo "--- journal"; sudo journalctl -k --no-pager 2>&1 | grep -i 'apparmor.*userns\|DENIED' | tail -20
+          echo "--- after setting sysctls to 0"
+          for k in $(sysctl -a 2>/dev/null | grep -E '^kernel\.apparmor_restrict' | cut -d= -f1); do sudo sysctl -w $k=0; done
+          bwrap --unshare-user --unshare-pid --cap-drop ALL --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
