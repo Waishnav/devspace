@@ -1,0 +1,50 @@
+{
+  "description": "Two turns in one checkout: patch and review, then patch, run a command, and review again.",
+  "host": { "clientName": "ChatGPT", "userAgent": "openai-mcp/1.0.0" },
+  "fixture": {
+    "files": {
+      "AGENTS.md": "# Fixture\n\nKeep changes small.\n",
+      "README.md": "# QA fixture\n\nbaseline line\n",
+      "src/greet.ts": "export function greet(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+    }
+  },
+  "steps": [
+    {
+      "tool": "open_workspace",
+      "arguments": { "path": "{{fixture}}" }
+    },
+    {
+      "tool": "apply_patch",
+      "label": "turn 1: update greet, add farewell",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "patch": "*** Begin Patch\n*** Update File: src/greet.ts\n@@\n export function greet(name: string): string {\n-  return `Hello, ${name}`;\n+  return `Hello, ${name.trim()}!`;\n }\n*** Add File: src/farewell.ts\n+export function farewell(name: string): string {\n+  return `Goodbye, ${name}`;\n+}\n*** End Patch"
+      }
+    },
+    {
+      "tool": "show_changes",
+      "label": "close turn 1",
+      "arguments": { "workspace_id": "{{workspace_id}}" },
+      "expect": { "text": ["Changed 2 files"] }
+    },
+    {
+      "tool": "apply_patch",
+      "label": "turn 2: document greet",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n # QA fixture\n \n-baseline line\n+baseline line\n+\n+Call `greet(name)` to say hello.\n*** End Patch"
+      }
+    },
+    {
+      "tool": "exec_command",
+      "arguments": { "workspace_id": "{{workspace_id}}", "cmd": "git status --short" },
+      "expect": { "text": ["README.md"] }
+    },
+    {
+      "tool": "show_changes",
+      "label": "close turn 2",
+      "arguments": { "workspace_id": "{{workspace_id}}" },
+      "expect": { "text": ["Changed 1 file"] }
+    }
+  ]
+}

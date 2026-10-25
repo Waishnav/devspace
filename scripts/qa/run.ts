@@ -84,6 +84,9 @@ async function main(): Promise<void> {
 
     if (options.serve) {
       console.log(`\nQA host:   ${outcome.hostUrl}`);
+      // The owner token is generated per run; it signs in to the server's own pages.
+      console.log(`Server:    ${outcome.serverUrl}`);
+      console.log(`Owner token: ${outcome.ownerToken}`);
       console.log(`Server log: ${outcome.serverLog}`);
       console.log("Keeping the server and host running. Press Ctrl-C to stop.");
       await waitForSignal();
@@ -94,6 +97,8 @@ async function main(): Promise<void> {
 }
 
 interface ScenarioOutcome {
+  serverUrl: string;
+  ownerToken: string;
   failures: string[];
   reportPath: string;
   hostUrl: string;
@@ -177,7 +182,7 @@ async function runScenario(
 
   const reportPath = join(runDir, "report.md");
   await writeFile(reportPath, renderReport(qaRun, { failures, browser, hostUrl, serverLog, transcriptPath }));
-  return { failures, reportPath, hostUrl, serverLog };
+  return { serverUrl: baseUrl, ownerToken, failures, reportPath, hostUrl, serverLog };
 }
 
 async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Promise<void> {
