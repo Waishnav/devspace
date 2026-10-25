@@ -30,6 +30,14 @@ const commented = parseWorkflowScript(`// @ts-check
 export const meta = { name: "commented" }; return 1;`);
 assert.equal(commented.meta.name, "commented");
 assert.equal(commented.body.trim(), "return 1;");
+// Long whitespace runs that do not lead to a meta declaration must fail fast (no regex backtracking blowup).
+const slowStart = Date.now();
+for (const filler of [" ", "\n", "\r\n", " //a\n"]) {
+  const source = `${filler.repeat(5_000)}return 1;`;
+  assert.equal(parseWorkflowScript(source).body, source);
+}
+assert.ok(Date.now() - slowStart < 1_000, "meta prefix scan must be linear");
+assert.equal(parseWorkflowScript(`${" ".repeat(5_000)}export const meta = { name: "late" }; return 1;`).meta.name, "late");
 assert.throws(
   () => parseWorkflowScript("export const meta = { name: getName() }; return 1;"),
   /must be strings or numbers/,

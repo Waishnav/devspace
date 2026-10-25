@@ -22,7 +22,7 @@ export function compileWorkflowSchema(schema: Record<string, unknown>): Validate
   }
   visit(schema, 0, "schema");
   try {
-    return new Ajv({ strict: true, allErrors: false, logger: false }).compile(schema);
+    return new Ajv({ strict: true, allowUnionTypes: true, allErrors: false, logger: false }).compile(schema);
   } catch (error) {
     throw new WorkflowError("INVALID_SCHEMA", `Invalid JSON schema: ${error instanceof Error ? error.message : String(error)}`);
   }

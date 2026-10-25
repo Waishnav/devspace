@@ -8,6 +8,7 @@ const validate = compileWorkflowSchema({
 assert.deepEqual(parseWorkflowOutput('{"summary":"ok","count":2}', validate), { summary: "ok", count: 2 });
 assert.throws(() => parseWorkflowOutput('```json\n{}\n```', validate), /not JSON/);
 assert.throws(() => parseWorkflowOutput('{"summary":"ok","count":-1}', validate), /JSON output/);
+assert.doesNotThrow(() => compileWorkflowSchema({ type: ["string", "null"] }));
 assert.throws(() => compileWorkflowSchema({ type: "not-a-type" }), /Invalid JSON schema/);
 assert.throws(() => compileWorkflowSchema({ type: "string", pattern: "(a+)+$" }), /do not support pattern/);
 assert.throws(() => compileWorkflowSchema({ $ref: "https://example.com/schema" }), /do not support \$ref/);
