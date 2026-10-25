@@ -73,6 +73,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
           await callbacks?.onSessionId?.(providerSessionId);
           if (continuing) await this.configureSession(nativeSessionId, input);
           const messages = await this.prompt(nativeSessionId, input);
+          if (messages.data.length === 0) await this.assertTurnNotFailed(nativeSessionId);
           const assistant = requireLatestAssistant(messages.data);
           assertOpenCodeV2AssistantSucceeded(assistant);
           return {
@@ -114,6 +115,29 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
     for (const controller of this.promptControllers) controller.abort();
     this.promptControllers.clear();
     this.server.close();
+  }
+
+  /**
+   * A turn that fails before any assistant output (for example provider auth)
+   * is recorded as a failed `idle` message, which the assistant-only listing hides.
+   */
+  private async assertTurnNotFailed(sessionId: string): Promise<void> {
+    const recent = await this.client.message.list({ sessionID: sessionId, limit: 5, order: "desc" });
+    const idle = recent.data.find((message) => (
+      message !== null
+      && typeof message === "object"
+      && "type" in message
+      && message.type === "idle"
+    )) as { outcome?: string; error?: { type?: string; message?: string } } | undefined;
+    if (idle?.outcome !== "failed") return;
+    throw new AgentProviderExecutionError({
+      code: "PROVIDER_EXECUTION_ERROR",
+      provider: "opencode",
+      operation: "prompt",
+      retryable: false,
+      cause: idle.error,
+      message: idle.error?.message || "OpenCode turn failed before producing a response.",
+    });
   }
 
   private async createSession(input: LocalAgentRunInput): Promise<string> {

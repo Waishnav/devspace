@@ -240,3 +240,28 @@ await upgradingDriver.createRuntime(upgradeContext);
 installedGeneration = "v2";
 await upgradingDriver.createRuntime(upgradeContext);
 assert.deepEqual(calls, { v1: 1, v2: 1 });
+
+// A turn that fails before any assistant output surfaces the provider's error, not a protocol error.
+const failedIdle = {
+  id: "msg_idle",
+  time: { created: 3 },
+  type: "idle",
+  outcome: "failed",
+  error: { type: "provider.auth", message: "xAI request failed (400): invalid_grant" },
+};
+const failedClient = {
+  ...client,
+  message: {
+    async list(input: { type?: string }) {
+      return { data: input.type === "assistant" ? [] : [failedIdle], cursor: { previous: null, next: null } };
+    },
+  },
+} as unknown as OpencodeV2ClientLike;
+const failedRuntime = new OpencodeV2Runtime(failedClient, { close: () => undefined });
+const failedRun = await failedRuntime.run({ prompt: "auth fails", workspaceRoot: "/tmp/project" });
+assert.equal(failedRun.isErr(), true);
+if (failedRun.isErr()) {
+  assert.equal(failedRun.error.code, "PROVIDER_EXECUTION_ERROR");
+  assert.match(failedRun.error.message, /invalid_grant/);
+}
+await failedRuntime.close();
