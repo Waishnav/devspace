@@ -197,9 +197,17 @@ export class LocalAgentStore {
 
   private createDispatch(input: CreateLocalAgentRecordInput): CreatedLocalAgentRecord {
     return this.database.sqlite.transaction(() => {
-      const id = input.id ?? `agt_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      const generate = () => `agt_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      let id = input.id ?? generate();
       validateAgentId(id);
-      const existing = this.getRowById(id);
+      let existing = this.getRowById(id);
+      // Only caller-supplied ids are idempotent; a generated id that collides must never alias another agent.
+      if (!input.id) {
+        while (existing) {
+          id = generate();
+          existing = this.getRowById(id);
+        }
+      }
       if (existing) {
         const record = rowToLocalAgentRecord(existing);
         validateDispatchIdentity(record, input, existing.dispatch_signature);
