@@ -18,7 +18,12 @@ import { createMcpServer, createServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
-import { groupWorkspaceToolCalls } from "./workspace-activity.js";
+import {
+  listActivityWorkspaces,
+  listTurnToolCalls,
+  listWorkspaceTurns,
+  readTurnDiff,
+} from "./workspace-activity.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 
@@ -315,57 +320,73 @@ test("show_changes can reopen a historical review without advancing the checkpoi
   );
 });
 
-test("workspace activity groups a real tool sequence under its review ref", async (t) => {
+test("workspace activity records turns between review checkpoints", async (t) => {
   const context = await fixture(t, { git: true, captureActivity: true });
-  assert.ok(context.activity);
+  const activity = context.activity!;
   const workspaceId = structuredContent(
-    await callOpen(context.client, context.project, "activity-sequence"),
-  ).workspace_id;
-  assert.ok(typeof workspaceId === "string");
-
-  await context.client.callTool({
-    name: "read",
-    arguments: { workspace_id: workspaceId, path: "README.md" },
+    await callOpen(context.client, context.project, "activity-turns"),
+  ).workspace_id as string;
+  const patch = (from: string, to: string) => context.client.callTool({
+    name: "apply_patch",
+    arguments: {
+      workspace_id: workspaceId,
+      patch: `*** Begin Patch\n*** Update File: README.md\n@@\n-${from}\n+${to}\n*** End Patch`,
+    },
   });
+  const showChanges = async () => structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+  })).review_ref as string;
+
+  await patch("hello", "hello turn one");
+  const firstRef = await showChanges();
+  await patch("hello turn one", "hello turn two");
   await context.client.callTool({
     name: "exec_command",
     arguments: { workspace_id: workspaceId, cmd: "printf activity" },
   });
-  await context.client.callTool({
-    name: "apply_patch",
-    arguments: {
-      workspace_id: workspaceId,
-      patch: "*** Begin Patch\n*** Update File: README.md\n@@\n-hello\n+hello activity\n*** End Patch",
-    },
-  });
-  const shown = structuredContent(await context.client.callTool({
-    name: "show_changes",
-    arguments: { workspace_id: workspaceId },
-  }));
-  const reviewRef = shown.review_ref;
-  assert.ok(typeof reviewRef === "string");
-
-  const groups = groupWorkspaceToolCalls(
-    context.activity.listCalls({ workspaceId, limit: 20 }),
-  );
-  const reviewed = groups.find((group) => group.reviewRef === reviewRef);
-  assert.ok(reviewed);
-  assert.deepEqual(reviewed.calls.map((call) => call.toolName), [
-    "read",
-    "exec_command",
-    "apply_patch",
-    "show_changes",
-  ]);
-
+  const secondRef = await showChanges();
   await context.client.callTool({
     name: "show_changes",
     arguments: { workspace_id: workspaceId },
-    _meta: { "devspace/reviewRef": reviewRef },
+    _meta: { "devspace/reviewRef": firstRef },
   } as Parameters<Client["callTool"]>[0]);
-  assert.equal(
-    context.activity.listCalls({ workspaceId, limit: 20 }).filter((call) => call.toolName === "show_changes").length,
-    1,
+
+  const turns = listWorkspaceTurns(activity, workspaceId);
+  assert.deepEqual(
+    turns.map(({ sequence, status, reviewRef }) => ({ sequence, status, reviewRef })),
+    [
+      { sequence: 3, status: "open", reviewRef: undefined },
+      { sequence: 2, status: "closed", reviewRef: secondRef },
+      { sequence: 1, status: "closed", reviewRef: firstRef },
+    ],
   );
+  assert.deepEqual(
+    listTurnToolCalls(activity, workspaceId, 1)?.map((call) => call.toolName),
+    ["open_workspace", "apply_patch", "show_changes"],
+  );
+  assert.deepEqual(
+    listTurnToolCalls(activity, workspaceId, 2)?.map((call) => call.toolName),
+    ["apply_patch", "exec_command", "show_changes"],
+  );
+  assert.equal(listTurnToolCalls(activity, workspaceId, 3)?.[0]?.origin, "card");
+
+  const secondDiff = await readTurnDiff(activity, workspaceId, 2);
+  assert.equal(secondDiff?.status, "available");
+  if (secondDiff?.status === "available") {
+    assert.match(secondDiff.review.patch, /-hello turn one\n\+hello turn two/);
+    assert.doesNotMatch(secondDiff.review.patch, /^-hello$/m);
+  }
+  assert.deepEqual(await readTurnDiff(activity, workspaceId, 3), { status: "open" });
+
+  const pinned = await execFileAsync("git", ["for-each-ref", "--format=%(refname)", "refs/devspace/review"], {
+    cwd: context.project,
+  });
+  for (const ref of [firstRef, secondRef]) assert.match(pinned.stdout, new RegExp(`/checkpoints/${ref}$`, "m"));
+
+  const [listed] = await listActivityWorkspaces(activity);
+  assert.equal(listed?.workspaceId, workspaceId);
+  assert.equal(listed?.turns, 3);
 });
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
@@ -849,12 +870,10 @@ async function fixture(
     resolveProviderAvailability(),
   );
   const store = new SqliteWorkspaceStore(stateDir);
-  const activityJournal = options.captureActivity
-    ? new WorkspaceActivityJournal(stateDir)
-    : undefined;
   const activity = options.captureActivity
     ? new WorkspaceActivityStore(stateDir)
     : undefined;
+  const activityJournal = activity ? new WorkspaceActivityJournal(activity) : undefined;
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
     config,
@@ -880,7 +899,6 @@ async function fixture(
     await client.close();
     await server.close();
     activity?.close();
-    activityJournal?.close();
     store.close();
   };
 

@@ -47,6 +47,7 @@ import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -838,7 +839,8 @@ export function createServer(
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
   const toolActivities = new ToolActivityTracker();
-  const workspaceActivityJournal = new WorkspaceActivityJournal(config.stateDir, (error) => {
+  const workspaceActivity = new WorkspaceActivityStore(config.stateDir);
+  const workspaceActivityJournal = new WorkspaceActivityJournal(workspaceActivity, (error) => {
     logEvent(config.logging, "warn", "workspace_activity_journal_error", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -999,7 +1001,7 @@ export function createServer(
           });
         }
         await toolActivities.waitForIdle();
-        workspaceActivityJournal.close();
+        workspaceActivity.close();
         processSessions.shutdown();
         oauthProvider.close();
         workspaceStore.close?.();

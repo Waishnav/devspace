@@ -1,88 +1,90 @@
-import type { WorkspaceToolCallSummary } from "./workspace-activity-store.js";
+import { git } from "./git.js";
+import { readReviewRef, type ReviewChangesResult } from "./review-checkpoints.js";
+import type {
+  ActivityWorkspaceRecord,
+  WorkspaceActivityStore,
+  WorkspaceToolCall,
+  WorkspaceTurn,
+} from "./workspace-activity-store.js";
 
-const ACTIVITY_GROUP_GAP_MS = 2 * 60 * 1000;
+// Read API for workspace observability. A turn is the work between two review
+// checkpoints: turn N holds the tool calls made after checkpoint N-1 and the
+// diff from checkpoint N-1 to checkpoint N.
 
-export interface WorkspaceActivityGroup {
-  id: string;
-  kind: "review" | "inferred";
-  startedAt: string;
-  completedAt?: string;
-  reviewRef?: string;
-  calls: WorkspaceToolCallSummary[];
+export type { WorkspaceToolCall, WorkspaceTurn } from "./workspace-activity-store.js";
+
+export interface ActivityWorkspace extends ActivityWorkspaceRecord {
+  /** Current branch of the workspace root; absent when detached or unreadable. */
+  branch?: string;
 }
 
-export function groupWorkspaceToolCalls(
-  calls: ReadonlyArray<WorkspaceToolCallSummary>,
-): WorkspaceActivityGroup[] {
-  const byConversation = new Map<string, WorkspaceToolCallSummary[]>();
-  for (const call of calls) {
-    const key = call.conversationScopeId ?? "__unscoped__";
-    const conversationCalls = byConversation.get(key) ?? [];
-    conversationCalls.push(call);
-    byConversation.set(key, conversationCalls);
+export type TurnDiff =
+  | { status: "available"; review: ReviewChangesResult }
+  | { status: "open" }
+  | { status: "unavailable"; reason: string };
+
+export async function listActivityWorkspaces(
+  store: WorkspaceActivityStore,
+): Promise<ActivityWorkspace[]> {
+  return Promise.all(store.listWorkspaces().map(withBranch));
+}
+
+export async function getActivityWorkspace(
+  store: WorkspaceActivityStore,
+  workspaceId: string,
+): Promise<ActivityWorkspace | undefined> {
+  const workspace = store.getWorkspace(workspaceId);
+  return workspace ? withBranch(workspace) : undefined;
+}
+
+/** Lists a workspace's turns, latest first. */
+export function listWorkspaceTurns(
+  store: WorkspaceActivityStore,
+  workspaceId: string,
+): WorkspaceTurn[] {
+  return store.listTurns(workspaceId);
+}
+
+/** Lists the tool calls of turn `sequence`, or undefined when the turn does not exist. */
+export function listTurnToolCalls(
+  store: WorkspaceActivityStore,
+  workspaceId: string,
+  sequence: number,
+): WorkspaceToolCall[] | undefined {
+  const turn = store.getTurn(workspaceId, sequence);
+  return turn ? store.listToolCalls(turn.id) : undefined;
+}
+
+/**
+ * Reads the diff of turn `sequence`: checkpoint N-1 to checkpoint N. Each
+ * checkpoint snapshot is a commit whose parent is the previous checkpoint, so
+ * this is exactly the diff show_changes reported when it closed the turn.
+ */
+export async function readTurnDiff(
+  store: WorkspaceActivityStore,
+  workspaceId: string,
+  sequence: number,
+): Promise<TurnDiff | undefined> {
+  const workspace = store.getWorkspace(workspaceId);
+  const turn = store.getTurn(workspaceId, sequence);
+  if (!workspace || !turn) return undefined;
+  if (!turn.reviewRef) return { status: "open" };
+
+  try {
+    return { status: "available", review: await readReviewRef(workspace.root, turn.reviewRef) };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
-
-  const groups = [...byConversation.values()].flatMap(groupConversationCalls);
-  return [...groups].sort((left, right) => {
-    const timeOrder = right.startedAt.localeCompare(left.startedAt);
-    if (timeOrder !== 0) return timeOrder;
-    return (right.calls[0]?.id ?? 0) - (left.calls[0]?.id ?? 0);
-  });
 }
 
-function groupConversationCalls(calls: WorkspaceToolCallSummary[]): WorkspaceActivityGroup[] {
-  const ordered = [...calls].sort((left, right) => {
-    const timeOrder = left.startedAt.localeCompare(right.startedAt);
-    return timeOrder !== 0 ? timeOrder : left.id - right.id;
-  });
-  const groups: WorkspaceActivityGroup[] = [];
-  let current: WorkspaceToolCallSummary[] = [];
-
-  const flush = () => {
-    if (current.length === 0) return;
-    groups.push(toActivityGroup(current));
-    current = [];
-  };
-
-  for (const call of ordered) {
-    const previous = current.at(-1);
-    if (previous && callStartedAfterGap(previous, call)) flush();
-
-    current.push(call);
-    if (isReviewBoundary(call)) flush();
+async function withBranch(workspace: ActivityWorkspaceRecord): Promise<ActivityWorkspace> {
+  try {
+    const branch = (await git(workspace.root, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
+    return branch ? { ...workspace, branch } : workspace;
+  } catch {
+    return workspace;
   }
-
-  flush();
-  return groups;
-}
-
-function toActivityGroup(calls: WorkspaceToolCallSummary[]): WorkspaceActivityGroup {
-  const first = calls[0]!;
-  const last = calls.at(-1)!;
-  const reviewRef = isReviewBoundary(last) ? last.reviewRef : undefined;
-  return {
-    id: reviewRef ? `review:${reviewRef}` : `activity:${first.id}`,
-    kind: reviewRef ? "review" : "inferred",
-    startedAt: first.startedAt,
-    ...(last.completedAt ? { completedAt: last.completedAt } : {}),
-    ...(reviewRef ? { reviewRef } : {}),
-    calls,
-  };
-}
-
-function callStartedAfterGap(
-  previous: WorkspaceToolCallSummary,
-  next: WorkspaceToolCallSummary,
-): boolean {
-  const previousEnd = Date.parse(previous.completedAt ?? previous.startedAt);
-  const nextStart = Date.parse(next.startedAt);
-  return Number.isFinite(previousEnd)
-    && Number.isFinite(nextStart)
-    && nextStart - previousEnd > ACTIVITY_GROUP_GAP_MS;
-}
-
-function isReviewBoundary(
-  call: WorkspaceToolCallSummary,
-): call is WorkspaceToolCallSummary & { reviewRef: string } {
-  return call.toolName === "show_changes" && typeof call.reviewRef === "string";
 }
