@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import {
+  isUserNamespaceDenied,
   createPiSandboxConfig,
   createPiSandboxExtension,
   createPiSandboxModeRef,
@@ -34,6 +35,13 @@ import {
     await rm(workspace, { recursive: true, force: true });
   }
 }
+
+assert.equal(
+  isUserNamespaceDenied("apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied"),
+  true,
+);
+assert.equal(isUserNamespaceDenied("bwrap: setting up uid map: Permission denied"), true);
+assert.equal(isUserNamespaceDenied("touch: cannot touch 'x': Permission denied"), false);
 
 const dependencies = await SandboxManager.checkDependenciesAsync();
 if (process.env.DEVSPACE_REQUIRE_PI_SANDBOX === "1") {
