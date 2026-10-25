@@ -459,10 +459,12 @@ function registerMcpSurface(
           }),
         ]),
         instruction: z.string(),
-        code_mode: z.object({
-          language: z.literal("javascript"),
-          tool_signatures: z.string(),
-        }).optional(),
+        ...(codeModeRegistry ? {
+          code_mode: z.object({
+            language: z.literal("javascript"),
+            tool_signatures: z.string(),
+          }),
+        } : {}),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },

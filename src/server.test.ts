@@ -95,6 +95,14 @@ test("experimental Code Mode bootstraps real tools and executes through MCP", as
   assert.match(reviewed.result as string, /Changed 1 file/);
 });
 
+test("Code Mode leaves the open_workspace schema unchanged when disabled", async (t) => {
+  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const { tools } = await context.client.listTools();
+  const openWorkspace = tools.find((tool) => tool.name === "open_workspace");
+  assert.ok(openWorkspace?.outputSchema?.properties);
+  assert.equal("code_mode" in openWorkspace.outputSchema.properties, false);
+});
+
 test("experimental Code Mode polls a long-running script without restarting it", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
