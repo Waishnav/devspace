@@ -341,6 +341,19 @@ export function createMcpServer(
     codeModeRegistry,
     codeModeExecutions,
   );
+  if (codeModeExecutions) {
+    // Scripts and the commands they start must not outlive the MCP server that ran them.
+    const close = server.close.bind(server);
+    server.close = async () => {
+      await codeModeExecutions.shutdown();
+      await close();
+    };
+    const onclose = server.server.onclose;
+    server.server.onclose = () => {
+      onclose?.();
+      void codeModeExecutions.shutdown();
+    };
+  }
   return server;
 }
 
@@ -873,7 +886,7 @@ function registerCodeModeTools(
     outputSchema,
   }, async ({ workspace_id, execution_id }) => {
     await workspaces.getWorkspace(workspace_id);
-    return executionResponse(executions.cancel(workspace_id, execution_id));
+    return executionResponse(await executions.cancel(workspace_id, execution_id));
   });
 }
 

@@ -52,7 +52,7 @@ export class CodeModeRegistry {
     })) });
   }
 
-  tools(workspaceId: string, onProcessSession: (id: number) => void): CodemodeTool[] {
+  tools(workspaceId: string): CodemodeTool[] {
     return [...this.entries.values()].map((entry) => ({
       name: entry.name,
       description: entry.description,
@@ -67,9 +67,6 @@ export class CodeModeRegistry {
         const result = response.structuredContent ?? { result: contentText(response.content ?? []) };
         const validated = entry.output.safeParse(result);
         if (!validated.success) throw new Error(`Invalid ${entry.name} response: ${validated.error.message}`);
-        if (entry.name === "exec_command" && result.running === true && typeof result.session_id === "number") {
-          onProcessSession(result.session_id);
-        }
         return result;
       },
     }));

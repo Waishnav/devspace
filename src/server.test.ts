@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { MAX_RUNNING_EXECUTIONS } from "./code-mode-executions.js";
 import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
@@ -145,6 +146,68 @@ test("experimental Code Mode rejects invalid tool inputs and interrupts runaway 
     arguments: { workspace_id: workspaceId, execution_id: start.execution_id },
   }));
   assert.equal(cancelled.status, "cancelled");
+});
+
+// The command appends to `ticks` until stopped; its exec_command call is still awaiting its first result.
+const TICKING_SCRIPT = `await tools.exec_command({ cmd: "while true; do echo tick >> ticks; sleep 0.02; done", yield_time_ms: 10000 }); return "unreachable";`;
+
+async function assertStopsGrowing(path: string): Promise<void> {
+  const size = (await stat(path)).size;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await stat(path)).size, size, `${path} kept growing after the command was stopped`);
+}
+
+test("cancelling Code Mode stops a command whose exec_command call has not returned", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const start = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: TICKING_SCRIPT, yield_time_ms: 0 },
+  }));
+  await waitForFile(join(context.project, "ticks"));
+
+  const cancelled = structuredContent(await context.client.callTool({
+    name: "cancel_execution",
+    arguments: { workspace_id: workspaceId, execution_id: start.execution_id },
+  }));
+  assert.equal(cancelled.status, "cancelled");
+  await assertStopsGrowing(join(context.project, "ticks"));
+});
+
+test("closing the MCP server stops running Code Mode scripts and their commands", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: TICKING_SCRIPT, yield_time_ms: 0 },
+  });
+  await waitForFile(join(context.project, "ticks"));
+
+  await context.close();
+  await assertStopsGrowing(join(context.project, "ticks"));
+});
+
+test("Code Mode rejects scripts beyond the server-wide running limit", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const execute = () => context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: "while (true) {}", yield_time_ms: 0 },
+  });
+  const running = [];
+  for (let index = 0; index < MAX_RUNNING_EXECUTIONS; index += 1) {
+    running.push(structuredContent(await execute()).execution_id as string);
+  }
+
+  const rejected = await execute();
+  assert.equal(rejected.isError, true);
+  assert.match(JSON.stringify(rejected.content), /already running 4 Code Mode scripts.*cancel_execution/);
+
+  await context.client.callTool({
+    name: "cancel_execution",
+    arguments: { workspace_id: workspaceId, execution_id: running[0] },
+  });
+  assert.equal(structuredContent(await execute()).status, "running");
 });
 
 test("model-facing tool schemas use snake_case recursively", async (t) => {
@@ -778,6 +841,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
 interface ServerFixture {
   client: Client;
   project: string;
+  close: () => Promise<void>;
 }
 
 function schemaPropertyPaths(
@@ -962,7 +1026,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project };
+  return { client, project, close };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {

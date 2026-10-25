@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CodemodeResult } from "@earendil-works/pi-codemode";
-import type { ProcessSessionManager } from "./process-sessions.js";
+import { ProcessOwner, type ProcessSessionManager } from "./process-sessions.js";
 import type { CodeModeRegistry } from "./code-mode-registry.js";
 
 export const MAX_CODE_MODE_YIELD_MS = 12_000;
@@ -9,6 +9,8 @@ const DEFAULT_POLL_MS = 5_000;
 const MAX_SCRIPT_MS = 5 * 60_000;
 const MAX_CALLS = 32;
 const MAX_CONCURRENT_CALLS = 4;
+// Each running script holds a worker with its own 256 MiB heap allowance.
+export const MAX_RUNNING_EXECUTIONS = 4;
 const COMPLETED_TTL_MS = 5 * 60_000;
 
 type Status = "running" | "completed" | "failed" | "cancelled";
@@ -18,12 +20,12 @@ interface Execution {
   workspaceId: string;
   status: Status;
   controller: AbortController;
+  processes: ProcessOwner;
   done: Promise<void>;
   result?: CodemodeResult;
   error?: string;
   startedAt: number;
   finishedAt?: number;
-  processSessionIds: Set<number>;
   cleanupTimer?: NodeJS.Timeout;
 }
 
@@ -37,12 +39,30 @@ export interface ExecutionSnapshot {
   calls?: CodemodeResult["calls"];
 }
 
+/** Runs at most `max` tasks at once; a finishing task hands its slot straight to the next waiter. */
+export function concurrencyLimiter(max: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  return async (task) => {
+    if (active < max) active++;
+    else await new Promise<void>((resolve) => waiters.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiters.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
 function yieldWindow(ms: number | undefined, fallback: number): number {
   return ms === undefined ? fallback : Math.min(ms, MAX_CODE_MODE_YIELD_MS);
 }
 
 export class CodeModeExecutions {
   private readonly executions = new Map<string, Execution>();
+  private closed = false;
 
   constructor(
     private readonly registry: CodeModeRegistry,
@@ -50,15 +70,20 @@ export class CodeModeExecutions {
   ) {}
 
   async start(workspaceId: string, code: string, yieldTimeMs?: number): Promise<ExecutionSnapshot> {
+    if (this.closed) throw new Error("DevSpace is shutting down; Code Mode scripts can no longer start.");
+    const running = [...this.executions.values()].filter((execution) => execution.status === "running").length;
+    if (running >= MAX_RUNNING_EXECUTIONS) {
+      throw new Error(`DevSpace is already running ${MAX_RUNNING_EXECUTIONS} Code Mode scripts. Wait for one with poll_execution or stop one with cancel_execution, then retry.`);
+    }
     const id = randomUUID();
     const execution: Execution = {
       id,
       workspaceId,
       status: "running",
       controller: new AbortController(),
+      processes: new ProcessOwner(),
       done: Promise.resolve(),
       startedAt: performance.now(),
-      processSessionIds: new Set(),
     };
     this.executions.set(id, execution);
     execution.done = this.run(execution, code);
@@ -72,25 +97,28 @@ export class CodeModeExecutions {
     return this.snapshot(execution);
   }
 
-  cancel(workspaceId: string, id: string): ExecutionSnapshot {
+  /** Resolves once the script has stopped and every command it started has exited. */
+  async cancel(workspaceId: string, id: string): Promise<ExecutionSnapshot> {
     const execution = this.get(workspaceId, id);
-    if (execution.status === "running") {
-      execution.controller.abort(new Error("Execution cancelled by user."));
-      this.terminateProcesses(execution);
-    }
+    if (execution.status === "running") await this.stop(execution, "Execution cancelled by user.");
     return this.snapshot(execution);
   }
 
   async shutdown(): Promise<void> {
-    for (const execution of this.executions.values()) {
+    this.closed = true;
+    const executions = [...this.executions.values()];
+    for (const execution of executions) {
       if (execution.cleanupTimer) clearTimeout(execution.cleanupTimer);
-      if (execution.status === "running") {
-        execution.controller.abort(new Error("DevSpace shutting down."));
-        this.terminateProcesses(execution);
-      }
     }
-    await Promise.allSettled([...this.executions.values()].map((execution) => execution.done));
+    await Promise.allSettled(executions
+      .filter((execution) => execution.status === "running")
+      .map((execution) => this.stop(execution, "DevSpace shutting down.")));
     this.executions.clear();
+  }
+
+  private async stop(execution: Execution, reason: string): Promise<void> {
+    execution.controller.abort(new Error(reason));
+    await Promise.allSettled([execution.done, execution.processes.terminate()]);
   }
 
   private get(workspaceId: string, id: string): Execution {
@@ -128,37 +156,21 @@ export class CodeModeExecutions {
     }
   }
 
-  private terminateProcesses(execution: Execution): void {
-    for (const id of execution.processSessionIds) {
-      try {
-        this.processes.terminate(execution.workspaceId, id);
-      } catch {
-        // A process might have finished and been reaped already.
-      }
-    }
-  }
-
   private async run(execution: Execution, code: string): Promise<void> {
     try {
       // The worker and WASM runtime are loaded only when the experimental mode runs a script.
       const { CodemodeSandbox } = await import("@earendil-works/pi-codemode");
       let calls = 0;
-      let active = 0;
-      const waiters: Array<() => void> = [];
-      const tools = this.registry.tools(execution.workspaceId, (id) => execution.processSessionIds.add(id))
+      const limit = concurrencyLimiter(MAX_CONCURRENT_CALLS);
+      const tools = this.registry.tools(execution.workspaceId)
         .map((tool) => ({
           ...tool,
           execute: async (args: unknown, context: Parameters<typeof tool.execute>[1]) => {
             if (++calls > MAX_CALLS) throw new Error(`Code Mode limit exceeded: ${MAX_CALLS} tool calls.`);
-            if (active >= MAX_CONCURRENT_CALLS) await new Promise<void>((resolve) => waiters.push(resolve));
-            active++;
-            try {
+            return limit(async () => {
               if (execution.controller.signal.aborted) throw new Error("Code execution cancelled.");
-              return await tool.execute(args, context);
-            } finally {
-              active--;
-              waiters.shift()?.();
-            }
+              return this.processes.runOwned(execution.processes, () => tool.execute(args, context));
+            });
           },
         }));
       const sandbox = new CodemodeSandbox({
@@ -177,7 +189,7 @@ export class CodeModeExecutions {
       execution.error = error instanceof Error ? error.message : String(error);
       execution.status = execution.controller.signal.aborted ? "cancelled" : "failed";
     } finally {
-      if (execution.status !== "completed") this.terminateProcesses(execution);
+      if (execution.status !== "completed") await execution.processes.terminate();
       execution.finishedAt = performance.now();
       execution.cleanupTimer = setTimeout(() => this.executions.delete(execution.id), COMPLETED_TTL_MS);
       execution.cleanupTimer.unref();
