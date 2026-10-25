@@ -37,9 +37,6 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
   "storage": {
     "stateDir": "~/.local/share/devspace",
   },
-  "tools": {
-    "mode": "codex",
-  },
   "ui": {
     "enabled": true,
   },
@@ -89,18 +86,29 @@ or `[::1]`, with optional ports. Restart DevSpace after changing
 `oauth.allowedResourceUrls`: the provider reads this policy at server creation.
 After restarting, refresh tokens for removed aliases can no longer mint tokens.
 
-## Tool modes and UI
+## Tool surfaces and UI
 
-`tools.mode` accepts two values:
+DevSpace picks the tool surface for each MCP host; there is nothing to
+configure.
 
-| Value | Tool surface |
+| Host | Tool surface |
 | --- | --- |
-| `codex` | Default. `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
-| `claude` | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
+| ChatGPT and other unrecognised hosts | `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
+| Claude | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
 
-The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each mode uses
-its shell tool with programs such as `rg`, `find`, and `ls` when it needs those
-operations.
+The host is identified from the OAuth client it registered: its `client_name`
+first, then its `redirect_uris` hosts (`chatgpt.com` and `openai.com`, or
+`claude.ai` and `claude.com`). If neither identifies the host, the request's
+`User-Agent` is used. The OAuth client is fixed per connector, so a host keeps
+the same tool list. Claude registers a `claude.ai` redirect URI, so add
+`claude.ai` to `oauth.allowedRedirectHosts` to connect it.
+
+`tools.mode` is deprecated. Existing configs that set it still load, DevSpace
+logs a `tools_mode_deprecated` warning at startup, and the value is ignored.
+
+The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each surface
+uses its shell tool with programs such as `rg`, `find`, and `ls` when it needs
+those operations.
 
 DevSpace attaches Apps UI metadata only to `open_workspace` and `show_changes`.
 This avoids rendering an iframe for every read, edit, search, or command call.
@@ -216,7 +224,7 @@ values to these JSONC keys:
 | `DEVSPACE_ALLOWED_ROOTS` | `workspaces.allowedRoots` |
 | `DEVSPACE_WORKTREE_ROOT` | `workspaces.worktreeRoot` |
 | `DEVSPACE_STATE_DIR` | `storage.stateDir` |
-| `DEVSPACE_TOOL_MODE`, `DEVSPACE_MINIMAL_TOOLS` | `tools.mode` |
+| `DEVSPACE_TOOL_MODE`, `DEVSPACE_MINIMAL_TOOLS` | None. The tool surface is picked from the MCP host. |
 | `DEVSPACE_WIDGETS` | `ui.enabled` |
 | `DEVSPACE_ARTIFACTS` | `artifacts.enabled` |
 | `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` | `artifacts.maxFileBytes` |
@@ -265,6 +273,7 @@ The persisted fields map as follows:
 | `artifactsEnabled`, `artifactMaxFileBytes` | `artifacts.enabled`, `artifacts.maxFileBytes` |
 | `agentDir` | `skills.agentDir` |
 | `subagents` | `subagents` |
-| `tools.mode`, `ui.enabled` | unchanged nested keys |
+| `ui.enabled` | unchanged nested key |
+| `tools.mode`, `tool_mode` | deprecated and ignored |
 
 `auth.json` is unchanged.
