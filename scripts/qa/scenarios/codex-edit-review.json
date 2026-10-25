@@ -1,0 +1,34 @@
+{
+  "description": "Codex surface: open a checkout, patch files, run a command, and review the changes.",
+  "host": { "clientName": "ChatGPT", "userAgent": "openai-mcp/1.0.0" },
+  "fixture": {
+    "files": {
+      "AGENTS.md": "# Fixture\n\nKeep changes small.\n",
+      "README.md": "# QA fixture\n\nbaseline line\n",
+      "src/greet.ts": "export function greet(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+    }
+  },
+  "steps": [
+    {
+      "tool": "open_workspace",
+      "arguments": { "path": "{{fixture}}" }
+    },
+    {
+      "tool": "apply_patch",
+      "label": "update one file, add another",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "patch": "*** Begin Patch\n*** Update File: src/greet.ts\n@@\n export function greet(name: string): string {\n-  return `Hello, ${name}`;\n+  return `Hello, ${name.trim()}!`;\n }\n*** Add File: src/farewell.ts\n+export function farewell(name: string): string {\n+  return `Goodbye, ${name}`;\n+}\n*** End Patch"
+      }
+    },
+    {
+      "tool": "exec_command",
+      "arguments": { "workspace_id": "{{workspace_id}}", "cmd": "git status --short" },
+      "expect": { "text": ["src/greet.ts", "src/farewell.ts"] }
+    },
+    {
+      "tool": "show_changes",
+      "arguments": { "workspace_id": "{{workspace_id}}" }
+    }
+  ]
+}
