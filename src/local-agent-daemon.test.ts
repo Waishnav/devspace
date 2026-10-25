@@ -168,6 +168,8 @@ class FakeManager implements LocalAgentDaemonManager {
 class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
   activeRunCount = 0;
   closed = false;
+  cancelled = false;
+  hangClose = false;
   blockWaitUntilAbort = false;
   waitAborted = false;
   lastInput?: WorkflowRunInput;
@@ -190,9 +192,10 @@ class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
   calls(): WorkflowCall[] { return [workflowCall]; }
   call(): WorkflowCall { return workflowCall; }
   events(): WorkflowEvent[] { return [workflowEvent]; }
-  async cancel(): Promise<WorkflowRun> { return { ...workflowRun, status: "cancelled" }; }
+  async cancel(): Promise<WorkflowRun> { this.cancelled = true; return { ...workflowRun, status: "cancelled" }; }
   async close(): Promise<void> {
     closeOrder.push("workflows");
+    if (this.hangClose) await new Promise<void>(() => {});
     this.closed = true;
     this.activeRunCount = 0;
   }
@@ -304,6 +307,7 @@ const workflowWaitManager = new FakeManager();
 workflowWaitManager.activeTurnCount = 0;
 const workflowWaits = new FakeWorkflows();
 workflowWaits.blockWaitUntilAbort = true;
+workflowWaits.activeRunCount = 1;
 const workflowWaitDaemon = new LocalAgentDaemon({
   stateDir: workflowWaitStateDir,
   configRevision: CONFIG_REVISION,
@@ -325,9 +329,36 @@ try {
   }, 0);
   assert.equal(result.isErr(), true);
   await waitFor(() => workflowWaits.waitAborted);
-  assert.equal(workflowWaits.activeRunCount, 0, "disconnecting a wait must not cancel the workflow");
+  assert.equal(workflowWaits.cancelled, false, "disconnecting a wait must not cancel the workflow");
+  assert.equal(workflowWaits.activeRunCount, 1);
 } finally {
+  workflowWaits.activeRunCount = 0;
   await workflowWaitDaemon.close();
+}
+
+// A stalled workflow shutdown must leave budget for the agent manager phase.
+const stalledManager = new FakeManager();
+stalledManager.activeTurnCount = 0;
+const stalledWorkflows = new FakeWorkflows();
+stalledWorkflows.hangClose = true;
+const stalledDaemon = new LocalAgentDaemon({
+  stateDir: join(root, "stalled-workflows"),
+  configRevision: CONFIG_REVISION,
+  manager: stalledManager,
+  workflows: stalledWorkflows,
+  shutdownTimeoutMs: 400,
+  idleShutdownMs: 60_000,
+});
+const keepAlive = setInterval(() => {}, 50); // withTimeout timers are unref'd; a never-settling close would otherwise end the process
+try {
+  await stalledDaemon.start();
+  const stalledStart = Date.now();
+  await stalledDaemon.close();
+  assert.equal(stalledManager.closed, true, "agent manager must close even when workflows stall");
+  assert.ok(Date.now() - stalledStart < 350, "a stalled workflow phase is capped at half the shutdown budget");
+} finally {
+  clearInterval(keepAlive);
+  await stalledDaemon.close();
 }
 
 const activeWorkflowStateDir = join(root, "aw");

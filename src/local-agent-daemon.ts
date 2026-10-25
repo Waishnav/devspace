@@ -225,11 +225,15 @@ export class LocalAgentDaemon {
       });
       for (const socket of this.sockets) socket.destroy();
       this.sockets.clear();
-      const serverResult = await settled(withTimeout(closeServer(this.server), this.shutdownTimeoutMs, "daemon socket shutdown"));
+      // One budget covers every phase (the entrypoint's force-exit timer uses the same value).
+      // Workflows get half so aborted runs that stall in agent stop cannot starve the agent manager.
+      const deadline = Date.now() + this.shutdownTimeoutMs;
+      const remaining = () => Math.max(0, deadline - Date.now());
+      const serverResult = await settled(withTimeout(closeServer(this.server), remaining(), "daemon socket shutdown"));
       const workflowResult = this.workflows
-        ? await settled(withTimeout(this.workflows.close(), this.shutdownTimeoutMs, "workflow manager shutdown"))
+        ? await settled(withTimeout(this.workflows.close(), Math.min(remaining(), this.shutdownTimeoutMs / 2), "workflow manager shutdown"))
         : undefined;
-      const managerResult = await settled(withTimeout(this.manager.close(), this.shutdownTimeoutMs, "daemon manager shutdown"));
+      const managerResult = await settled(withTimeout(this.manager.close(), remaining(), "daemon manager shutdown"));
       if (serverResult.status === "rejected") {
         writeLocalAgentDaemonLog(this.paths, "warn", "daemon_socket_close_failed", {
           error: errorMessage(serverResult.reason),
