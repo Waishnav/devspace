@@ -1,43 +1,79 @@
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, asc, count, desc, eq, max, sql } from "drizzle-orm";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import { workspaceSessions, workspaceToolCalls, type WorkspaceToolCallRow } from "./db/schema.js";
+import {
+  workspaceSessions,
+  workspaceTurns,
+  workspaceTurnToolCalls,
+  type WorkspaceSessionRow,
+  type WorkspaceTurnRow,
+  type WorkspaceTurnToolCallRow,
+} from "./db/schema.js";
+import type { WorkspaceMode, WorkspaceStatus } from "./workspace-store.js";
 
-export interface WorkspaceToolCallSummary {
+export type WorkspaceTurnStatus = "open" | "closed";
+export type WorkspaceToolCallOrigin = "model" | "card";
+
+export interface ActivityWorkspaceRecord {
+  workspaceId: string;
+  root: string;
+  mode: WorkspaceMode;
+  status: WorkspaceStatus;
+  sourceRoot?: string;
+  createdAt: string;
+  lastUsedAt: string;
+  lastActivityAt?: string;
+  turns: number;
+}
+
+export interface WorkspaceTurn {
   id: number;
-  workspaceId?: string;
-  conversationScopeId?: string;
-  requestId?: string;
-  toolName: string;
-  startedAt: string;
-  completedAt?: string;
-  durationMs?: number;
+  workspaceId: string;
+  /** 1-based position of the turn within its workspace. */
+  sequence: number;
+  status: WorkspaceTurnStatus;
+  /** Review checkpoint that closed the turn; absent while the turn is open. */
   reviewRef?: string;
+  startedAt: string;
+  closedAt?: string;
+  toolCalls: number;
+  failedToolCalls: number;
 }
 
-export interface WorkspaceToolCall extends WorkspaceToolCallSummary {
-  arguments: unknown;
-  result?: unknown;
-  error?: unknown;
-}
-
-export interface StartWorkspaceToolCall {
-  workspaceId?: string;
+export interface WorkspaceToolCall {
+  id: number;
+  turnId: number;
+  origin: WorkspaceToolCallOrigin;
   conversationScopeId?: string;
   requestId?: string;
   toolName: string;
   arguments: unknown;
-  startedAt: string;
-}
-
-export interface FinishWorkspaceToolCall {
-  workspaceId?: string;
   result?: unknown;
   error?: unknown;
+  isError: boolean;
+  startedAt: string;
   completedAt: string;
   durationMs: number;
-  reviewRef?: string;
 }
 
+export interface RecordWorkspaceToolCall {
+  turnId: number;
+  origin: WorkspaceToolCallOrigin;
+  conversationScopeId?: string;
+  requestId?: string;
+  toolName: string;
+  argumentsJson: string;
+  resultJson?: string;
+  errorJson?: string;
+  isError: boolean;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+}
+
+/**
+ * SQLite persistence for workspace turns and the tool calls made in them.
+ * A workspace has at most one open turn; a review checkpoint closes it.
+ */
 export class WorkspaceActivityStore {
   private readonly database: DatabaseHandle;
 
@@ -45,146 +81,225 @@ export class WorkspaceActivityStore {
     this.database = openDatabase(stateDir);
   }
 
-  startCall(input: StartWorkspaceToolCall): number {
+  hasWorkspace(workspaceId: string): boolean {
+    return this.database.db
+      .select({ id: workspaceSessions.id })
+      .from(workspaceSessions)
+      .where(eq(workspaceSessions.id, workspaceId))
+      .get() !== undefined;
+  }
+
+  /** Returns the workspace's open turn, starting the next one when none is open. */
+  openTurn(workspaceId: string, now = new Date()): WorkspaceTurn {
+    const open = this.database.sqlite.transaction(() => {
+      const existing = this.findOpenTurnRow(workspaceId);
+      if (existing) return existing;
+
+      const previous = this.database.db
+        .select({ sequence: max(workspaceTurns.sequence) })
+        .from(workspaceTurns)
+        .where(eq(workspaceTurns.workspaceSessionId, workspaceId))
+        .get();
+      return this.database.db
+        .insert(workspaceTurns)
+        .values({
+          workspaceSessionId: workspaceId,
+          sequence: (previous?.sequence ?? 0) + 1,
+          status: "open",
+          startedAt: now.toISOString(),
+        })
+        .returning()
+        .get();
+    });
+    return this.withCallCounts(open.immediate());
+  }
+
+  currentTurn(workspaceId: string): WorkspaceTurn | undefined {
+    const row = this.findOpenTurnRow(workspaceId);
+    return row ? this.withCallCounts(row) : undefined;
+  }
+
+  /** Closes the open turn with its review checkpoint and returns it. */
+  closeTurn(workspaceId: string, reviewRef: string, now = new Date()): WorkspaceTurn {
+    const turn = this.openTurn(workspaceId, now);
+    this.database.db
+      .update(workspaceTurns)
+      .set({ status: "closed", reviewRef, closedAt: now.toISOString() })
+      .where(eq(workspaceTurns.id, turn.id))
+      .run();
+    return { ...turn, status: "closed", reviewRef, closedAt: now.toISOString() };
+  }
+
+  recordToolCall(input: RecordWorkspaceToolCall): number {
     const inserted = this.database.db
-      .insert(workspaceToolCalls)
+      .insert(workspaceTurnToolCalls)
       .values({
-        workspaceSessionId: this.existingWorkspaceId(input.workspaceId) ?? null,
+        turnId: input.turnId,
+        origin: input.origin,
         conversationScopeId: input.conversationScopeId ?? null,
         requestId: input.requestId ?? null,
         toolName: input.toolName,
-        argumentsJson: JSON.stringify(input.arguments),
+        argumentsJson: input.argumentsJson,
+        resultJson: input.resultJson ?? null,
+        errorJson: input.errorJson ?? null,
+        isError: input.isError ? 1 : 0,
         startedAt: input.startedAt,
+        completedAt: input.completedAt,
+        durationMs: input.durationMs,
       })
       .run();
-
     return Number(inserted.lastInsertRowid);
   }
 
-  finishCall(id: number, input: FinishWorkspaceToolCall): void {
-    this.database.db
-      .update(workspaceToolCalls)
-      .set({
-        ...(input.workspaceId
-          ? { workspaceSessionId: this.existingWorkspaceId(input.workspaceId) ?? null }
-          : {}),
-        resultJson: input.result === undefined ? null : JSON.stringify(input.result),
-        errorJson: input.error === undefined ? null : JSON.stringify(input.error),
-        completedAt: input.completedAt,
-        durationMs: input.durationMs,
-        reviewRef: input.reviewRef ?? null,
+  /** Lists workspaces, most recently active first. */
+  listWorkspaces(): ActivityWorkspaceRecord[] {
+    return this.workspaceQuery().all().map(rowToWorkspace);
+  }
+
+  getWorkspace(workspaceId: string): ActivityWorkspaceRecord | undefined {
+    const row = this.workspaceQuery().where(eq(workspaceSessions.id, workspaceId)).get();
+    return row ? rowToWorkspace(row) : undefined;
+  }
+
+  private workspaceQuery() {
+    const activity = this.database.db
+      .select({
+        workspaceId: workspaceTurns.workspaceSessionId,
+        turns: sql<number>`count(distinct ${workspaceTurns.id})`.as("turns"),
+        lastActivityAt: max(workspaceTurnToolCalls.completedAt).as("last_activity_at"),
       })
-      .where(eq(workspaceToolCalls.id, id))
-      .run();
-  }
-
-  listCalls(input: {
-    workspaceId: string;
-    beforeId?: number;
-    limit: number;
-  }): WorkspaceToolCall[] {
-    const clauses = [eq(workspaceToolCalls.workspaceSessionId, input.workspaceId)];
-    if (input.beforeId !== undefined) clauses.push(lt(workspaceToolCalls.id, input.beforeId));
-
-    return this.database.db
-      .select()
-      .from(workspaceToolCalls)
-      .where(and(...clauses))
-      .orderBy(desc(workspaceToolCalls.id))
-      .limit(input.limit)
-      .all()
-      .map(rowToWorkspaceToolCall);
-  }
-
-  listCallSummaries(input: {
-    workspaceId: string;
-    beforeId?: number;
-    limit: number;
-  }): WorkspaceToolCallSummary[] {
-    const clauses = [eq(workspaceToolCalls.workspaceSessionId, input.workspaceId)];
-    if (input.beforeId !== undefined) clauses.push(lt(workspaceToolCalls.id, input.beforeId));
+      .from(workspaceTurns)
+      .leftJoin(workspaceTurnToolCalls, eq(workspaceTurnToolCalls.turnId, workspaceTurns.id))
+      .groupBy(workspaceTurns.workspaceSessionId)
+      .as("activity");
 
     return this.database.db
       .select({
-        id: workspaceToolCalls.id,
-        workspaceSessionId: workspaceToolCalls.workspaceSessionId,
-        conversationScopeId: workspaceToolCalls.conversationScopeId,
-        requestId: workspaceToolCalls.requestId,
-        toolName: workspaceToolCalls.toolName,
-        startedAt: workspaceToolCalls.startedAt,
-        completedAt: workspaceToolCalls.completedAt,
-        durationMs: workspaceToolCalls.durationMs,
-        reviewRef: workspaceToolCalls.reviewRef,
+        session: workspaceSessions,
+        turns: activity.turns,
+        lastActivityAt: activity.lastActivityAt,
       })
-      .from(workspaceToolCalls)
-      .where(and(...clauses))
-      .orderBy(desc(workspaceToolCalls.id))
-      .limit(input.limit)
-      .all()
-      .map(rowToWorkspaceToolCallSummary);
+      .from(workspaceSessions)
+      .leftJoin(activity, eq(activity.workspaceId, workspaceSessions.id))
+      .orderBy(desc(sql`coalesce(${activity.lastActivityAt}, ${workspaceSessions.lastUsedAt})`))
+      .$dynamic();
   }
 
-  getCall(workspaceId: string, callId: number): WorkspaceToolCall | undefined {
-    const row = this.database.db
-      .select()
-      .from(workspaceToolCalls)
-      .where(
-        and(
-          eq(workspaceToolCalls.workspaceSessionId, workspaceId),
-          eq(workspaceToolCalls.id, callId),
-        ),
-      )
+  /** Lists a workspace's turns, latest first. */
+  listTurns(workspaceId: string): WorkspaceTurn[] {
+    return this.turnQuery()
+      .where(eq(workspaceTurns.workspaceSessionId, workspaceId))
+      .orderBy(desc(workspaceTurns.sequence))
+      .all()
+      .map(rowToTurn);
+  }
+
+  getTurn(workspaceId: string, sequence: number): WorkspaceTurn | undefined {
+    const row = this.turnQuery()
+      .where(and(
+        eq(workspaceTurns.workspaceSessionId, workspaceId),
+        eq(workspaceTurns.sequence, sequence),
+      ))
       .get();
-    return row ? rowToWorkspaceToolCall(row) : undefined;
+    return row ? rowToTurn(row) : undefined;
+  }
+
+  /** Lists the tool calls of one turn in the order they started. */
+  listToolCalls(turnId: number): WorkspaceToolCall[] {
+    return this.database.db
+      .select()
+      .from(workspaceTurnToolCalls)
+      .where(eq(workspaceTurnToolCalls.turnId, turnId))
+      .orderBy(asc(workspaceTurnToolCalls.startedAt), asc(workspaceTurnToolCalls.id))
+      .all()
+      .map(rowToToolCall);
   }
 
   close(): void {
     this.database.close();
   }
 
-  private existingWorkspaceId(workspaceId: string | undefined): string | undefined {
-    if (!workspaceId) return undefined;
-    const row = this.database.db
-      .select({ id: workspaceSessions.id })
-      .from(workspaceSessions)
-      .where(eq(workspaceSessions.id, workspaceId))
+  private findOpenTurnRow(workspaceId: string): WorkspaceTurnRow | undefined {
+    return this.database.db
+      .select()
+      .from(workspaceTurns)
+      .where(and(
+        eq(workspaceTurns.workspaceSessionId, workspaceId),
+        eq(workspaceTurns.status, "open"),
+      ))
       .get();
-    return row?.id;
+  }
+
+  private withCallCounts(row: WorkspaceTurnRow): WorkspaceTurn {
+    const counts = this.turnQuery().where(eq(workspaceTurns.id, row.id)).get();
+    return counts ? rowToTurn(counts) : rowToTurn({ turn: row, toolCalls: 0, failedToolCalls: 0 });
+  }
+
+  private turnQuery() {
+    return this.database.db
+      .select({
+        turn: workspaceTurns,
+        toolCalls: count(workspaceTurnToolCalls.id),
+        failedToolCalls: sql<number>`coalesce(sum(${workspaceTurnToolCalls.isError}), 0)`,
+      })
+      .from(workspaceTurns)
+      .leftJoin(workspaceTurnToolCalls, eq(workspaceTurnToolCalls.turnId, workspaceTurns.id))
+      .groupBy(workspaceTurns.id)
+      .$dynamic();
   }
 }
 
-function rowToWorkspaceToolCall(row: WorkspaceToolCallRow): WorkspaceToolCall {
+function rowToWorkspace({ session, turns, lastActivityAt }: {
+  session: WorkspaceSessionRow;
+  turns: number | null;
+  lastActivityAt: string | null;
+}): ActivityWorkspaceRecord {
   return {
-    ...rowToWorkspaceToolCallSummary(row),
-    arguments: JSON.parse(row.argumentsJson) as unknown,
-    ...(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : {}),
-    ...(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : {}),
+    workspaceId: session.id,
+    root: session.root,
+    mode: session.mode as WorkspaceMode,
+    status: session.status as WorkspaceStatus,
+    ...(session.sourceRoot ? { sourceRoot: session.sourceRoot } : {}),
+    createdAt: session.createdAt,
+    lastUsedAt: session.lastUsedAt,
+    ...(lastActivityAt ? { lastActivityAt } : {}),
+    turns: turns ?? 0,
   };
 }
 
-function rowToWorkspaceToolCallSummary(
-  row: Pick<
-    WorkspaceToolCallRow,
-    | "id"
-    | "workspaceSessionId"
-    | "conversationScopeId"
-    | "requestId"
-    | "toolName"
-    | "startedAt"
-    | "completedAt"
-    | "durationMs"
-    | "reviewRef"
-  >,
-): WorkspaceToolCallSummary {
+function rowToTurn(row: {
+  turn: WorkspaceTurnRow;
+  toolCalls: number;
+  failedToolCalls: number;
+}): WorkspaceTurn {
+  const { turn } = row;
+  return {
+    id: turn.id,
+    workspaceId: turn.workspaceSessionId,
+    sequence: turn.sequence,
+    status: turn.status as WorkspaceTurnStatus,
+    ...(turn.reviewRef ? { reviewRef: turn.reviewRef } : {}),
+    startedAt: turn.startedAt,
+    ...(turn.closedAt ? { closedAt: turn.closedAt } : {}),
+    toolCalls: row.toolCalls,
+    failedToolCalls: Number(row.failedToolCalls),
+  };
+}
+
+function rowToToolCall(row: WorkspaceTurnToolCallRow): WorkspaceToolCall {
   return {
     id: row.id,
-    ...(row.workspaceSessionId ? { workspaceId: row.workspaceSessionId } : {}),
+    turnId: row.turnId,
+    origin: row.origin as WorkspaceToolCallOrigin,
     ...(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : {}),
     ...(row.requestId ? { requestId: row.requestId } : {}),
     toolName: row.toolName,
+    arguments: JSON.parse(row.argumentsJson) as unknown,
+    ...(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : {}),
+    ...(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : {}),
+    isError: row.isError === 1,
     startedAt: row.startedAt,
-    ...(row.completedAt ? { completedAt: row.completedAt } : {}),
-    ...(row.durationMs !== null ? { durationMs: row.durationMs } : {}),
-    ...(row.reviewRef ? { reviewRef: row.reviewRef } : {}),
+    completedAt: row.completedAt,
+    durationMs: row.durationMs,
   };
 }
