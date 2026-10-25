@@ -126,7 +126,9 @@ or `cancel_execution` to stop it. Long-running nested `exec_command` calls retur
 `session_id` for polling via `tools.write_stdin` inside the script.
 
 The experimental runtime has a five-minute script deadline, up to 32 nested tool
-calls and four simultaneous nested calls. Sessions and results are in memory only
+calls and four simultaneous nested calls per script, and at most four scripts
+running at once per server. Cancelling a script, or stopping the server, also
+stops every command the script started. Sessions and results are in memory only
 and are lost on server restart. Tool calls already performed are **not rolled
 back** when a script fails or is cancelled.
 
