@@ -14,14 +14,26 @@ const MAX_STRING_LENGTH = 8 * 1024;
 const MAX_RECORD_LENGTH = 64 * 1024;
 const REDACTED = "[redacted]";
 const SECRET_KEY_PATTERN = /(token|secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
-const SECRET_VALUE_PATTERNS: RegExp[] = [
-  /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
-  /\b(sk|pk|rk)-[A-Za-z0-9_-]{16,}/g,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
-  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+// Value patterns are deliberately shape- or context-bound (an Authorization
+// header, an env-var name, a credential flag) so ordinary prose and source code
+// such as "Basic functionality" or `MAX_TOKENS=4096` survive intact. A pattern's
+// replacement may keep its leading context via $1.
+const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(Authorization["']?\s*[:=]\s*["']?)(?:Bearer|Basic|Token|Digest)\s+[^\s"']+/gi, `$1${REDACTED}`],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g, `Bearer ${REDACTED}`],
+  // ALL_CAPS env assignment whose name ends in a secret word: API_KEY=…, export GITHUB_TOKEN="…".
+  // MAX_TOKENS=… and values that defer to another variable ($VAR, $(cmd)) are left alone.
+  [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?)=)(?!\$)(?:"[^"]*"|'[^']*'|[^\s"'`;&|)]+)/g, `$1${REDACTED}`],
+  // CLI credential flags: --password hunter2, --api-key=abc. --password-stdin takes no value.
+  [/(--(?:[a-z0-9]+-)*(?:password|passwd|token|secret|api-?key|access-?key|secret-?key|private-?key)(?:\s+|=))(?![-$])(?:"[^"]*"|'[^']*'|[^\s"'`;&|)]+)/gi, `$1${REDACTED}`],
+  // Credentials embedded in a URL: https://user:pass@host.
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/?#]+:[^\s@/?#]+@/gi, `$1${REDACTED}@`],
+  [/\b(sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, REDACTED],
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, REDACTED],
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
+  [/\bAKIA[0-9A-Z]{16}\b/g, REDACTED],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, REDACTED],
 ];
 
 /**
@@ -195,8 +207,8 @@ function redact(value: unknown, depth: number): unknown {
 
 function redactString(value: string): string {
   let redacted = value;
-  for (const pattern of SECRET_VALUE_PATTERNS) {
-    redacted = redacted.replace(pattern, REDACTED);
+  for (const [pattern, replacement] of SECRET_VALUE_PATTERNS) {
+    redacted = redacted.replace(pattern, replacement);
   }
   return redacted.length > MAX_STRING_LENGTH
     ? `${redacted.slice(0, MAX_STRING_LENGTH)}… [truncated ${redacted.length - MAX_STRING_LENGTH} chars]`
