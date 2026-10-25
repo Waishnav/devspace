@@ -17,20 +17,20 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          uname -a; cat /etc/os-release | head -3; bwrap --version; id
-          echo "--- sysctls"; sysctl -a 2>/dev/null | grep -Ei 'userns|max_user_namespaces|unprivileged|apparmor' 
-          echo "--- aa-status"; sudo aa-status 2>&1 | head -40
-          echo "--- apparmor.d"; ls /etc/apparmor.d | head -60; cat /etc/apparmor.d/bwrap* 2>/dev/null
-          echo "--- my label"; cat /proc/self/attr/current
           SEC=$(ls -d node_modules/.pnpm/@anthropic-ai+sandbox-runtime@*/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp)
-          echo "--- bwrap plain user"; bwrap --unshare-user --ro-bind / / true; echo rc=$?
-          echo "--- bwrap userns + cap-drop ALL + unshare -U"; bwrap --unshare-user --cap-drop ALL --ro-bind / / --proc /proc unshare -U true; echo rc=$?
-          echo "--- bwrap exact (cap-drop ALL, --proc) + apply-seccomp"; bwrap --unshare-user --unshare-pid --cap-drop ALL --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
-          echo "--- bwrap weaker (no cap-drop, bind /proc) + apply-seccomp"; bwrap --unshare-user --unshare-pid --ro-bind / / --bind /proc /proc "$SEC" true; echo rc=$?
-          echo "--- bwrap unshare-user only + apply-seccomp"; bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
-          echo "--- direct apply-seccomp"; "$SEC" true; echo rc=$?
-          echo "--- dmesg"; sudo dmesg 2>&1 | grep -i 'apparmor\|userns' | tail -20
-          echo "--- journal"; sudo journalctl -k --no-pager 2>&1 | grep -i 'apparmor.*userns\|DENIED' | tail -20
-          echo "--- after setting sysctls to 0"
-          for k in $(sysctl -a 2>/dev/null | grep -E '^kernel\.apparmor_restrict' | cut -d= -f1); do sudo sysctl -w $k=0; done
-          bwrap --unshare-user --unshare-pid --cap-drop ALL --ro-bind / / --proc /proc "$SEC" true; echo rc=$?
+          probe() { echo "=== $1"; bwrap --unshare-user --unshare-pid --cap-drop ALL --ro-bind / / --proc /proc "$SEC" true; echo "rc=$?"; }
+          P=/etc/apparmor.d/bwrap-userns-restrict
+          echo "### V1: profile removed, sysctls untouched (userns=1)"
+          sudo apparmor_parser -R $P; probe v1
+          sudo apparmor_parser -r $P
+          echo "### V2: profile removed, restrict_unprivileged_userns=0 only"
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; sudo apparmor_parser -R $P; probe v2
+          sudo apparmor_parser -r $P
+          echo "### V3: profile loaded, both sysctls 0 (current CI + unconfined)"
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0; probe v3
+          echo "### V4: profile removed, both sysctls 0"
+          sudo apparmor_parser -R $P; probe v4
+          echo "aa-status bwrap:"; sudo aa-status | grep -c bwrap
+          echo "### V5: aa-disable style (symlink to disable/) is persistent variant"
+          sudo apparmor_parser -r $P
+          sudo ln -sf $P /etc/apparmor.d/disable/ ; sudo apparmor_parser -R $P; probe v5
