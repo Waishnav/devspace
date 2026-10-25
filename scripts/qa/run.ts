@@ -550,14 +550,19 @@ async function captureBrowserEvidence(
     await browser("wait", "--fn", "window.__devspaceQa?.settled === true", "--timeout", "45000");
     const cards = JSON.parse(JSON.parse(await browser("eval", "JSON.stringify(window.__devspaceQa.cards)"))) as BrowserEvidence["cards"];
 
+    // Chrome does not paint cross-origin iframes outside the viewport, and element
+    // shots taken after scrolling can crop the wrong region. Fit the whole page
+    // in the viewport instead, so every card is painted and nothing scrolls.
+    const pageHeight = Number(JSON.parse(await browser("eval", "document.documentElement.scrollHeight")));
+    await browser("set", "viewport", "1280", String(Math.min(Math.max(pageHeight, 900), 12_000)));
+    await browser("wait", "500");
     const page = join(artifacts, "page.png");
-    await browser("screenshot", "--full", page);
+    await browser("screenshot", page);
     screenshots.push(page);
     for (const step of qaRun.steps.filter((item) => item.resourceUri)) {
       const shot = join(artifacts, `step-${step.index}-${step.tool}.png`);
       const selector = `#step-${step.index} .card-frame`;
       await browser("wait", selector);
-      await browser("scrollintoview", selector);
       await browser("screenshot", selector, shot);
       screenshots.push(shot);
     }
