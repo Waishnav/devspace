@@ -302,7 +302,7 @@ function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
   if (names.has("provider") && !names.has("provider_instance_id")) {
     sqlite.exec("alter table local_agent_sessions rename column provider to provider_instance_id");
   }
-  addColumnIfMissing(sqlite, "local_agent_sessions", "driver", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "driver", "text not null default ''");
   sqlite.exec(`
     update local_agent_sessions
     set driver = provider_instance_id

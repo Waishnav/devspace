@@ -38,12 +38,20 @@ const disabledProfile: LocalAgentProfile = {
   filePath: join(root, "disabled-reviewer.md"),
   disabled: true,
 };
+const shadowProfile: LocalAgentProfile = {
+  ...profile,
+  name: "codex-shadow",
+  provider: "codex-shadow",
+  filePath: join(root, "codex-shadow.md"),
+  body: "Shadow profile body.",
+};
 const subagents: SubagentsConfig = {
   enabled: true,
   instructions: "on-demand",
   providers: [
     { id: "codex", driver: "codex", enabled: true, model: "gpt-default", effort: "medium" },
     { id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" },
+    { id: "codex-shadow", driver: "codex", enabled: true },
     { id: "claude", driver: "claude", enabled: true },
   ],
 };
@@ -107,6 +115,7 @@ const driver: LocalAgentDriver = {
   },
 };
 const workDriver: LocalAgentDriver = { ...driver, providerInstanceId: "codex-work" };
+const shadowDriver: LocalAgentDriver = { ...driver, providerInstanceId: "codex-shadow" };
 
 function providerFailure(message: string): AgentProviderExecutionError {
   return new AgentProviderExecutionError({
@@ -131,9 +140,9 @@ store.update(stale.id, { latestResponse: "previous response" });
 
 const manager = new LocalAgentManager({
   store,
-  drivers: [driver, workDriver],
+  drivers: [driver, workDriver, shadowDriver],
   pool: new LocalAgentRuntimePool(),
-  loadProfiles: async () => [profile, disabledProfile],
+  loadProfiles: async () => [profile, disabledProfile, shadowProfile],
   allowedRoots: [root],
   subagents,
 });
@@ -188,6 +197,22 @@ assert.equal(namedInstance.providerInstanceId, "codex-work");
 assert.equal(namedInstance.driver, "codex");
 assert.equal(namedInstance.model, "gpt-work");
 await waitFor(() => getRecord(namedInstance.id).status === "idle");
+
+// A profile shadows a provider instance with the same name, on start and on every continuation.
+const shadowed = unwrap(await manager.start({
+  target: "codex-shadow",
+  prompt: "first",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => getRecord(shadowed.id).status === "idle");
+unwrap(await manager.continue(shadowed.id, "second", {}, scope));
+await waitFor(() => runtimes.get(shadowed.id)?.inputs.length === 2);
+assert.deepEqual(
+  runtimes.get(shadowed.id)?.inputs.map((input) => input.prompt),
+  ["Shadow profile body.\n\nTask:\nfirst", "Shadow profile body.\n\nTask:\nsecond"],
+);
+await waitFor(() => getRecord(shadowed.id).status === "idle");
 
 const disabled = await manager.start({
   target: "disabled-reviewer",
@@ -293,7 +318,7 @@ const second = unwrap(await manager.start({
 }));
 await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
-assert.equal(runtimes.size, 3, "different agents receive independent logical runtimes");
+assert.equal(runtimes.size, 4, "different agents receive independent logical runtimes");
 
 const failed = unwrap(await manager.start({
   target: "reviewer",

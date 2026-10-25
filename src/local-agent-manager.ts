@@ -495,8 +495,9 @@ export class LocalAgentManager {
     record: LocalAgentRecord,
     profiles: readonly LocalAgentProfile[],
   ): BetterResult<LocalAgentProfile | undefined, AgentTargetError> {
-    if (record.profileName === record.providerInstanceId) return Result.ok(undefined);
+    // Profiles win over provider instances of the same name, matching start-time target resolution.
     const profile = profiles.find((candidate) => candidate.name === record.profileName);
+    if (!profile && record.profileName === record.providerInstanceId) return Result.ok(undefined);
     if (!profile) {
       return Result.err(new AgentTargetError({
         code: "UNKNOWN_TARGET",
