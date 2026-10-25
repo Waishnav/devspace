@@ -12,6 +12,19 @@ const COMPLETED_SESSION_TTL_MS = 5 * 60 * 1_000;
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
 const OWNER_TERMINATE_GRACE_MS = 2_000;
+const OWNER_KILL_WAIT_MS = 2_000;
+
+async function allExitWithin(sessions: ProcessSession[], ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.all(sessions.map((session) => session.exitPromise)).then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface StartCommandInput {
   workspaceId: string;
@@ -231,21 +244,20 @@ export class ProcessOwner {
     if (this.terminated && session.running) session.process?.kill("SIGTERM");
   }
 
-  /** Stops every adopted command and resolves once they have all exited. */
-  async terminate(): Promise<void> {
+  /**
+   * Stops every adopted command. Resolves with how many commands were killed
+   * but never confirmed their exit: a descendant that left the process group
+   * (e.g. via setsid) can keep inherited output open indefinitely, so the
+   * final wait is bounded and reported instead of treated as success.
+   */
+  async terminate(): Promise<number> {
     this.terminated = true;
     const running = [...this.sessions].filter((session) => session.running);
     for (const session of running) session.process?.kill("SIGTERM");
-    const exited = Promise.all(running.map((session) => session.exitPromise));
-    let timer: NodeJS.Timeout | undefined;
-    const graceExpired = await Promise.race([
-      exited.then(() => false),
-      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), OWNER_TERMINATE_GRACE_MS); }),
-    ]);
-    if (timer) clearTimeout(timer);
-    if (!graceExpired) return;
+    if (await allExitWithin(running, OWNER_TERMINATE_GRACE_MS)) return 0;
     for (const session of running) if (session.running) session.process?.kill("SIGKILL");
-    await exited;
+    await allExitWithin(running, OWNER_KILL_WAIT_MS);
+    return running.filter((session) => session.running).length;
   }
 }
 

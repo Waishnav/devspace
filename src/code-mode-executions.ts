@@ -118,7 +118,8 @@ export class CodeModeExecutions {
 
   private async stop(execution: Execution, reason: string): Promise<void> {
     execution.controller.abort(new Error(reason));
-    await Promise.allSettled([execution.done, execution.processes.terminate()]);
+    const [, terminated] = await Promise.allSettled([execution.done, execution.processes.terminate()]);
+    if (terminated.status === "fulfilled") recordUnconfirmedExits(execution, terminated.value);
   }
 
   private get(workspaceId: string, id: string): Execution {
@@ -189,10 +190,17 @@ export class CodeModeExecutions {
       execution.error = error instanceof Error ? error.message : String(error);
       execution.status = execution.controller.signal.aborted ? "cancelled" : "failed";
     } finally {
-      if (execution.status !== "completed") await execution.processes.terminate();
+      if (execution.status !== "completed") recordUnconfirmedExits(execution, await execution.processes.terminate());
       execution.finishedAt = performance.now();
       execution.cleanupTimer = setTimeout(() => this.executions.delete(execution.id), COMPLETED_TTL_MS);
       execution.cleanupTimer.unref();
     }
   }
+}
+
+// Surface incomplete termination instead of reporting a clean stop.
+function recordUnconfirmedExits(execution: Execution, unconfirmed: number): void {
+  if (unconfirmed === 0) return;
+  const note = `${unconfirmed} command${unconfirmed === 1 ? " was" : "s were"} killed but did not close output; a detached descendant may still be running.`;
+  if (!execution.error?.includes(note)) execution.error = execution.error ? `${execution.error} ${note}` : note;
 }
