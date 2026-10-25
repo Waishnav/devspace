@@ -27,6 +27,7 @@ const harnessRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const qaStateRoot = join(harnessRoot, ".devspace-dev", "qa");
 const hostSourceRoot = fileURLToPath(new URL("./host/", import.meta.url));
 const WORKSPACE_ID_PATTERN = /\bws_[a-f0-9]{6,}\b/;
+const RENDER_VIEWPORT_HEIGHT = 12_000;
 
 const { values: options, positionals } = parseArgs({
   allowPositionals: true,
@@ -545,16 +546,17 @@ async function captureBrowserEvidence(
   const failures: string[] = [];
   const screenshots: string[] = [];
   try {
-    await browser("set", "viewport", "1280", "900");
+    // Chrome throttles requestAnimationFrame in off-screen cross-origin iframes, and
+    // MCP Apps report their size from it, so render with every card on screen.
+    await browser("set", "viewport", "1280", String(RENDER_VIEWPORT_HEIGHT));
     await browser("open", hostUrl);
     await browser("wait", "--fn", "window.__devspaceQa?.settled === true", "--timeout", "45000");
     const cards = JSON.parse(JSON.parse(await browser("eval", "JSON.stringify(window.__devspaceQa.cards)"))) as BrowserEvidence["cards"];
 
-    // Chrome does not paint cross-origin iframes outside the viewport, and element
-    // shots taken after scrolling can crop the wrong region. Fit the whole page
-    // in the viewport instead, so every card is painted and nothing scrolls.
+    // Shrink to the page so screenshots have no trailing blank space; every card
+    // stays inside the viewport, so nothing needs scrolling or lazy painting.
     const pageHeight = Number(JSON.parse(await browser("eval", "document.documentElement.scrollHeight")));
-    await browser("set", "viewport", "1280", String(Math.min(Math.max(pageHeight, 900), 12_000)));
+    await browser("set", "viewport", "1280", String(Math.min(Math.max(pageHeight, 900), RENDER_VIEWPORT_HEIGHT)));
     await browser("wait", "500");
     const page = join(artifacts, "page.png");
     await browser("screenshot", page);
