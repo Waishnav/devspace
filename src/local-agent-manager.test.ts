@@ -476,7 +476,13 @@ const timedWaitAgent = unwrap(await manager.start({
   workspaceRoot: root,
 }));
 await waitFor(() => runtimes.get(timedWaitAgent.id)?.inputs.length === 1);
-assert.deepEqual(unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id], scope, 5)), [
+// Turn ids are random; assertions that compare whole wait results ignore them.
+function withoutTurnId<T extends { turnId?: string }>(results: T[]): Omit<T, "turnId">[] {
+  return results.map(({ turnId: _turnId, ...result }) => result);
+}
+
+const timedWaitResults = unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id], scope, 5));
+assert.deepEqual(withoutTurnId(timedWaitResults), [
   {
     id: earlyFailure.id,
     status: "failed",
@@ -488,6 +494,12 @@ assert.deepEqual(unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id],
   },
   { id: timedWaitAgent.id, status: "running", wait: "timeout" },
 ]);
+// Wait results identify the turn they describe.
+assert.deepEqual(
+  timedWaitResults.map((result) => result.turnId),
+  [getRecord(earlyFailure.id).latestTurnId, getRecord(timedWaitAgent.id).latestTurnId],
+);
+assert.ok(timedWaitResults.every((result) => result.turnId?.startsWith("trn_")));
 runtimes.get(timedWaitAgent.id)!.release();
 await waitFor(() => getRecord(timedWaitAgent.id).status === "idle");
 
@@ -501,7 +513,7 @@ await waitFor(() => runtimes.get(cancelledWaitAgent.id)?.inputs.length === 1);
 const waitAbort = new AbortController();
 const cancelledWait = manager.wait([cancelledWaitAgent.id], scope, undefined, waitAbort.signal);
 waitAbort.abort();
-assert.deepEqual(unwrap(await cancelledWait), [{ id: cancelledWaitAgent.id, status: "running" }]);
+assert.deepEqual(withoutTurnId(unwrap(await cancelledWait)), [{ id: cancelledWaitAgent.id, status: "running" }]);
 assert.equal(getRecord(cancelledWaitAgent.id).status, "running", "cancelling a waiter must not stop its turn");
 runtimes.get(cancelledWaitAgent.id)!.release();
 await waitFor(() => getRecord(cancelledWaitAgent.id).status === "idle");
@@ -619,7 +631,7 @@ const detailed = unwrap(await manager.start({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
 }));
-assert.deepEqual(unwrap(await manager.wait([detailed.id], scope)), [{
+assert.deepEqual(withoutTurnId(unwrap(await manager.wait([detailed.id], scope))), [{
   id: detailed.id,
   status: "failed",
   error: {
