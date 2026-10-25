@@ -83,3 +83,11 @@ Create a worktree for each revision, then run the same scenario with `--checkout
 ## Limits
 
 The local host follows the MCP Apps protocol: a separate sandbox origin, CSP taken from resource metadata, host context, and server tools. It is still not ChatGPT or Claude. Use the real host when a claim depends on host-specific behavior such as `window.openai` globals, connector caching, OAuth reconnects, or display modes the local host does not implement.
+
+## Attach evidence to a pull request
+
+```bash
+scripts/qa/publish-evidence.sh <pr-number> <run-dir>/artifacts/page.png <run-dir>/artifacts/step-3-show_changes.png
+```
+
+This pushes the images to the orphan branch `qa-evidence/pr-<number>` and prints Markdown image links. Paste them into the PR body or a comment with the scenario names and the pass/fail lines from `report.md`.

@@ -26,7 +26,6 @@ const spawn = createRequire(import.meta.url)("cross-spawn") as typeof import("no
 const harnessRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const qaStateRoot = join(harnessRoot, ".devspace-dev", "qa");
 const hostSourceRoot = fileURLToPath(new URL("./host/", import.meta.url));
-const hostDistRoot = join(qaStateRoot, "host-dist");
 const WORKSPACE_ID_PATTERN = /\bws_[a-f0-9]{6,}\b/;
 
 const { values: options, positionals } = parseArgs({
@@ -66,9 +65,10 @@ async function main(): Promise<void> {
     // The source server reads the widget from dist/ui, so the target checkout must be rebuilt.
     await run("pnpm", ["build:app"], { cwd: checkout, stdio: "inherit" });
   }
-  await buildHost();
-
-  const batch = timestamp();
+  // Each batch builds its own host so parallel QA runs never share output.
+  const batch = `${timestamp()}-${process.pid}`;
+  const hostDistRoot = join(qaStateRoot, "runs", batch, "host");
+  await buildHost(hostDistRoot);
   let failed = 0;
   for (const name of names) {
     const scenario = await loadScenario(name);
@@ -76,6 +76,7 @@ async function main(): Promise<void> {
       checkout,
       runDir: join(qaStateRoot, "runs", batch, scenario.name),
       useBrowser,
+      hostDistRoot,
     });
     if (outcome.failures.length > 0) failed += 1;
     console.log(`${outcome.failures.length === 0 ? "PASS" : "FAIL"} ${scenario.name} → ${outcome.reportPath}`);
@@ -101,7 +102,7 @@ interface ScenarioOutcome {
 
 async function runScenario(
   scenario: Scenario,
-  context: { checkout: string; runDir: string; useBrowser: boolean },
+  context: { checkout: string; runDir: string; useBrowser: boolean; hostDistRoot: string },
 ): Promise<ScenarioOutcome> {
   const { checkout, runDir } = context;
   const dirs = {
@@ -164,7 +165,7 @@ async function runScenario(
   const transcriptPath = join(runDir, "transcript.json");
   await writeFile(transcriptPath, `${JSON.stringify(qaRun, null, 2)}\n`);
 
-  const host = await startHost(client, qaRun, transcriptPath);
+  const host = await startHost(client, qaRun, transcriptPath, context.hostDistRoot);
   const hostUrl = `${host.url}/?theme=${options.theme}${options["bare-host"] ? "&styles=none" : ""}`;
 
   const failures = qaRun.steps.flatMap((step) => step.failures.map((failure) => `step ${step.index} ${step.tool}: ${failure}`));
@@ -365,7 +366,7 @@ async function issueAccessToken(baseUrl: string, ownerToken: string, clientName:
   return accessToken;
 }
 
-async function buildHost(): Promise<void> {
+async function buildHost(hostDistRoot: string): Promise<void> {
   await viteBuild({
     configFile: false,
     root: hostSourceRoot,
@@ -380,7 +381,12 @@ async function buildHost(): Promise<void> {
  * real MCP Apps hosts. The bearer token stays in this process: cards reach
  * DevSpace only through the same-origin /api/call endpoint.
  */
-async function startHost(client: Client, qaRun: QaRun, transcriptPath: string): Promise<{ url: string }> {
+async function startHost(
+  client: Client,
+  qaRun: QaRun,
+  transcriptPath: string,
+  hostDistRoot: string,
+): Promise<{ url: string }> {
   const hostPort = await freePort();
   const sandboxPort = await freePort();
   const hostOrigin = `http://127.0.0.1:${hostPort}`;
