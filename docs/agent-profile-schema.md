@@ -93,7 +93,7 @@ to one of these built-in driver integrations:
 Codex and OpenCode are resolved from the user's environment rather than bundled
 as executables. Run their normal login/setup flows before using them; set
 `CODEX_COMMAND` when Codex is not on the normal PATH. OpenCode is discovered as
-`opencode`, and DevSpace automatically routes OpenCode 1.x and 2.x to their
+`opencode` unless `OPENCODE_COMMAND` names another executable, and DevSpace automatically routes OpenCode 1.x and 2.x to their
 matching runtime implementations. OpenCode, Cursor, and Copilot runtimes are
 started and reused by the daemon internally. Pi is launched in RPC mode and
 uses its native persisted session file as DevSpace's continuation identity;

@@ -189,6 +189,7 @@ assert.deepEqual(promptInputs[0], {
 });
 
 let callbackSessionId: string | undefined;
+const overrideEvents: unknown[] = [];
 await pool.run(driver, {
   agentId: "agt_one",
   providerInstanceId: "opencode",
@@ -201,8 +202,10 @@ await pool.run(driver, {
   effort: "low",
 }, {
   onSessionId: (id) => { callbackSessionId = id; },
+  onEvent: (event) => { overrideEvents.push(event); },
 });
 assert.equal(callbackSessionId, firstRecord.providerSessionId);
+assert.equal((overrideEvents[0] as { type?: string } | undefined)?.type, "message");
 assert.deepEqual(promptInputs[2], {
   sessionID: "session_1",
   directory: "/tmp/project",

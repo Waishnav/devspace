@@ -31,8 +31,8 @@ built-in provider (`codex`, `claude`, `opencode`, `pi`, `cursor`, `copilot`,
 `grok`) and reports the ones it cannot run, with the reason. Each runs with the
 CLI's own default model; pass `--model` and `--effort` to override. A provider
 is available when its executable is on `PATH`, or named by `CODEX_COMMAND`,
-`CURSOR_COMMAND`, `COPILOT_COMMAND`, `GROK_COMMAND`, `CLAUDE_COMMAND`, or
-`PI_COMMAND`. Claude and Pi also ship inside the package. DevSpace checks that a
+`CURSOR_COMMAND`, `COPILOT_COMMAND`, `GROK_COMMAND`, `CLAUDE_COMMAND`,
+`OPENCODE_COMMAND`, or `PI_COMMAND`. Claude and Pi also ship inside the package. DevSpace checks that a
 provider can start, not that you are signed in to it.
 
 Configuring `subagents` explicitly replaces that detection. `"enabled": false`

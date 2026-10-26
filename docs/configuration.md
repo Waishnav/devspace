@@ -241,9 +241,10 @@ runtime and automatically selects the OpenCode 1.x or 2.x protocol. Both major
 versions use the same provider instance and profile configuration; `opencode2`
 is not a separate driver.
 
-Codex, Claude, Pi, and ACP instances also accept `command`. OpenCode does not
-expose a command override. Cursor, Copilot, and Grok retain their built-in ACP
-commands when `command` is omitted. An arbitrary ACP instance declares its
+Codex, Claude, OpenCode, Pi, and ACP instances also accept `command`. For
+OpenCode it names the executable used for both `--version` and `serve`.
+Cursor, Copilot, and Grok retain their built-in ACP commands when `command` is
+omitted. An arbitrary ACP instance declares its
 executable and may provide fixed startup arguments under `config.args`:
 
 ```jsonc
@@ -269,7 +270,7 @@ the matching read-only/workspace-safe set; `full_access` leaves Pi's normal
 tool configuration untouched.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
-`CODEX_HOME`, `CLAUDE_COMMAND`, `PI_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
+`CODEX_HOME`, `CLAUDE_COMMAND`, `OPENCODE_COMMAND`, `PI_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,
 `GROK_COMMAND`, and `GROK_AGENT_PROFILE`. Provider configuration takes
 precedence where the same value is set in both places.
 

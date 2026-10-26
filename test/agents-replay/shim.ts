@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, writeFileSy
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { recordHttp, replayHttp, serveArgs } from "./http-shim.js";
 import { providerDefinition } from "./providers.js";
 import { Replayer } from "./replayer.js";
 import { parseFrame, readTranscript, scrub, type ScrubContext, type TranscriptMeta } from "./transcript.js";
@@ -18,6 +19,9 @@ import { parseFrame, readTranscript, scrub, type ScrubContext, type TranscriptMe
  * - DEVSPACE_AGENT_SHIM_RUN_DIR: scratch directory for spawn claims and the
  *   failure report the runner prints;
  * - DEVSPACE_AGENT_SHIM_WORKSPACE: the workspace root to scrub and restore.
+ *
+ * HTTP providers launched as `<command> serve --port=P` are recorded and
+ * replayed over HTTP instead of stdio (see http-shim.ts).
  */
 const SHIM_ENV_PREFIX = "DEVSPACE_AGENT_SHIM_";
 const MISMATCH_EXIT_CODE = 70;
@@ -30,6 +34,7 @@ const transcriptBase = requiredEnv("TRANSCRIPT");
 const runDir = requiredEnv("RUN_DIR");
 const context: ScrubContext = { workspace: requiredEnv("WORKSPACE"), home: homedir(), tmp: tmpdir() };
 const args = process.argv.slice(2);
+const http = provider.http === true && serveArgs(args) !== undefined;
 
 if (args.length === 1 && args[0] === "--version") {
   printVersion();
@@ -42,9 +47,35 @@ if (args.length === 1 && args[0] === "--version") {
 }
 
 function record(path: string): void {
+  const command = provider.realCommand();
+  const append = startTranscript(path, command);
+  const childEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith(SHIM_ENV_PREFIX)));
+  if (http) {
+    void recordHttp({ command, args, env: childEnv, append, fail });
+    return;
+  }
+  const appendLine = (dir: "in" | "out", line: string) => {
+    if (line.trim()) append(dir, parseFrame(line));
+  };
+  const child = spawn(command, args, { env: childEnv, stdio: ["pipe", "pipe", "inherit"] });
+  child.on("error", (error) => fail(`Could not start ${command}: ${error.message}`));
+  // Bytes pass through unchanged; the transcript gets a parsed copy of each line.
+  process.stdin.on("data", (chunk) => child.stdin.write(chunk));
+  process.stdin.on("end", () => child.stdin.end());
+  child.stdin.on("error", () => undefined);
+  child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+  createInterface({ input: process.stdin }).on("line", (line) => appendLine("in", line));
+  createInterface({ input: child.stdout }).on("line", (line) => appendLine("out", line));
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => child.kill(signal));
+  }
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 : 1)));
+}
+
+/** Writes the meta line and returns an appender that redacts and scrubs each frame. */
+function startTranscript(path: string, command: string): (dir: "in" | "out", frame: unknown) => void {
   mkdirSync(dirname(path), { recursive: true });
   const startedAt = Date.now();
-  const command = provider.realCommand();
   const version = spawnSync(command, ["--version"], { encoding: "utf8", timeout: 10_000 }).stdout?.trim();
   const meta: TranscriptMeta = {
     type: "meta",
@@ -55,29 +86,12 @@ function record(path: string): void {
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(meta)}\n`);
-  const append = (dir: "in" | "out", line: string) => {
-    if (!line.trim()) return;
-    const parsed = parseFrame(line);
+  return (dir, parsed) => {
     const frame = dir === "out" && provider.redactFrame && isRecord(parsed) ? provider.redactFrame(parsed) : parsed;
     if (frame === undefined) return;
     const entry = { dir, ms: Date.now() - startedAt, frame: scrub(frame, context) };
     appendFileSync(path, `${JSON.stringify(entry)}\n`);
   };
-
-  const childEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith(SHIM_ENV_PREFIX)));
-  const child = spawn(command, args, { env: childEnv, stdio: ["pipe", "pipe", "inherit"] });
-  child.on("error", (error) => fail(`Could not start ${command}: ${error.message}`));
-  // Bytes pass through unchanged; the transcript gets a parsed copy of each line.
-  process.stdin.on("data", (chunk) => child.stdin.write(chunk));
-  process.stdin.on("end", () => child.stdin.end());
-  child.stdin.on("error", () => undefined);
-  child.stdout.on("data", (chunk) => process.stdout.write(chunk));
-  createInterface({ input: process.stdin }).on("line", (line) => append("in", line));
-  createInterface({ input: child.stdout }).on("line", (line) => append("out", line));
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => child.kill(signal));
-  }
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 : 1)));
 }
 
 function replay(path: string): void {
@@ -92,16 +106,28 @@ function replay(path: string): void {
       `  actual:   ${JSON.stringify(liveArgs)}`,
     ].join("\n"));
   }
+  let respond = (frame: unknown) => { process.stdout.write(`${JSON.stringify(frame)}\n`); };
   const replayer = new Replayer({
     transcript,
     protocol: provider.protocol,
     context,
     emit: (frame) => {
       trace("out", frame);
-      process.stdout.write(`${JSON.stringify(frame)}\n`);
+      respond(frame);
     },
     fail: (report) => fail(`${path}\n${report}`),
   });
+  if (http) {
+    respond = replayHttp({
+      args,
+      receive: (frame) => {
+        trace("in", frame);
+        replayer.receive(frame);
+      },
+    }).respond;
+    replayer.start();
+    return;
+  }
   createInterface({ input: process.stdin })
     .on("line", (line) => {
       if (!line.trim()) return;
@@ -147,9 +173,9 @@ function claimTranscript(): string {
   }
 }
 
-/** Temporary directories created per run, e.g. Pi's sandbox extension, differ every time. */
+/** Temporary directories (Pi's sandbox extension) and server ports differ every run. */
 function normalizeArgs(values: string[]): string[] {
-  return values.map((value) => value.replace(/\$TMP\/[^/\s"]+/g, "$TMP/*"));
+  return values.map((value) => value.replace(/\$TMP\/[^/\s"]+/g, "$TMP/*").replace(/^--port=\d+$/, "--port=*"));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

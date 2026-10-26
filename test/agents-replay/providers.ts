@@ -42,6 +42,8 @@ export interface ProviderDefinition {
   liveEnv?(): Record<string, string>;
   /** The real executable the record shim spawns; the driver's default resolution. */
   realCommand(): string;
+  /** The provider runs `<command> serve --port=P` and speaks HTTP instead of stdio (see http-shim.ts). */
+  http?: boolean;
 }
 
 const require = createRequire(import.meta.url);
@@ -136,6 +138,22 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
       return agentDir ? { PI_CODING_AGENT_DIR: agentDir } : {};
     },
     realCommand: () => "pi",
+  },
+  opencode: {
+    id: "opencode",
+    model: "openai/gpt-5.6-luna",
+    http: true,
+    // HTTP frames from http-shim.ts: requests in, responses and SSE events out, correlated by request counter.
+    protocol: {
+      kind: (frame) => typeof frame.method === "string"
+        ? `${frame.method} ${String(frame.path).split("?")[0]!.replace(/\/[a-z]+_[A-Za-z0-9]+/g, "/{id}")}`
+        : "response",
+      requestId: (frame) => typeof frame.method === "string" ? frame.id : undefined,
+      responseTo: (frame) => typeof frame.method === "string" ? undefined : frame.id,
+      volatileKeys: new Set(["id"]),
+      elasticKinds: new Set(),
+    },
+    realCommand: () => "opencode",
   },
   codex: {
     id: "codex",

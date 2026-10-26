@@ -1,6 +1,7 @@
 import { resolveExecutableCommand } from "./local-agent-command.js";
 import { acpFlavorCommand, resolveAcpCommand } from "./local-agent-acp.js";
 import { resolvePiCommand } from "./local-agent-pi.js";
+import { resolveOpenCodeCommand } from "./local-agent-opencode-version.js";
 import {
   localAgentProviderEnvironment,
   subagentAcpFlavor,
@@ -54,7 +55,7 @@ function checkLocalAgentProviderAvailability(
         ? commandAvailability(providerInstanceId, providerEnv.CLAUDE_COMMAND, providerEnv)
         : packageAvailability(providerInstanceId, "@anthropic-ai/claude-agent-sdk");
     case "opencode":
-      return commandAvailability(providerInstanceId, "opencode", providerEnv);
+      return commandAvailability(providerInstanceId, resolveOpenCodeCommand(providerEnv), providerEnv);
     case "pi":
       // Same resolution as the runtime: PI_COMMAND, then `pi` on PATH, then the bundled package.
       try {
