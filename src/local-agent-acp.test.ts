@@ -519,6 +519,18 @@ assert.deepEqual(
   [{ sessionId: "grok_session_1", modelId: "grok-4.5", _meta: { reasoningEffort: "low" } }],
 );
 assert.equal(grokCompletionRegistry.size, 0);
+// A user's own always-approve setting must not bypass the permission requests that enforce the write mode.
+assert.deepEqual(
+  (grokRequests.find(({ method }) => method === "session/new")?.params as { _meta?: unknown })._meta,
+  { yoloMode: false },
+);
+const grokResumed = await grokRuntime.run({ prompt: "resume", workspaceRoot: "/tmp/project", providerSessionId: "grok_session_other", writeMode: "full_access" });
+assert.equal(grokResumed.isOk(), true);
+assert.deepEqual(
+  (grokRequests.find(({ method }) => method === "session/resume")?.params as { _meta?: unknown })._meta,
+  { yoloMode: true },
+  "only full_access may skip Grok's permission requests",
+);
 await grokRuntime.close();
 
 const grokConfigurationConnection = {

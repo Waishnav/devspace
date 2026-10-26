@@ -318,6 +318,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         cwd: input.workspaceRoot,
         mcpServers: [],
         ...this.additionalDirectoryParams(),
+        ...this.permissionMeta(input),
       });
       this.cacheSessionMetadata(input.providerSessionId, response);
       this.queues.set(input.providerSessionId, { values: [] });
@@ -332,6 +333,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       cwd: input.workspaceRoot,
       mcpServers: [],
       ...this.additionalDirectoryParams(),
+      ...this.permissionMeta(input),
     });
     const sessionId = readString(response, "sessionId");
     if (!sessionId) {
@@ -471,6 +473,14 @@ export class AcpRuntime implements LocalAgentRuntime {
         message: `${this.provider} ACP could not select model '${requestedModel}'.`,
       });
     }
+  }
+
+  /**
+   * Grok follows the user's own always-approve setting unless the client says otherwise, which would
+   * bypass the permission requests that enforce the write mode. Only full_access may skip them.
+   */
+  private permissionMeta(input: LocalAgentRunInput): { _meta?: { yoloMode: boolean } } {
+    return this.flavor === "grok" ? { _meta: { yoloMode: input.writeMode === "full_access" } } : {};
   }
 
   private additionalDirectoryParams(): { additionalDirectories?: string[] } {
