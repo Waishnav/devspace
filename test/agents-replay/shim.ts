@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -17,7 +17,10 @@ import { parseFrame, readTranscript, scrub, type ScrubContext, type TranscriptMe
  * - DEVSPACE_AGENT_SHIM_TRANSCRIPT: transcript path without `.jsonl`;
  * - DEVSPACE_AGENT_SHIM_RUN_DIR: scratch directory for spawn claims and the
  *   failure report the runner prints;
- * - DEVSPACE_AGENT_SHIM_WORKSPACE: the workspace root to scrub and restore.
+ * - DEVSPACE_AGENT_SHIM_WORKSPACE: the workspace root to scrub and restore;
+ * - DEVSPACE_AGENT_SHIM_WORKTREE_ROOT: where `--worktree` checkouts are created.
+ *   The provider starts after its worktree exists, so the single entry found
+ *   there is scrubbed like the workspace (its name has a random suffix).
  */
 const SHIM_ENV_PREFIX = "DEVSPACE_AGENT_SHIM_";
 const MISMATCH_EXIT_CODE = 70;
@@ -28,7 +31,12 @@ const provider = providerDefinition(requiredEnv("PROVIDER"));
 const scenario = requiredEnv("SCENARIO");
 const transcriptBase = requiredEnv("TRANSCRIPT");
 const runDir = requiredEnv("RUN_DIR");
-const context: ScrubContext = { workspace: requiredEnv("WORKSPACE"), home: homedir(), tmp: tmpdir() };
+const context: ScrubContext = {
+  workspace: requiredEnv("WORKSPACE"),
+  worktree: findWorktree(env[`${SHIM_ENV_PREFIX}WORKTREE_ROOT`]),
+  home: homedir(),
+  tmp: tmpdir(),
+};
 const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "--version") {
@@ -51,6 +59,7 @@ function record(path: string): void {
     provider: provider.id,
     scenario,
     args: scrub(args, context) as string[],
+    cwd: scrub(process.cwd(), context) as string,
     ...(version ? { version } : {}),
     recordedAt: new Date().toISOString(),
   };
@@ -91,6 +100,10 @@ function replay(path: string): void {
       `  expected: ${JSON.stringify(recordedArgs)}`,
       `  actual:   ${JSON.stringify(liveArgs)}`,
     ].join("\n"));
+  }
+  const liveCwd = scrub(process.cwd(), context) as string;
+  if (transcript.meta.cwd !== undefined && transcript.meta.cwd !== liveCwd) {
+    fail(`${provider.id} was started in a different directory than recorded in ${path}:\n  expected: ${transcript.meta.cwd}\n  actual:   ${liveCwd}`);
   }
   const replayer = new Replayer({
     transcript,
@@ -145,6 +158,12 @@ function claimTranscript(): string {
     }
     return index === 1 ? `${transcriptBase}.jsonl` : `${transcriptBase}.${index}.jsonl`;
   }
+}
+
+function findWorktree(root: string | undefined): string | undefined {
+  if (!root || !existsSync(root)) return undefined;
+  const [entry] = readdirSync(root);
+  return entry ? join(root, entry) : undefined;
 }
 
 /** Temporary directories created per run, e.g. Pi's sandbox extension, differ every time. */
