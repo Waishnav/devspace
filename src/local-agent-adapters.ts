@@ -1,13 +1,9 @@
 import {
-  localAgentProviderEnvironment,
-  localAgentProviderEnvironmentOverrides,
   type SubagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
 import {
   LOCAL_AGENT_DRIVER_KINDS,
-  type LocalAgentDriverKind,
-  type LocalAgentProviderInstanceId,
 } from "./local-agent-provider.js";
 import {
   AcpLocalAgentDriver,
@@ -33,6 +29,7 @@ import {
   type PiSessionFactory,
 } from "./local-agent-pi.js";
 import type { LocalAgentDriver } from "./local-agent-runtime.js";
+import { LocalAgentProviderRegistry } from "./local-agent-provider-registry.js";
 
 export type LocalAgentAdapter = LocalAgentDriver;
 
@@ -53,58 +50,21 @@ export function createLocalAgentDrivers(
     driver,
     enabled: true,
   } satisfies SubagentProviderConfig));
-  return instances.map((instance) => new ProviderInstanceDriver(
-    instance.id,
-    createDriver(instance, options, env),
-  ));
+  const registry = createLocalAgentProviderRegistry(options);
+  return instances.map((instance) => registry.create(instance, options.subagents, env));
 }
 
-function createDriver(
-  instance: SubagentProviderConfig,
-  options: LocalAgentDriverOptions,
-  inheritedEnv: NodeJS.ProcessEnv,
-): LocalAgentDriver {
-  const env = options.subagents
-    ? localAgentProviderEnvironment(options.subagents, instance.id, inheritedEnv)
-    : inheritedEnv;
-  const envOverrides = options.subagents
-    ? localAgentProviderEnvironmentOverrides(options.subagents, instance.id)
-    : {};
-  switch (instance.driver) {
-    case "codex":
-      return new CodexLocalAgentDriver(env);
-    case "claude":
-      return new ClaudeLocalAgentDriver(options.claudeQueryFactory, env);
-    case "opencode":
-      return new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env });
-    case "pi":
-      return new PiLocalAgentDriver(options.piSessionFactory, envOverrides);
-    case "cursor":
-    case "copilot":
-    case "grok":
-      return new AcpLocalAgentDriver(instance.driver, env);
-  }
-}
-
-class ProviderInstanceDriver implements LocalAgentDriver {
-  readonly provider: LocalAgentDriverKind;
-  readonly idleTimeoutMs?: number;
-
-  constructor(
-    readonly providerInstanceId: LocalAgentProviderInstanceId,
-    private readonly driver: LocalAgentDriver,
-  ) {
-    this.provider = driver.provider;
-    this.idleTimeoutMs = driver.idleTimeoutMs;
-  }
-
-  runtimeKey(context: Parameters<LocalAgentDriver["runtimeKey"]>[0]): string {
-    return JSON.stringify([this.providerInstanceId, this.driver.runtimeKey(context)]);
-  }
-
-  createRuntime(context: Parameters<LocalAgentDriver["createRuntime"]>[0]) {
-    return this.driver.createRuntime(context);
-  }
+export function createLocalAgentProviderRegistry(
+  options: LocalAgentDriverOptions = {},
+): LocalAgentProviderRegistry {
+  return new LocalAgentProviderRegistry()
+    .register("codex", ({ env }) => new CodexLocalAgentDriver(env))
+    .register("claude", ({ env }) => new ClaudeLocalAgentDriver(options.claudeQueryFactory, env))
+    .register("opencode", ({ env }) => new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env }))
+    .register("pi", ({ envOverrides }) => new PiLocalAgentDriver(options.piSessionFactory, envOverrides))
+    .register("cursor", ({ env }) => new AcpLocalAgentDriver("cursor", env))
+    .register("copilot", ({ env }) => new AcpLocalAgentDriver("copilot", env))
+    .register("grok", ({ env }) => new AcpLocalAgentDriver("grok", env));
 }
 
 export function extractLocalAgentResponseText(value: unknown): string {

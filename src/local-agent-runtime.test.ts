@@ -95,8 +95,7 @@ let createCount = 0;
 const driver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  idleTimeoutMs: Number.POSITIVE_INFINITY,
-  runtimeKey: () => "shared",
+  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
   createRuntime: async () => {
     createCount += 1;
     await Promise.resolve();
@@ -136,8 +135,7 @@ const sessionPool = new LocalAgentRuntimePool({
 const sessionDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  idleTimeoutMs: Number.POSITIVE_INFINITY,
-  runtimeKey: () => "session-runtime",
+  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
   createRuntime: async () => Result.ok(sessionRuntime),
 };
 await sessionPool.run(sessionDriver, context, input);
@@ -165,8 +163,7 @@ const shutdownReleasePool = new LocalAgentRuntimePool({
 const shutdownReleaseDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  idleTimeoutMs: Number.POSITIVE_INFINITY,
-  runtimeKey: () => "shutdown-release-runtime",
+  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
   createRuntime: async () => Result.ok(shutdownReleaseRuntime),
 };
 await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
@@ -215,7 +212,7 @@ const cleanupRuntime = new CleanupFailureRuntime();
 const cleanupDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  runtimeKey: () => "cleanup-runtime",
+  runtimePolicy: { scope: "instance" },
   createRuntime: async () => Result.ok(cleanupRuntime),
 };
 const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
@@ -232,7 +229,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
   const recoveryDriver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
-    runtimeKey: () => "dead-runtime-recovery",
+    runtimePolicy: { scope: "instance" },
     createRuntime: async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime),
   };
 
@@ -257,7 +254,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
   const completedTurnDriver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
-    runtimeKey: () => "completed-turn-during-close",
+    runtimePolicy: { scope: "instance" },
     createRuntime: async () => Result.ok(completedTurnRuntime),
   };
 
@@ -274,7 +271,7 @@ const racePool = new LocalAgentRuntimePool();
 const raceDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  runtimeKey: () => "creation-race",
+  runtimePolicy: { scope: "instance" },
   createRuntime: () => creating,
 };
 const pendingRun = racePool.run(raceDriver, context, input);
@@ -306,7 +303,7 @@ if (afterClose.isErr()) {
   const creationDriver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
-    runtimeKey: () => "creation-failure",
+    runtimePolicy: { scope: "instance" },
     async createRuntime() {
       createAttempts += 1;
       if (createAttempts === 1) {
@@ -360,8 +357,7 @@ if (afterClose.isErr()) {
   const releaseDriver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
-    idleTimeoutMs: Number.POSITIVE_INFINITY,
-    runtimeKey: () => "release-failure",
+    runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
     createRuntime: async () => Result.ok(releaseRuntime),
   };
 
@@ -379,6 +375,60 @@ if (afterClose.isErr()) {
     "a failed release returns the session to retained state so it can be reused and retried",
   );
   await releasePool.close();
+}
+
+{
+  let creates = 0;
+  const policyPool = new LocalAgentRuntimePool();
+  const policyDriver = (providerInstanceId: string, runtimePolicy: LocalAgentDriver["runtimePolicy"]): LocalAgentDriver => ({
+    providerInstanceId,
+    provider: "codex",
+    runtimePolicy,
+    createRuntime: async () => {
+      creates += 1;
+      return Result.ok(new FakeRuntime());
+    },
+  });
+
+  const instanceDriver = policyDriver("codex-work", { scope: "instance" });
+  await policyPool.run(instanceDriver, { ...context, providerInstanceId: "codex-work" }, input);
+  await policyPool.run(instanceDriver, {
+    ...context,
+    agentId: "agt_other",
+    providerInstanceId: "codex-work",
+  }, input);
+  assert.equal(creates, 1, "instance-scoped runtimes are shared across agents in one provider instance");
+
+  const personalDriver = policyDriver("codex-personal", { scope: "instance" });
+  await policyPool.run(personalDriver, {
+    ...context,
+    providerInstanceId: "codex-personal",
+  }, input);
+  assert.equal(creates, 2, "provider instances never share a runtime even when they use the same driver");
+
+  const claudeDriver = policyDriver("claude-work", {
+    scope: "agent",
+    authority: "full_access_boundary",
+  });
+  const claudeContext = {
+    ...context,
+    agentId: "agt_claude",
+    providerInstanceId: "claude-work",
+  };
+  await policyPool.run(claudeDriver, { ...claudeContext, writeMode: "read_only" }, input);
+  await policyPool.run(claudeDriver, { ...claudeContext, writeMode: "allowed" }, input);
+  await policyPool.run(claudeDriver, { ...claudeContext, writeMode: "full_access" }, input);
+  assert.equal(creates, 4, "full-access authority is isolated while restricted modes share one agent runtime");
+
+  const acpDriver = policyDriver("cursor", { scope: "workspace", authority: "write_mode" });
+  const acpContext = { ...context, providerInstanceId: "cursor", workspaceRoot: "/tmp/a" };
+  await policyPool.run(acpDriver, { ...acpContext, writeMode: "allowed" }, input);
+  await policyPool.run(acpDriver, { ...acpContext, agentId: "agt_acp_2", writeMode: "allowed" }, input);
+  await policyPool.run(acpDriver, { ...acpContext, writeMode: "read_only" }, input);
+  await policyPool.run(acpDriver, { ...acpContext, workspaceRoot: "/tmp/b", writeMode: "allowed" }, input);
+  assert.equal(creates, 7, "workspace and write mode are explicit ACP runtime isolation dimensions");
+
+  await policyPool.close();
 }
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {

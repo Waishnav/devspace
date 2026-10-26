@@ -107,7 +107,7 @@ const runtimes = new Map<string, FakeRuntime>();
 const driver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  runtimeKey: (context: LocalAgentRuntimeContext) => context.agentId,
+  runtimePolicy: { scope: "agent" },
   createRuntime: async (context) => {
     const runtime = new FakeRuntime();
     runtimes.set(context.agentId, runtime);

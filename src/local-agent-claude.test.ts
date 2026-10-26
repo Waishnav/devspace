@@ -72,17 +72,11 @@ const driver = new ClaudeLocalAgentDriver(({ prompt, options }) => {
   query = new FakeClaudeQuery(prompt);
   return query;
 }, { PATH: "/usr/bin" });
-assert.equal(driver.runtimeKey(context), "claude:agt_claude:restricted");
-assert.equal(
-  driver.runtimeKey({ ...context, writeMode: "allowed" }),
-  "claude:agt_claude:restricted",
-  "restricted Claude modes can share one query because per-turn settings are dynamic",
-);
-assert.equal(
-  driver.runtimeKey({ ...context, writeMode: "full_access" }),
-  "claude:agt_claude:full_access",
-  "full access uses a query initialized with the explicit dangerous-permission opt-in",
-);
+assert.deepEqual(driver.runtimePolicy, {
+  scope: "agent",
+  authority: "full_access_boundary",
+  idleTimeoutMs: 3 * 60_000,
+});
 
 const runtimeResult = await driver.createRuntime(context);
 assert.equal(runtimeResult.isOk(), true);
