@@ -265,3 +265,28 @@ if (failedRun.isErr()) {
   assert.match(failedRun.error.message, /invalid_grant/);
 }
 await failedRuntime.close();
+
+// A continued turn that fails before output must not return the previous turn's response.
+const staleClient = {
+  ...client,
+  session: {
+    ...client.session,
+    async prompt() {
+      return { id: "inbox", sessionID: "ses_v2", time: { created: 5 }, type: "user", payload: { text: "x" }, delivery: "queue" };
+    },
+  },
+  message: {
+    async list(input: { type?: string }) {
+      return { data: input.type === "assistant" ? [assistant] : [failedIdle], cursor: { previous: null, next: null } };
+    },
+  },
+} as unknown as OpencodeV2ClientLike;
+const staleRuntime = new OpencodeV2Runtime(staleClient, { close: () => undefined });
+const staleRun = await staleRuntime.run({
+  prompt: "continued but failing",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: "opencode:v2:ses_v2",
+});
+assert.equal(staleRun.isErr(), true);
+if (staleRun.isErr()) assert.match(staleRun.error.message, /invalid_grant/);
+await staleRuntime.close();
