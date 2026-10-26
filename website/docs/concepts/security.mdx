@@ -70,11 +70,13 @@ Requests and tool calls are logged by default. Shell command previews are off
 unless `logging.shellCommands` is `true` — leave it off if commands may carry
 secrets.
 
-Native download tool logs contain bounded workspace ID, validated hostname,
-relative destination, byte count, hash, duration, and status metadata. They
-exclude the file value, raw content, connector references, native file IDs,
-bearer credentials, full presigned URLs, host and temporary paths, and base64
-chunks. The tool result returns only the workspace-relative path.
+Native download tool logs record the workspace ID, download hostname,
+destination, byte count, hash, duration, and status. They exclude the file
+value, raw content, connector references, native file IDs, bearer credentials,
+full presigned URLs, temporary paths, and base64 chunks. A rejected call logs
+the destination and workspace ID as requested, so an invalid absolute path
+appears in the log verbatim. The tool result returns only the
+workspace-relative path.
 
 Activity history is a separate store of workspace tool arguments and results.
 When enabled, it can record native-file arguments including the short-lived

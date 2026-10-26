@@ -116,8 +116,9 @@ line is one JSON event.
 | `text` | Message text; XML puts it in the event body. |
 | Turn completion `status` | `completed`, `failed`, or `stopped`; may also include an error `code` and a `dropped` event count (`errorCode` / `droppedEvents` in JSON). |
 
-DevSpace retains at most 500 events and 256 KiB per turn, with event logs for
-an agent's 20 most recent turns. Messages and tool summaries are truncated,
+DevSpace keeps up to 500 events per turn — about 256K characters of event
+text, with the terminal event always kept — and event logs for an agent's 20
+most recent turns. Messages and tool summaries are truncated,
 and common credential shapes are redacted. Tool summaries identify a command,
 path, or query rather than storing full inputs or outputs.
 

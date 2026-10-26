@@ -42,11 +42,13 @@ artifact ID. Afterwards, ordinary tools can inspect, move, or replace the file.
 
 ## Logs and activity history
 
-`download_artifact` tool logs contain bounded workspace ID, validated hostname,
-workspace-relative destination, byte count, hash, duration, and status metadata.
-They exclude the file value, raw content, connector references, native file IDs,
-bearer credentials, full presigned URLs, host and temporary paths, and base64
-chunks. Tool results return only the relative path.
+`download_artifact` tool logs record the workspace ID, download hostname,
+destination, byte count, hash, duration, and status. They exclude the file
+value, raw content, connector references, native file IDs, bearer credentials,
+full presigned URLs, temporary paths, and base64 chunks. A rejected call logs
+the destination and workspace ID as requested, so an invalid absolute path or
+untrusted hostname appears in the log. Tool results return only the relative
+path.
 
 [Activity history](/reference/configuration#activity) is separate from tool
 logging. When enabled, it records the call's native-file arguments, including
