@@ -153,3 +153,7 @@ public releases are never modified: the workflow verifies npm state and the
 published GitHub tarball and exits successfully only when they already match.
 Any partial or mismatched public release fails for manual investigation instead
 of rewriting published state.
+
+## Automated replay QA
+
+`pnpm qa` replays scripted MCP tool calls against an isolated server and renders every card in a local MCP Apps host, capturing screenshots and page errors with agent-browser. It needs no seeded state and no real host. See `.agents/skills/replay-qa/SKILL.md` for scenarios, interactive `--serve` mode, and attaching evidence to pull requests.
