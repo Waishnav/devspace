@@ -39,6 +39,17 @@ The command returns `<agent id="agt_..." status="running" turn="trn_..."/>` imme
 
 Add `--request-id <key>` when a retry is possible (a flaky network, a scheduled job). Running again with the same key, project, and arguments returns the existing agent instead of starting a duplicate; the key (letters, digits, `. _ : -`, up to 128 characters) becomes the agent id. The same key with a different brief is an `AGENT_CONFLICT` error.
 
+### Isolate writing agents
+
+Agents run in your checkout by default. When you start more than one agent that writes at the same time, or you are editing the same checkout yourself, add `--worktree` so each agent gets its own git worktree and branch instead of overwriting the others:
+
+```bash
+devspace agents run <profile-or-provider> --worktree "<brief>"
+devspace agents run <profile-or-provider> --worktree --branch <name> "<brief>"
+```
+
+Output then carries `worktree="<path>"` and `branch="<name>"`. The worktree starts from the committed `HEAD`; uncommitted changes in your checkout are not copied, so commit first if the agent needs them. `continue` reuses the same worktree. Nothing is merged or deleted for you: review with `git -C <worktree> diff` and `git log`, commit the agent's changes if it left them uncommitted, merge the branch, then `git worktree remove <worktree>`. Read-only agents do not need `--worktree`.
+
 ### Write modes
 
 `--write-mode` limits what the subagent may change:
