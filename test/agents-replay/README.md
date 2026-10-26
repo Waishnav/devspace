@@ -59,7 +59,7 @@ These apply to every provider, with the same assertions:
 |---|---|---|
 | C1 | `run-wait` | `run` + `wait` completes and the response contains `PAPAYA-7`. |
 | C2 | `continue` | `continue` on the same agent recalls the codename from turn one. |
-| C3 | `read-only` | A `read_only` agent asked to create `probe.txt` ends `completed` and the file does not exist. The provider may refuse, be denied, or lack a write tool; all of these are the same outcome. `agents run` has no write-mode flag, so this scenario starts the agent with `writeMode: "read_only"` through the daemon client, the path workflows and MCP use. |
+| C3 | `read-only` | A `read_only` agent asked to create `probe.txt` ends `completed` and the file does not exist. The provider may refuse, be denied, or lack a write tool; all of these are the same outcome. It starts the agent with `agents run --write-mode read_only`. |
 | C4 | `stop` | `stop` during a `sleep` tool call yields `stopped` within 15s, and two seconds later there are no new events and no `late.txt`. |
 | C5 | `events` | One turn id covers `turn_started` … `message` … `turn_completed`. When the driver's `capabilities.turns.streaming` is true, the tool-using prompt also produces `tool_started` and `tool_completed`. |
 | C6 | `missing-command` | `agents run` exits non-zero with `PROVIDER_UNAVAILABLE`. No transcript is needed. |
