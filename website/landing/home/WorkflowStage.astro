@@ -1,0 +1,196 @@
+---
+// The workflow script beside a live visualizer of its run. The active phase in
+// the visualizer highlights the matching lines in the code.
+import { Code } from "astro:components";
+import Logo from "../../logos/Logo.astro";
+import { MATRIX, WORKFLOW_SNIPPET } from "../content";
+import { workbenchTheme } from "./theme";
+
+// Illustrative timings (ticks). Review and QA overlap: that is the parallel().
+const byTask = Object.fromEntries(MATRIX.map((m) => [m.task, m]));
+const CALLS = [
+  { label: "plan", phase: "Plan", start: 0, end: 5, ...byTask.Plan! },
+  { label: "implement", phase: "Build", start: 5, end: 13, ...byTask.Implement! },
+  { label: "review", phase: "Verify", start: 13, end: 18, ...byTask.Review! },
+  { label: "qa", phase: "Verify", start: 13, end: 20, ...byTask.QA! },
+];
+const PHASES = ["Plan", "Build", "Verify"];
+
+// What the inspector would show for the running call in each phase.
+const ACTIVITY: Array<{ phase: string; lines: Array<[string, string]> }> = [
+  { phase: "Plan", lines: [["read", "src/routes/billing/page.tsx"], ["read", "src/lib/invoices.ts"], ["note", "4 steps: route, csv util, button, test"]] },
+  { phase: "Build", lines: [["edit", "src/lib/csv.ts"], ["edit", "src/routes/billing/export.ts"], ["exec", "pnpm test billing-export"]] },
+  { phase: "Verify", lines: [["read", "git diff main"], ["open", "localhost:5173/billing"], ["note", "CSV misses embedded quotes"]] },
+  { phase: "done", lines: [["done", "review + qa completed"], ["result", "{ review, qa }"]] },
+];
+
+// Which phase each source line belongs to (the meta block belongs to none).
+let current: string | null = null;
+const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
+  const match = /\bphase\("(\w+)"/.exec(line);
+  if (match) current = match[1]!;
+  if (line.startsWith("return")) current = null;
+  return current ?? "";
+});
+---
+
+<div class="stage" data-wf data-last={Math.max(...CALLS.map((c) => c.end))} data-phases={JSON.stringify(linePhases)}>
+  <div class="pane pane--code">
+    <div class="pane__head"><span>.devspace/workflows/ship.js</span><span class="dim">js</span></div>
+    <Code code={WORKFLOW_SNIPPET} lang="js" theme={workbenchTheme} />
+  </div>
+
+  <div class="pane pane--viz" role="img" aria-label="Illustration: the ship workflow running through its Plan, Build, and Verify phases">
+    <div class="pane__head"><span>devspace workflow status · ship</span><span class="run" data-run>running</span></div>
+
+    <div class="phases">
+      {PHASES.map((phase) => {
+        const total = CALLS.filter((c) => c.phase === phase).length;
+        return (
+          <div class="phase" data-phase={phase} data-total={total}>
+            <span>{phase}</span><b data-count>0/{total}</b>
+          </div>
+        );
+      })}
+    </div>
+
+    <div class="calls">
+      {CALLS.map((call, i) => (
+        <div class="call" data-state="queued" data-start={call.start} data-end={call.end} data-phase={call.phase}>
+          <span class="call__idx">{i}</span>
+          <span class="call__name">{call.label}</span>
+          <span class="call__state" data-state-label>queued</span>
+          <span class="call__target"><Logo id={call.logo} size={16} />{call.profile}</span>
+          <i class="call__bar"><b></b></i>
+        </div>
+      ))}
+    </div>
+
+    <div class="activity">
+      <div class="activity__title">ACTIVITY</div>
+      {ACTIVITY.map((entry) => (
+        <div class="activity__set" data-for={entry.phase}>
+          {entry.lines.map((line) => <p><span>{line[0]}</span>{line[1]}</p>)}
+        </div>
+      ))}
+    </div>
+
+    <div class="pane__foot"><span data-summary>0/4 calls</span><span>↑↓ navigate · enter open · q quit</span></div>
+  </div>
+</div>
+
+<script>
+  const root = document.querySelector<HTMLElement>("[data-wf]");
+  if (root) {
+    const last = Number(root.dataset.last);
+    const linePhases: string[] = JSON.parse(root.dataset.phases!);
+    const lines = [...root.querySelectorAll<HTMLElement>(".pane--code .line")];
+    lines.forEach((el, i) => (el.dataset.phase = linePhases[i] ?? ""));
+    const calls = [...root.querySelectorAll<HTMLElement>(".call")];
+    const phases = [...root.querySelectorAll<HTMLElement>(".phase")];
+    const run = root.querySelector<HTMLElement>("[data-run]")!;
+    const summary = root.querySelector<HTMLElement>("[data-summary]")!;
+
+    const render = (tick: number) => {
+      let done = 0;
+      let active = "";
+      for (const call of calls) {
+        const start = Number(call.dataset.start);
+        const end = Number(call.dataset.end);
+        const progress = Math.min(1, Math.max(0, (tick - start) / (end - start)));
+        const state = tick < start ? "queued" : progress >= 1 ? "done" : "running";
+        call.dataset.state = state;
+        call.querySelector<HTMLElement>("[data-state-label]")!.textContent = state === "done" ? "completed" : state;
+        call.querySelector<HTMLElement>(".call__bar b")!.style.width = `${progress * 100}%`;
+        if (state === "done") done++;
+        if (state !== "queued") active = call.dataset.phase!;
+      }
+      for (const phase of phases) {
+        const finished = calls.filter((c) => c.dataset.phase === phase.dataset.phase && c.dataset.state === "done").length;
+        phase.querySelector("[data-count]")!.textContent = `${finished}/${phase.dataset.total}`;
+        phase.classList.toggle("is-active", phase.dataset.phase === active);
+      }
+      root.dataset.active = active;
+      const finished = done === calls.length;
+      root.dataset.finished = String(finished);
+      const shown = finished ? "done" : active;
+      root.querySelectorAll<HTMLElement>(".activity__set").forEach((set) => set.classList.toggle("is-on", set.dataset.for === shown));
+      run.textContent = finished ? "completed" : "running";
+      summary.textContent = `${done}/${calls.length} calls`;
+    };
+
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      render(last);
+    } else {
+      let tick = 0;
+      render(0);
+      setInterval(() => {
+        tick = tick > last + 5 ? 0 : tick + 1;
+        render(tick);
+      }, 450);
+    }
+  }
+</script>
+
+<style>
+  .stage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+  .dim { color: #6d6c67; }
+
+  .pane { background: #151515; color: #e7e5df; border: 1px solid #151515; font-size: 12.5px; display: flex; flex-direction: column; min-width: 0; }
+  .pane__head, .pane__foot {
+    display: flex; justify-content: space-between; gap: 12px; padding: 10px 16px; color: #a3a19a;
+    border-bottom: 1px solid #2c2c2a;
+  }
+  .pane__foot { border-bottom: 0; border-top: 1px solid #2c2c2a; margin-top: auto; color: #6d6c67; font-size: 11.5px; }
+
+  .pane--code :global(pre) {
+    margin: 0; padding: 14px 0; font: 12.5px/1.75 "IBM Plex Mono", monospace; overflow-x: auto; background: transparent !important;
+  }
+  .pane--code :global(pre code) { display: block; font: inherit; min-width: max-content; }
+  .pane--code :global(.line) { display: inline-block; width: 100%; padding: 0 18px; border-left: 2px solid transparent; transition: background 0.25s, opacity 0.25s, border-color 0.25s; }
+  .stage[data-active] :global(.line[data-phase]:not([data-phase=""])) { opacity: 0.4; }
+  .stage[data-active="Plan"] :global(.line[data-phase="Plan"]:not([data-phase=""])),
+  .stage[data-active="Build"] :global(.line[data-phase="Build"]:not([data-phase=""])),
+  .stage[data-active="Verify"] :global(.line[data-phase="Verify"]:not([data-phase=""])) {
+    opacity: 1; background: rgba(240, 165, 74, 0.09); border-left-color: #f0a54a;
+  }
+  .stage[data-finished="true"] :global(.line) { opacity: 1 !important; background: transparent !important; border-left-color: transparent !important; }
+
+  .activity { margin: 6px 16px 14px; padding-top: 12px; border-top: 1px solid #2c2c2a; min-height: 96px; }
+  .activity__title { color: #6d6c67; font-size: 10.5px; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .activity__set { display: none; }
+  .activity__set.is-on { display: block; }
+  .activity__set p { margin: 0; color: #d3d0c8; animation: rise 0.3s ease-out both; }
+  .activity__set p span { display: inline-block; width: 4.4em; color: #6d6c67; }
+  .activity__set p:nth-child(3) { animation-delay: 0.15s; }
+  .activity__set p:nth-child(4) { animation-delay: 0.3s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(3px); } }
+  .run { color: #f0a54a; }
+  .stage[data-finished="true"] .run { color: #7ee2a8; }
+
+  .phases { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid #2c2c2a; }
+  .phase { display: flex; justify-content: space-between; padding: 10px 16px; color: #6d6c67; border-right: 1px solid #2c2c2a; transition: color 0.25s, background 0.25s; }
+  .phase:last-child { border-right: 0; }
+  .phase.is-active { color: #e7e5df; background: rgba(255, 255, 255, 0.05); }
+
+  .calls { padding: 6px 0; display: grid; align-content: start; }
+  .call {
+    display: grid; grid-template-columns: 1.4em 1fr auto; gap: 1px 10px; align-items: center;
+    padding: 11px 16px; border-bottom: 1px dashed #2c2c2a; opacity: 0.55; transition: opacity 0.25s;
+  }
+  .call[data-state="running"], .call[data-state="done"] { opacity: 1; }
+  .call__idx { color: #6d6c67; }
+  .call__state { font-size: 11.5px; color: #6d6c67; }
+  .call[data-state="running"] .call__state { color: #f0a54a; }
+  .call[data-state="running"] .call__state::before { content: "● "; animation: blink 0.9s infinite alternate; }
+  .call[data-state="done"] .call__state { color: #7ee2a8; }
+  .call[data-state="done"] .call__state::before { content: "✓ "; }
+  .call__target { grid-column: 2; display: flex; align-items: center; gap: 7px; color: #8f8d86; font-size: 11.5px; overflow: hidden; white-space: nowrap; }
+  .call__bar { grid-column: 2 / -1; height: 2px; background: #2c2c2a; margin-top: 7px; overflow: hidden; }
+  .call__bar b { display: block; height: 100%; width: 0; background: #f0a54a; transition: width 0.45s linear; }
+  .call[data-state="done"] .call__bar b { background: #7ee2a8; }
+  @keyframes blink { to { opacity: 0.3; } }
+
+  @media (max-width: 1000px) { .stage { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .stage * { animation: none !important; transition: none !important; } }
+</style>

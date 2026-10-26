@@ -1,0 +1,152 @@
+---
+import Logo from "../../logos/Logo.astro";
+// Illustrative session: ChatGPT using DevSpace to work on the user's own
+// computer. Tool names mirror the default (codex) surface; results are made up.
+---
+
+<div class="mock" role="img" aria-label="Illustration: ChatGPT opening a project on the user's computer through DevSpace, running tests, patching a bug, and showing the diff">
+  <div class="mock__bar">
+    <span class="mock__dots"><i></i><i></i><i></i></span>
+    <span class="mock__title"><Logo id="openai" size={14} /> ChatGPT · <b>DevSpace</b> connector</span>
+    <span class="mock__pill">~/work/billing</span>
+  </div>
+
+  <div class="mock__body chat">
+    <div class="chat__main">
+      <div class="msg msg--user r" style="--d:.2s">The billing export test is failing. Fix it and show me what changed.</div>
+
+      <div class="tool r" style="--d:.7s">
+        <div class="tool__head"><span class="ok">✓</span> open_workspace <span class="dim">~/work/billing</span></div>
+        <div class="tool__meta">ws_8f2c · checkout · AGENTS.md · 3 skills</div>
+      </div>
+
+      <div class="tool r" style="--d:1.3s">
+        <div class="tool__head"><span class="ok">✓</span> exec_command</div>
+        <pre><span class="dim">$</span> pnpm test billing-export
+<span class="del">✗ escapes embedded quotes</span>  <span class="dim">1 failed · 11 passed</span></pre>
+      </div>
+
+      <div class="tool r" style="--d:2s">
+        <div class="tool__head"><span class="ok">✓</span> apply_patch <span class="dim">src/lib/csv.ts</span> <em class="add">+6</em> <em class="del">−2</em></div>
+      </div>
+
+      <div class="tool r" style="--d:2.6s">
+        <div class="tool__head"><span class="ok">✓</span> exec_command</div>
+        <pre><span class="dim">$</span> pnpm test billing-export
+<span class="ok">12 passed</span></pre>
+      </div>
+
+      <div class="msg msg--asst r" style="--d:3.2s">
+        Cells containing quotes weren't escaped. Fixed in <b>csv.ts</b>; all 12 tests pass.
+      </div>
+
+      <div class="review r" style="--d:3.8s">
+        <div class="review__head"><span>show_changes</span><span><em class="add">+15</em> <em class="del">−2</em> · 2 files</span></div>
+        <ul>
+          <li><span>src/lib/csv.ts</span><b><em class="add">+6</em> <em class="del">−2</em></b></li>
+          <li><span>test/billing-export.test.ts</span><b><em class="add">+9</em></b></li>
+        </ul>
+      </div>
+
+      <div class="composer" data-composer><span><em class="mention" data-mention></em><span data-rest></span><i class="caret"></i></span></div>
+    </div>
+
+    <aside class="machine">
+      <div class="machine__title">Your computer <span class="dim">local</span></div>
+      <div class="machine__card r" style="--d:.7s">
+        <b>~/work/billing</b>
+        <span class="dim">checkout · main · clean</span>
+      </div>
+      <div class="machine__card r" style="--d:2s">
+        <span class="dim">changed files</span>
+        <p><span>M</span> src/lib/csv.ts</p>
+        <p class="r" style="--d:3.4s"><span>A</span> test/billing-export.test.ts</p>
+      </div>
+      <div class="machine__card r" style="--d:2.6s">
+        <span class="dim">terminal</span>
+        <p><span class="dim">$</span> pnpm test billing-export</p>
+        <p class="ok">12 passed</p>
+      </div>
+      <div class="machine__foot"><span class="dim">access</span> allowed roots · owner-approved</div>
+    </aside>
+  </div>
+</div>
+
+<script>
+  // Types the next prompt once the rest of the session has played. Restarts
+  // whenever the tab is shown again.
+  const composer = document.querySelector<HTMLElement>("[data-composer]");
+  if (composer) {
+    const mention = composer.querySelector<HTMLElement>("[data-mention]")!;
+    const rest = composer.querySelector<HTMLElement>("[data-rest]")!;
+    const full = ["@DevSpace", " now add CSV export to the billing page"];
+    const panel = composer.closest<HTMLElement>(".panel");
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let timers: number[] = [];
+
+    const clear = () => { timers.forEach(clearTimeout); timers = []; };
+    const reset = () => { mention.textContent = ""; rest.textContent = ""; };
+    const play = () => {
+      clear();
+      reset();
+      if (reduced) { mention.textContent = full[0]!; rest.textContent = full[1]!; return; }
+      let delay = 4400;
+      full.forEach((chunk, part) => {
+        const target = part === 0 ? mention : rest;
+        for (let i = 1; i <= chunk.length; i++) {
+          delay += 40 + Math.random() * 45;
+          timers.push(window.setTimeout(() => (target.textContent = chunk.slice(0, i)), delay));
+        }
+        delay += 250;
+      });
+    };
+
+    play();
+    if (panel) {
+      new MutationObserver(() => { if (panel.classList.contains("is-active")) play(); else { clear(); reset(); } })
+        .observe(panel, { attributes: true, attributeFilter: ["class"] });
+    }
+  }
+</script>
+
+<style>
+  .chat { display: grid; grid-template-columns: minmax(0, 1fr) 250px; }
+  .chat__main { padding: 18px 20px 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  .msg { max-width: 88%; font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
+  .msg--user { align-self: flex-end; background: #2a2a28; padding: 9px 13px; border-radius: 14px; }
+  .msg--asst b { font-family: "IBM Plex Mono", monospace; font-weight: 500; font-size: 12px; }
+
+  .tool { border: 1px solid var(--m-line); border-radius: 7px; background: var(--m-panel); overflow: hidden; }
+  .tool__head { padding: 6px 10px; }
+  .tool__meta { padding: 6px 10px; color: var(--m-dim); border-top: 1px solid var(--m-line); }
+  .tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--m-line); white-space: pre-wrap; word-break: break-word; font: inherit; }
+
+  .review { border: 1px solid #2f4d36; border-radius: 7px; overflow: hidden; }
+  .review__head { display: flex; justify-content: space-between; padding: 6px 10px; background: #173020; color: #b7f0c6; }
+  .review ul { list-style: none; margin: 0; padding: 4px 0; }
+  .review li { display: flex; gap: 8px; justify-content: space-between; padding: 2px 10px; color: var(--m-dim); }
+  .review li b { font-weight: 400; flex: none; }
+
+  .composer {
+    margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid var(--m-line); border-radius: 12px; padding: 12px; color: var(--m-fg); font-size: 13.5px;
+    font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
+  }
+  .mention:empty { display: none; }
+  .mention { color: #8ab4ff; background: rgba(138, 180, 255, 0.14); border-radius: 4px; padding: 0 4px; margin-right: 2px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .caret { display: inline-block; width: 1.5px; height: 15px; background: var(--m-fg); vertical-align: -3px; margin-left: 2px; animation: mock-blink 0.8s infinite alternate; }
+
+  .machine { border-left: 1px solid var(--m-line); background: #131313; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .machine__title { display: flex; justify-content: space-between; padding-bottom: 6px; border-bottom: 1px solid var(--m-line); }
+  .machine__card { border: 1px solid var(--m-line); border-radius: 6px; padding: 8px 9px; background: var(--m-panel); display: grid; gap: 2px; }
+  .machine__card p { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .machine__card p span { display: inline-block; width: 1.5em; color: #f0a54a; }
+  .machine__card p .dim { color: var(--m-dim); }
+  .machine__foot { margin-top: auto; border-top: 1px solid var(--m-line); padding-top: 8px; font-size: 11px; }
+
+  @media (max-width: 820px) {
+    .chat { grid-template-columns: 1fr; }
+    .machine { border-left: 0; border-top: 1px solid var(--m-line); }
+  }
+</style>

@@ -1,0 +1,32 @@
+/* Shared chrome for the hero's dark "window" illustrations. */
+.mock {
+  --m-bg: #161616; --m-panel: #1d1d1c; --m-line: #2c2c2a; --m-fg: #e9e7e2; --m-dim: #8a8883;
+  width: 100%; background: var(--m-bg); color: var(--m-fg);
+  border: 1px solid #000; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 30px 80px rgba(20, 24, 30, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+  font: 12px/1.55 "IBM Plex Mono", ui-monospace, monospace;
+  text-align: left; display: flex; flex-direction: column;
+}
+.mock .dim { color: var(--m-dim); }
+.mock .ok { color: #4ade80; }
+.mock .amber { color: #f0a54a; }
+.mock .xml { color: #e0a86a; }
+.mock .add { color: #4ade80; }
+.mock .del { color: #f87171; }
+.mock em { font-style: normal; }
+.mock__bar { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--m-line); background: #121212; flex: none; }
+.mock__dots { display: flex; gap: 6px; }
+.mock__dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; display: block; }
+.mock__dots i:nth-child(2) { background: #febc2e; }
+.mock__dots i:nth-child(3) { background: #28c840; }
+.mock__title { flex: 1; color: var(--m-dim); display: inline-flex; align-items: center; gap: 7px; }
+.mock__title b { color: var(--m-fg); font-weight: 500; }
+.mock__pill { border: 1px solid var(--m-line); padding: 1px 8px; border-radius: 4px; color: var(--m-dim); }
+.mock__body { flex: 1; min-height: 0; }
+
+/* Staggered reveal: elements with .r and --d play in on first display. */
+.mock .r { animation: mock-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: var(--d, 0s); }
+@keyframes mock-rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes mock-blink { to { opacity: 0.3; } }
+@keyframes mock-grow { to { width: 92%; } }
+@media (prefers-reduced-motion: reduce) { .mock * { animation: none !important; } }

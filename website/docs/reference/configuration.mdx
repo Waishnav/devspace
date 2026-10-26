@@ -1,0 +1,138 @@
+---
+title: Configuration
+description: The complete ~/.devspace/config.jsonc reference — server, workspaces, tools, activity, skills, subagents, logging, and OAuth.
+---
+
+DevSpace stores durable settings in `~/.devspace/config.jsonc`. It accepts
+comments and trailing commas, is validated before the server starts, and
+rejects unknown keys so typos cannot silently change behavior. Editor
+completion comes from the versioned
+[JSON Schema](https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json).
+
+The Owner password lives separately in `~/.devspace/auth.json`.
+
+## Complete example
+
+```jsonc ~/.devspace/config.jsonc lineNumbers
+{
+  "$schema": "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json",
+  "configVersion": 1,
+
+  "server": {
+    "host": "127.0.0.1",
+    "port": 7676,
+    // Public origin only; do not append /mcp.
+    "publicBaseUrl": "https://devspace.example.com",
+    "allowedHosts": [],
+    "trustProxy": false,
+  },
+  "workspaces": {
+    "allowedRoots": ["~/personal", "~/work"],
+    "worktreeRoot": "~/.devspace/worktrees",
+  },
+  "storage": { "stateDir": "~/.local/share/devspace" },
+  // Optional: "codex" or "claude" gives every host that surface.
+  // "tools": { "mode": "claude" },
+  "ui": { "enabled": true },
+  "activity": { "enabled": true, "maxTurns": 200 },
+  "artifacts": { "enabled": false, "maxFileBytes": 104857600 },
+  "skills": { "enabled": true, "paths": [], "agentDir": "~/.codex" },
+  "subagents": { "enabled": false, "instructions": "on-demand", "providers": [] },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "requests": true,
+    "assets": false,
+    "toolCalls": true,
+    "shellCommands": false,
+  },
+  "oauth": {
+    "accessTokenTtlSeconds": 3600,
+    "refreshTokenTtlSeconds": 2592000,
+    "refreshTokenGraceSeconds": 0,
+    "scopes": ["devspace"],
+    "allowedResourceUrls": [],
+    "allowedRedirectHosts": ["chatgpt.com", "claude.ai", "claude.com", "localhost", "127.0.0.1"],
+  },
+}
+```
+
+Omitted keys use the defaults shown.
+
+## Server
+
+`publicBaseUrl` is the tunnel origin MCP clients use for OAuth discovery.
+Allowed Host headers derive from it, so requests through any other hostname
+get `403 Invalid Host`; `["*"]` in `allowedHosts` is for local debugging only.
+
+`trustProxy` controls which client IP DevSpace logs and rate-limits OAuth by.
+`false` ignores forwarding headers. `"loopback"` trusts `X-Forwarded-For` only
+from a proxy on the same machine, such as `cloudflared` or Tailscale Funnel —
+the recommended value for tunnels. `true` trusts every hop, so any client can
+choose its own IP.
+
+## Workspaces
+
+`allowedRoots` bounds where `open_workspace` may open. An empty list uses the
+current working directory. `worktreeRoot` is where managed worktrees live.
+
+## Tools and UI
+
+DevSpace picks the tool surface for each host. `tools.mode` (`codex` or
+`claude`) is an optional override that gives every host that surface — see
+[Tool surfaces](/connect/tool-surfaces). `ui.enabled: false` removes widget
+metadata but keeps `show_changes`.
+
+## Activity
+
+DevSpace records each workspace tool call, with its arguments and result, in
+the local state database, grouped into turns that close at each
+`show_changes`. Browse them at `/web` on your public origin after signing in
+with the Owner password. Strings are truncated and common secret patterns are
+redacted, but file contents and command output are kept as the tools returned
+them.
+
+`activity.maxTurns` caps the closed turns kept per workspace; older turns and
+their calls are deleted. `activity.enabled: false` stops recording.
+
+## Subagents
+
+`subagents.providers` lists explicit provider objects; omitted providers are
+disabled. See [Providers](/orchestration/providers). Without a `subagents`
+section, the `devspace agents` CLI can use every built-in provider whose CLI is
+installed, while `serve` keeps subagents off for MCP hosts.
+
+| `instructions` | Behavior |
+| --- | --- |
+| `on-demand` | Default. `open_workspace` advertises the `subagents` skill; the model reads it when delegation helps. |
+| `preload` | The workflow is included in the initial `open_workspace` instructions. |
+
+Neither mode tells the model to prefer subagents for routine work.
+
+## OAuth
+
+`allowedResourceUrls` accepts exact alternate MCP resource URLs (HTTPS, or HTTP
+on localhost) for clients connecting through an alias. Restart after changing
+it. The default `allowedRedirectHosts` covers ChatGPT and Claude; add hosts for
+other MCP clients. An explicit list replaces the default, so keep `claude.ai`
+in it to connect Claude.
+
+`refreshTokenGraceSeconds` (default `0`, up to `600`) lets a trusted host retry
+a refresh with the token it just rotated, so a lost response doesn't force a
+new sign-in.
+
+## Environment
+
+Only two persistent environment variables remain:
+
+| Variable | Purpose |
+| --- | --- |
+| `DEVSPACE_CONFIG_DIR` | Location of `config.jsonc`, `auth.json`, skills, and profiles. |
+| `DEVSPACE_OAUTH_OWNER_TOKEN` | Optional override for the stored Owner password. |
+
+Two switches enable experimental features: `DEVSPACE_EXPERIMENTAL_CODE_MODE=1`
+(code mode for MCP hosts) and `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`
+([dynamic workflows](/orchestration/dynamic-workflows)).
+
+Provider command overrides such as `CODEX_COMMAND`, `CODEX_HOME`, and
+`CLAUDE_COMMAND` are still honored; provider config wins when both are set.

@@ -1,0 +1,50 @@
+---
+title: Security model
+description: DevSpace is remote access to your development machine. Here is exactly what is contained, what is not, and how access is approved.
+---
+
+Treat a connected MCP client like a trusted coding partner with access to your
+machine. The model is simple:
+
+- you choose a narrow filesystem allowlist,
+- the MCP endpoint requires OAuth approval with your Owner password,
+- Host headers are allowlisted from the configured public URL,
+- every action happens through an explicit, logged tool call.
+
+:::warning
+File tools enforce allowed-root containment. **Shell commands do not.** They
+run with your user account's authority. Never assume shell execution is
+sandboxed because file tools are.
+:::
+
+## Allowed roots
+
+MCP workspaces open only under configured roots. Keep them narrow —
+`~/work` rather than `~` or `/`. Direct `devspace agents` commands use the
+current project with your shell's authority and are not gated by MCP roots.
+
+## Owner password
+
+`devspace init` generates an Owner password in `~/.devspace/auth.json`. When a
+client connects, DevSpace shows an approval page. Enter the password only when
+you intend to grant that client access. For env-driven deployments, set
+`DEVSPACE_OAUTH_OWNER_TOKEN` to a long random value.
+
+## Tunnels
+
+DevSpace never manages your tunnel. Point Cloudflare Tunnel, ngrok, Pinggy,
+Tailscale Funnel, or a reverse proxy at `http://127.0.0.1:7676`. Prefer adding
+Cloudflare Access or Tailscale identity controls in front of a public tunnel;
+the URL itself is not a secret.
+
+## Subagent credentials
+
+Subagents use the CLIs and logins already on your machine. Provider `env`
+values in `config.jsonc` are written with mode `0600` but are still plain text.
+Keep credentials in the process environment if you do not want them persisted.
+
+## Logs
+
+Requests and tool calls are logged by default. Shell command previews are off
+unless `logging.shellCommands` is `true` — leave it off if commands may carry
+secrets.

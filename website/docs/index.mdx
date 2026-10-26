@@ -1,0 +1,86 @@
+---
+title: Introduction
+description: DevSpace is an agent-agnostic orchestration layer. Any coding harness can delegate to any other as a subagent, and program multi-agent loops as dynamic workflows — on your own machine.
+sidebar:
+  icon: house
+---
+
+Heavy AI users already run several coding agents. Codex plans well, Claude
+implements carefully, another harness is good at driving a browser — and today
+you are the one copying context between them and deciding what to prompt next.
+
+DevSpace moves that routing into software. It gives any coding harness the
+ability to **call other harnesses as bounded subagents** and to **program
+multi-agent loops** as replayable scripts. The model you talk to becomes the
+intent translator; DevSpace is the layer it uses to dispatch, wait on, and
+combine work from the rest.
+
+<DelegationDiagram />
+
+## Three things DevSpace does
+
+<CardGroup cols={3}>
+  <Card title="Harness over MCP" href="/connect/mcp-hosts" icon="plug">
+    ChatGPT, Claude, and other MCP hosts get a minimal coding harness on your
+    machine, with the tools each model knows: read, edit, run, and review.
+  </Card>
+  <Card title="Subagents" href="/orchestration/subagents" icon="users">
+    Any harness delegates a self-contained brief to Codex, Claude Code,
+    OpenCode, Pi, Cursor, Copilot, or Grok — and waits on the result.
+  </Card>
+  <Card title="Dynamic workflows" href="/orchestration/dynamic-workflows" icon="workflow">
+    Fan out, pipeline, and phase agent calls in a small JavaScript script that
+    resumes from the first failed step.
+  </Card>
+</CardGroup>
+
+## Orchestrate from anywhere
+
+The orchestrator is whichever model you already talk to — a chat app over MCP,
+or a coding agent from its own shell.
+
+<Logos set="hosts" />
+
+It delegates to the coding harnesses installed on your machine:
+
+<Logos set="providers" />
+
+## Why agent-agnostic
+
+Every provider is racing to make _their_ agent the orchestrator. In practice,
+people already pick a different model and harness per task:
+
+| Task | A typical pick today |
+| --- | --- |
+| Planning and review | Codex with a high-effort GPT model |
+| Implementation | Claude Code with Sonnet or Opus |
+| Exploration | a cheap, fast model through OpenCode or Pi |
+| End-to-end QA | a harness with browser tools |
+
+That matrix is personal, and it changes every few weeks. DevSpace keeps it as
+configuration — [profiles](/orchestration/profiles) you own — instead of
+locking it into one vendor's product. The orchestrating model only sees a
+catalog of names and descriptions and chooses from it.
+
+## Local-first
+
+DevSpace runs on your machine, against your real checkouts, with your
+installed CLIs and existing subscriptions. Nothing is uploaded to a DevSpace
+service; there isn't one. MCP hosts reach it through a tunnel you own and a
+password only you have.
+
+:::note
+DevSpace is MIT-licensed and published on npm as `@waishnav/devspace`. The
+source is on [GitHub](https://github.com/Waishnav/devspace).
+:::
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart" icon="rocket">
+    Install, pick your subagents, and run your first delegation.
+  </Card>
+  <Card title="How it works" href="/concepts/how-it-works" icon="book-open">
+    The host, the workspace, the daemon, and the providers.
+  </Card>
+</CardGroup>

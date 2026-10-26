@@ -1,0 +1,25 @@
+{
+  // devspace.run: a Worker serving the static Blume build in ./dist.
+  // Cloudflare Workers Builds (root directory `website`) runs `npm ci`,
+  // the build command `npm run build`, then `npx wrangler deploy`.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "devspace-site",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "devspace.run", "custom_domain": true }],
+  "env": {
+    // Manual staging deploy (`npx wrangler deploy --env staging`) of a build
+    // copied to .staging-dist with noindex headers; see README.
+    "staging": {
+      "name": "devspace-staging",
+      "assets": {
+        "directory": "./.staging-dist",
+        "not_found_handling": "404-page"
+      },
+      "routes": [{ "pattern": "staging.devspace.run", "custom_domain": true }]
+    }
+  }
+}

@@ -1,0 +1,92 @@
+---
+title: Coding agents
+description: Teach Codex, Claude Code, OpenCode, Cursor, or any skills-capable harness to delegate to the others through the devspace CLI — or drive them from a bot.
+---
+
+A coding harness does not need MCP to use DevSpace. It already has a shell.
+Install the skill and it learns to call `devspace agents` directly — no server,
+no OAuth, no tunnel. Without a `subagents` section in your config, every
+built-in provider whose CLI is installed is available.
+
+```bash
+npm install -g @waishnav/devspace
+devspace agents skill --install claude-code             # ~/.claude/skills/devspace-agents/SKILL.md
+devspace agents skill --install claude-code --project   # .claude/skills/devspace-agents/SKILL.md
+```
+
+| Harness | Global location | `--project` location |
+| --- | --- | --- |
+| `claude-code` | `~/.claude/skills/devspace-agents/SKILL.md` | `.claude/skills/devspace-agents/SKILL.md` |
+| `codex` | `~/.codex/skills/devspace-agents/SKILL.md` | `.agents/skills/devspace-agents/SKILL.md` |
+| `opencode` | `~/.config/opencode/skills/devspace-agents/SKILL.md` | `.opencode/skills/devspace-agents/SKILL.md` |
+| `cursor` | — | `.cursor/rules/devspace-agents.mdc` |
+| `agents` | `~/.agents/skills/devspace-agents/SKILL.md` | `.agents/skills/devspace-agents/SKILL.md` |
+
+The skill text ships with the package, so reinstall it after upgrading. Chat
+apps connected over MCP don't need it; DevSpace manages their skill itself.
+
+## Scope
+
+Run agent commands from the project the subagent should use. DevSpace
+discovers the current Git repository, or the current directory outside one.
+Lists, lookups, and continuations stay inside that scope.
+
+## Example: Claude Code calls Codex
+
+Inside Claude Code, a request like _"get a second opinion from Codex on this
+migration, read only"_ becomes:
+
+```bash
+devspace agents run codex --effort high --write-mode read_only --wait \
+  "Review db/migrations/0042_*.sql for data-loss risks. The table has 40M rows. Report findings with file:line."
+```
+
+`--wait` blocks until the turn ends and exits `0` completed, `2` failed, `3`
+stopped, or `4` timed out. The reverse works the same way: Codex can hand
+implementation to Claude, OpenCode can ask Pi for a cheap exploration pass, and
+any of them can fan out to several at once:
+
+```bash
+devspace agents wait agt_a agt_b agt_c --timeout 120
+```
+
+## Parallel writers
+
+Two agents editing the same checkout trample each other. `--worktree` gives an
+agent its own Git worktree on branch `devspace/<agent id>`, created from the
+committed `HEAD`; continuing the agent reuses it.
+
+```bash
+devspace agents run claude --worktree "Implement the retry policy in src/http.ts"
+devspace agents run codex --worktree "Add the missing tests for src/queue.ts"
+```
+
+Merge the branches when you're ready. Worktrees live under
+`workspaces.worktreeRoot` and are kept until you remove them.
+
+## From a bot or scheduled job
+
+Install the package on the machine that holds the code and the agent CLIs, then
+call it over SSH or from cron. `--request-id` makes a retry return the same
+agent instead of starting a second one:
+
+```bash
+ssh builder 'cd ~/src/app && devspace agents run claude \
+  --request-id "nightly-$(date +%F)" --write-mode read_only \
+  --wait --timeout 900 --json "Review yesterday'"'"'s commits for security issues"'
+echo $?   # 0 done, 2 failed, 3 stopped, 4 still running
+```
+
+On exit code `4`, call `devspace agents wait <id> --timeout 900 --json` with
+the id from the output. Provider credentials come from the user the command
+runs as, so a non-interactive session needs the same logins as an interactive
+one.
+
+<CardGroup cols={2}>
+  <Card title="Subagents" href="/orchestration/subagents" icon="users">
+    The full command workflow and output format.
+  </Card>
+  <Card title="Delegation patterns" href="/orchestration/patterns" icon="lightbulb">
+    Planner, implementer, reviewer, QA — composed.
+  </Card>
+</CardGroup>

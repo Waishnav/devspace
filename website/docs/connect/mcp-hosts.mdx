@@ -1,0 +1,99 @@
+---
+title: Chat apps over MCP
+description: Give ChatGPT, Claude, Grok Bot, OpenClaw, Hermes, or any MCP host a minimal coding harness on your own machine, through a tunnel you control.
+---
+
+<Logos set="hosts" />
+
+`devspace serve` turns an MCP host into a coding agent for your local projects:
+it can open a workspace, read and patch files, run tests and builds, and show
+you a review card of what changed. With subagents enabled, the same host can
+delegate to Codex, Claude Code, and the rest.
+
+ChatGPT and Claude connect through their custom connector settings. Grok Bot,
+OpenClaw, and Hermes work when your setup can add a remote MCP server with
+OAuth. Muse applies only to environments that expose MCP configuration;
+consumer Muse currently documents connectors through APIs and CLIs.
+
+## Connect
+
+<Steps>
+  <Step title="Start a tunnel">
+    Point Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS
+    reverse proxy at `http://127.0.0.1:7676`.
+
+    For Tailscale Funnel, proxy the whole server from the root — DevSpace
+    serves OAuth routes outside `/mcp`:
+
+    ```bash
+    tailscale funnel --bg 7676
+    ```
+
+  </Step>
+  <Step title="Save the public origin">
+    Use the origin **without** `/mcp`. Setup asks for it; you can change it
+    later:
+
+    ```bash
+    npx @waishnav/devspace config set publicBaseUrl https://your-tunnel.example.com
+    ```
+
+  </Step>
+  <Step title="Serve">
+    ```bash
+    npx @waishnav/devspace serve
+    ```
+  </Step>
+  <Step title="Add the connector">
+    In the host, add a custom connector for the full endpoint:
+
+    ```txt
+    https://your-tunnel.example.com/mcp
+    ```
+
+    DevSpace opens an approval page. Enter the Owner password from
+    `~/.devspace/auth.json`.
+
+    ChatGPT and Claude are allowed OAuth redirect hosts by default. For other
+    hosts, add their callback host to `oauth.allowedRedirectHosts`.
+
+  </Step>
+</Steps>
+
+Protocol compatibility is automatic: the same `/mcp` endpoint serves the
+2026-07-28 per-request protocol and older 2025-era clients statelessly.
+
+## A session
+
+1. Ask the host to open a project inside one of your allowed roots.
+2. It calls `open_workspace` and receives instructions, skills, and the
+   subagent catalog.
+3. It reads, patches, and runs commands with the returned `workspace_id`.
+4. After the last file change in a turn, it calls `show_changes` once to render
+   a review card of the combined diff.
+
+ChatGPT gets Codex-style tools (`apply_patch`, `exec_command`); Claude and other
+hosts get Claude-style tools (`write`, `edit`, `bash`). See
+[Tool surfaces](/connect/tool-surfaces) for the exact tools.
+
+## Activity history
+
+Every tool call the host makes is recorded per workspace, grouped into turns
+that end at each `show_changes`. Open `https://your-tunnel.example.com/web`,
+sign in with the Owner password, and browse workspaces, turns, each call's
+arguments and result, and each turn's diff. Turn it off with
+`activity.enabled: false` — see [Configuration](/reference/configuration).
+
+## Delegating from a chat app
+
+There are no dedicated subagent MCP tools. The host runs
+`devspace agents …` through its ordinary shell or process tool, and DevSpace
+injects the opened workspace identity so agents stay scoped to that project.
+`subagents.instructions` decides whether the workflow is read on demand
+(default) or preloaded into `open_workspace`.
+
+:::note
+Using DevSpace as a custom connector is a standard MCP App setup and writing or
+running code is not a restricted use case. Your account is still governed by
+your provider's terms.
+:::

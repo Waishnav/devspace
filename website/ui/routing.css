@@ -1,0 +1,76 @@
+/* Delegation diagram (docs): host -> devspace -> agents, with a command log.
+   Uses the shared --ds-* tokens, so it follows the light and dark themes. */
+.dm { --dm-chip: var(--blume-background, #fff); --dm-accent: var(--ds-live); font-size: 13px; }
+.dm b { font-weight: 600; }
+.dm .ds-diagram__bar { padding: 0.7rem 1.1rem; }
+.dm__state { font-size: 12px; color: var(--ds-muted); }
+.dm__state--running { color: var(--ds-live); }
+.dm__state--completed { color: var(--ds-ok); }
+
+.dm__body {
+  display: grid; grid-template-columns: 172px minmax(28px, 1fr) 112px minmax(28px, 1fr) 236px;
+  align-items: center; padding: 34px 24px 30px;
+}
+
+/* Host carousel: three visible slots, the active host in the middle. */
+.dm__hosts { position: relative; overflow: hidden; }
+.dm__hosts::before, .dm__hosts::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 22px; z-index: 2; pointer-events: none;
+}
+.dm__hosts::before { top: 0; background: linear-gradient(var(--ds-bg), transparent); }
+.dm__hosts::after { bottom: 0; background: linear-gradient(transparent, var(--ds-bg)); }
+.dm__tag {
+  position: absolute; z-index: 3; left: 0; top: 0; padding: 0 4px; background: var(--ds-bg);
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ds-muted);
+}
+.dm__host {
+  position: absolute; left: 0; right: 0; top: 0; height: 50px; margin-top: 6px;
+  display: flex; align-items: center; gap: 11px; padding: 0 14px;
+  border: 1px solid var(--ds-border); border-radius: 8px; background: var(--dm-chip);
+  font-size: 14px; color: var(--ds-fg);
+  transition: transform 0.7s cubic-bezier(0.5, 0, 0.2, 1), opacity 0.5s, border-color 0.3s, background 0.3s;
+}
+.dm__host.on { border-color: var(--dm-accent); background: color-mix(in oklab, var(--dm-accent) 8%, var(--dm-chip)); }
+
+.dm__wire { position: relative; height: 1px; background: var(--ds-border); margin: 0 8px; }
+.dm__wire i {
+  position: absolute; top: -2px; left: 0; width: 22px; height: 5px; border-radius: 3px;
+  background: var(--dm-accent); opacity: 0;
+}
+.dm__wire.on i { animation: dm-pulse 0.95s ease-in-out infinite; }
+@keyframes dm-pulse { 0% { left: 0; opacity: 0; } 20%, 80% { opacity: 1; } 100% { left: calc(100% - 22px); opacity: 0; } }
+
+.dm__core {
+  text-align: center; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--dm-chip);
+  padding: 22px 6px; display: grid; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
+}
+.dm__core b { font-size: 15px; }
+
+.dm__agents { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.dm__agents li {
+  margin: 0; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; column-gap: 10px;
+  height: 38px; padding: 0 12px; border: 1px solid var(--ds-border); border-radius: 7px; background: var(--dm-chip);
+  color: var(--ds-muted); transition: border-color 0.3s, color 0.3s, background 0.3s;
+}
+.dm__agents li.on { color: var(--ds-fg); border-color: var(--dm-accent); background: color-mix(in oklab, var(--dm-accent) 8%, var(--dm-chip)); }
+.dm__name { font-weight: 500; }
+.dm__st { font-size: 11.5px; min-width: 4.8em; text-align: right; color: var(--ds-muted); opacity: 0.6; }
+.dm__st--running { color: var(--ds-live); opacity: 1; }
+.dm__st--completed { color: var(--ds-ok); opacity: 1; }
+.dm__st--running::before, .dm__st--completed::before { content: "● "; }
+.dm__st--running::before { animation: ds-blink 0.7s infinite alternate; }
+
+.dm__log { border-top: 1px solid var(--ds-border); padding: 16px 22px 18px; min-height: 7.6em; line-height: 1.7; font-size: 12.5px; }
+.dm__line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: ds-in 0.25s ease-out both; }
+.dm__line--cmd { color: var(--ds-fg); }
+.dm__line--out { color: var(--ds-muted); }
+.dm__prompt { color: var(--ds-muted); }
+.dm__ok { color: var(--ds-ok); }
+
+@media (max-width: 720px) {
+  .dm__body { grid-template-columns: 1fr; gap: 22px; padding: 24px 16px; }
+  .dm__wire { display: none; }
+  .dm__hosts { justify-self: stretch; }
+  .dm__core { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dm * { animation: none !important; transition: none !important; } }

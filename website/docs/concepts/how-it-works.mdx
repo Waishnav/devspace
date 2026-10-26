@@ -1,0 +1,77 @@
+---
+title: How it works
+description: The host orchestrates. DevSpace executes. Providers do the work. A tour of the boundaries and the vocabulary used across these docs.
+---
+
+DevSpace is deliberately small. It does not run a hidden agent loop of its
+own; it exposes explicit capabilities and execution state so the model you are
+already talking to can orchestrate.
+
+```txt
+ you ──▶ host (ChatGPT, Claude, Hermes, OpenClaw, Codex, Claude Code, …)
+           │  MCP tools or the devspace CLI
+           ▼
+        DevSpace ──▶ workspace (checkout or worktree)
+           │
+           ▼
+     devspace-agentd ──▶ codex · claude · opencode · pi · cursor · copilot · grok
+```
+
+## Product principles
+
+1. **The host is the orchestrator.** DevSpace exposes capabilities and state;
+   it never hides the workflow inside an opaque agent.
+2. **Everything happens in a workspace.** One project directory or worktree,
+   plus the instructions accumulated while working in it.
+3. **Local authority stays explicit.** Roots, paths, commands, processes, and
+   credentials are product boundaries.
+4. **Subagents are bounded workers** with an explicit task, profile, working
+   context, lifecycle, and result.
+5. **Adapters stay at the edges.** Provider terminology does not leak into the
+   model-facing contract.
+6. **Composable primitives** over baked-in workflows.
+
+## The pieces
+
+### Host
+
+The MCP client or coding harness presenting the agent experience. ChatGPT,
+Claude, Grok Bot, OpenClaw, Hermes, and Muse connect over MCP. Codex, Claude
+Code, OpenCode, Pi, and others call the `devspace` CLI from their own shell
+tool.
+
+### Server
+
+`devspace serve` runs a Streamable HTTP MCP server on `127.0.0.1:7676`. It
+gives MCP hosts a workspace-scoped coding harness: open a workspace, read,
+patch, run commands, and review changes. It is only needed for MCP hosts.
+
+### Agent daemon
+
+`devspace-agentd` owns subagent execution. The CLI starts it on demand over a
+private Unix socket or named pipe; you never manage it during normal use. It
+persists logical agent records in SQLite and keeps provider runtimes warm while
+they are in use. The MCP server and every CLI invocation are clients of the
+same daemon, so restarting the server never loses agent state.
+
+### Providers
+
+Native integrations with each harness: the Codex app-server, the Claude Agent
+SDK, OpenCode's HTTP server, Pi's RPC mode, and ACP for Cursor, Copilot, Grok,
+and any other ACP agent. See [Providers](/orchestration/providers).
+
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Host | The MCP client or harness coordinating work. |
+| Workspace | One opened directory or worktree and its accumulated instruction context. |
+| `workspace_id` | Opaque handle returned by `open_workspace`, reused for every call in that workspace. |
+| Allowed root | A configured boundary inside which a workspace may be opened. Not itself a workspace. |
+| Checkout mode | Working in an existing checkout supplied by the user. |
+| Worktree mode | Working in an isolated, DevSpace-managed Git worktree. |
+| Tool surface | The MCP tools exposed by the configured mode: `codex` or `claude`. |
+| Subagent | A bounded model invocation delegated and coordinated by the host. |
+| Agent profile | The provider, model, effort, and instructions for a role such as `reviewer`. |
+| Workflow | A replayable script that composes many subagent calls. |
+| Review checkpoint | Git-backed state representing a coherent set of changes. |

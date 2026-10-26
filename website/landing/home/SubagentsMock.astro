@@ -1,0 +1,90 @@
+---
+import Logo from "../../logos/Logo.astro";
+// Illustrative Claude Code session delegating reviews to Codex and Pi. Commands
+// and XML fragments mirror the real `devspace agents` output; ids, findings, and
+// timings are made up. Long output is truncated the way Claude Code truncates it.
+---
+
+<div class="mock cc" role="img" aria-label="Illustration: a Claude Code session running devspace agents to have Codex and Pi review a diff, then reading their findings">
+  <div class="mock__bar">
+    <span class="mock__dots"><i></i><i></i><i></i></span>
+    <span class="mock__title"><Logo id="claude" size={14} /> claude — <b>~/work/billing</b></span>
+  </div>
+
+  <div class="mock__body cc__body">
+    <div class="cc__log">
+      <div class="welcome r" style="--d:.1s">
+        <div><span class="star">✻</span> Welcome to <b>Claude Code</b>!</div>
+        <div class="dim">cwd: ~/work/billing</div>
+      </div>
+
+      <div class="user r" style="--d:.6s"><span class="dim">&gt;</span> get Codex and Pi to review this before I merge</div>
+
+      <div class="line r" style="--d:1.2s"><i class="dot">●</i> I'll send the staged diff to both in parallel.</div>
+
+      <div class="line r" style="--d:1.9s"><i class="dot ok">●</i> <b>Bash</b>(devspace agents run codex "Review the staged diff for correctness…")</div>
+      <div class="out r" style="--d:2.2s"><span>⎿</span><em class="xml">&lt;agent id="agt_7Kq2" status="running"/&gt;</em></div>
+
+      <div class="line r" style="--d:2.8s"><i class="dot ok">●</i> <b>Bash</b>(devspace agents run pi "Check the staged diff for test gaps…")</div>
+      <div class="out r" style="--d:3.1s"><span>⎿</span><em class="xml">&lt;agent id="agt_Q9m4" status="running"/&gt;</em></div>
+
+      <div class="line r" style="--d:3.7s"><i class="dot ok">●</i> <b>Bash</b>(devspace agents wait agt_7Kq2 agt_Q9m4)</div>
+      <div class="out out--block r" style="--d:4.8s">
+        <span>⎿</span>
+        <div>
+          <p><em class="xml">&lt;agent id="agt_7Kq2" status="completed"&gt;</em></p>
+          <p>3 findings</p>
+          <p>1. export.ts:48  quotes in cell values aren't escaped</p>
+          <p>2. export.ts:71  UTF-8 BOM missing, Excel misreads accents</p>
+          <p class="more">… +6 lines (ctrl+r to expand)</p>
+          <p class="gap"><em class="xml">&lt;agent id="agt_Q9m4" status="completed"&gt;</em></p>
+          <p>4 test gaps</p>
+          <p>- empty invoice list: no header-only export test</p>
+          <p>- 10k+ rows: streaming path is untested</p>
+          <p class="more">… +4 lines (ctrl+r to expand)</p>
+        </div>
+      </div>
+
+      <div class="line r" style="--d:6s"><i class="dot">●</i> Both reviews are in. Fixing <b>export.ts:48</b> first, then adding the empty-list and JPY tests.</div>
+
+      <div class="spinner r" style="--d:6.6s"><span class="star pulse">✻</span> Fixing… <span class="dim">(12s · ↑ 1.4k tokens · esc to interrupt)</span></div>
+    </div>
+
+    <div class="cc__foot">
+      <div class="input"><span class="dim">&gt;</span> <i class="caret"></i></div>
+      <div class="hints"><span>? for shortcuts</span><span>Opus 5.5</span></div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .cc { --cc-orange: #d97757; }
+  .cc__body { display: flex; flex-direction: column; padding: 16px 20px 14px; font-size: 12.5px; line-height: 1.5; }
+  .cc__log { flex: 1; display: flex; flex-direction: column; gap: 7px; min-height: 0; }
+  .star { color: var(--cc-orange); }
+  .pulse { display: inline-block; animation: mock-blink 0.9s infinite alternate; }
+
+  .welcome { align-self: flex-start; border: 1px solid var(--cc-orange); border-radius: 6px; padding: 8px 14px 9px; display: grid; gap: 1px; margin-bottom: 4px; }
+  .welcome b { font-weight: 600; }
+
+  .user { background: #262624; border-radius: 4px; padding: 5px 10px; }
+  .line { display: block; }
+  .line b { font-weight: 600; }
+  .dot { font-style: normal; margin-right: 4px; }
+  .dot.ok { color: #4ade80; }
+
+  .out { display: flex; gap: 8px; margin: -4px 0 0 6px; color: #b9b6ae; }
+  .out > span { color: var(--m-dim); }
+  .out p { margin: 0; }
+  .out .pad { padding-left: 1.6em; }
+  .out .gap { margin-top: 6px; }
+  .out .more { color: var(--m-dim); }
+  .out--block > div { min-width: 0; }
+
+  .spinner { color: var(--cc-orange); margin-top: 2px; }
+
+  .cc__foot { margin-top: 10px; }
+  .input { border: 1px solid #55534d; border-radius: 8px; padding: 9px 12px; display: flex; gap: 8px; align-items: center; }
+  .caret { display: inline-block; width: 8px; height: 15px; background: var(--m-fg); animation: mock-blink 0.8s infinite alternate; }
+  .hints { display: flex; justify-content: space-between; padding: 5px 4px 0; color: var(--m-dim); font-size: 11.5px; }
+</style>

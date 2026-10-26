@@ -1,0 +1,28 @@
+---
+import { logoSvg, type LogoId } from "./index";
+import "./variants.css";
+
+interface Props {
+  id: LogoId;
+  size?: number | string;
+  label?: string;
+  class?: string;
+}
+
+const { id, size = 20, label, class: className } = Astro.props;
+const dim = typeof size === "number" ? `${size}px` : size;
+---
+
+<span
+  class:list={["logo", className]}
+  style={`--logo-size:${dim}`}
+  role={label ? "img" : undefined}
+  aria-label={label}
+  aria-hidden={label ? undefined : "true"}
+  set:html={logoSvg(id)}
+/>
+
+<style>
+  .logo { display: inline-flex; flex: none; width: var(--logo-size); height: var(--logo-size); line-height: 0; }
+  .logo :global(svg) { width: 100%; height: 100%; border-radius: 22%; }
+</style>

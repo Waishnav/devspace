@@ -1,0 +1,64 @@
+---
+title: Agent profiles
+description: Markdown files with frontmatter that turn your model-per-task matrix into named roles any orchestrator can pick from.
+---
+
+A profile is a role: which harness, which model, how much effort, and the
+instructions that make it a reviewer rather than an implementer. It is how you
+encode _"Codex for review, Claude for implementation"_ once, instead of
+re-typing it into every prompt.
+
+Profiles are discovered from:
+
+- `~/.devspace/agents/*.md` — yours, across projects
+- `.devspace/agents/*.md` — checked into a project
+
+## Shape
+
+```md .devspace/agents/reviewer.md
+---
+schema: devspace-agent/v1
+name: reviewer
+description: Read-only reviewer for bugs, security risks, and missing tests.
+provider: codex
+model: gpt-5.4
+effort: high
+---
+
+You are a read-only reviewer. Do not edit files.
+Focus on correctness, security, test gaps, and maintainability.
+Cite files and return concise findings.
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `schema` | no | `devspace-agent/v1`. |
+| `name` | no | Stable kebab-case identifier. Defaults to the filename. |
+| `description` | yes | Shown to the orchestrator so it can choose. Make it specific. |
+| `provider` | yes | `codex`, `claude`, `opencode`, `pi`, `cursor`, `copilot`, or `grok`. |
+| `model` | no | Provider model id or alias, such as `gpt-5.4` or `sonnet`. |
+| `effort` | no | Provider-specific passthrough: `low`, `high`, `xhigh`, … |
+| `disabled` | no | Hide the profile without deleting it. |
+
+The markdown body is prepended when the profile launches. It never enters the
+orchestrator's context — the catalog exposes only name, description, provider,
+model, and effort.
+
+## A starter matrix
+
+DevSpace ships starter templates in `examples/agents/`. Copy the ones you want:
+
+| Profile | Provider | Role |
+| --- | --- | --- |
+| `codex-explorer` | codex · `gpt-5.4-mini` | Read-only tracing and risk discovery. |
+| `codex-worker` | codex · `gpt-5.4` | Focused tasks with clear acceptance criteria. |
+| `claude-implementer` | claude · `sonnet` | Narrow multi-file changes and test repair. |
+| `codex-qa-tester` | codex · `gpt-5.4-mini` | Outside-in QA with browser tools. |
+| `copilot-reviewer` | copilot | Severity-ordered review findings. |
+| `pi-reviewer` | pi · `openai-codex/gpt-5.5` | Quick risk checks and targeted questions. |
+| `opencode-explorer` | opencode · `deepseek-v4-flash-free` | Fast relevant-file discovery. |
+| `cursor-agent-worker` | cursor · `composer-2.5-fast` | UI-heavy changes and alternative passes. |
+| `grok-builder` | grok · `grok-4.5` | Focused changes with Grok Build. |
+
+Good body content says when to use the role, whether it may edit files, its
+testing expectations, and a fixed report format the orchestrator can parse.

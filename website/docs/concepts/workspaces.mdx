@@ -1,0 +1,58 @@
+---
+title: Workspaces
+description: Checkout and worktree modes, project instructions, and skills — the context every MCP coding session runs in.
+---
+
+An MCP host starts every coding session by calling `open_workspace` once for a
+project folder inside an [allowed root](/reference/configuration#workspaces).
+The result includes a `workspace_id`; every later read, patch, command, and
+review call reuses it.
+
+```json
+{ "path": "~/work/my-project" }
+```
+
+Call `open_workspace` again only when the ID is rejected as unknown, work moves
+to a different project, work switches between checkout and worktree mode, or
+you ask for a new isolated worktree.
+
+## Checkout mode
+
+The default. DevSpace opens the actual directory, so the host works in your
+current checkout alongside you.
+
+## Worktree mode
+
+For isolated, parallel work:
+
+```json
+{ "path": "~/work/my-project", "mode": "worktree", "base_ref": "main" }
+```
+
+Each call creates a new managed worktree under `~/.devspace/worktrees` and a
+new `workspace_id`. It requires a Git repository with at least one commit and
+starts from `HEAD` unless `base_ref` is set. Uncommitted changes in the source
+checkout are not copied; DevSpace reports a dirty source so the model can ask
+you how to proceed.
+
+Worktrees unused for three days can be cleaned up with
+`devspace worktrees prune`. Worktrees are a workflow boundary, not a security
+boundary.
+
+## Project instructions
+
+When a workspace opens, DevSpace loads root-level `AGENTS.md` and `CLAUDE.md`.
+Nested instruction files are returned as `available_agents_files`, and the
+model reads the relevant one before working under that directory — explicit
+and inspectable, never silently injected mid-session.
+
+## Skills
+
+DevSpace discovers standard Agent Skills from `~/.agents/skills`, project
+`.agents/skills`, and `~/.devspace/skills`, plus `~/.codex/skills` and any
+`skills.paths`. Matching skills are advertised by `open_workspace`; the model
+reads a skill's `SKILL.md` before following it.
+
+When subagents are enabled, DevSpace keeps its bundled `subagents` skill at
+`~/.devspace/skills/subagents/SKILL.md` and advertises the profile catalog
+(name, description, provider, model, effort) — never provider launch details.
