@@ -94,6 +94,9 @@ assert.equal(existsSync(join(created.worktreePath!, "tracked.txt")), true);
 assert.equal(existsSync(join(created.worktreePath!, "uncommitted.txt")), false);
 unwrap(await manager.wait(["job-1"], scope, 2_000));
 assert.deepEqual(runRoots, [created.worktreePath], "the provider works in the worktree");
+const waited = unwrap(await manager.wait(["job-1"], scope, 0))[0];
+assert.equal(waited?.worktree, created.worktreePath, "wait reports the worktree");
+assert.equal(waited?.branch, "devspace/job-1");
 assert.equal(unwrap(manager.get("job-1", scope)).worktreePath, created.worktreePath);
 
 // A retried request id returns the same agent and creates no second worktree.

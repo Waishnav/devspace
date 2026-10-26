@@ -353,7 +353,14 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
   return value.map((entry): LocalAgentWaitResult => {
     const record = asRecord(entry);
     const turnId = optionalString(record?.turnId);
-    return turnId === undefined ? decodeWaitBody(record) : { ...decodeWaitBody(record), turnId };
+    const worktree = optionalString(record?.worktree);
+    const branch = optionalString(record?.branch);
+    return {
+      ...decodeWaitBody(record),
+      ...(turnId === undefined ? {} : { turnId }),
+      ...(worktree === undefined ? {} : { worktree }),
+      ...(branch === undefined ? {} : { branch }),
+    };
   });
 }
 

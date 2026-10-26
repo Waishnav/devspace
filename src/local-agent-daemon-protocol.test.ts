@@ -151,6 +151,10 @@ assert.equal(worktreeRecord.worktreePath, "/wt/app-1a2b");
 assert.equal(worktreeRecord.branch, "devspace/agt_1234");
 assert.equal(record.worktreePath, undefined);
 
+const waited = decodeAgentWaitResults([{ id: "agt_1234", status: "completed", response: "ok", worktree: "/wt/app-1a2b", branch: "devspace/agt_1234" }]);
+assert.deepEqual(waited, [{ id: "agt_1234", status: "completed", response: "ok", worktree: "/wt/app-1a2b", branch: "devspace/agt_1234" }]);
+assert.deepEqual(decodeAgentWaitResults([{ id: "agt_1234", status: "running" }]), [{ id: "agt_1234", status: "running" }]);
+
 const directRecord = decodeAgentRecord({ ...record, workspaceId: undefined });
 assert.equal(directRecord.workspaceId, undefined);
 

@@ -117,7 +117,7 @@ export interface LocalAgentFailure {
   detail?: string;
 }
 
-export type LocalAgentWaitResult = { turnId?: string } & (
+export type LocalAgentWaitResult = { turnId?: string; worktree?: string; branch?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: LocalAgentFailure }
@@ -372,15 +372,21 @@ export class LocalAgentManager {
       : false;
     const results: LocalAgentWaitResult[] = [];
     for (const capture of captures) {
+      const worktree = capture.agent.worktreePath
+        ? { worktree: capture.agent.worktreePath, branch: capture.agent.branch }
+        : {};
       if (!capture.turn) {
-        results.push(waitResultFromAgent(capture.agent, timedOut));
+        results.push({ ...waitResultFromAgent(capture.agent, timedOut), ...worktree });
         continue;
       }
       const turn = this.store.getTurnByIdResult(capture.turn.id);
       if (turn.isErr()) return turn;
-      results.push(turn.value
-        ? waitResultFromTurn(turn.value, timedOut)
-        : waitResultFromAgent(capture.agent, timedOut));
+      results.push({
+        ...(turn.value
+          ? waitResultFromTurn(turn.value, timedOut)
+          : waitResultFromAgent(capture.agent, timedOut)),
+        ...worktree,
+      });
     }
     return Result.ok(results);
   }
