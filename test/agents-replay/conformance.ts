@@ -50,6 +50,7 @@ const shimPath = join(harnessDir, "shim.ts");
 const transcriptsDir = join(harnessDir, "transcripts");
 const TURN_TIMEOUT_SECONDS = 180;
 const STOP_BOUND_MS = 15_000;
+const NON_STREAMING_TOOL_DELAY_MS = 8_000;
 
 const SCENARIOS: Scenario[] = [
   {
@@ -94,7 +95,13 @@ const SCENARIOS: Scenario[] = [
     transcript: true,
     async run(run) {
       const id = await start(run, "Run the shell command `sleep 20 && echo late > late.txt`, then reply SLEPT.");
-      await waitForEvent(run, id, (event) => event.type === "tool_started");
+      if (streams(run.provider)) {
+        await waitForEvent(run, id, (event) => event.type === "tool_started");
+      } else {
+        // A non-streaming driver reports no tool activity, so give the provider time to reach the sleep.
+        await waitForEvent(run, id, (event) => event.type === "turn_started");
+        await delay(NON_STREAMING_TOOL_DELAY_MS);
+      }
       const stoppedAt = Date.now();
       const stopped = await cli(run, ["agents", "stop", id, "--json"]);
       expect(stopped.code === 0, `stop failed: ${stopped.stdout}${stopped.stderr}`);
