@@ -30,42 +30,36 @@ export const PILLARS = [
     key: "subagents",
     kicker: "Subagents",
     title: "Any harness can call any other.",
-    body: "Codex hands implementation to Claude Code. Claude asks Codex for review. Six commands, one daemon, compact XML the model reads directly.",
+    body: "Codex hands implementation to Claude Code. Claude asks Codex for review. One CLI, one daemon, compact XML the model reads directly — and worktrees so parallel writers never collide.",
     href: "/docs/orchestration/subagents",
   },
   {
     key: "workflows",
-    kicker: "Dynamic workflows",
+    kicker: "Dynamic workflows · experimental",
     title: "Program the loop, not the next prompt.",
-    body: "agent(), parallel(), pipeline(), phase(). A small replayable script that fans out, isolates writers in worktrees, and resumes from the step that failed.",
+    body: "agent(), parallel(), pipeline(), phase(). A small replayable script that fans out, isolates writers in worktrees, and resumes read-only runs from the step that failed.",
     href: "/docs/orchestration/dynamic-workflows",
   },
 ];
 
-export const WORKFLOW_SNIPPET = `export const meta = {
-  name: "ship",
-  phases: [{ title: "Plan" }, { title: "Build" }, { title: "Verify" }],
-};
+export const WORKFLOW_SNIPPET = `export const meta = { name: "ship" };
 
-phase("Plan");
-const plan = await agent(\`Plan: \${args.task}\`, {
-  provider: "codex", model: "gpt-6-astra", effort: "xhigh",
-});
+const plan = await phase("Plan", (agent) =>
+  agent(\`Plan: \${args.task}\`, {
+    target: "codex", model: "gpt-6-astra", effort: "xhigh",
+  }));
 
-phase("Build");
-await agent(\`Implement:\\n\${plan}\`, {
-  provider: "claude", model: "opus-5.5", effort: "medium",
-});
+await phase("Build", (agent) =>
+  agent(\`Implement:\\n\${plan}\`, {
+    target: "claude", model: "opus-5.5", effort: "medium",
+    writeMode: "allowed",
+  }));
 
-phase("Verify");
-const [review, qa] = await parallel([
-  () => agent("Review the diff.", {
-    provider: "pi", model: "fable-5.1", effort: "high",
-  }),
-  () => agent("Test it in the browser.", {
-    provider: "codex", model: "gpt-6-sol", effort: "medium",
-  }),
-]);
+const [review, qa] = await phase("Verify", (agent) =>
+  parallel([
+    { target: "pi", model: "fable-5.1", brief: "Review the diff." },
+    { target: "codex", model: "gpt-6-sol", brief: "Test it in the browser." },
+  ], ({ brief, ...options }) => agent(brief, options)));
 
 return { review, qa };`;
 
@@ -96,6 +90,6 @@ export const FAQ = [
   },
   {
     q: "What is coming next?",
-    a: "Dynamic workflows land in v1.1. Further out: environments — a dedicated computer and compute for your agents, so long runs keep going while your laptop sleeps.",
+    a: "Dynamic workflows ship in v1.1 as an experiment behind DEVSPACE_EXPERIMENTAL_WORKFLOWS=1. Further out: environments — a dedicated computer and compute for your agents, so long runs keep going while your laptop sleeps.",
   },
 ];

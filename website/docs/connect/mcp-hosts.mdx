@@ -1,6 +1,6 @@
 ---
 title: Chat apps over MCP
-description: Give ChatGPT, Claude, Grok Bot, OpenClaw, Hermes, or any MCP host a minimal Codex-style coding harness on your own machine, through a tunnel you control.
+description: Give ChatGPT, Claude, Grok Bot, OpenClaw, Hermes, or any MCP host a minimal coding harness on your own machine, through a tunnel you control.
 ---
 
 <Logos set="hosts" />
@@ -54,6 +54,9 @@ consumer Muse currently documents connectors through APIs and CLIs.
     DevSpace opens an approval page. Enter the Owner password from
     `~/.devspace/auth.json`.
 
+    ChatGPT and Claude are allowed OAuth redirect hosts by default. For other
+    hosts, add their callback host to `oauth.allowedRedirectHosts`.
+
   </Step>
 </Steps>
 
@@ -69,7 +72,17 @@ Protocol compatibility is automatic: the same `/mcp` endpoint serves the
 4. After the last file change in a turn, it calls `show_changes` once to render
    a review card of the combined diff.
 
-See [Tool surfaces](/connect/tool-surfaces) for the exact tools.
+ChatGPT gets Codex-style tools (`apply_patch`, `exec_command`); Claude and other
+hosts get Claude-style tools (`write`, `edit`, `bash`). See
+[Tool surfaces](/connect/tool-surfaces) for the exact tools.
+
+## Activity history
+
+Every tool call the host makes is recorded per workspace, grouped into turns
+that end at each `show_changes`. Open `https://your-tunnel.example.com/web`,
+sign in with the Owner password, and browse workspaces, turns, each call's
+arguments and result, and each turn's diff. Turn it off with
+`activity.enabled: false` — see [Configuration](/reference/configuration).
 
 ## Delegating from a chat app
 

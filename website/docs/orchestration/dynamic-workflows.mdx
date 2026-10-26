@@ -2,68 +2,75 @@
 title: Dynamic workflows
 description: Program multi-agent loops as small, replayable JavaScript scripts — fan out, pipeline, phase, and resume from the first failed call.
 sidebar:
-  badge: Preview
+  badge: Experimental
 ---
 
-:::info
-Dynamic workflows ship with DevSpace v1.1 and are in preview. Commands and
-script primitives may still change before the release.
+:::caution
+Workflows are experimental in v1.1 and hidden by default. Set
+`DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` in the environment that runs `devspace`
+to enable the `workflow` commands and the skill that teaches agents to use
+them. The script API may change.
 :::
 
 A subagent is one delegation. A **workflow** is the loop around many of them,
 written down: review a diff from three angles and synthesize; run the same
 staged pipeline over forty files; try two implementations in isolated worktrees
-and compare. The orchestrating model can write the script, launch it, and poll
-it — without holding the entire run in one tool call or its own context.
+and compare. The orchestrating model can write the script, launch it, and wait
+on it — without holding the entire run in one tool call or its own context.
 
 <WorkflowRun />
 
 ## A workflow script
 
-Named workflows live at `.devspace/workflows/<name>.js`. The first statement
-exports literal metadata; the rest composes primitives and returns a
-JSON-compatible result.
+Named workflows live at `.devspace/workflows/<name>.js`. An optional first
+statement exports literal metadata; the rest composes primitives and returns a
+JSON-compatible result. Scripts run in an isolated JavaScript sandbox with no
+filesystem or network access — only the primitives below.
 
 ```js .devspace/workflows/review-auth.js lineNumbers
 export const meta = {
   name: "review-auth",
   description: "Review auth changes from two perspectives",
-  phases: [{ title: "Review" }, { title: "Synthesize" }],
   concurrency: 2,
 };
 
-phase("Review");
-const findings = await parallel([
-  () => agent("Review the auth diff for correctness.", { label: "correctness", profile: "reviewer" }),
-  () => agent("Review the auth diff for security.", { label: "security", provider: "claude" }),
-]);
+const reviews = await phase("Review", (agent) => parallel(
+  [
+    { target: "reviewer", focus: "correctness" },
+    { target: "claude", focus: "security" },
+  ],
+  ({ target, focus }) => agent(`Review the auth diff for ${focus}.`, { target, label: focus }),
+));
 
-phase("Synthesize");
-const summary = await agent(
-  `Synthesize these findings: ${JSON.stringify(findings)}`,
-  { label: "summary" },
-);
+const summary = await phase("Synthesize", (agent) => agent(
+  `Synthesize these reviews: ${JSON.stringify(reviews)}`,
+  { target: "codex", label: "summary" },
+));
 
-return { findings, summary };
+return { reviews, summary };
 ```
 
 ## Primitives
 
 | Primitive | What it does |
 | --- | --- |
-| `agent(prompt, options?)` | One bounded delegation. Options: `label`, `phase`, `schema`, `profile` or `provider`, `model`, `effort`, `isolation: "worktree"`. |
-| `parallel([thunks])` | Runs tasks concurrently, preserving order. A failed branch yields `null`. |
-| `pipeline(items, ...stages)` | Runs each item through dependent stages; a failed chain yields `null` without stopping the others. |
-| `phase(title)` / `log(message)` | Record meaningful progress. |
-| `workflow(nameOrRef, args?)` | Compose another named workflow (or `{ scriptPath }`) one level deep. |
-| `args` | Values passed with `--arg key=value`. |
+| `agent(prompt, options)` | One bounded delegation; resolves to the agent's response. `options.target` (a provider or profile) is required. Also: `model`, `effort`, `label`, `schema`, `writeMode`, `isolation: "worktree"`, `workspace`. |
+| `phase(name, (agent) => …)` | Groups calls under a named phase; the callback's `agent` tags each call with it. |
+| `parallel(items, worker, concurrency?)` | Runs `worker(item, index)` over items, at most `meta.concurrency` (default 4) at a time. Resolves to `{ status: "completed", value }` or `{ status: "failed", error }` per item, in order. |
+| `pipeline(items, ...stages)` | Runs each item through dependent stages — `stage(value, item, index)` — with the same per-item outcomes as `parallel`. |
+| `workflow(name, args?)` | Compose another named workflow. |
+| `log(...values)` | Record progress in the run's event log. |
+| `args` | The run's arguments, passed as JSON with `--args`. |
 
 ### Structured results
 
-Ask for typed JSON when a later step consumes the output:
+Ask for typed JSON when a later step consumes the output. DevSpace validates
+the response against the schema and asks the agent once to correct invalid
+JSON:
 
 ```js
 const review = await agent("Return the discovered bugs.", {
+  target: "codex",
   schema: {
     type: "object",
     properties: { bugs: { type: "array", items: { type: "string" } } },
@@ -72,59 +79,53 @@ const review = await agent("Return the discovered bugs.", {
 });
 ```
 
-### Isolated writers
+### Writers
 
-`isolation: "worktree"` gives a call its own Git worktree, so parallel agents
-that edit overlapping files never collide. Readers and intentionally sequential
-writers can share the checkout.
+Runs are read-only unless started with `--write-mode allowed`. Within a writing
+run, `isolation: "worktree"` gives a call its own Git worktree, so parallel
+agents that edit overlapping files never collide:
 
 ```js
-const [a, b] = await parallel([
-  () => agent("Implement the cache with an LRU.", { provider: "claude", isolation: "worktree" }),
-  () => agent("Implement the cache with a TTL map.", { provider: "codex", isolation: "worktree" }),
-]);
+const [lru, ttl] = await parallel(
+  [{ target: "claude", kind: "an LRU" }, { target: "codex", kind: "a TTL map" }],
+  ({ target, kind }) => agent(`Implement the cache with ${kind}.`, {
+    target, writeMode: "allowed", isolation: "worktree",
+  }),
+);
 ```
 
 ## Run and inspect
 
 ```bash
-devspace workflow run --name review-auth --json
-devspace workflow run --file ./scratch.js --arg pr=482 --json
-devspace workflow status <run-id> --json
-devspace workflow calls <run-id> --json
-devspace workflow call <run-id> <call-index> --json
-devspace workflow cancel <run-id> --json
-devspace workflow ls --json
+devspace workflow run --name review-auth
+devspace workflow run --file ./scratch.js --args '{"pr":482}'
+devspace workflow wait <run-id> --timeout 60
+devspace workflow status <run-id>
+devspace workflow calls <run-id>
+devspace workflow call <run-id> <call-index>
+devspace workflow events <run-id> --after <sequence>
+devspace workflow cancel <run-id>
+devspace workflow ls
 ```
 
-From an agent harness, prefer `--json`, keep the run ID, and poll `status`
-until it reaches `completed`, `failed`, or `cancelled`. `--follow` streams
-output for interactive terminals.
-
-### Navigator
-
-```bash
-devspace workflow tui [run-id]
-```
-
-A read-only terminal navigator: declared phases beside the agent calls in each
-phase, and a per-call inspector with activity, prompt, result, worktree, and
-provider metadata. Token counts are best-effort provider observations — shown
-as unavailable rather than estimated.
+`run` returns a receipt with the run ID. From an agent harness, `wait` in
+bounded steps instead of polling `status`; add `--json` for scripts.
 
 ## Resume
 
-Failed and cancelled runs are terminal. Fix the script and create a resumed run:
+Failed, cancelled, and interrupted runs are terminal. Resume one to reuse its
+completed calls:
 
 ```bash
-devspace workflow run --resume <run-id> --json
-devspace workflow run --resume <run-id> --file ./fixed.js --json
+devspace workflow run --resume <run-id>
 ```
 
-Resume reuses the unchanged successful prefix and executes live from the first
-call that failed or changed. Keep completed calls' prompts and options stable
-to reuse them. Completed `worktree` calls cannot be reused because their
-checkout is not restored.
+A resumed run replays the original script and arguments, reuses each completed
+call whose prompt and options are unchanged, and runs live from the first call
+that failed. Only runs whose calls were all read-only can be resumed — a run
+that may have changed files is never replayed; inspect its calls and start a
+new one. Resume also refuses if the workspace changed since the original run
+(its commit, staged changes, or files).
 
 :::warning
 Scripts must be replayable. Do not use `Date.now()`, `Math.random()`, or

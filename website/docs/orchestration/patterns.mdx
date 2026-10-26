@@ -28,43 +28,44 @@ devspace agents run claude-implementer "Add a per-key burst limit in <paths from
 
 ## Plan → build → review → QA
 
-The full matrix, written as a workflow so it can be resumed from the step that
-failed instead of from the start.
+The full matrix, written as an [experimental workflow](/orchestration/dynamic-workflows)
+so the orchestrator launches one run instead of driving each step.
 
 ```js .devspace/workflows/ship.js lineNumbers
 export const meta = {
   name: "ship",
   description: "Plan with Codex, build with Claude, review and QA in parallel",
-  phases: [{ title: "Plan" }, { title: "Build" }, { title: "Verify" }],
 };
 
-phase("Plan");
-const plan = await agent(`Write an implementation plan for: ${args.task}`, {
-  provider: "codex",
+const plan = await phase("Plan", (agent) => agent(`Write an implementation plan for: ${args.task}`, {
+  target: "codex",
   effort: "xhigh",
   schema: {
     type: "object",
     properties: { steps: { type: "array", items: { type: "string" } } },
     required: ["steps"],
   },
-});
+}));
 
-phase("Build");
-const build = await agent(`Implement this plan:\n${plan.steps.join("\n")}`, {
-  profile: "claude-implementer",
-});
+const build = await phase("Build", (agent) => agent(`Implement this plan:\n${plan.steps.join("\n")}`, {
+  target: "claude-implementer",
+  writeMode: "allowed",
+}));
 
-phase("Verify");
-const [review, qa] = await parallel([
-  () => agent("Review the working-tree diff against the plan.", { profile: "copilot-reviewer" }),
-  () => agent("Exercise the changed flow in the browser.", { profile: "codex-qa-tester" }),
-]);
+const [review, qa] = await phase("Verify", (agent) => parallel(
+  [
+    { target: "copilot-reviewer", brief: "Review the working-tree diff against the plan." },
+    { target: "codex-qa-tester", brief: "Exercise the changed flow in the browser." },
+  ],
+  ({ target, brief }) => agent(brief, { target }),
+));
 
 return { plan, build, review, qa };
 ```
 
 ```bash
-devspace workflow run --name ship --arg task="Add CSV export to the billing page" --json
+devspace workflow run --name ship --write-mode allowed \
+  --args '{"task":"Add CSV export to the billing page"}'
 ```
 
 ## Bake-off
@@ -72,13 +73,14 @@ devspace workflow run --name ship --arg task="Add CSV export to the billing page
 Two harnesses implement the same brief in isolated worktrees; a third judges.
 
 ```js
-const [a, b] = await parallel([
-  () => agent(args.brief, { provider: "claude", isolation: "worktree" }),
-  () => agent(args.brief, { provider: "codex", isolation: "worktree" }),
-]);
-return await agent(`Compare these two implementations and pick one:\nA: ${a}\nB: ${b}`, {
-  profile: "pi-reviewer",
-});
+const [a, b] = await parallel(
+  ["claude", "codex"],
+  (target) => agent(args.brief, { target, writeMode: "allowed", isolation: "worktree" }),
+);
+return await agent(
+  `Compare these two implementations and pick one:\nA: ${JSON.stringify(a)}\nB: ${JSON.stringify(b)}`,
+  { target: "pi-reviewer" },
+);
 ```
 
 ## When not to delegate

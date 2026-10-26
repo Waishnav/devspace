@@ -33,13 +33,23 @@ Bash, public URL, allowed hosts, and native SQLite status.
   OAuth routes.
 </Accordion>
 
-<Accordion title="Host header or 403 errors">
-  Allowed hosts derive from `publicBaseUrl`. If your tunnel URL changed, update
-  it.
+<Accordion title="403 Invalid Host">
+  Allowed hosts derive from `publicBaseUrl`, so every request through a
+  different hostname is rejected — including OAuth discovery, which hosts
+  report as a sign-in or registration failure. If you switched tunnels, run
+  `devspace config set publicBaseUrl https://new-host` and restart `serve`.
+</Accordion>
+
+<Accordion title="Claude: &quot;Couldn't register with DevSpace's sign-in service&quot;">
+  Claude registers an OAuth client with a `claude.ai` callback. Check that
+  `curl https://your-host/healthz` works through the tunnel (see Invalid Host
+  above), and that `oauth.allowedRedirectHosts` includes `claude.ai` — an
+  explicit list in your config replaces the default, which includes it.
 </Accordion>
 
 <Accordion title="OAuth redirect host rejected">
-  Add the client's redirect host to `oauth.allowedRedirectHosts`.
+  Registration fails with `Client redirect_uri is not allowed`. Add the
+  client's redirect host to `oauth.allowedRedirectHosts` and restart `serve`.
 </Accordion>
 
 <Accordion title="Unknown workspace_id">
@@ -59,6 +69,19 @@ Bash, public URL, allowed hosts, and native SQLite status.
 
 <Accordion title="Shell commands fail on Windows">
   DevSpace needs Bash. Install Git for Windows (Git Bash) or use WSL.
+</Accordion>
+
+<Accordion title="PROVIDER_UNAVAILABLE">
+  The provider's CLI isn't installed or isn't on `PATH` for the user running
+  DevSpace. Install it, or point DevSpace at it with the provider's `command`
+  setting or its `*_COMMAND` variable (`CODEX_COMMAND`, `CLAUDE_COMMAND`,
+  `OPENCODE_COMMAND`, `PI_COMMAND`, …).
+</Accordion>
+
+<Accordion title="A read-only subagent refuses to start">
+  `--write-mode read_only` is enforced by the provider itself — Cursor's ask
+  mode, Copilot's plan mode. An older CLI that can't switch modes fails the
+  turn instead of running with write access. Update the CLI or use `allowed`.
 </Accordion>
 
 <Accordion title="A subagent provider is missing from targets">

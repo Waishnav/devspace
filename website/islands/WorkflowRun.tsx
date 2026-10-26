@@ -36,7 +36,7 @@ export default function WorkflowRun() {
     <div className="ds-diagram" aria-label="Illustration: a dynamic workflow run moving through Plan, Build, and Verify phases">
       <div className="ds-diagram__bar">
         <span className="ds-diagram__dots"><i /><i /><i /></span>
-        <span>devspace workflow tui · ship</span>
+        <span>devspace workflow status · ship</span>
         <span className={`ds-status ds-status--${status}`}>{status}</span>
       </div>
       <div className="ds-wf">

@@ -12,35 +12,58 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | `devspace serve` | Start the MCP server on `127.0.0.1:7676`. |
 | `devspace doctor` | Show config, runtime, Git, Bash, and native dependency status. |
 | `devspace config get` | Print the persisted config. |
-| `devspace config set publicBaseUrl <url\|null>` | Update the public origin, preserving comments. |
+| `devspace config set publicBaseUrl <url\|null>` | Update the public origin, preserving comments. Restart `serve` to apply it. |
 | `devspace worktrees prune` | Prune managed worktrees unused for three days. |
 | `devspace show-changes <review-ref> [--json]` | Inspect a Git-backed review checkpoint. |
 | `devspace -v`, `--version` | Print the installed version. |
 
 ## Subagents
 
+Agent commands need no server, OAuth, or tunnel. They run from the project the
+agent should work in.
+
 | Command | Description |
 | --- | --- |
 | `devspace agents targets` | List usable providers and profiles for this project. |
-| `devspace agents run <target> [--model m] [--effort e] <brief>` | Start a new logical agent. |
-| `devspace agents continue <id> [--model m] [--effort e] <brief>` | Send a follow-up to an existing agent. |
+| `devspace agents run <target> [options] <prompt>` | Start a new logical agent. |
+| `devspace agents continue <id> [options] <prompt>` | Send a follow-up to an existing agent. |
 | `devspace agents show <id>` | Immediate snapshot. |
-| `devspace agents wait <id>... [--timeout s]` | Block until all named agents finish their current work. |
+| `devspace agents wait <id>... [--timeout s]` | Block until all named agents finish their current turn. |
+| `devspace agents stop <id>` | Cancel the agent's running turn. The agent can be continued later. |
+| `devspace agents events <id> [--turn <turn-id>] [--follow]` | Tool calls, messages, and errors from a turn, as they happen with `--follow`. |
 | `devspace agents ls` | List agents in the current project. |
+| `devspace agents skill [--install <harness> [--project]]` | Print the subagents skill, or install it for `claude-code`, `codex`, `cursor`, `opencode`, or `agents`. |
 | `devspace agents daemon <status\|stop\|logs>` | Diagnose the local agent daemon. |
+
+Options for `run` and `continue`:
+
+| Option | Description |
+| --- | --- |
+| `--model <model>`, `--effort <level>` | Override the target's model or reasoning effort. |
+| `--write-mode <read_only\|allowed\|full_access>` | Default `allowed`. `read_only` is enforced by the provider itself and refuses to start when it can't be. |
+| `--wait [--timeout <seconds>]` | Block until the turn ends. Exit codes: `0` completed, `2` failed, `3` stopped, `4` timed out. A timeout leaves the agent running. |
+| `--worktree [--branch <name>]` | `run` only. Work in a new Git worktree on branch `devspace/<agent id>` (or `--branch`), created from the committed `HEAD`. |
+| `--request-id <key>` | `run` only. A retry with the same key returns the same agent instead of starting another. |
 
 Agent commands print compact XML fragments; add `--json` for scripts.
 
-## Workflows <Badge>Preview</Badge>
+## Workflows <Badge>Experimental</Badge>
+
+Workflow commands exist only when `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` is set.
+See [Dynamic workflows](/orchestration/dynamic-workflows).
 
 | Command | Description |
 | --- | --- |
-| `devspace workflow run --name <name> [--arg k=v]...` | Run `.devspace/workflows/<name>.js`. |
-| `devspace workflow run --file <path> [--arg k=v]...` | Run a script by path. |
-| `devspace workflow run --resume <run-id> [--file <path>]` | Create a resumed run. |
+| `devspace workflow run --name <name>` | Run `.devspace/workflows/<name>.js`. |
+| `devspace workflow run --file <path>` | Run a script by path. |
+| `devspace workflow run --resume <run-id>` | Create a resumed run that reuses completed calls. |
 | `devspace workflow status <run-id>` | Run status and phase progress. |
+| `devspace workflow wait <run-id> [--timeout s]` | Block until the run finishes. |
 | `devspace workflow calls <run-id>` | Compact list of child calls. |
 | `devspace workflow call <run-id> <index>` | One call's prompt, result, or error. |
+| `devspace workflow events <run-id> [--after <sequence>]` | The run's event log. |
 | `devspace workflow cancel <run-id>` | Cancel a run. |
 | `devspace workflow ls` | Runs in the current project. |
-| `devspace workflow tui [run-id]` | Read-only terminal navigator. |
+
+`workflow run` takes arguments as JSON with `--args <json>` or
+`--args-file <file>`, and `--write-mode read_only|allowed`.

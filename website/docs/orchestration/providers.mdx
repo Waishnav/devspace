@@ -13,8 +13,8 @@ working.
 | --- | --- | --- |
 | `codex` | Host-installed `codex app-server` | One app-server across agents |
 | `claude` | Claude Agent SDK | One warm runtime per agent |
-| `opencode` | OpenCode SDK | One server across sessions |
-| `pi` | Embedded Pi coding-agent SDK | One in-process session per agent |
+| `opencode` | `opencode serve` over HTTP; v1 or v2 detected from the installed CLI | One server across sessions |
+| `pi` | `pi --mode rpc` | One process per agent |
 | `cursor` | ACP | One process across sessions |
 | `copilot` | ACP | One process across sessions |
 | `grok` | Grok Build ACP (`grok agent stdio`) | One process across sessions |
@@ -42,11 +42,24 @@ Providers are explicit. Omitted providers are disabled.
 }
 ```
 
-- `command` names one executable (no argument splitting). Codex, Claude,
-  Cursor, Copilot, and Grok accept it; use a wrapper script for fixed args.
+- `command` names one executable (no argument splitting); use a wrapper script
+  for fixed args. Every provider accepts it, and the `*_COMMAND` environment
+  variables (`CODEX_COMMAND`, `CLAUDE_COMMAND`, `OPENCODE_COMMAND`,
+  `PI_COMMAND`, …) still work.
 - `env` overlays literal values on the daemon's environment for that provider
   only. `$NAME` references are not expanded.
-- Availability is re-checked before a provider is shown or used.
+- Availability is re-checked before a provider is shown or used; a missing
+  executable fails with `PROVIDER_UNAVAILABLE` before any agent is created.
+
+## Any ACP agent
+
+Cursor, Copilot, and Grok run through one generic ACP driver. Any other agent
+that speaks ACP over stdio can be added with `driver: "acp"` and a `command`:
+
+```jsonc
+{ "id": "my-agent", "driver": "acp", "enabled": true,
+  "command": "my-agent", "config": { "args": ["acp"] } }
+```
 
 ## Effort
 
@@ -54,7 +67,7 @@ Providers are explicit. Omitted providers are disabled.
 
 - **claude** — SDK effort with adaptive thinking
 - **codex** — app-server reasoning effort
-- **pi** — AgentSession thinking level
+- **pi** — RPC thinking level
 - **opencode** — model variant
 - **cursor**, **copilot** — ACP thought-level config when supported
 - **grok** — `--reasoning-effort` on startup

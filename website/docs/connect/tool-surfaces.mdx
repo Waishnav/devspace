@@ -1,13 +1,22 @@
 ---
 title: Tool surfaces
-description: The exact MCP tools DevSpace exposes to a host, in the default Codex-style surface and the Claude-style alternative.
+description: The exact MCP tools DevSpace exposes to a host — Codex-style for ChatGPT, Claude-style for Claude and other hosts — and how the surface is chosen.
 ---
 
-DevSpace keeps the model-facing surface small. Choose it with `tools.mode` in
-`~/.devspace/config.jsonc`.
+DevSpace keeps the model-facing surface small and gives each host the tools
+its model is trained on. ChatGPT gets the Codex-style surface; Claude, Cursor,
+and any host DevSpace doesn't recognise get the Claude-style surface.
+
+The host is identified from the OAuth client it registered: its `client_name`,
+then its redirect hosts (`chatgpt.com`/`openai.com` or `claude.ai`/`claude.com`),
+then the request's `User-Agent`. The client is fixed per connector, so a host
+keeps the same tool list across requests.
+
+To give every host one surface, set `tools.mode` to `"codex"` or `"claude"` in
+`~/.devspace/config.jsonc`. When set, it wins over detection.
 
 <Tabs>
-  <Tab title="codex (default)">
+  <Tab title="codex (ChatGPT)">
     | Tool | Purpose |
     | --- | --- |
     | `open_workspace` | Open a checkout or new worktree; returns `workspace_id`, instructions, skills, and the agent catalog. |
@@ -17,7 +26,7 @@ DevSpace keeps the model-facing surface small. Choose it with `tools.mode` in
     | `write_stdin` | Poll a running session, send input, resize a PTY, or send Ctrl-C. |
     | `show_changes` | Render the combined diff for the turn and advance the review point. |
   </Tab>
-  <Tab title="claude">
+  <Tab title="claude (Claude and others)">
     | Tool | Purpose |
     | --- | --- |
     | `open_workspace` | Same as above. |

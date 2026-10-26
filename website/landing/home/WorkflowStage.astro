@@ -27,7 +27,7 @@ const ACTIVITY: Array<{ phase: string; lines: Array<[string, string]> }> = [
 // Which phase each source line belongs to (the meta block belongs to none).
 let current: string | null = null;
 const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
-  const match = /^phase\("(\w+)"\)/.exec(line);
+  const match = /\bphase\("(\w+)"/.exec(line);
   if (match) current = match[1]!;
   if (line.startsWith("return")) current = null;
   return current ?? "";
@@ -41,7 +41,7 @@ const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
   </div>
 
   <div class="pane pane--viz" role="img" aria-label="Illustration: the ship workflow running through its Plan, Build, and Verify phases">
-    <div class="pane__head"><span>devspace workflow tui · ship</span><span class="run" data-run>running</span></div>
+    <div class="pane__head"><span>devspace workflow status · ship</span><span class="run" data-run>running</span></div>
 
     <div class="phases">
       {PHASES.map((phase) => {

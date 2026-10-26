@@ -1,6 +1,6 @@
 ---
 title: Subagents
-description: Delegate one bounded task to another harness, keep its ID, wait on it, and continue it later — six commands, compact XML output.
+description: Delegate one bounded task to another harness, keep its ID, wait on it, stop it, and continue it later — compact XML output.
 ---
 
 A subagent is a bounded worker: an explicit brief, a target, a lifecycle, and a
@@ -38,7 +38,12 @@ For routine edits, the orchestrator should just do the work.
     devspace agents run claude --model opus --effort high "Implement …"
     ```
 
-    Returns immediately: `<agent id="agt_7Kq2" status="running"/>`.
+    Returns immediately: `<agent id="agt_7Kq2" status="running"/>`. Add
+    `--wait` to block until the turn ends instead.
+
+    `--write-mode read_only` asks the provider to enforce a read-only turn, and
+    `--worktree` runs the agent in its own Git worktree so parallel writers
+    don't collide. See [CLI](/reference/cli) for every option.
 
   </Step>
   <Step title="Wait for one or many">
@@ -66,9 +71,15 @@ For routine edits, the orchestrator should just do the work.
 ## Inspecting
 
 ```bash
-devspace agents show agt_7Kq2   # immediate snapshot
-devspace agents ls              # agents in the current project
+devspace agents show agt_7Kq2              # immediate snapshot
+devspace agents events agt_7Kq2 --follow   # tool calls, messages, errors as they happen
+devspace agents stop agt_7Kq2              # cancel the running turn
+devspace agents ls                         # agents in the current project
 ```
+
+A stopped agent keeps its record and provider session; `continue` it later.
+Turn events are stored with secrets redacted, so you can audit what a
+subagent did after the fact.
 
 Use `show` for a snapshot, not as a polling loop — `wait` expresses the
 dependency.
@@ -85,16 +96,17 @@ one fragment per item; empty lists print nothing.
 <error code="AGENT_NOT_FOUND" retryable="false" agent-id="agt_missing">Subagent not found.</error>
 ```
 
-Prompts, provider session IDs, workspace paths, and timestamps are never
-included. `--json` exists for scripts; the bundled skill does not use it.
+Prompts, provider session IDs, and timestamps are never included; an agent
+started with `--worktree` adds its `worktree` path and `branch`. `--json` exists for scripts; the bundled skill does not use it.
 
 ## Lifecycle
 
 - **One active turn per agent**; different agents run concurrently.
 - Logical agent records live in the daemon's SQLite store. Live provider
   runtimes are disposable and are recreated after a daemon restart.
-- If the daemon restarts mid-turn, `running` agents become `error` without
-  losing their provider session; `continue` resumes where the provider allows.
+- If the daemon restarts mid-turn, the turn fails with `DAEMON_UNAVAILABLE`
+  without losing the provider session; `continue` resumes where the provider
+  allows.
 - Failures carry structured `code` and `retryable` fields so the orchestrator
   can tell cancellation, availability, and workspace conflicts apart.
 
