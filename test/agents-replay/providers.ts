@@ -131,6 +131,22 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     protocol: jsonRpc,
     realCommand: () => "codex",
   },
+  // ACP agents speak JSON-RPC over stdio; DevSpace's AcpLocalAgentDriver is shared by all three.
+  cursor: {
+    id: "cursor",
+    protocol: jsonRpc,
+    realCommand: () => "cursor-agent",
+  },
+  copilot: {
+    id: "copilot",
+    protocol: jsonRpc,
+    realCommand: () => "copilot",
+  },
+  grok: {
+    id: "grok",
+    protocol: jsonRpc,
+    realCommand: () => "grok",
+  },
 };
 
 function emptied(record: Record<string, unknown>, keys: string[]): Record<string, unknown[]> {
