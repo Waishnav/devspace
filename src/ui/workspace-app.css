@@ -1,16 +1,29 @@
 :root {
   color-scheme: light dark;
+  /* Defaults for hosts that send no style variables. They follow the effective
+     color-scheme, which applyDocumentTheme pins to the host theme. Host values
+     are set inline on the root and win. */
+  --color-background-primary: light-dark(#ffffff, #181818);
+  --color-background-secondary: light-dark(#f4f4f5, #272727);
+  --color-background-tertiary: light-dark(#e4e4e7, #343434);
+  --color-border-primary: light-dark(#d4d4d8, #414141);
+  --color-text-primary: light-dark(#18181b, #f5f5f6);
+  --color-text-secondary: light-dark(#52525b, #b6b6bd);
+  --color-text-tertiary: light-dark(#71717a, #a3a3aa);
+  --color-text-success: light-dark(#1a7f37, #6fda83);
+  --color-text-danger: light-dark(#cf222e, #ee7676);
+  --color-text-warning: light-dark(#9a6700, #e6b566);
   font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
   background: transparent;
-  color: var(--color-text-primary, #f5f5f6);
-  --tool-card-border: color-mix(in srgb, var(--color-border-primary, #414141) 74%, transparent);
-  --tool-card-header-bg: color-mix(in srgb, var(--color-background-secondary, #272727) 88%, transparent);
-  --tool-card-body-bg: color-mix(in srgb, var(--color-background-primary, #181818) 94%, transparent);
-  --tool-card-hover-bg: color-mix(in srgb, var(--color-background-tertiary, #343434) 46%, transparent);
-  --tool-card-divider: color-mix(in srgb, var(--color-border-primary, #414141) 66%, transparent);
-  --tool-accent: var(--color-text-secondary, #b6b6bd);
-  --scrollbar-thumb: color-mix(in srgb, var(--color-text-tertiary, #8a8a8a) 56%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-text-secondary, #a8a8a8) 82%, transparent);
+  color: var(--color-text-primary);
+  --tool-card-border: color-mix(in srgb, var(--color-border-primary) 74%, transparent);
+  --tool-card-header-bg: color-mix(in srgb, var(--color-background-secondary) 88%, transparent);
+  --tool-card-body-bg: color-mix(in srgb, var(--color-background-primary) 94%, transparent);
+  --tool-card-hover-bg: color-mix(in srgb, var(--color-background-tertiary) 46%, transparent);
+  --tool-card-divider: color-mix(in srgb, var(--color-border-primary) 66%, transparent);
+  --tool-accent: var(--color-text-secondary);
+  --scrollbar-thumb: color-mix(in srgb, var(--color-text-tertiary) 56%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-text-secondary) 82%, transparent);
 }
 
 * {
@@ -39,15 +52,15 @@ body {
   border-radius: 12px;
   background: var(--tool-card-header-bg);
   box-shadow: none;
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
 }
 
 .tool-card.workspace {
-  --tool-accent: color-mix(in srgb, var(--color-text-primary, #f5f5f6) 34%, #3b82f6 66%);
+  --tool-accent: color-mix(in srgb, var(--color-text-primary) 34%, #3b82f6 66%);
 }
 
 .tool-card.review {
-  --tool-accent: color-mix(in srgb, var(--color-text-primary, #f5f5f6) 28%, #d99742 72%);
+  --tool-accent: color-mix(in srgb, var(--color-text-primary) 28%, #d99742 72%);
 }
 
 @supports selector(::-webkit-scrollbar) {
@@ -85,7 +98,7 @@ body {
 
 .empty {
   padding: 14px 16px;
-  color: var(--color-text-secondary, #b6b6bd);
+  color: var(--color-text-secondary);
   font-size: var(--font-text-sm-size, 13px);
 }
 
@@ -145,7 +158,7 @@ body {
 }
 
 .tool-title {
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
   font-size: var(--font-text-sm-size, 14px);
   font-weight: 550;
   line-height: 1.3;
@@ -153,7 +166,7 @@ body {
 
 .tool-label {
   overflow: hidden;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: var(--font-text-xs-size, 12px);
   line-height: 1.4;
@@ -172,7 +185,7 @@ body {
 }
 
 .header-meta {
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   font-size: var(--font-text-sm-size, 12px);
   line-height: 1.35;
   text-align: right;
@@ -184,11 +197,11 @@ body {
 }
 
 .add {
-  color: var(--color-success-text, #6fda83);
+  color: var(--color-text-success);
 }
 
 .remove {
-  color: var(--color-danger-text, #ee7676);
+  color: var(--color-text-danger);
 }
 
 .chevron {
@@ -197,7 +210,7 @@ body {
   height: 20px;
   place-items: center;
   border-radius: 7px;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   transition:
     background 140ms ease,
     color 140ms ease,
@@ -205,7 +218,7 @@ body {
 }
 
 .tool-header:hover:not(:disabled) .chevron {
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
 }
 
 .chevron .icon-svg {
@@ -249,7 +262,7 @@ body {
   place-items: center;
   border-radius: 6px;
   background: color-mix(in srgb, var(--tool-accent) 9%, transparent);
-  color: color-mix(in srgb, var(--tool-accent) 72%, var(--color-text-tertiary, #a3a3aa));
+  color: color-mix(in srgb, var(--tool-accent) 72%, var(--color-text-tertiary));
 }
 
 .workspace-row-icon-svg {
@@ -262,7 +275,7 @@ body {
   display: flex;
   min-height: 22px;
   align-items: center;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   font-size: var(--font-text-sm-size, 12px);
   font-weight: 500;
 }
@@ -270,7 +283,7 @@ body {
 .workspace-value {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-secondary, #c7c7ce);
+  color: var(--color-text-secondary);
   font-size: var(--font-text-sm-size, 12px);
   line-height: 1.45;
   text-overflow: ellipsis;
@@ -298,7 +311,7 @@ body {
   height: 18px;
   flex: 0 0 auto;
   place-items: center;
-  color: var(--color-warning-text, #e6b566);
+  color: var(--color-text-warning);
   cursor: help;
 }
 
@@ -329,7 +342,7 @@ body {
   border: 1px solid color-mix(in srgb, var(--tool-accent) 16%, var(--tool-card-divider));
   border-radius: 9999px;
   background: color-mix(in srgb, var(--tool-accent) 7%, transparent);
-  color: var(--color-text-secondary, #c7c7ce);
+  color: var(--color-text-secondary);
   font-size: 11px;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -363,7 +376,7 @@ body {
   border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 34%, var(--tool-card-divider));
   border-radius: 0;
   background: transparent;
-  color: var(--color-text-secondary, #c7c7ce);
+  color: var(--color-text-secondary);
   font-size: 11px;
   line-height: 1.25;
   white-space: nowrap;
@@ -379,12 +392,12 @@ body {
 
 .workspace-agent-profile:hover {
   border-bottom-color: var(--tool-accent);
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
 }
 
 .workspace-agent-profile.muted {
   border-bottom-style: dashed;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   opacity: 0.72;
 }
 
@@ -410,7 +423,7 @@ body {
 
 .workspace-chip.muted {
   border-style: dashed;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   opacity: 0.72;
 }
 
@@ -440,13 +453,13 @@ body {
 }
 
 .workspace-instruction-status.loaded {
-  background: color-mix(in srgb, var(--color-success-text, #6fda83) 12%, transparent);
-  color: var(--color-success-text, #6fda83);
+  background: color-mix(in srgb, var(--color-text-success) 12%, transparent);
+  color: var(--color-text-success);
 }
 
 .workspace-instruction-status.available {
-  background: color-mix(in srgb, var(--color-text-tertiary, #a3a3aa) 9%, transparent);
-  color: var(--color-text-tertiary, #a3a3aa);
+  background: color-mix(in srgb, var(--color-text-tertiary) 9%, transparent);
+  color: var(--color-text-tertiary);
 }
 
 .workspace-instruction-status-svg {
@@ -539,7 +552,7 @@ body {
 .workspace-instruction-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
   font-size: var(--font-text-sm-size, 12px);
   font-weight: 550;
   text-overflow: ellipsis;
@@ -549,7 +562,7 @@ body {
 .workspace-instruction-path {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 10px;
   line-height: 1.35;
@@ -562,7 +575,7 @@ body {
   width: 18px;
   height: 18px;
   place-items: center;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   transition: transform 140ms ease;
 }
 
@@ -581,8 +594,8 @@ body {
   overflow: auto;
   padding: 10px 12px;
   border-top: 1px solid var(--tool-card-divider);
-  background: color-mix(in srgb, var(--color-background-primary, #101114) 92%, transparent);
-  color: var(--color-text-secondary, #c7c7ce);
+  background: color-mix(in srgb, var(--color-background-primary) 92%, transparent);
+  color: var(--color-text-secondary);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 11px;
   line-height: 1.55;
@@ -617,7 +630,7 @@ body {
 }
 
 .review-empty {
-  color: var(--color-text-secondary, #b7b7bf);
+  color: var(--color-text-secondary);
   font-size: var(--font-text-sm-size, 13px);
 }
 
@@ -628,7 +641,7 @@ body {
   border: 0;
   border-top: 1px solid var(--tool-card-divider);
   background: transparent;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-text-sm-size, 12px);
@@ -637,7 +650,7 @@ body {
 
 .review-more:hover {
   background: var(--tool-card-hover-bg);
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
 }
 
 .review-diff {
@@ -676,7 +689,7 @@ body {
   padding: 0 12px;
   border: 0;
   background: var(--tool-card-body-bg);
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -689,28 +702,28 @@ body {
   align-self: center;
   place-items: center;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--color-text-tertiary, #a3a3aa) 10%, transparent);
-  color: var(--color-text-tertiary, #a3a3aa);
+  background: color-mix(in srgb, var(--color-text-tertiary) 10%, transparent);
+  color: var(--color-text-tertiary);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 10px;
   font-weight: 700;
 }
 
 .review-file-kind.added {
-  background: color-mix(in srgb, var(--color-success-text, #6fda83) 12%, transparent);
-  color: var(--color-success-text, #6fda83);
+  background: color-mix(in srgb, var(--color-text-success) 12%, transparent);
+  color: var(--color-text-success);
 }
 
 .review-file-kind.edited,
 .review-file-kind.renamed,
 .review-file-kind.renamed-edited {
-  background: color-mix(in srgb, var(--color-warning-text, #e6b566) 12%, transparent);
-  color: var(--color-warning-text, #e6b566);
+  background: color-mix(in srgb, var(--color-text-warning) 12%, transparent);
+  color: var(--color-text-warning);
 }
 
 .review-file-kind.deleted {
-  background: color-mix(in srgb, var(--color-danger-text, #ee7676) 12%, transparent);
-  color: var(--color-danger-text, #ee7676);
+  background: color-mix(in srgb, var(--color-text-danger) 12%, transparent);
+  color: var(--color-text-danger);
 }
 
 .review-single-file {
@@ -749,16 +762,16 @@ body {
 }
 
 .review-diff-file-path.previous {
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
 }
 
 .review-diff-file-path.current {
-  color: var(--color-text-primary, #f5f5f6);
+  color: var(--color-text-primary);
 }
 
 .review-diff-file-arrow {
   flex: 0 0 auto;
-  color: var(--color-text-tertiary, #a3a3aa);
+  color: var(--color-text-tertiary);
   font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
 }
 
@@ -776,17 +789,17 @@ body {
 }
 
 .status.muted {
-  color: var(--color-text-secondary, #b7b7bf);
+  color: var(--color-text-secondary);
 }
 
 .status.error {
-  color: var(--color-danger-text, #ee7676);
+  color: var(--color-text-danger);
 }
 
 .pierre-diff {
-  --diffs-bg: var(--tool-payload-bg, var(--color-background-primary, #101114));
-  --diffs-light-bg: var(--color-background-primary, #ffffff);
-  --diffs-dark-bg: var(--tool-payload-bg, var(--color-background-primary, #101114));
+  --diffs-bg: var(--tool-payload-bg, var(--color-background-primary));
+  --diffs-light-bg: var(--color-background-primary);
+  --diffs-dark-bg: var(--tool-payload-bg, var(--color-background-primary));
   --diffs-font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   --diffs-header-font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
   /* Keep iOS WebKit from inflating dense diff text independently of the card UI. */
