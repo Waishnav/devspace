@@ -12,6 +12,9 @@ assert.equal(redactSecrets("deploy --password hunter2 --verbose"), "deploy --pas
 assert.equal(redactSecrets("gh auth login --with-token 'abc def'"), "gh auth login --with-token [redacted]");
 assert.equal(redactSecrets("git clone https://alice:hunter2@example.com/repo"), "git clone https://alice:[redacted]@example.com/repo");
 assert.equal(redactSecrets("git clone ssh://git@github.com/org/repo"), "git clone ssh://git@github.com/org/repo");
+assert.equal(redactSecrets("https://alice:pa@ss@example.com/repo"), "https://alice:[redacted]@example.com/repo");
+assert.equal(redactSecrets("https://alice:@hunter2@example.com/repo"), "https://alice:[redacted]@example.com/repo");
+assert.equal(redactSecrets("curl https://example.com:8080?email=a@b.com"), "curl https://example.com:8080?email=a@b.com");
 assert.equal(redactSecrets("docker login --password-stdin"), "docker login --password-stdin");
 assert.equal(redactSecrets("pnpm test --max-tokens 4096"), "pnpm test --max-tokens 4096");
 assert.equal(redactSecrets("deploy --github-token ghx_value"), "deploy --github-token [redacted]");

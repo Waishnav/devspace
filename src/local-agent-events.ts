@@ -119,8 +119,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 const SECRET_ASSIGNMENT = /\b([A-Za-z0-9_]*(?:api[_-]?key|token|secret|password|passwd|authorization|credential)[A-Za-z0-9_]*)(["']?\s*[:=]\s*["']?)(?:Bearer\s+)?([^\s"',;]{4,})/gi;
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
-// `https://user:pass@host`: keep the user, drop the password.
-const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/@:]*):[^\s/@]+@/gi;
+// `https://user:pass@host`: keep the user, drop the password. The password runs to the
+// authority's last `@` (it may contain `@`) and never past `/`, `?` or `#`.
+const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*):[^\s/?#]*@(?=[^\s/?#@]*(?:[\s/?#]|$))/gi;
 // `--password hunter2`: a secret-named flag followed by its value as the next word.
 // Plural "tokens" (e.g. --max-tokens 4096) is a count, not a credential.
 const SECRET_FLAG = /(--?[A-Za-z0-9_-]*(?:api[_-]?key|token(?!s)|secret|password|passwd|authorization|credential)[A-Za-z0-9_-]*\s+)(?!-)("[^"]*"|'[^']*'|\S+)/gi;
