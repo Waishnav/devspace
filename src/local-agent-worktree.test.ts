@@ -87,7 +87,7 @@ const start = (extra: { agentId?: string; worktree?: { branch?: string }; worksp
 const created = unwrap(await start({ agentId: "job-1", worktree: {} }));
 assert.equal(created.workspaceRoot, source, "the agent stays scoped to the checkout it was started from");
 assert.equal(created.branch, "devspace/job-1");
-assert.ok(created.worktreePath?.startsWith(`${worktreeRoot}/app-`), created.worktreePath);
+assert.ok(created.worktreePath?.startsWith(join(worktreeRoot, "app-")), created.worktreePath);
 assert.equal(git(created.worktreePath!, "rev-parse", "--abbrev-ref", "HEAD"), "devspace/job-1");
 assert.equal(git(created.worktreePath!, "rev-parse", "HEAD"), git(source, "rev-parse", "HEAD"));
 assert.equal(existsSync(join(created.worktreePath!, "tracked.txt")), true);
