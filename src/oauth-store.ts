@@ -40,7 +40,7 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
 export class SqliteOAuthStore {
   private readonly database: DatabaseHandle;
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, private readonly refreshTokenGraceSeconds = 0) {
     this.database = openDatabase(stateDir);
     this.deleteExpiredTokens(Math.floor(Date.now() / 1000));
   }
@@ -142,9 +142,15 @@ export class SqliteOAuthStore {
   saveTokenPair(pair: PersistedTokenPair, consumedRefreshTokenHash?: string): boolean {
     const save = this.database.sqlite.transaction(() => {
       if (consumedRefreshTokenHash) {
-        const result = this.database.sqlite
-          .prepare("delete from oauth_refresh_tokens where token_hash = ?")
-          .run(consumedRefreshTokenHash);
+        const now = Math.floor(Date.now() / 1000);
+        // Retried rotations must not extend the original grace deadline or TTL.
+        const result = this.refreshTokenGraceSeconds > 0
+          ? this.database.sqlite
+              .prepare("update oauth_refresh_tokens set expires_at = min(expires_at, ?) where token_hash = ? and expires_at >= ?")
+              .run(now + this.refreshTokenGraceSeconds, consumedRefreshTokenHash, now)
+          : this.database.sqlite
+              .prepare("delete from oauth_refresh_tokens where token_hash = ?")
+              .run(consumedRefreshTokenHash);
         if (result.changes !== 1) return false;
       }
 

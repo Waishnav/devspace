@@ -10,6 +10,18 @@ assert.throws(
   /Unrecognized key/,
 );
 
+assert.equal(devspaceConfigSchema.parse({ configVersion: 1 }).oauth.refreshTokenGraceSeconds, 0);
+for (const refreshTokenGraceSeconds of [0, 1, 600]) {
+  assert.equal(devspaceConfigSchema.parse({
+    configVersion: 1, oauth: { refreshTokenGraceSeconds },
+  }).oauth.refreshTokenGraceSeconds, refreshTokenGraceSeconds);
+}
+for (const refreshTokenGraceSeconds of [-1, 601, 1.5, "600"]) {
+  assert.equal(devspaceConfigSchema.safeParse({
+    configVersion: 1, oauth: { refreshTokenGraceSeconds },
+  }).success, false);
+}
+
 for (const url of [
   "https://tunnel.example.com/v1/mcp/tunnel_123",
   "http://localhost:7676/mcp",

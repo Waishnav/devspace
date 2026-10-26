@@ -16,6 +16,7 @@ export interface OAuthConfig {
   ownerToken: string;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
+  refreshTokenGraceSeconds?: number;
   scopes: string[];
   allowedResourceUrls: string[];
   allowedRedirectHosts: string[];
@@ -128,7 +129,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     this.allowedResourceUrls = new Set(
       config.allowedResourceUrls.map((url) => resourceUrlFromServerUrl(url).href),
     );
-    this.oauthStore = new SqliteOAuthStore(stateDir);
+    this.oauthStore = new SqliteOAuthStore(stateDir, config.refreshTokenGraceSeconds ?? 0);
     this.clientsStore = new SqliteOAuthClientsStore(this.oauthStore, config.allowedRedirectHosts);
   }
 
