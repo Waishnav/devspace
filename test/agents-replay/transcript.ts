@@ -47,6 +47,8 @@ export interface ScrubContext {
   tmp: string;
 }
 
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
 function placeholders(context: ScrubContext): Array<[string, string]> {
   return [
     [context.workspace, "$WORKSPACE"],
@@ -63,7 +65,7 @@ export function scrub(value: unknown, context: ScrubContext): unknown {
     for (const [actual, placeholder] of placeholders(context)) {
       if (actual) next = next.replaceAll(actual, placeholder);
     }
-    return redactSecrets(next);
+    return redactSecrets(next).replace(EMAIL, "user@example.invalid");
   });
 }
 

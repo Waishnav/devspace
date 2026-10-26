@@ -57,7 +57,10 @@ function record(path: string): void {
   writeFileSync(path, `${JSON.stringify(meta)}\n`);
   const append = (dir: "in" | "out", line: string) => {
     if (!line.trim()) return;
-    const entry = { dir, ms: Date.now() - startedAt, frame: scrub(parseFrame(line), context) };
+    const parsed = parseFrame(line);
+    const frame = dir === "out" && provider.redactFrame && isRecord(parsed) ? provider.redactFrame(parsed) : parsed;
+    if (frame === undefined) return;
+    const entry = { dir, ms: Date.now() - startedAt, frame: scrub(frame, context) };
     appendFileSync(path, `${JSON.stringify(entry)}\n`);
   };
 
@@ -147,6 +150,10 @@ function claimTranscript(): string {
 /** Temporary directories created per run, e.g. Pi's sandbox extension, differ every time. */
 function normalizeArgs(values: string[]): string[] {
   return values.map((value) => value.replace(/\$TMP\/[^/\s"]+/g, "$TMP/*"));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function requiredEnv(name: string): string {

@@ -33,6 +33,11 @@ export interface ProviderDefinition {
   protocol: ReplayProtocol;
   /** Model pinned for recordings, when the provider's default is not cheap. */
   model?: string;
+  /**
+   * Record-time redaction of the user's environment that drivers never read,
+   * such as installed skills or hooks. Returning undefined drops the frame.
+   */
+  redactFrame?(frame: Record<string, unknown>): unknown;
   /** Provider env for live and record runs, e.g. to isolate the provider from user config. */
   liveEnv?(): Record<string, string>;
   /** The real executable the record shim spawns; the driver's default resolution. */
@@ -70,6 +75,29 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
       volatileKeys: new Set(["request_id", "session_id", "uuid", "timestamp"]),
       elasticKinds: new Set(),
     },
+    redactFrame: (frame) => {
+      // SessionStart and other hooks report the user's own hook commands and output.
+      if (frame.type === "system" && String(frame.subtype).startsWith("hook_")) return undefined;
+      if (frame.type === "system" && frame.subtype === "init") {
+        return {
+          ...frame,
+          tools: (frame.tools as string[]).filter((tool) => !tool.startsWith("mcp__")),
+          ...emptied(frame, ["mcp_servers", "slash_commands", "agents", "skills", "plugins"]),
+          memory_paths: {},
+        };
+      }
+      const response = (frame.response as Record<string, unknown> | undefined)?.response as Record<string, unknown> | undefined;
+      if (frame.type === "control_response" && response && "commands" in response) {
+        return {
+          ...frame,
+          response: {
+            ...(frame.response as Record<string, unknown>),
+            response: { ...response, ...emptied(response, ["commands", "agents"]), account: {}, pid: 0 },
+          },
+        };
+      }
+      return frame;
+    },
     realCommand: () => {
       // The SDK runs its bundled native CLI unless CLAUDE_COMMAND is set.
       const sdk = dirname(require.resolve("@anthropic-ai/claude-agent-sdk"));
@@ -104,6 +132,10 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     realCommand: () => "codex",
   },
 };
+
+function emptied(record: Record<string, unknown>, keys: string[]): Record<string, unknown[]> {
+  return Object.fromEntries(keys.filter((key) => key in record).map((key) => [key, []]));
+}
 
 export function providerDefinition(name: string): ProviderDefinition {
   const definition = PROVIDERS[name];

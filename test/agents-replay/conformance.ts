@@ -68,9 +68,9 @@ const SCENARIOS: Scenario[] = [
     description: "C2: continue recalls a fact from the first turn",
     transcript: true,
     async run(run) {
-      const id = await start(run, "Remember this fact: the vault code is 4417. Reply with only OK. Do not use any tools.");
+      const id = await start(run, "For this conversation, our project codename is BLUEBIRD-4417. Reply with only OK. Do not use any tools.");
       expect((await waitFor(run, id)).status === "completed", "first turn did not complete");
-      const continued = await cli(run, ["agents", "continue", id, "--json", "What is the vault code? Reply with only the number. Do not use any tools."]);
+      const continued = await cli(run, ["agents", "continue", id, "--json", "What is our project codename? Reply with only the codename. Do not use any tools."]);
       expect(continued.code === 0, `continue failed: ${continued.stdout}${continued.stderr}`);
       const result = await waitFor(run, id);
       expect(result.status === "completed", `expected completed, got ${describe(result)}`);
