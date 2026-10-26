@@ -1,4 +1,6 @@
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -140,6 +142,13 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
   copilot: {
     id: "copilot",
     protocol: jsonRpc,
+    // The user's Copilot hooks run in Copilot's tool sandbox and can fail a turn, and they would
+    // be recorded. A separate config dir keeps the login (it is not stored there) and drops them.
+    liveEnv: (): Record<string, string> => {
+      const home = join(tmpdir(), "devspace-agents-qa-copilot-home");
+      mkdirSync(home, { recursive: true });
+      return { COPILOT_HOME: home };
+    },
     realCommand: () => "copilot",
   },
   grok: {

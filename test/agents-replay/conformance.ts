@@ -238,7 +238,8 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
   } finally {
     await cli(run, ["agents", "daemon", "stop"]).catch(() => undefined);
   }
-  if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true });
+  // A provider process that was just stopped may still be writing as the daemon exits.
+  if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 /** Provider commands take no arguments, so a small wrapper selects the shim's mode and transcript. */
