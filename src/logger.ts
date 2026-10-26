@@ -2,6 +2,7 @@ import type { Request } from "express";
 
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
 export type LogFormat = "json" | "pretty";
+export type TrustProxyMode = boolean | "loopback";
 
 export interface LoggingConfig {
   level: LogLevel;
@@ -10,7 +11,7 @@ export interface LoggingConfig {
   assets: boolean;
   toolCalls: boolean;
   shellCommands: boolean;
-  trustProxy: boolean;
+  trustProxy: TrustProxyMode;
 }
 
 type LogFields = Record<string, unknown>;
@@ -52,8 +53,10 @@ export function logEvent(
   }
 }
 
-export function requestIp(req: Request, trustProxy: boolean): string | undefined {
-  if (trustProxy) {
+export function requestIp(req: Request, trustProxy: TrustProxyMode): string | undefined {
+  // "loopback" lets Express resolve req.ip from hops appended by a local proxy;
+  // the raw headers here would return client-supplied values.
+  if (trustProxy === true) {
     const cfConnectingIp = firstHeaderValue(req.header("cf-connecting-ip"));
     if (cfConnectingIp) return cfConnectingIp;
 

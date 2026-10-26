@@ -51,7 +51,15 @@
         },
         "trustProxy": {
           "default": false,
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "loopback"
+            }
+          ]
         }
       },
       "additionalProperties": false
