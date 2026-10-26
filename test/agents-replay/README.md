@@ -9,7 +9,7 @@ fixture repo, and runs with exactly one provider configured.
 ```bash
 pnpm build
 pnpm qa:agents                       # replay every provider that has transcripts
-pnpm qa:agents claude pi             # replay chosen providers
+pnpm qa:agents claude pi opencode    # replay chosen providers
 pnpm qa:agents pi --scenario stop    # one scenario
 pnpm qa:agents claude --live         # real provider binaries, no shim
 pnpm qa:agents claude --record       # live, through the record shim; rewrites transcripts
@@ -21,8 +21,8 @@ the provider's normal login and spend a little quota.
 ## How it works
 
 The runner points the provider's `command` override (`CLAUDE_COMMAND`,
-`PI_COMMAND`, `CODEX_COMMAND`, or the ACP `command`) at a wrapper script that
-runs `shim.ts`.
+`PI_COMMAND`, `CODEX_COMMAND`, `OPENCODE_COMMAND`, or the ACP `command`) at a
+wrapper script that runs `shim.ts`.
 
 - **Record** spawns the real binary with the same arguments and env, passes
   stdio through unchanged, and tees each newline-delimited frame into
@@ -84,11 +84,28 @@ line.
 
 ## HTTP providers (OpenCode)
 
-OpenCode runs `opencode serve` and talks HTTP and SSE, so this stdio shim
-cannot sit between it and the driver. The design leaves room for an HTTP
-record/replay proxy with the same transcript shape (`in` = request,
-`out` = response or SSE event) and the same matching rules. Until that exists,
-run OpenCode with `--live` only.
+OpenCode drivers run `opencode serve --hostname=H --port=P` and wait for
+`opencode server listening on http://H:P`. For a provider marked `http` in
+`providers.ts`, `http-shim.ts` takes the place of stdio:
+
+- **Record** starts the real `opencode serve` on a private port, prints the
+  ready line for the port the driver chose, and reverse-proxies to it. Each
+  request is an `in` frame `{ id, method, path, body }`, and each response an
+  `out` frame `{ id, status, type, body }`. An event stream is recorded as
+  `{ id, status, type, stream: true }`, then one `{ id, event }` per SSE event
+  and `{ id, end: true }`. `id` counts requests and correlates responses,
+  because requests overlap: a stop's `interrupt` arrives while the
+  `session/wait` long poll is still open. Request paths are URL-decoded so
+  query paths scrub, and `accept-encoding` is dropped so bodies stay readable.
+- **Replay** listens on the driver's port and runs the same `Replayer`.
+  Requests match by method and path template (ids become `{id}`), then by
+  path and body shape. Session and message ids come from the recording, so the
+  driver echoes recorded values back. A mismatch exits the shim, and the
+  driver reports `PROVIDER_UNAVAILABLE`.
+
+The `--port` argument is normalized when replay compares launch arguments.
+Both OpenCode generations wait on blocking requests rather than subscribing to
+SSE, so the current transcripts contain no stream frames.
 
 ## Re-recording and troubleshooting
 
@@ -111,3 +128,8 @@ run OpenCode with `--live` only.
   passes the dir as `PI_CODING_AGENT_DIR`.
 - **Claude** runs the Agent SDK's bundled CLI, matching DevSpace's default,
   with `model: haiku`.
+- **OpenCode** recordings use OpenCode 2.x (the v2 driver) with
+  `openai/gpt-5.6-luna`, which needs a working OpenAI login in OpenCode. An
+  expired provider login fails C1 with the provider's own message, for example
+  `OAuth access token is invalid.` OpenCode 1.x (the v1 driver) is covered by
+  its unit tests only. Recording it needs a 1.x install.
