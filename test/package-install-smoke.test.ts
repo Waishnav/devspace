@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,27 @@ function testPackedPackageLaunchers(): void {
       DEVSPACE_AGENTD_IDLE_TIMEOUT_MS: "0",
       DEVSPACE_AGENTD_SHUTDOWN_TIMEOUT_MS: "1000",
     });
+
+    // A fresh machine has no config, auth, or OAuth setup; agent commands must still work.
+    const home = join(root, "home");
+    const freshEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      DEVSPACE_CONFIG_DIR: join(root, "fresh-config"),
+      DEVSPACE_OAUTH_OWNER_TOKEN: "",
+    };
+    const targets = JSON.parse(
+      execInstalledBin(installRoot, "devspace", ["agents", "targets", "--json"], freshEnv),
+    ) as { enabled: boolean; targets: Array<{ name: string }> };
+    assert.equal(targets.enabled, true);
+    assert.ok(targets.targets.some((target) => target.name === "claude"));
+    assert.match(
+      execInstalledBin(installRoot, "devspace", ["agents", "skill"], freshEnv),
+      /^---\nname: devspace-agents\n/,
+    );
+    execInstalledBin(installRoot, "devspace", ["agents", "skill", "--install", "claude-code"], freshEnv);
+    assert.ok(existsSync(join(home, ".claude", "skills", "devspace-agents", "SKILL.md")));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
