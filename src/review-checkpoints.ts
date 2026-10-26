@@ -321,7 +321,12 @@ async function readReviewBetween(
   const numstat = (await git(gitRoot, ["diff", "--numstat", "-z", before, after], {
     maxBuffer: 50 * 1024 * 1024,
   })).stdout;
-  const files = parseNumstat(numstat);
+  // Line counts can't tell a new file from an append (or a deletion from a truncation),
+  // so the change type comes from git's own status for the same diff.
+  const nameStatus = (await git(gitRoot, ["diff", "--name-status", "-z", before, after], {
+    maxBuffer: 50 * 1024 * 1024,
+  })).stdout;
+  const files = parseNumstat(numstat, parseNameStatus(nameStatus));
   return {
     summary: summarizeFiles(files),
     files,
@@ -410,7 +415,7 @@ function checkpointEnv(indexPath: string): NodeJS.ProcessEnv {
   };
 }
 
-function parseNumstat(output: string): ReviewFile[] {
+function parseNumstat(output: string, types: Map<string, ReviewFile["type"]>): ReviewFile[] {
   const fields = output.split("\0").filter((field) => field.length > 0);
   const files: ReviewFile[] = [];
 
@@ -420,20 +425,21 @@ function parseNumstat(output: string): ReviewFile[] {
     const additions = parseStatNumber(parts[0]);
     const removals = parseStatNumber(parts[1]);
 
-    if (parts.length >= 3) {
-      const path = parts[2] ?? "";
-      if (path) files.push({ path, type: fileType(path, undefined, additions, removals), additions, removals });
+    // With -z, a rename header ends in an empty path and is followed by the old and new paths.
+    const path = parts[2];
+    if (path) {
+      files.push({ path, type: types.get(path) ?? "change", additions, removals });
       continue;
     }
 
     const previousPath = fields[index++];
-    const path = fields[index++];
-    if (!path) continue;
+    const newPath = fields[index++];
+    if (!newPath) continue;
 
     files.push({
-      path,
+      path: newPath,
       previousPath,
-      type: fileType(path, previousPath, additions, removals),
+      type: types.get(newPath) ?? "rename-changed",
       additions,
       removals,
     });
@@ -448,16 +454,29 @@ function parseStatNumber(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function fileType(
-  path: string,
-  previousPath: string | undefined,
-  additions: number,
-  removals: number,
-): ReviewFile["type"] {
-  if (previousPath) return additions === 0 && removals === 0 ? "rename-pure" : "rename-changed";
-  if (additions > 0 && removals === 0) return "new";
-  if (additions === 0 && removals > 0) return "deleted";
-  return "change";
+/** Maps each changed path to its type from `git diff --name-status -z` output. */
+function parseNameStatus(output: string): Map<string, ReviewFile["type"]> {
+  const fields = output.split("\0").filter((field) => field.length > 0);
+  const types = new Map<string, ReviewFile["type"]>();
+
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++] ?? "";
+    const kind = status[0];
+    if (kind === "R" || kind === "C") {
+      index++; // source path
+      const path = fields[index++];
+      if (!path) continue;
+      if (kind === "R") types.set(path, status === "R100" ? "rename-pure" : "rename-changed");
+      else types.set(path, "new");
+      continue;
+    }
+
+    const path = fields[index++];
+    if (!path) continue;
+    types.set(path, kind === "A" ? "new" : kind === "D" ? "deleted" : "change");
+  }
+
+  return types;
 }
 
 function summarizeFiles(files: ReviewFile[]): ReviewSummary {

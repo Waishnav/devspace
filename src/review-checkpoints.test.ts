@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -75,6 +75,47 @@ test("show_changes reports and advances the last-shown checkpoint", async (t) =>
   const afterReviewed = await manager.reviewChanges({ workspaceId: "ws_incremental", root });
   assert.equal(afterReviewed.summary.files, 0);
   assert.equal(afterReviewed.patch, "");
+});
+
+test("file types come from git status, not from line counts", async (t) => {
+  const root = await committedRepository(t);
+  const body = (name: string) => Array.from({ length: 10 }, (_, i) => `${name} line ${i}\n`).join("");
+  await writeFile(join(root, "append.txt"), "one\ntwo\n");
+  await writeFile(join(root, "truncate.txt"), "one\ntwo\nthree\n");
+  await writeFile(join(root, "remove.txt"), "bye\n");
+  await writeFile(join(root, "moved.txt"), body("moved"));
+  await writeFile(join(root, "edited-move.txt"), body("edited"));
+  await writeFile(join(root, "image.bin"), Buffer.from([0, 1, 2, 3]));
+  await git(root, ["add", "."]);
+  await git(root, ["commit", "-m", "Fixtures"]);
+
+  const manager = createReviewCheckpointManager();
+  await manager.initializeWorkspace({ workspaceId: "ws_types", root });
+
+  await writeFile(join(root, "append.txt"), "one\ntwo\nthree\n");
+  await writeFile(join(root, "truncate.txt"), "one\n");
+  await writeFile(join(root, "added.txt"), "fresh\n");
+  await unlink(join(root, "remove.txt"));
+  await rename(join(root, "moved.txt"), join(root, "renamed.txt"));
+  await rename(join(root, "edited-move.txt"), join(root, "edited-renamed.txt"));
+  await writeFile(join(root, "edited-renamed.txt"), `${body("edited")}extra\n`);
+  await writeFile(join(root, "image.bin"), Buffer.from([0, 1, 2, 3, 4]));
+  await writeFile(join(root, "added.bin"), Buffer.from([0, 255, 0, 255]));
+
+  const review = await manager.reviewChanges({ workspaceId: "ws_types", root });
+  const types = Object.fromEntries(review.files.map((file) => [file.path, file.type]));
+  assert.deepEqual(types, {
+    "added.bin": "new",
+    "added.txt": "new",
+    "append.txt": "change",
+    "edited-renamed.txt": "rename-changed",
+    "image.bin": "change",
+    "remove.txt": "deleted",
+    "renamed.txt": "rename-pure",
+    "truncate.txt": "change",
+  });
+  const renamed = review.files.find((file) => file.path === "renamed.txt");
+  assert.equal(renamed?.previousPath, "moved.txt");
 });
 
 test("historical review refs survive later reviews and manager restarts", async (t) => {
