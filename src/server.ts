@@ -922,12 +922,15 @@ export function createServer(
     const requestId = res.locals.requestId as string | undefined;
 
     await new Promise<void>((resolve, reject) => {
+      res.once("finish", resolve);
+      res.once("close", resolve);
       bearerAuth(req, res, (error?: unknown) => {
         if (error) reject(error);
         else resolve();
       });
     });
-    if (res.headersSent) return;
+    // A client that disconnected mid-auth has nothing left to answer.
+    if (res.headersSent || res.destroyed) return;
 
     if (!req.auth?.resource || !oauthProvider.isResourceAllowed(req.auth.resource)) {
       logEvent(config.logging, "warn", "auth_denied", {
