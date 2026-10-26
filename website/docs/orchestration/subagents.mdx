@@ -22,10 +22,14 @@ For routine edits, the orchestrator should just do the work.
     <provider name="codex" model="gpt-5.4" effort="high"/>
     <provider name="claude" model="sonnet"/>
     <profile name="reviewer" provider="codex">Read-only reviewer for bugs and missing tests.</profile>
+    <unavailable name="cursor">cursor-agent executable not found; install it or set CURSOR_COMMAND</unavailable>
     ```
 
     Prefer a matching [profile](/orchestration/profiles). Use a raw provider
-    when no profile fits.
+    when no profile fits. Without a `subagents` config section, providers use
+    their own default models; the settings above are examples. Any explicit
+    section replaces detection, and `enabled: false` produces
+    `<disabled>…</disabled>`. Availability does not verify sign-in.
 
   </Step>
   <Step title="Start work with a self-contained brief">
@@ -38,7 +42,8 @@ For routine edits, the orchestrator should just do the work.
     devspace agents run claude --model opus --effort high "Implement …"
     ```
 
-    Returns immediately: `<agent id="agt_7Kq2" status="running"/>`. Add
+    Returns immediately:
+    `<agent id="agt_7Kq2" status="running" turn="trn_9f2c1a7b"/>`. Add
     `--wait` to block until the turn ends instead.
 
     `--write-mode read_only` asks the provider to enforce a read-only turn, and
@@ -53,8 +58,11 @@ For routine edits, the orchestrator should just do the work.
     ```
 
     Without `--timeout`, `wait` blocks until every named agent finishes its
-    current work. With it, you get one fragment per agent in first-seen order;
-    unfinished work is marked `status="running" wait="timeout"`.
+    current turn. It returns one aggregate result, not individual completions
+    as they arrive. Duplicate IDs appear once, in first-seen order. At a
+    timeout, unfinished work is marked `status="running" wait="timeout"`.
+    A timeout or Ctrl-C interrupts the wait, not the agent. Scripts should
+    pass `--timeout`, then `wait` again or `stop` the agent.
 
   </Step>
   <Step title="Continue related work">
@@ -63,7 +71,9 @@ For routine edits, the orchestrator should just do the work.
     ```
 
     Continue when the agent's existing provider context helps. Start a new
-    agent for unrelated work.
+    agent for unrelated work. Use the complete logical agent ID; provider
+    session IDs and prefixes are not accepted. A continuation may lower write
+    authority but cannot raise it (`AGENT_CONFLICT`).
 
   </Step>
 </Steps>
@@ -84,31 +94,121 @@ subagent did after the fact.
 Use `show` for a snapshot, not as a polling loop — `wait` expresses the
 dependency.
 
+## Turn events
+
+`events` shows the latest turn; `--turn <turn-id>` selects an earlier one.
+`--follow` prints activity until that turn ends. With `--follow --json`, each
+line is one JSON event.
+
+```xml
+<event seq="1" type="turn_started" turn="trn_9f2c1a7b" at="2026-10-26T10:00:00.000Z"/>
+<event seq="2" type="tool_started" turn="trn_9f2c1a7b" tool="Bash">git status --short</event>
+<event seq="3" type="tool_completed" turn="trn_9f2c1a7b" tool="Bash" status="completed">git status --short</event>
+<event seq="4" type="message" turn="trn_9f2c1a7b">The tree is clean.</event>
+<event seq="5" type="turn_completed" turn="trn_9f2c1a7b" status="completed" at="2026-10-26T10:00:09.000Z"/>
+```
+
+| Field | Meaning |
+| --- | --- |
+| `seq`, `type`, `turn` | Sequence, event type, and DevSpace turn ID (`turnId` in JSON). |
+| `at` | Timestamp on XML turn boundaries; JSON events carry it on every event. |
+| `tool`, `summary`, `status` | Tool name, identifying summary, and completion status (`completed` or `failed`). XML puts the summary in the event body. |
+| `text` | Message text; XML puts it in the event body. |
+| Turn completion `status` | `completed`, `failed`, or `stopped`; may also include an error `code` and a `dropped` event count (`errorCode` / `droppedEvents` in JSON). |
+
+DevSpace retains at most 500 events and 256 KiB per turn, with event logs for
+an agent's 20 most recent turns. Messages and tool summaries are truncated,
+and common credential shapes are redacted. Tool summaries identify a command,
+path, or query rather than storing full inputs or outputs.
+
+OpenCode does not stream intermediate activity. It emits a final `message`
+event, along with `turn_started` and `turn_completed`.
+
 ## Output format
 
 Model-facing commands print compact XML fragments with no wrapper. Lists print
 one fragment per item; empty lists print nothing.
 
 ```xml
-<agent id="agt_123" status="running"/>
-<agent id="agt_123" status="completed">Review complete.</agent>
-<agent id="agt_456" status="failed" code="PROVIDER_EXECUTION_ERROR" retryable="true">Provider disconnected.</agent>
+<agent id="agt_123" status="running" turn="trn_9f2c1a7b"/>
+<agent id="agt_123" status="completed" turn="trn_9f2c1a7b">Review complete.</agent>
+<agent id="agt_456" status="failed" turn="trn_0d41e6c2" code="PROVIDER_EXECUTION_ERROR" retryable="false">Claude agent turn failed.<cause>Claude returned an error result: usage limit reached</cause></agent>
 <error code="AGENT_NOT_FOUND" retryable="false" agent-id="agt_missing">Subagent not found.</error>
 ```
 
-Prompts, provider session IDs, and timestamps are never included; an agent
-started with `--worktree` adds its `worktree` path and `branch`. `--json` exists for scripts; the bundled skill does not use it.
+Receipts and observations include a DevSpace turn ID (`turn` in XML,
+`turnId` in JSON). A failed observation may include the provider's explanation
+as `<cause>` or JSON `error.detail`, redacted and truncated. Prompts and
+provider session IDs are omitted; an agent started with `--worktree` adds its
+`worktree` path and `branch`.
+
+`--json` exists for scripts; the bundled skill does not use it. See the
+[CLI output contract](/reference/cli#output-for-scripts) for JSON shapes and
+[exit codes](/reference/cli#exit-codes) for command and turn failures.
 
 ## Lifecycle
 
 - **One active turn per agent**; different agents run concurrently.
-- Logical agent records live in the daemon's SQLite store. Live provider
-  runtimes are disposable and are recreated after a daemon restart.
+- One daemon per DevSpace `stateDir` serves all clients of that store. It
+  starts on demand and may exit when idle; agents keep running after the
+  submitting CLI exits. `devspace serve` is not required.
+- Logical agent records and provider session IDs live in the daemon's SQLite
+  store. Live provider runtimes are disposable and are recreated after a
+  daemon restart. The daemon uses a private local socket or named pipe;
+  execution and state stay on that machine.
 - If the daemon restarts mid-turn, the turn fails with `DAEMON_UNAVAILABLE`
   without losing the provider session; `continue` resumes where the provider
   allows.
 - Failures carry structured `code` and `retryable` fields so the orchestrator
   can tell cancellation, availability, and workspace conflicts apart.
+
+Use `devspace agents daemon status`, `stop`, or `logs` for diagnostics. These
+commands print diagnostic text/JSON, not agent XML. After provider config
+changes, an idle daemon is replaced automatically; active work produces
+retryable `DAEMON_CONFIG_CHANGED` until it finishes.
+
+## Worktrees
+
+`run --worktree` gives a writing agent its own Git worktree from the source
+checkout's **committed `HEAD`**. Uncommitted changes are not copied.
+
+```bash
+devspace agents run claude --worktree "Add retries to src/fetch.ts"
+devspace agents run codex --worktree --branch fix/flaky-test "Fix the flaky retry test"
+```
+
+| Choice | Behavior |
+| --- | --- |
+| Path | `<repo>-<8 hex>` under `workspaces.worktreeRoot`, default `~/.devspace/worktrees`. |
+| Branch | New branch `devspace/<agent id>`, or `--branch <name>`; an existing branch is rejected. A `:` in a request ID becomes `-` in the default branch name. |
+| Later turns | `continue` reuses the worktree and branch. Agents remain listed under their originating checkout. |
+| Output | `run`, `continue`, `show`, `wait`, and `ls` include `worktree` and `branch` in XML and JSON. |
+| Retries | A matching `--request-id` returns the existing agent without creating another worktree. Changing the branch or worktree choice produces `AGENT_CONFLICT`. |
+
+| Error | Recovery |
+| --- | --- |
+| `WORKTREE_NOT_GIT_REPOSITORY` | Run from a Git checkout or omit `--worktree`. |
+| `WORKTREE_CREATE_FAILED` | Create an initial commit if needed, or fix branch creation (including an existing branch name). No agent record is left after worktree creation fails. |
+| `WORKTREE_MISSING` | The worktree was removed before `continue`. The branch remains; restore it with `git worktree add <worktree> <branch>`. |
+
+DevSpace never merges or removes CLI agent worktrees, and
+`devspace worktrees prune` ignores them. Review and clean up from the
+originating checkout:
+
+```bash
+git -C <worktree> status
+git -C <worktree> diff
+git log main..devspace/agt_1a2b3c4d
+git -C <worktree> add -A && git -C <worktree> commit -m "Add retries"
+git merge devspace/agt_1a2b3c4d
+git worktree remove <worktree>   # --force if files remain
+git branch -d devspace/agt_1a2b3c4d
+```
+
+Whether the agent can commit depends on its write mode and provider sandbox;
+inspect uncommitted changes too. Worktrees isolate files, not local-user
+authority. See [write authority](/connect/coding-agents#write-authority) before
+using `full_access`.
 
 ## Good uses
 

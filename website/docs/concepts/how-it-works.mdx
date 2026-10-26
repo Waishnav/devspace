@@ -51,8 +51,11 @@ patch, run commands, and review changes. It is only needed for MCP hosts.
 `devspace-agentd` owns subagent execution. The CLI starts it on demand over a
 private Unix socket or named pipe; you never manage it during normal use. It
 persists logical agent records in SQLite and keeps provider runtimes warm while
-they are in use. The MCP server and every CLI invocation are clients of the
-same daemon, so restarting the server never loses agent state.
+they are in use. One daemon serves all clients of a DevSpace `storage.stateDir`:
+one SQLite store and one runtime owner. Separate state directories have separate
+daemons. The MCP server and CLI invocations using that store share its daemon,
+so restarting the MCP server does not lose persisted agent state. Live provider
+runtimes are disposable and may be recreated after a daemon restart.
 
 ### Providers
 

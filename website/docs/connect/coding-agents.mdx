@@ -4,9 +4,11 @@ description: Teach Codex, Claude Code, OpenCode, Cursor, or any skills-capable h
 ---
 
 A coding harness does not need MCP to use DevSpace. It already has a shell.
-Install the skill and it learns to call `devspace agents` directly — no server,
-no OAuth, no tunnel. Without a `subagents` section in your config, every
-built-in provider whose CLI is installed is available.
+Install the skill and it learns to call `devspace agents` directly — no MCP
+server, OAuth, or tunnel. An on-demand local daemon owns execution.
+Without a `subagents` section in your config, DevSpace detects the built-in
+providers and uses each provider's default model. Claude and Pi ship inside
+the package, so they need no separate CLI installation.
 
 ```bash
 npm install -g @waishnav/devspace
@@ -22,14 +24,44 @@ devspace agents skill --install claude-code --project   # .claude/skills/devspac
 | `cursor` | — | `.cursor/rules/devspace-agents.mdc` |
 | `agents` | `~/.agents/skills/devspace-agents/SKILL.md` | `.agents/skills/devspace-agents/SKILL.md` |
 
+For Codex, the global location is `$CODEX_HOME/skills/devspace-agents/SKILL.md`
+when `CODEX_HOME` is set. The `agents` target installs into the shared Agent
+Skills directory, which Codex and OpenCode also read. `--project` resolves from
+the current Git root, or the current directory outside a repository.
+
 The skill text ships with the package, so reinstall it after upgrading. Chat
 apps connected over MCP don't need it; DevSpace manages their skill itself.
+
+## Check availability
+
+```bash
+devspace agents targets
+```
+
+DevSpace reports usable providers and profiles, plus reasons for unavailable
+providers:
+
+```xml
+<provider name="claude"/>
+<unavailable name="cursor">cursor-agent executable not found; install it or set CURSOR_COMMAND</unavailable>
+```
+
+Availability checks executable or package discovery; it does not verify
+sign-in. Use the provider's normal login flow before delegating. For an
+external CLI, install it on `PATH` or set its `*_COMMAND` override, such as
+`CURSOR_COMMAND`.
+
+Any explicit `subagents` section replaces auto-detection. With
+`subagents.enabled: false`, `targets` prints a `<disabled>…</disabled>` fragment.
+Remove the section to restore detection, or configure the providers you want.
 
 ## Scope
 
 Run agent commands from the project the subagent should use. DevSpace
 discovers the current Git repository, or the current directory outside one.
-Lists, lookups, and continuations stay inside that scope.
+Lists, lookups, and continuations stay inside that scope. Commands require the
+complete logical agent ID returned by DevSpace; provider session IDs and ID
+prefixes are not accepted.
 
 ## Example: Claude Code calls Codex
 
@@ -42,13 +74,19 @@ devspace agents run codex --effort high --write-mode read_only --wait \
 ```
 
 `--wait` blocks until the turn ends and exits `0` completed, `2` failed, `3`
-stopped, or `4` timed out. The reverse works the same way: Codex can hand
+stopped, or `4` timed out; `1` means the command itself failed. A timeout or
+Ctrl-C leaves the agent running. In scripts, always pass `--timeout`, then
+`wait` again or `stop` the agent. The reverse works the same way: Codex can hand
 implementation to Claude, OpenCode can ask Pi for a cheap exploration pass, and
 any of them can fan out to several at once:
 
 ```bash
 devspace agents wait agt_a agt_b agt_c --timeout 120
 ```
+
+A multi-agent wait returns one aggregate result after all current turns end or
+the timeout passes. Duplicate IDs appear once, in first-seen order. If outcomes
+differ, the exit-code precedence is failed (`2`), stopped (`3`), timeout (`4`).
 
 ## Parallel writers
 
@@ -62,13 +100,18 @@ devspace agents run codex --worktree "Add the missing tests for src/queue.ts"
 ```
 
 Merge the branches when you're ready. Worktrees live under
-`workspaces.worktreeRoot` and are kept until you remove them.
+`workspaces.worktreeRoot` (default `~/.devspace/worktrees`) and are kept until
+you remove them; `devspace worktrees prune` ignores CLI agent worktrees. See
+[Subagents](/orchestration/subagents#worktrees) for review, merge, cleanup, and
+recovery commands.
 
 ## From a bot or scheduled job
 
-Install the package on the machine that holds the code and the agent CLIs, then
-call it over SSH or from cron. `--request-id` makes a retry return the same
-agent instead of starting a second one:
+State and execution are per machine. Install the package where the code,
+provider runtimes, and credentials live, then run it directly, over SSH, or
+from cron. The local CLI does not connect to agents on another machine.
+`--request-id` makes a retry return the same agent instead of starting a
+second one:
 
 ```bash
 ssh builder 'cd ~/src/app && devspace agents run claude \
@@ -79,8 +122,23 @@ echo $?   # 0 done, 2 failed, 3 stopped, 4 still running
 
 On exit code `4`, call `devspace agents wait <id> --timeout 900 --json` with
 the id from the output. Provider credentials come from the user the command
-runs as, so a non-interactive session needs the same logins as an interactive
-one.
+runs as, so a non-interactive session needs the same logins and environment as
+an interactive one. See [CLI](/reference/cli#safe-retries) for the request-ID
+format and the arguments that must match on a retry.
+
+## Write authority
+
+| Mode | Meaning |
+| --- | --- |
+| `read_only` | Read and search without modifying files. |
+| `allowed` (default) | Edit files in the project, sandboxed where the provider supports it. |
+| `full_access` | No sandbox; use only for work you would run yourself unattended. |
+
+Enforcement varies by provider. Generic ACP providers support only
+`--write-mode full_access`. A continuation can lower write authority but cannot
+raise it; an increase fails with `AGENT_CONFLICT`. Worktrees isolate files,
+not local-user authority: a `full_access` agent can reach other checkouts by
+absolute path.
 
 <CardGroup cols={2}>
   <Card title="Subagents" href="/orchestration/subagents" icon="users">

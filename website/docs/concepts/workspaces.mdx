@@ -14,12 +14,24 @@ review call reuses it.
 
 Call `open_workspace` again only when the ID is rejected as unknown, work moves
 to a different project, work switches between checkout and worktree mode, or
-you ask for a new isolated worktree.
+you ask for a new isolated worktree. Workspace IDs are persisted and survive
+server restarts; a restart alone does not require reopening.
 
 ## Checkout mode
 
 The default. DevSpace opens the actual directory, so the host works in your
 current checkout alongside you.
+
+Optional OpenAI conversation metadata can bind repeated opens of the same
+checkout in the same conversation to its existing `workspace_id`. This is
+OpenAI adapter behavior, not a model-facing option or a standard MCP field.
+Hosts without supported conversation metadata get a new workspace on each open.
+In either case, reuse the returned ID for later calls.
+
+A new checkout workspace returns complete instructions and coding context.
+When an open reuses an existing checkout workspace, it omits repeated
+model-visible bootstrap context while the workspace card keeps the complete
+details. Every new worktree returns its own full context.
 
 ## Worktree mode
 
@@ -41,7 +53,8 @@ boundary.
 
 ## Project instructions
 
-When a workspace opens, DevSpace loads root-level `AGENTS.md` and `CLAUDE.md`.
+When a workspace opens, DevSpace loads root-level `AGENTS.md`, `AGENTS.MD`,
+`CLAUDE.md`, and `CLAUDE.MD`.
 Nested instruction files are returned as `available_agents_files`, and the
 model reads the relevant one before working under that directory — explicit
 and inspectable, never silently injected mid-session.
@@ -49,10 +62,24 @@ and inspectable, never silently injected mid-session.
 ## Skills
 
 DevSpace discovers standard Agent Skills from `~/.agents/skills`, project
-`.agents/skills`, and `~/.devspace/skills`, plus `~/.codex/skills` and any
-`skills.paths`. Matching skills are advertised by `open_workspace`; the model
-reads a skill's `SKILL.md` before following it.
+`.agents/skills`, and `~/.devspace/skills`, plus `skills.agentDir/skills`
+(default `~/.codex/skills`) and any `skills.paths`. Relative custom paths resolve
+from the active workspace. Add legacy project paths such as `.pi/skills` to
+`skills.paths` when needed.
+
+Matching skills are advertised by `open_workspace`. Their directories may be
+outside the workspace; DevSpace permits reads within advertised skill
+directories, including supporting files. The model should read `SKILL.md`
+first, but DevSpace does not enforce that ordering.
 
 When subagents are enabled, DevSpace keeps its bundled `subagents` skill at
-`~/.devspace/skills/subagents/SKILL.md` and advertises the profile catalog
-(name, description, provider, model, effort) — never provider launch details.
+`~/.devspace/skills/subagents/SKILL.md` synchronized from the installed package.
+That managed copy wins over other skills named `subagents`. DevSpace advertises
+the profile catalog (name, description, provider, model, effort) — never
+provider launch details. Profiles load from `~/.devspace/agents/*.md` and project
+`.devspace/agents/*.md`. Packaged `examples/agents/` are starter templates; copy
+or adapt them into an active profile directory before use.
+
+`subagents.instructions` defaults to `on-demand`, which advertises the skill
+for a separate read when delegation helps. `preload` includes the workflow in
+the initial workspace instructions.

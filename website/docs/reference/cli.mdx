@@ -13,44 +13,95 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | `devspace doctor` | Show config, runtime, Git, Bash, and native dependency status. |
 | `devspace config get` | Print the persisted config. |
 | `devspace config set publicBaseUrl <url\|null>` | Update the public origin, preserving comments. Restart `serve` to apply it. |
-| `devspace worktrees prune` | Prune managed worktrees unused for three days. |
+| `devspace worktrees prune` | Prune managed worktrees unused for three days; CLI agent worktrees are excluded. |
 | `devspace show-changes <review-ref> [--json]` | Inspect a Git-backed review checkpoint. |
 | `devspace -v`, `--version` | Print the installed version. |
 
 ## Subagents
 
-Agent commands need no server, OAuth, or tunnel. They run from the project the
-agent should work in.
+Agent commands need no MCP server, OAuth, or tunnel. They run from the project
+the agent should work in, using an on-demand local daemon. Without a
+`subagents` config section, targets use detected built-in providers and each
+provider's default model; Claude and Pi are bundled. Any explicit section
+replaces detection. Availability does not check sign-in.
 
 | Command | Description |
 | --- | --- |
-| `devspace agents targets` | List usable providers and profiles for this project. |
+| `devspace agents targets` | List usable providers and profiles, unavailable reasons, or `<disabled>…</disabled>` when disabled. |
 | `devspace agents run <target> [options] <prompt>` | Start a new logical agent. |
 | `devspace agents continue <id> [options] <prompt>` | Send a follow-up to an existing agent. |
 | `devspace agents show <id>` | Immediate snapshot. |
-| `devspace agents wait <id>... [--timeout s]` | Block until all named agents finish their current turn. |
+| `devspace agents wait <id>... [--timeout s]` | Wait for all current turns or the timeout; return one aggregate result, with duplicate IDs once in first-seen order. |
 | `devspace agents stop <id>` | Cancel the agent's running turn. The agent can be continued later. |
 | `devspace agents events <id> [--turn <turn-id>] [--follow]` | Tool calls, messages, and errors from a turn, as they happen with `--follow`. |
 | `devspace agents ls` | List agents in the current project. |
 | `devspace agents skill [--install <harness> [--project]]` | Print the subagents skill, or install it for `claude-code`, `codex`, `cursor`, `opencode`, or `agents`. |
-| `devspace agents daemon <status\|stop\|logs>` | Diagnose the local agent daemon. |
+| `devspace agents daemon <status\|stop\|logs>` | Diagnose the local agent daemon; prints diagnostic text/JSON, not agent XML. |
 
 Options for `run` and `continue`:
 
 | Option | Description |
 | --- | --- |
 | `--model <model>`, `--effort <level>` | Override the target's model or reasoning effort. |
-| `--write-mode <read_only\|allowed\|full_access>` | Default `allowed`. `read_only` is enforced by the provider itself and refuses to start when it can't be. |
-| `--wait [--timeout <seconds>]` | Block until the turn ends. Exit codes: `0` completed, `2` failed, `3` stopped, `4` timed out. A timeout leaves the agent running. |
+| `--write-mode <read_only\|allowed\|full_access>` | Default `allowed`. See [write authority](/connect/coding-agents#write-authority); continuations may lower authority but cannot raise it. |
+| `--wait [--timeout <seconds>]` | Block until the turn ends or timeout. A timeout or Ctrl-C leaves the agent running; scripts should set `--timeout`, then `wait` again or `stop`. |
 | `--worktree [--branch <name>]` | `run` only. Work in a new Git worktree on branch `devspace/<agent id>` (or `--branch`), created from the committed `HEAD`. |
 | `--request-id <key>` | `run` only. A retry with the same key returns the same agent instead of starting another. |
 
-Agent commands print compact XML fragments; add `--json` for scripts.
+Use complete logical agent IDs, not provider session IDs or prefixes. Agents
+started with `--worktree` stay scoped to their originating checkout. See
+[Subagents](/orchestration/subagents#worktrees) for worktree paths, errors,
+review, and cleanup.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Turn completed; without `--wait`, `run` exits once started. |
+| `1` | Command error: usage, unknown or unavailable target, workspace conflict, or daemon failure. |
+| `2` | Agent failed. |
+| `3` | Agent stopped. |
+| `4` | Wait timed out; unfinished agents keep running. |
+
+For several observations, precedence is failed (`2`), stopped (`3`), then
+timeout (`4`).
+
+### Safe retries
+
+`--request-id` becomes the logical agent ID. Use 1–128 ASCII characters: the
+first must be a letter or digit; the rest may also contain `.`, `_`, `:`, or
+`-`. Reusing it returns the same agent only when the project, target, brief,
+resolved options (model, effort, write mode), and worktree/branch choice match.
+Otherwise the command fails with `AGENT_CONFLICT`. A matching retry creates no
+second agent or worktree.
+
+### Output for scripts
+
+Agent commands print compact XML fragments; add `--json` for scripts. Receipts
+and observations include the DevSpace turn ID as XML `turn` or JSON `turnId`.
+`status` is `running`, `completed`, `failed`, or `stopped`.
+
+| Command or outcome | JSON contract |
+| --- | --- |
+| `run` / `continue` without `--wait` | `{id,status,turnId}`. |
+| `wait` | Array of observations, in first-seen ID order. |
+| `targets` | `{enabled,targets,unavailable}`. |
+| Completed observation | May include `response`. |
+| Failed observation | `error: {code,message,retryable,detail?}`; optional provider detail is redacted and truncated. |
+| Unfinished wait | `status: "running"`, `wait: "timeout"`. |
+| Command error | `{"error":{...}}`, exit `1`. |
+| `events --follow --json` | One JSON event per line. |
+
+`--worktree` adds `worktree` and `branch` to `run`, `continue`, `show`, `wait`,
+and `ls` output in both formats. See [turn events](/orchestration/subagents#turn-events)
+for fields and retention.
 
 ## Workflows <Badge>Experimental</Badge>
 
-Workflow commands exist only when `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` is set.
-See [Dynamic workflows](/orchestration/dynamic-workflows).
+Workflow commands exist only when `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` reaches
+both the CLI and daemon. Stop an existing daemon first with
+`devspace agents daemon stop`. There is no config-file switch or MCP workflow
+tool. See [Dynamic workflows](/orchestration/dynamic-workflows).
 
 | Command | Description |
 | --- | --- |
@@ -58,12 +109,15 @@ See [Dynamic workflows](/orchestration/dynamic-workflows).
 | `devspace workflow run --file <path>` | Run a script by path. |
 | `devspace workflow run --resume <run-id>` | Create a resumed run that reuses completed calls. |
 | `devspace workflow status <run-id>` | Run status and phase progress. |
-| `devspace workflow wait <run-id> [--timeout s]` | Block until the run finishes. |
-| `devspace workflow calls <run-id>` | Compact list of child calls. |
-| `devspace workflow call <run-id> <index>` | One call's prompt, result, or error. |
-| `devspace workflow events <run-id> [--after <sequence>]` | The run's event log. |
+| `devspace workflow wait <run-id> [--timeout s]` | Wait 0–60 seconds (default 60); return latest state on timeout. |
+| `devspace workflow calls <run-id>` | Compact child-call summaries without prompts or results. |
+| `devspace workflow call <run-id> <index>` | One call's prompt, result, or error; index is zero-based. |
+| `devspace workflow events <run-id> [--after <sequence>]` | Up to 100 event-log entries after the sequence. |
 | `devspace workflow cancel <run-id>` | Cancel a run. |
 | `devspace workflow ls` | Runs in the current project. |
 
-`workflow run` takes arguments as JSON with `--args <json>` or
-`--args-file <file>`, and `--write-mode read_only|allowed`.
+`workflow run` requires exactly one of `--file`, `--name`, or `--resume`. It
+takes arguments as JSON with either `--args <json>` or `--args-file <file>`,
+and `--write-mode read_only|allowed` (default `read_only`). Resume uses the
+original arguments and authority. Named workflows and run lookups are scoped
+to the current checkout or worktree.
