@@ -13,8 +13,8 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
-  /** Deprecated `tools.mode` from the config file; accepted so old configs load, never used. */
-  ignoredToolsMode: "claude" | "codex" | undefined;
+  /** Explicit `tools.mode`; when set it wins over host detection. */
+  toolSurfaceOverride: "claude" | "codex" | undefined;
   uiEnabled: boolean;
   stateDir: string;
   worktreeRoot: string;
@@ -63,7 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
-    ignoredToolsMode: stored.tools.mode,
+    toolSurfaceOverride: stored.tools.mode,
     uiEnabled: stored.ui.enabled,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),

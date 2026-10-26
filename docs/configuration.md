@@ -103,8 +103,9 @@ first, then its `redirect_uris` hosts (`chatgpt.com` and `openai.com`, or
 the same tool list. Claude registers a `claude.ai` redirect URI, so add
 `claude.ai` to `oauth.allowedRedirectHosts` to connect it.
 
-`tools.mode` is deprecated. Existing configs that set it still load, DevSpace
-logs a `tools_mode_deprecated` warning at startup, and the value is ignored.
+`tools.mode` (`"codex"` or `"claude"`) is an optional override: when set, every
+host gets that surface and detection is skipped. Leave it unset to let DevSpace
+choose per host.
 
 The dedicated MCP tools `grep`, `glob`, and `ls` are not exposed. Each surface
 uses its shell tool with programs such as `rg`, `find`, and `ls` when it needs
@@ -274,6 +275,6 @@ The persisted fields map as follows:
 | `agentDir` | `skills.agentDir` |
 | `subagents` | `subagents` |
 | `ui.enabled` | unchanged nested key |
-| `tools.mode`, `tool_mode` | deprecated and ignored |
+| `tool_mode` | `tools.mode` |
 
 `auth.json` is unchanged.

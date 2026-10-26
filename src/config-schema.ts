@@ -24,9 +24,8 @@ const storageConfigSchema = z.object({
 
 const toolsConfigSchema = z.object({
   mode: z.enum(["claude", "codex"]).optional().meta({
-    deprecated: true,
     description:
-      "Deprecated and ignored. DevSpace picks the tool surface from the connecting MCP host.",
+      "Optional override. When unset, DevSpace picks the tool surface from the connecting MCP host.",
   }),
 }).strict().prefault({});
 

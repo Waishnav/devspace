@@ -93,8 +93,7 @@
       "type": "object",
       "properties": {
         "mode": {
-          "deprecated": true,
-          "description": "Deprecated and ignored. DevSpace picks the tool surface from the connecting MCP host.",
+          "description": "Optional override. When unset, DevSpace picks the tool surface from the connecting MCP host.",
           "type": "string",
           "enum": [
             "claude",

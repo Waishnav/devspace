@@ -503,6 +503,18 @@ test("HTTP endpoint picks the tool surface from the OAuth client", async (t) => 
   assert.ok(unknown.tools.includes("bash") && !unknown.tools.includes("apply_patch"));
 });
 
+test("HTTP endpoint honours an explicit tools.mode over host detection", async (t) => {
+  const { localBaseUrl, issueAccessToken } = await httpServerFixture(
+    t,
+    "devspace-surface-override-test-",
+    { tools: { mode: "claude" } },
+  );
+  const listed = await postModernMcp(localBaseUrl, await issueAccessToken("ChatGPT"), "tools/list", {});
+  const tools = (await listed.json() as { result: { tools: Array<{ name: string }> } })
+    .result.tools.map((tool) => tool.name);
+  assert.ok(tools.includes("edit") && !tools.includes("apply_patch"));
+});
+
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(
     t,
@@ -711,6 +723,7 @@ interface HttpServerFixture {
 async function httpServerFixture(
   t: TestContext,
   prefix: string,
+  extraConfig: { tools?: { mode: ToolSurfaceName } } = {},
 ): Promise<HttpServerFixture> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const ownerToken = "test-owner-token-that-is-long-enough";
@@ -724,6 +737,7 @@ async function httpServerFixture(
       worktreeRoot: join(root, ".worktrees"),
     },
     storage: { stateDir: join(root, ".state") },
+    ...extraConfig,
   }));
   const running = createServer(config, { incomingArtifactAdapters: [] });
   const httpServer = running.app.listen(0, "127.0.0.1");

@@ -854,27 +854,21 @@ export function createServer(
     codex: compileModernSurface("codex"),
     claude: compileModernSurface("claude"),
   } satisfies Record<ToolSurfaceName, unknown>;
-  if (config.ignoredToolsMode) {
-    logEvent(config.logging, "warn", "tools_mode_deprecated", {
-      toolsMode: config.ignoredToolsMode,
-      message:
-        "tools.mode is deprecated and ignored: DevSpace now picks the tool surface from the connecting MCP host. Remove it from config.jsonc.",
-    });
-  }
   const logMcpHandlerError = (error: Error) => logEvent(
     config.logging,
     "error",
     "mcp_handler_error",
     modernMcpAdapterErrorLogFields(error),
   );
-  // The registered OAuth client identifies the connector, so a host keeps the
+  // An explicit tools.mode wins so existing setups keep their tools. Otherwise
+  // the registered OAuth client identifies the connector, so a host keeps the
   // same tool list across requests. The User-Agent only fills in when the
   // client name and redirect hosts are unrecognised.
   const mcpHandler = createMcpHandler(async ({ authInfo, requestInfo }) => {
     const client = authInfo
       ? await oauthProvider.clientsStore.getClient(authInfo.clientId)
       : undefined;
-    const { toolSurface, bind } = modernSurfaces[detectToolSurface({
+    const { toolSurface, bind } = modernSurfaces[config.toolSurfaceOverride ?? detectToolSurface({
       clientName: client?.client_name,
       redirectUris: client?.redirect_uris.map(String),
       userAgent: requestInfo?.headers.get("user-agent") ?? undefined,
