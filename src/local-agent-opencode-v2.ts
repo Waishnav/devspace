@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  ClientError,
   OpenCode,
   type ModelRef,
   type OpenCodeClient,
@@ -363,22 +364,7 @@ function assertOpenCodeV2AssistantSucceeded(message: SessionMessageAssistant): v
   });
 }
 
+/** @opencode/client wraps every connection failure, whatever its errno, in a Transport ClientError. */
 function isOpenCodeTransportFailure(error: unknown): boolean {
-  const code = transportErrorCode(error);
-  return code === "ECONNREFUSED"
-    || code === "ECONNRESET"
-    || code === "EPIPE"
-    || code === "ENETDOWN"
-    || code === "ENETUNREACH"
-    || code === "ETIMEDOUT";
-}
-
-function transportErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const code = (error as NodeJS.ErrnoException).code;
-  if (typeof code === "string") return code;
-  const cause = (error as Error & { cause?: unknown }).cause;
-  return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
-    ? (cause as NodeJS.ErrnoException).code
-    : undefined;
+  return error instanceof ClientError && error.reason === "Transport";
 }
