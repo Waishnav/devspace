@@ -647,10 +647,11 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
     accessToken,
     "tools/call",
     {
-      name: "bash",
+      name: "exec_command",
       arguments: {
         workspace_id: workspaceId,
-        command: `node -e \"${command}\"`,
+        cmd: `node -e \"${command}\"`,
+        yield_time_ms: 12_000,
       },
     },
   );
@@ -745,7 +746,8 @@ async function httpServerFixture(
     ownerToken,
     clientName,
   );
-  const accessToken = await issueAccessToken("DevSpace modern protocol test");
+  // Named as ChatGPT so HTTP tests get the Codex surface; unknown hosts get Claude tools.
+  const accessToken = await issueAccessToken("ChatGPT");
   return { root, localBaseUrl, accessToken, issueAccessToken, running };
 }
 
