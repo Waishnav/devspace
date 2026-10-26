@@ -462,9 +462,7 @@ function displayProvider(provider: LocalAgentDriverKind): string {
     case "claude": return "Claude";
     case "opencode": return "OpenCode";
     case "pi": return "Pi";
-    case "cursor": return "Cursor";
-    case "copilot": return "Copilot";
-    case "grok": return "Grok";
+    case "acp": return "ACP";
   }
 }
 

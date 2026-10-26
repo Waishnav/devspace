@@ -55,7 +55,7 @@ const connection = {
 
 const sessionIds: string[] = [];
 const runtime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -106,7 +106,7 @@ assert.equal(requests.filter(({ method }) => method === "session/close").length,
 assert.equal(runtime.isAlive(), true);
 
 const resumedRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -145,7 +145,7 @@ assert.equal(queues.has("cursor_session_1"), false);
 assert.equal(requests.filter(({ method }) => method === "session/close").length, 1);
 
 const closeOnlyRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -229,7 +229,7 @@ const overlapConnection = {
   closed: new Promise<void>(() => undefined),
 };
 const overlapRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -259,7 +259,7 @@ await overlapRuntime.close();
 const cachedContext = {
   agentId: "agt_acp",
   providerInstanceId: "cursor",
-  provider: "cursor" as const,
+  provider: "acp" as const,
   workspaceRoot: "/tmp/project",
   writeMode: "allowed" as const,
 };
@@ -270,13 +270,13 @@ assert.deepEqual(acpCommandArgs("cursor", cachedContext), [
 assert.deepEqual(acpCommandArgs("grok", {
   ...cachedContext,
   providerInstanceId: "grok",
-  provider: "grok",
+  provider: "acp",
   effort: "low",
 }), ["agent", "--reasoning-effort", "low", "stdio"]);
 assert.deepEqual(acpCommandArgs("grok", {
   ...cachedContext,
   providerInstanceId: "grok",
-  provider: "grok",
+  provider: "acp",
   effort: "low",
 }, { GROK_AGENT_PROFILE: " /tmp/grok-coding-only.md " }), [
   "agent", "--agent-profile", "/tmp/grok-coding-only.md", "--reasoning-effort", "low", "stdio",
@@ -291,13 +291,20 @@ assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
 ]);
 
-const missingCommandDriver = new AcpLocalAgentDriver(
-  "cursor",
-  process.env,
-  () => join(tmpdir(), "devspace-definitely-missing-acp-command"),
-);
+const missingCommandDriver = new AcpLocalAgentDriver({
+  flavor: "cursor",
+  env: process.env,
+  commandResolver: () => join(tmpdir(), "devspace-definitely-missing-acp-command"),
+});
 // A stop that outlives the cancel grace period closes the runtime, so it must not be shared.
 assert.equal(missingCommandDriver.runtimePolicy.scope, "agent");
+// Generic ACP agents cannot be held to a restricted write mode, so they run only with full_access.
+const genericDriver = new AcpLocalAgentDriver({ command: process.execPath, args: ["-e", ""] });
+for (const writeMode of ["read_only", "allowed"] as const) {
+  const restricted = await genericDriver.createRuntime({ ...cachedContext, writeMode });
+  assert.equal(restricted.isErr(), true);
+  if (restricted.isErr()) assert.match(restricted.error.message, /full_access/);
+}
 const missingCommand = await missingCommandDriver.createRuntime(cachedContext);
 assert.equal(missingCommand.isErr(), true);
 if (missingCommand.isErr()) {
@@ -320,11 +327,11 @@ if (process.platform === "win32") {
       `require("node:fs").writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));\n`,
     );
     await writeFile(command, `@ECHO OFF\r\n"${process.execPath}" "${recorder}" %*\r\n`);
-    const shimDriver = new AcpLocalAgentDriver("copilot", process.env, () => command);
+    const shimDriver = new AcpLocalAgentDriver({ flavor: "copilot", env: process.env, commandResolver: () => command });
     const shimStartup = await shimDriver.createRuntime({
       ...cachedContext,
       providerInstanceId: "copilot",
-      provider: "copilot",
+      provider: "acp",
       workspaceRoot,
     });
     assert.equal(shimStartup.isErr(), true);
@@ -399,7 +406,7 @@ const grokConnection = {
   closed: new Promise<void>(() => undefined),
 };
 const grokRuntime = new AcpRuntime({
-  provider: "grok",
+  flavor: "grok",
   command: "grok",
   args: ["agent", "--reasoning-effort", "low", "stdio"],
   env: {},
@@ -447,7 +454,7 @@ const grokConfigurationConnection = {
   closed: new Promise<void>(() => undefined),
 };
 const grokConfigurationRuntime = new AcpRuntime({
-  provider: "grok",
+  flavor: "grok",
   command: "grok",
   args: ["agent", "stdio"],
   env: {},
@@ -484,7 +491,7 @@ assert.equal(resumedRuntime.isAlive(), false);
 const stuckRequests: string[] = [];
 const stuckNotifications: string[] = [];
 const stuckRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},
@@ -514,7 +521,7 @@ assert.equal(stuckRuntime.isAlive(), false, "an unresponsive provider is dropped
 // Stop requested before the prompt is sent must not start provider work.
 const preAbortRequests: string[] = [];
 const preAbortRuntime = new AcpRuntime({
-  provider: "cursor",
+  flavor: "cursor",
   command: "cursor-agent",
   args: ["acp"],
   env: {},

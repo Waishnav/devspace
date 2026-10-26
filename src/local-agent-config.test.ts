@@ -115,6 +115,46 @@ assert.deepEqual(namedInstance.providers[0], {
   model: "gpt-work",
 });
 assert.equal(subagentProviderConfig(namedInstance, "codex-work")?.driver, "codex");
+const genericAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [{
+    id: "kiro",
+    driver: "acp",
+    enabled: true,
+    command: "kiro",
+    config: { args: ["acp"] },
+  }],
+});
+assert.deepEqual(genericAcp.providers[0], {
+  id: "kiro",
+  driver: "acp",
+  enabled: true,
+  command: "kiro",
+  config: { args: ["acp"] },
+});
+// Built-in ACP flavors derive sandbox flags from the write mode; custom args would drop them.
+for (const provider of [
+  { id: "cursor", driver: "cursor", enabled: true, config: { args: ["acp"] } },
+  { id: "copilot-work", driver: "acp", enabled: true, command: "copilot", config: { flavor: "copilot", args: ["--acp"] } },
+]) {
+  assert.throws(() => parseSubagentsConfig({ enabled: true, providers: [provider] }), /config\.args applies only to generic/);
+}
+const legacyAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [{ id: "cursor", driver: "cursor", enabled: true }],
+});
+assert.equal(legacyAcp.providers[0]?.driver, "acp");
+assert.deepEqual(legacyAcp.providers[0]?.config, { flavor: "cursor" });
+const namedLegacyAcp = parseSubagentsConfig({
+  enabled: true,
+  providers: [
+    { id: "cursor-work", driver: "cursor", enabled: true, command: "cursor-agent" },
+    { id: "grok", driver: "codex", enabled: true },
+  ],
+});
+assert.equal(namedLegacyAcp.providers[0]?.driver, "acp");
+assert.deepEqual(namedLegacyAcp.providers[0]?.config, { flavor: "cursor" }, "a named legacy-driver instance keeps its flavor");
+assert.equal(namedLegacyAcp.providers[1]?.config, undefined, "a built-in id with another driver is not an ACP provider");
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,

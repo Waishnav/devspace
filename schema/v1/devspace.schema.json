@@ -198,6 +198,7 @@
                   "claude",
                   "opencode",
                   "pi",
+                  "acp",
                   "cursor",
                   "copilot",
                   "grok"
@@ -228,6 +229,26 @@
                 "type": "string",
                 "minLength": 1,
                 "pattern": "\\S"
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "flavor": {
+                    "type": "string",
+                    "enum": [
+                      "cursor",
+                      "copilot",
+                      "grok"
+                    ]
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "required": [

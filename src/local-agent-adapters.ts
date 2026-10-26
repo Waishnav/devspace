@@ -1,8 +1,10 @@
 import {
+  subagentAcpFlavor,
   type SubagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
 import {
+  LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
   LOCAL_AGENT_DRIVER_KINDS,
 } from "./local-agent-provider.js";
 import {
@@ -45,9 +47,9 @@ export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
   const env = options.env ?? process.env;
-  const instances = options.subagents?.providers ?? LOCAL_AGENT_DRIVER_KINDS.map((driver) => ({
-    id: driver,
-    driver,
+  const instances = options.subagents?.providers ?? LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => ({
+    id,
+    driver: id === "cursor" || id === "copilot" || id === "grok" ? "acp" : id,
     enabled: true,
   } satisfies SubagentProviderConfig));
   const registry = createLocalAgentProviderRegistry(options);
@@ -62,9 +64,12 @@ export function createLocalAgentProviderRegistry(
     .register("claude", ({ env }) => new ClaudeLocalAgentDriver(options.claudeQueryFactory, env))
     .register("opencode", ({ env }) => new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env }))
     .register("pi", ({ envOverrides }) => new PiLocalAgentDriver(options.piSessionFactory, envOverrides))
-    .register("cursor", ({ env }) => new AcpLocalAgentDriver("cursor", env))
-    .register("copilot", ({ env }) => new AcpLocalAgentDriver("copilot", env))
-    .register("grok", ({ env }) => new AcpLocalAgentDriver("grok", env));
+    .register("acp", ({ instance, env }) => new AcpLocalAgentDriver({
+      env,
+      command: instance.command,
+      args: instance.config?.args,
+      flavor: subagentAcpFlavor(instance),
+    }));
 }
 
 export function extractLocalAgentResponseText(value: unknown): string {

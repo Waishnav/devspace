@@ -1,12 +1,14 @@
 import { resolveExecutableCommand } from "./local-agent-command.js";
+import { resolveAcpCommand } from "./local-agent-acp.js";
 import {
   localAgentProviderEnvironment,
+  subagentAcpFlavor,
   subagentProviderConfig,
   type SubagentsConfig,
 } from "./local-agent-config.js";
 import {
-  isLocalAgentDriverKind,
-  LOCAL_AGENT_DRIVER_KINDS,
+  defaultDriverForProviderId,
+  LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
   type LocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
 } from "./local-agent-provider.js";
@@ -23,9 +25,10 @@ export function getLocalAgentProviderAvailabilitySnapshot(
   config?: SubagentsConfig,
 ): LocalAgentProviderAvailability[] {
   const configured = new Map(config?.providers.map((provider) => [provider.id, provider]) ?? []);
+  const defaultIds = new Set<string>(LOCAL_AGENT_DEFAULT_PROVIDER_IDS);
   const instances = [
-    ...LOCAL_AGENT_DRIVER_KINDS.map((driver) => configured.get(driver) ?? { id: driver, driver }),
-    ...(config?.providers.filter((provider) => !isLocalAgentDriverKind(provider.id)) ?? []),
+    ...LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => configured.get(id) ?? { id, driver: defaultDriverForProviderId(id)! }),
+    ...(config?.providers.filter((provider) => !defaultIds.has(provider.id)) ?? []),
   ];
   return instances.map((instance) => checkLocalAgentProviderAvailability(
     instance.id,
@@ -53,12 +56,23 @@ function checkLocalAgentProviderAvailability(
       return commandAvailability(providerInstanceId, "opencode", providerEnv);
     case "pi":
       return packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
-    case "cursor":
-      return commandAvailability(providerInstanceId, providerEnv.CURSOR_COMMAND ?? "cursor-agent", providerEnv);
-    case "copilot":
-      return commandAvailability(providerInstanceId, providerEnv.COPILOT_COMMAND ?? "copilot", providerEnv);
-    case "grok":
-      return commandAvailability(providerInstanceId, providerEnv.GROK_COMMAND ?? "grok", providerEnv);
+    case "acp": {
+      // Resolve exactly as the driver does, so preflight and startup agree on the executable.
+      const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
+      const flavor = subagentAcpFlavor({ id: providerInstanceId, config: configured?.config });
+      if (resolveAcpCommand(flavor ?? "generic", providerEnv, configured?.command)) {
+        return { name: providerInstanceId, available: true };
+      }
+      return {
+        name: providerInstanceId,
+        available: false,
+        reason: configured?.command
+          ? `${configured.command} executable not found`
+          : flavor
+            ? `${flavor} executable not found`
+            : "ACP command is not configured",
+      };
+    }
   }
 }
 
@@ -69,7 +83,7 @@ export function assertLocalAgentProviderAvailable(
 ): void {
   const provider = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
   const driver = provider?.driver
-    ?? (isLocalAgentDriverKind(providerInstanceId) ? providerInstanceId : undefined);
+    ?? defaultDriverForProviderId(providerInstanceId);
   if (!driver) throw new Error(`${providerInstanceId} provider is not configured.`);
   const availability = checkLocalAgentProviderAvailability(providerInstanceId, driver, env, config);
   if (availability.available) return;

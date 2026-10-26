@@ -201,8 +201,9 @@ multiple independently configured instances of one integration:
 ```
 
 Profiles can then select that instance with `provider: codex-work`. The driver
-is the implementation (`codex`, `claude`, `opencode`, `pi`, `cursor`,
-`copilot`, or `grok`); provider-native session ids remain internal to DevSpace.
+is the implementation (`codex`, `claude`, `opencode`, `pi`, or `acp`);
+provider-native session ids remain internal to DevSpace. Cursor, Copilot, and
+Grok are default ACP provider instances rather than separate drivers.
 
 `subagents.instructions` controls when ChatGPT receives the managed workflow:
 
@@ -233,10 +234,26 @@ runtime and automatically selects the OpenCode 1.x or 2.x protocol. Both major
 versions use the same provider instance and profile configuration; `opencode2`
 is not a separate driver.
 
-Codex, Claude, Cursor, Copilot, and Grok also accept `command`. OpenCode and Pi
-do not expose a command override. For providers that support it, an explicit
-`command` wins over both the inherited command override and a command override
-placed in `env`.
+Codex, Claude, and ACP instances also accept `command`. OpenCode and Pi do not
+expose a command override. Cursor, Copilot, and Grok retain their built-in ACP
+commands when `command` is omitted. An arbitrary ACP instance declares its
+executable and may provide fixed startup arguments under `config.args`:
+
+```jsonc
+{
+  "id": "kiro",
+  "driver": "acp",
+  "enabled": true,
+  "command": "kiro",
+  "config": { "args": ["acp"] }
+}
+```
+
+`config.flavor` is reserved for the small built-in protocol quirks currently
+needed by `cursor`, `copilot`, and `grok`; generic ACP agents normally omit it.
+Those built-in flavors derive their sandbox arguments from the write mode, so
+they reject `config.args`. DevSpace cannot enforce `read_only` or `allowed` on an
+arbitrary ACP agent, so generic ACP instances run only with `full_access`.
 
 Existing process-level overrides remain supported: `CODEX_COMMAND`,
 `CODEX_HOME`, `CLAUDE_COMMAND`, `CURSOR_COMMAND`, `COPILOT_COMMAND`,

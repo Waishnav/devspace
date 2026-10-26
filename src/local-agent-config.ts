@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
+  defaultDriverForProviderId,
   isLocalAgentDriverKind,
+  isLegacyAcpDriverKind,
+  LEGACY_ACP_DRIVER_KINDS,
   LOCAL_AGENT_DRIVER_KINDS,
   type LocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
@@ -25,13 +28,23 @@ const commandSchema = z.string()
   .min(1)
   .optional();
 
+const acpConfigSchema = z.object({
+  args: z.array(z.string()).optional(),
+  flavor: z.enum(LEGACY_ACP_DRIVER_KINDS).optional(),
+}).strict();
+
+const inputDriverKinds = [...LOCAL_AGENT_DRIVER_KINDS, ...LEGACY_ACP_DRIVER_KINDS] as const;
+
 const providerSchema = z.object({
   id: z.string().trim().min(1),
-  driver: z.enum(LOCAL_AGENT_DRIVER_KINDS).optional(),
+  driver: z.enum(inputDriverKinds).optional(),
   ...providerShape,
   command: commandSchema,
+  config: acpConfigSchema.optional(),
 }).strict().superRefine((provider, context) => {
-  const driver = provider.driver ?? (isLocalAgentDriverKind(provider.id) ? provider.id : undefined);
+  const driver = provider.driver
+    ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
+    : defaultDriverForProviderId(provider.id);
   if (!driver) {
     context.addIssue({
       code: "custom",
@@ -45,6 +58,30 @@ const providerSchema = z.object({
       code: "custom",
       path: ["command"],
       message: `${driver} does not support a command override.`,
+    });
+  }
+  if (driver !== "acp" && provider.config !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["config"],
+      message: `${driver} does not support ACP config.`,
+    });
+  }
+  const flavor = provider.config?.flavor
+    ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
+    ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+  if (driver === "acp" && flavor && provider.config?.args !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["config", "args"],
+      message: `${flavor} sets its own ACP arguments for each write mode; config.args applies only to generic ACP providers.`,
+    });
+  }
+  if (driver === "acp" && !provider.command && !isLegacyAcpDriverKind(provider.id)) {
+    context.addIssue({
+      code: "custom",
+      path: ["command"],
+      message: `ACP provider instance ${provider.id} must declare a command.`,
     });
   }
 });
@@ -88,11 +125,28 @@ export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 export function resolveSubagentsConfig(config: ParsedSubagentsConfig): SubagentsConfig {
   return {
     ...config,
-    providers: config.providers.map((provider) => ({
-      ...provider,
-      driver: provider.driver ?? provider.id as LocalAgentDriverKind,
-    })),
+    providers: config.providers.map((provider) => {
+      const driver = provider.driver
+        ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
+        : defaultDriverForProviderId(provider.id)!;
+      // `driver: "cursor"` (or a built-in id) predates generic ACP; keep it as the ACP flavor.
+      const flavor = provider.config?.flavor
+        ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
+        ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+      return {
+        ...provider,
+        driver,
+        ...(driver === "acp" && flavor ? { config: { ...provider.config, flavor } } : {}),
+      };
+    }),
   };
+}
+
+/** Built-in ids (`cursor`, `copilot`, `grok`) imply their flavor even when a config object omits it. */
+export function subagentAcpFlavor(
+  provider: Pick<SubagentProviderConfig, "id" | "config">,
+): typeof LEGACY_ACP_DRIVER_KINDS[number] | undefined {
+  return provider.config?.flavor ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
 }
 
 export function parseSubagentsConfig(value: unknown): SubagentsConfig {
@@ -137,11 +191,9 @@ export function providerCommandVariable(driver: LocalAgentDriverKind): string | 
   switch (driver) {
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
-    case "cursor": return "CURSOR_COMMAND";
-    case "copilot": return "COPILOT_COMMAND";
-    case "grok": return "GROK_COMMAND";
     case "opencode":
     case "pi":
+    case "acp":
       return undefined;
   }
 }
@@ -163,6 +215,7 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
             ),
           }
         : {}),
+      ...(provider.config ? { config: provider.config } : {}),
     }));
   return createHash("sha256")
     .update(JSON.stringify({ enabled: config.enabled, providers }))

@@ -60,3 +60,29 @@ assert.equal(
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+{
+  const directory = mkdtempSync(join(tmpdir(), "devspace-acp-availability-"));
+  try {
+    const grok = join(directory, "grok");
+    writeFileSync(grok, "#!/bin/sh\nexit 0\n");
+    chmodSync(grok, 0o700);
+    const env = { PATH: directory };
+    const config = {
+      enabled: true,
+      instructions: "on-demand" as const,
+      providers: [
+        { id: "cursor", driver: "acp" as const, enabled: true, config: { flavor: "cursor" as const } },
+        { id: "cursor-work", driver: "acp" as const, enabled: true, config: { flavor: "grok" as const } },
+        { id: "kiro", driver: "acp" as const, enabled: true, command: "kiro" },
+      ],
+    };
+    const snapshot = getLocalAgentProviderAvailabilitySnapshot(env, config);
+    assert.deepEqual(snapshot.filter((provider) => provider.name === "cursor").length, 1, "configured built-in ACP ids are listed once");
+    assert.equal(snapshot.find((provider) => provider.name === "cursor-work")?.available, true, "preflight checks the flavor's executable");
+    assert.equal(snapshot.find((provider) => provider.name === "kiro")?.reason, "kiro executable not found");
+    assert.equal(snapshot.find((provider) => provider.name === "cursor")?.available, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
