@@ -77,7 +77,7 @@ Changes on disk do not automatically update a running server.
     "refreshTokenGraceSeconds": 0,
     "scopes": ["devspace"],
     "allowedResourceUrls": [],
-    "allowedRedirectHosts": ["chatgpt.com", "localhost", "127.0.0.1"],
+    "allowedRedirectHosts": ["chatgpt.com", "claude.ai", "claude.com", "localhost", "127.0.0.1"],
   },
 }
 ```
@@ -130,8 +130,7 @@ The host is identified from the OAuth client it registered: its `client_name`
 first, then its `redirect_uris` hosts (`chatgpt.com` and `openai.com`, or
 `claude.ai` and `claude.com`). If neither identifies the host, the request's
 `User-Agent` is used. The OAuth client is fixed per connector, so a host keeps
-the same tool list. Claude registers a `claude.ai` redirect URI, so add
-`claude.ai` to `oauth.allowedRedirectHosts` to connect it.
+the same tool list.
 
 `tools.mode` (`"codex"` or `"claude"`) is an optional override: when set, every
 host gets that surface and detection is skipped. Leave it unset to let DevSpace

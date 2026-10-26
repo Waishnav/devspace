@@ -32,6 +32,7 @@ try {
     providers: [],
   });
   assert.deepEqual(defaults.oauth.allowedResourceUrls, []);
+  assert.deepEqual(defaults.oauth.allowedRedirectHosts, ["chatgpt.com", "claude.ai", "claude.com", "localhost", "127.0.0.1"]);
   assert.equal(defaults.oauth.refreshTokenGraceSeconds, 0);
   assert.deepEqual(defaults.logging, {
     level: "info",
