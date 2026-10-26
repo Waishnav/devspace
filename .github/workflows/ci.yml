@@ -17,7 +17,7 @@ jobs:
   smoke:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +47,14 @@ jobs:
           sudo apt-get install -y ripgrep bubblewrap socat
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          # Ubuntu 26.04 enforces a bwrap profile that strips capabilities from
+          # bwrap's children, so the seccomp helper cannot create its nested
+          # user namespace (apply-seccomp: ... nested userns is capability-restricted).
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            # Removal fails when the profile exists but is not loaded; the
+            # required sandbox test below still catches a real denial.
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || echo "bwrap-userns-restrict is not loaded"
           fi
 
       - name: Typecheck

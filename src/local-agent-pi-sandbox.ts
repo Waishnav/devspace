@@ -62,6 +62,33 @@ const PI_NETWORK_ALLOWLIST = [
   "*.rubygems.org",
 ] as const;
 
+// Printed by apply-seccomp and bwrap when the host denies the capability-bearing
+// user namespaces the sandbox needs (Ubuntu 24.04+ AppArmor restrictions).
+const USER_NAMESPACE_DENIED =
+  /nested userns is capability-restricted|bwrap: (?:No permissions to create new namespace|setting up uid map: Permission denied)/;
+
+const DENIAL_SCAN_CHARS = 512;
+
+/** Detects a denial message even when it is split across output chunks. */
+export function createUserNamespaceDenialDetector(): { push(chunk: string): void; readonly denied: boolean } {
+  let tail = "";
+  let denied = false;
+  return {
+    push(chunk) {
+      if (denied) return;
+      tail = (tail + chunk).slice(-DENIAL_SCAN_CHARS);
+      denied = isUserNamespaceDenied(tail);
+    },
+    get denied() {
+      return denied;
+    },
+  };
+}
+
+export function isUserNamespaceDenied(output: string): boolean {
+  return USER_NAMESPACE_DENIED.test(output);
+}
+
 // Pi does not provide a built-in sandbox. Keep the provider-native sandbox
 // small and fail closed when a command needs a registry or host that is not
 // explicitly allowed here; the agent can report that limitation to the user.
@@ -388,8 +415,26 @@ async function runSandboxedCommand(
     options.signal,
     workspace,
   );
+  const denial = createUserNamespaceDenialDetector();
   try {
-    return await spawnSandboxedCommand(wrapped.argv, wrapped.env, workspace, options);
+    const result = await spawnSandboxedCommand(wrapped.argv, wrapped.env, workspace, {
+      ...options,
+      onData: (data) => {
+        denial.push(data.toString("utf8"));
+        options.onData(data);
+      },
+    });
+    // The sandbox initializes fine on these hosts and only fails per command,
+    // which the model would otherwise read as its own command failing.
+    if (denial.denied && result.exitCode !== 0) {
+      throw new Error(
+        "Pi allowed mode could not start its sandbox: the host denies the user namespaces it needs. " +
+          "On Ubuntu 24.04+, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`; " +
+          "on Ubuntu 26.04 also unload the bwrap profile with " +
+          "`sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict`.",
+      );
+    }
+    return result;
   } finally {
     SandboxManager.cleanupAfterCommand();
   }
