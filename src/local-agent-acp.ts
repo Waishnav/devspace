@@ -705,6 +705,11 @@ export function resolveAcpCommand(
   return resolveExecutableCommand(command, env);
 }
 
+/** Default executable for a built-in ACP flavor, for diagnostics. */
+export function acpFlavorCommand(flavor: AcpFlavor): string | undefined {
+  return ACP_COMMANDS[flavor]?.[0];
+}
+
 export type AcpCommandResolver = (
   provider: AcpFlavor,
   env: NodeJS.ProcessEnv,

@@ -4,6 +4,7 @@ import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 import type { LocalAgentTurnEvent, LocalAgentTurnEventBody } from "./local-agent-events.js";
+import { validateAgentId } from "./local-agent-id.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 
@@ -690,12 +691,6 @@ function readStatus(status: string): LocalAgentStatus {
 function readWriteMode(value: string): LocalAgentWriteMode {
   if (value === "read_only" || value === "allowed" || value === "full_access") return value;
   throw new Error(`Invalid stored local agent write mode: ${value}`);
-}
-
-function validateAgentId(id: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) {
-    throw new Error("Subagent id must be 1-128 characters using letters, numbers, '.', '_', ':' or '-'.");
-  }
 }
 
 function validateDispatchIdentity(

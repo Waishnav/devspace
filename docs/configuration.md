@@ -154,7 +154,14 @@ When Subagents are enabled for MCP workspaces, DevSpace keeps its bundled
 That managed copy is the authoritative `subagents` skill for DevSpace and is
 refreshed when the packaged skill changes.
 
-Subagent providers are explicit. Omitted providers are disabled:
+Subagents for MCP workspaces are an explicit opt-in: without a `subagents`
+section the server exposes none. The `devspace agents` CLI differs. It needs no
+server setup and, when config has no `subagents` key, uses every built-in
+provider it can find on the machine (see [Agents CLI](agents-cli.md)). Any
+`subagents` section, including `"enabled": false`, replaces that detection;
+`devspace init` writes one with the agents you pick.
+
+Within a `subagents` section, omitted providers are disabled:
 
 ```jsonc
 {

@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { matchError, Result, type Result as BetterResult } from "better-result";
-import type { ServerConfig } from "./config.js";
+import type { AgentConfig } from "./config.js";
 import {
   AgentDaemonConfigChangedError,
   AgentDaemonInvalidRequestError,
@@ -602,7 +602,7 @@ function isObservationRequest(
 }
 
 export function createLocalAgentClient(
-  config: Pick<ServerConfig, "configDir" | "stateDir" | "subagents">,
+  config: Pick<AgentConfig, "configDir" | "stateDir" | "subagents">,
 ): LocalAgentClient {
   return new LocalAgentClient({
     configDir: config.configDir,

@@ -83,11 +83,8 @@ export const devspaceConfigSchema = z.object({
   ui: uiConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
-  subagents: subagentsConfigSchema.default({
-    enabled: false,
-    instructions: "on-demand",
-    providers: [],
-  }),
+  // Absent means "never configured", which differs from an explicit `enabled: false`.
+  subagents: subagentsConfigSchema.optional(),
   logging: loggingConfigSchema,
   oauth: oauthConfigSchema,
 }).strict();

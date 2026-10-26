@@ -35,7 +35,7 @@ withConfigDir((configDir, env) => {
   assert.equal(files.config.server.port, 8787);
   assert.deepEqual(files.config.workspaces.allowedRoots, ["/work"]);
   assert.equal(files.config.artifacts.enabled, true);
-  assert.equal(files.config.subagents.enabled, true);
+  assert.equal(files.config.subagents?.enabled, true);
   assert.equal(files.config.tools.mode, "claude");
   assert.equal(files.config.ui.enabled, true);
   assert.equal(files.auth.ownerToken, "test-owner-token");

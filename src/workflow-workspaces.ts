@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ServerConfig } from "./config.js";
+import type { AgentConfig } from "./config.js";
 import { createManagedWorktree } from "./git-worktrees.js";
 import { isPathInsideRoot, resolveCanonicalAllowedPath } from "./roots.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
@@ -13,7 +13,7 @@ import { WorkflowError } from "./workflow-types.js";
 // The JS-implemented realpathSync does not, so mixing the two makes equal paths look unrelated.
 const canonical = realpathSync.native;
 
-export function isManagedWorkflowWorkspace(config: ServerConfig, root: string, id: string): boolean {
+export function isManagedWorkflowWorkspace(config: AgentConfig, root: string, id: string): boolean {
   const store = new SqliteWorkspaceStore(config.stateDir);
   try {
     const workspace = store.getSession(id);
@@ -29,7 +29,7 @@ export function isManagedWorkflowWorkspace(config: ServerConfig, root: string, i
   finally { store.close(); }
 }
 
-export async function createWorkflowWorkspace(config: ServerConfig, source: LocalAgentWorkspaceScope): Promise<LocalAgentWorkspaceScope> {
+export async function createWorkflowWorkspace(config: AgentConfig, source: LocalAgentWorkspaceScope): Promise<LocalAgentWorkspaceScope> {
   let sourcePath = source.workspaceRoot;
   let baseRef: string | undefined;
   if (source.workspaceId && isManagedWorkflowWorkspace(config, sourcePath, source.workspaceId)) {

@@ -13,6 +13,11 @@ assert.deepEqual(snapshot.find((provider) => provider.name === "codex"), {
   available: false,
   reason: "/definitely/missing/devspace-codex executable not found",
 });
+// Without `pi` on PATH, Pi runs from the copy bundled in this package.
+assert.equal(
+  getLocalAgentProviderAvailabilitySnapshot({ PATH: "" }).find((provider) => provider.name === "pi")?.available,
+  true,
+);
 assert.equal(
   getLocalAgentProviderAvailabilitySnapshot({ ...process.env, CODEX_COMMAND: "" })
     .find((provider) => provider.name === "codex")?.available,

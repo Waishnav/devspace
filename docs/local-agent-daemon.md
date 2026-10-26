@@ -16,7 +16,9 @@ devspace agents targets/run/continue/show/wait/ls
           └── provider runtimes
 ```
 
-The CLI starts the daemon automatically when an agent command needs it. The
+The CLI starts the daemon automatically when an agent command needs it. Agent
+commands and the daemon load only the settings they need, so they work without
+OAuth, a public URL, or `devspace init`; see [Agents CLI](agents-cli.md). The
 MCP server can use the same local client when an MCP operation needs agent
 functionality, but `devspace serve` is not required for local-agent execution.
 The daemon is scoped to one DevSpace `stateDir`, so one SQLite store and one

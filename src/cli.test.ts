@@ -248,7 +248,8 @@ try {
       "show must be an immediate snapshot",
     );
 
-    const { stdout: waitOutput } = await execFileAsync(
+    // A wait that times out exits 4 so scripts can tell it from completion.
+    const waitTimeout = await execFileAsync(
       "node",
       [
         "--import",
@@ -271,9 +272,13 @@ try {
           DEVSPACE_WORKSPACE_ROOT: projectRoot,
         },
       },
+    ).then(
+      () => assert.fail("wait should exit 4 when an agent is still running"),
+      (error: { code: number; stdout: string }) => error,
     );
+    assert.equal(waitTimeout.code, 4);
     assert.equal(
-      waitOutput,
+      waitTimeout.stdout,
       [
         `<agent id="${current.id}" status="completed">Review complete.</agent>`,
         `<agent id="${other.id}" status="running" wait="timeout"/>`,
@@ -404,6 +409,16 @@ try {
         return true;
       },
     );
+
+    for (const helpArgs of [["agents", "run", "--help"], ["agents", "wait", "-h"]]) {
+      const help = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", ...helpArgs], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, ...cliConfigEnv },
+      });
+      assert.match(help.stdout, /^DevSpace agents\n/);
+      assert.equal(help.stderr, "");
+    }
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
       daemon.close((error) => error ? rejectClose(error) : resolveClose());

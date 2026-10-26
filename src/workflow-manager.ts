@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { open, realpath } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ServerConfig } from "./config.js";
+import type { AgentConfig } from "./config.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
 import type { LocalAgentManager } from "./local-agent-manager.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
@@ -26,7 +26,7 @@ interface WorkflowManagerOptions {
   loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   subagents: SubagentsConfig;
   allowedRoots?: readonly string[];
-  config?: ServerConfig;
+  config?: AgentConfig;
   /** Tests may exercise the supervisor without a provider or child process. */
   runner?: typeof runWorkflowScript;
 }

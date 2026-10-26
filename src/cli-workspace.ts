@@ -43,7 +43,7 @@ function canonicalizePath(path: string): string {
   }
 }
 
-function findGitRoot(cwd: string): string | undefined {
+export function findGitRoot(cwd: string): string | undefined {
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: resolve(cwd),
     encoding: "utf8",

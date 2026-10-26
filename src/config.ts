@@ -2,33 +2,66 @@ import { resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
-import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
-import { resolveSubagentsConfig, type SubagentsConfig } from "./local-agent-config.js";
+import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles, type DevspaceFiles } from "./user-config.js";
+import {
+  disabledSubagentsConfig,
+  implicitSubagentsConfig,
+  resolveSubagentsConfig,
+  type SubagentsConfig,
+} from "./local-agent-config.js";
 
-export interface ServerConfig {
+/** What `devspace agents` and the agent daemon need. They run without OAuth, a public URL, or a server. */
+export interface AgentConfig {
   configDir: string;
+  allowedRoots: string[];
+  stateDir: string;
+  worktreeRoot: string;
+  devspaceAgentsDir: string;
+  subagents: SubagentsConfig;
+  agentDir: string;
+}
+
+export interface ServerConfig extends AgentConfig {
   host: string;
   port: number;
   oauth: OAuthConfig;
-  allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
   /** Explicit `tools.mode`; when set it wins over host detection. */
   toolSurfaceOverride: "claude" | "codex" | undefined;
   uiEnabled: boolean;
-  stateDir: string;
-  worktreeRoot: string;
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
-  devspaceAgentsDir: string;
-  subagents: SubagentsConfig;
-  agentDir: string;
   logging: LoggingConfig;
 }
 
+/**
+ * Agent commands need no server setup. Without a `subagents` key they detect the installed
+ * coding agents; an explicit `subagents` config, including `enabled: false`, always wins.
+ */
+export function loadAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
+  const files = loadDevspaceFiles(env);
+  const { subagents } = files.config;
+  return agentConfig(files, env, subagents ? resolveSubagentsConfig(subagents) : implicitSubagentsConfig());
+}
+
+function agentConfig(files: DevspaceFiles, env: NodeJS.ProcessEnv, subagents: SubagentsConfig): AgentConfig {
+  const stored = files.config;
+  return {
+    configDir: files.dir,
+    allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
+    stateDir: normalizePath(stored.storage.stateDir),
+    worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),
+    devspaceAgentsDir: devspaceAgentsDir(env),
+    subagents,
+    agentDir: normalizePath(stored.skills.agentDir),
+  };
+}
+
+/** Strict config for `devspace serve`: requires the owner token. Subagents stay an explicit opt-in. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const stored = files.config;
@@ -47,7 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   ];
 
   return {
-    configDir: files.dir,
+    ...agentConfig(files, env, resolveSubagentsConfig(stored.subagents ?? disabledSubagentsConfig())),
     host,
     port,
     oauth: {
@@ -61,21 +94,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       allowedResourceUrls: stored.oauth.allowedResourceUrls,
       allowedRedirectHosts: stored.oauth.allowedRedirectHosts,
     },
-    allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
     toolSurfaceOverride: stored.tools.mode,
     uiEnabled: stored.ui.enabled,
-    stateDir: normalizePath(stored.storage.stateDir),
-    worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,
     skillsEnabled: stored.skills.enabled,
     skillPaths: stored.skills.paths,
     devspaceSkillsDir: devspaceSkillsDir(env),
-    devspaceAgentsDir: devspaceAgentsDir(env),
-    subagents: resolveSubagentsConfig(stored.subagents),
-    agentDir: normalizePath(stored.skills.agentDir),
     logging: {
       ...stored.logging,
       trustProxy: stored.server.trustProxy,
