@@ -21,7 +21,11 @@ export type AgentTargetOutput =
     };
 
 export interface AgentTargetCatalogOutput {
+  /** False when config sets `subagents.enabled: false`; no target is usable then. */
+  enabled: boolean;
   targets: AgentTargetOutput[];
+  /** Enabled providers that cannot run, with the reason. */
+  unavailable: Array<{ name: string; reason: string }>;
 }
 
 export interface AgentReceiptOutput {
@@ -58,6 +62,7 @@ export type AgentObservationOutput = { turnId?: string } & (
 
 export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTargetCatalogOutput {
   return {
+    enabled: catalog.enabled,
     targets: [
       ...catalog.providers
         .filter((provider) => provider.usable)
@@ -76,6 +81,11 @@ export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTarg
         ...(profile.effort ? { effort: profile.effort } : {}),
       })),
     ],
+    unavailable: catalog.enabled
+      ? catalog.providers
+        .filter((provider) => !provider.available)
+        .map((provider) => ({ name: provider.id, reason: provider.reason ?? "provider preflight failed" }))
+      : [],
   };
 }
 
@@ -114,13 +124,20 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
 }
 
 export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): string {
-  return catalog.targets.map((target) => {
+  if (!catalog.enabled) {
+    return "<disabled>Subagents are disabled by subagents.enabled in config.jsonc. Remove the subagents key to detect installed agents, or set enabled to true.</disabled>";
+  }
+  const unavailable = catalog.unavailable.map((provider) => (
+    `<unavailable name="${escapeXmlAttribute(provider.name)}">${escapeXmlText(provider.reason)}</unavailable>`
+  ));
+  const targets = catalog.targets.map((target) => {
     const settings = xmlAttributes({ model: target.model, effort: target.effort });
     if (target.kind === "provider") {
       return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
     return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
-  }).join("\n");
+  });
+  return [...targets, ...unavailable].join("\n");
 }
 
 export function formatAgentReceipt(receipt: AgentReceiptOutput): string {

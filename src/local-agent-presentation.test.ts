@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import {
   formatAgentObservation,
+  formatAgentTargetCatalog,
   formatAgentTurnEvent,
   presentAgentObservation,
   presentAgentReceipt,
@@ -112,6 +113,8 @@ const catalog: LocalAgentCatalog = {
 };
 const targetCatalog = presentAgentTargetCatalog(catalog);
 assert.deepEqual(targetCatalog, {
+  enabled: true,
+  unavailable: [{ name: "claude", reason: "credentials missing" }],
   targets: [
     { name: "codex", kind: "provider", model: "gpt-5.4", effort: "high" },
     {
@@ -124,3 +127,15 @@ assert.deepEqual(targetCatalog, {
     },
   ],
 });
+assert.equal(
+  formatAgentTargetCatalog(targetCatalog),
+  [
+    '<provider name="codex" model="gpt-5.4" effort="high"/>',
+    '<profile name="reviewer" provider="codex" model="gpt-5.4" effort="high">Review changes.</profile>',
+    '<unavailable name="claude">credentials missing</unavailable>',
+  ].join("\n"),
+);
+assert.match(
+  formatAgentTargetCatalog(presentAgentTargetCatalog({ ...catalog, enabled: false })),
+  /^<disabled>Subagents are disabled/,
+);

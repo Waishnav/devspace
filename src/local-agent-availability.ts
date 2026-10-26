@@ -1,5 +1,5 @@
 import { resolveExecutableCommand } from "./local-agent-command.js";
-import { resolveAcpCommand } from "./local-agent-acp.js";
+import { acpFlavorCommand, resolveAcpCommand } from "./local-agent-acp.js";
 import { resolvePiCommand } from "./local-agent-pi.js";
 import {
   localAgentProviderEnvironment,
@@ -80,7 +80,7 @@ function checkLocalAgentProviderAvailability(
         reason: configured?.command
           ? `${configured.command} executable not found`
           : flavor
-            ? `${flavor} executable not found`
+            ? `${acpFlavorCommand(flavor) ?? flavor} executable not found; install it or set ${flavor.toUpperCase()}_COMMAND`
             : "ACP command is not configured",
       };
     }
