@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
+import { localAgentProviderAvailability } from "./local-agent-availability.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
 import { LocalAgentDaemon, writeLocalAgentDaemonLog } from "./local-agent-daemon.js";
 import {
@@ -34,6 +35,7 @@ const manager = new LocalAgentManager({
   allowedRoots: config.allowedRoots,
   logger: log,
   subagents: config.subagents,
+  providerAvailability: (providerInstanceId) => localAgentProviderAvailability(providerInstanceId, process.env, config.subagents),
   authorizeManagedWorkspace: workflowsEnabled()
     ? (workspaceRoot, workspaceId) => isManagedWorkflowWorkspace(config, workspaceRoot, workspaceId)
     : undefined,
