@@ -9,7 +9,7 @@ export interface HostHints {
   userAgent?: string;
 }
 
-export const DEFAULT_TOOL_SURFACE: ToolSurfaceName = "codex";
+export const DEFAULT_TOOL_SURFACE: ToolSurfaceName = "claude";
 
 interface HostSignature {
   surface: ToolSurfaceName;
@@ -38,7 +38,8 @@ const HOST_SIGNATURES: readonly HostSignature[] = [
  *
  * The registered OAuth client identifies a connector and does not change between
  * requests, so it decides first (name, then redirect host). The User-Agent only
- * decides when the client says nothing, and unknown hosts get the default.
+ * decides when the client says nothing. Unknown hosts get the Claude surface:
+ * plain edit/write/bash tools need no host-specific training.
  */
 export function detectToolSurface(hints: HostHints): ToolSurfaceName {
   const { clientName, redirectUris = [], userAgent } = hints;

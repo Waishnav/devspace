@@ -93,8 +93,8 @@ configure.
 
 | Host | Tool surface |
 | --- | --- |
-| ChatGPT and other unrecognised hosts | `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
-| Claude | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
+| ChatGPT | `open_workspace`, `read`, `apply_patch`, `exec_command`, `write_stdin`, and `show_changes`. |
+| Claude and other unrecognised hosts | `open_workspace`, `read`, `write`, `edit`, `bash`, and `show_changes`. |
 
 The host is identified from the OAuth client it registered: its `client_name`
 first, then its `redirect_uris` hosts (`chatgpt.com` and `openai.com`, or

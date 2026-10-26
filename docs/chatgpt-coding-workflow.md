@@ -159,7 +159,8 @@ sessions for that workspace.
 
 DevSpace picks the tool surface from the connecting MCP host, so there is
 nothing to configure (see
-[Tool surfaces and UI](configuration.md#tool-surfaces-and-ui)). Claude hosts get:
+[Tool surfaces and UI](configuration.md#tool-surfaces-and-ui)). Claude, and any
+host DevSpace does not recognise, get:
 
 - `open_workspace`
 - `read`
@@ -168,7 +169,7 @@ nothing to configure (see
 - `bash`
 - `show_changes`
 
-ChatGPT, and any host DevSpace does not recognise, get the Codex-style surface:
+ChatGPT gets the Codex-style surface:
 
 - `open_workspace`
 - `read`

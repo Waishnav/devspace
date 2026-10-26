@@ -1,5 +1,5 @@
 {
-  "description": "No tools config: an unrecognised OAuth client falls back to the Codex surface.",
+  "description": "No tools config: an unrecognised OAuth client falls back to the Claude surface.",
   "host": {
     "clientName": "Some other host"
   },
@@ -17,17 +17,31 @@
       }
     },
     {
-      "tool": "apply_patch",
+      "tool": "edit",
       "arguments": {
         "workspace_id": "{{workspace_id}}",
-        "patch": "*** Begin Patch\n*** Update File: notes/todo.md\n@@\n-- [ ] first\n+- [x] first\n*** Add File: notes/new.md\n+# New note\n+\n+Written during QA.\n*** End Patch"
+        "path": "notes/todo.md",
+        "edits": [
+          {
+            "old_text": "- [ ] first",
+            "new_text": "- [x] first"
+          }
+        ]
       }
     },
     {
-      "tool": "exec_command",
+      "tool": "write",
       "arguments": {
         "workspace_id": "{{workspace_id}}",
-        "cmd": "git status --short"
+        "path": "notes/new.md",
+        "content": "# New note\n\nWritten during QA.\n"
+      }
+    },
+    {
+      "tool": "bash",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "command": "git status --short"
       },
       "expect": {
         "text": [

@@ -499,7 +499,8 @@ test("HTTP endpoint picks the tool surface from the OAuth client", async (t) => 
   assert.ok(!claude.tools.includes("apply_patch"));
   assert.ok(claude.instructions.includes("available_agents_files"));
 
-  assert.ok((await surfaceFor("Some other host")).tools.includes("apply_patch"));
+  const unknown = await surfaceFor("Some other host");
+  assert.ok(unknown.tools.includes("bash") && !unknown.tools.includes("apply_patch"));
 });
 
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
@@ -646,11 +647,10 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
     accessToken,
     "tools/call",
     {
-      name: "exec_command",
+      name: "bash",
       arguments: {
         workspace_id: workspaceId,
-        cmd: `node -e \"${command}\"`,
-        yield_time_ms: 12_000,
+        command: `node -e \"${command}\"`,
       },
     },
   );

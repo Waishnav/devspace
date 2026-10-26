@@ -42,8 +42,8 @@ test("the redirect host decides when the client name is generic", () => {
 
 test("lookalike redirect hosts do not match", () => {
   assert.equal(
-    detectToolSurface({ redirectUris: ["https://notclaude.ai/cb", "https://claude.ai.evil.test/cb"] }),
-    "codex",
+    detectToolSurface({ redirectUris: ["https://notchatgpt.com/cb", "https://chatgpt.com.evil.test/cb"] }),
+    "claude",
   );
 });
 
@@ -59,7 +59,7 @@ test("the User-Agent decides when the client is unrecognised", () => {
   assert.equal(detectToolSurface({ userAgent: "Claude-User/1.0" }), "claude");
 });
 
-test("unknown hosts get the codex surface", () => {
-  assert.equal(detectToolSurface({}), "codex");
-  assert.equal(detectToolSurface({ clientName: "Acme", userAgent: "curl/8" }), "codex");
+test("unknown hosts get the claude surface", () => {
+  assert.equal(detectToolSurface({}), "claude");
+  assert.equal(detectToolSurface({ clientName: "Acme", userAgent: "curl/8" }), "claude");
 });
