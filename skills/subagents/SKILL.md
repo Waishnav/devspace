@@ -115,7 +115,7 @@ Stopping keeps the agent record as `stopped`. Agents are scoped to the project t
 
 ## JSON output
 
-With `--json` every command prints exactly one JSON value on stdout and errors as `{"error":{"code","message","retryable"}}`. `run` and `continue` print `{id,status,turnId}`; `run --wait` and `show` print `{id,status,turnId,response?|error?|wait?}`; `wait` prints an array of those; `targets` prints `{enabled,targets,unavailable}`. `status` is `running`, `completed`, `failed`, or `stopped`.
+With `--json` every command prints exactly one JSON value on stdout and errors as `{"error":{"code","message","retryable",...}}`. `run` and `continue` print `{id,status,turnId}`; `run --wait` and `show` print `{id,status,turnId,response?|error?|wait?}`; `wait` prints an array of those; `targets` prints `{enabled,targets,unavailable}`. `status` is `running`, `completed`, `failed`, or `stopped`.
 
 ## Good uses
 

@@ -103,12 +103,12 @@ $ devspace agents run claude --wait "Reply with exactly PONG"
 <agent id="agt_1a2b3c4d" status="completed" turn="trn_5e6f7a8b">PONG</agent>
 
 $ devspace agents run claude --wait --json "Reply with exactly PONG"
-{"id":"agt_1a2b3c4d","status":"completed","turnId":"trn_5e6f7a8b","response":"PONG"}
+{"id":"agt_1a2b3c4d","status":"completed","response":"PONG","turnId":"trn_5e6f7a8b"}
 ```
 
 `status` is `running`, `completed`, `failed`, or `stopped`. A failure adds
 `error: {code, message, retryable, detail?}`; an unfinished wait adds
-`wait: "timeout"`. Command errors print `{"error":{"code","message","retryable"}}`.
+`wait: "timeout"`. Command errors print `{"error":{"code","message","retryable",...}}` and exit 1.
 `wait` prints an array of observations, `run`/`continue` without `--wait` print
 `{id,status,turnId}`, and `targets` prints `{enabled,targets,unavailable}`.
 
