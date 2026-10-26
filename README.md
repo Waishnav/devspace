@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/docs/assets/devspace-logo-light.png" alt="DevSpace logo" width="140">
+    <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-logo-light.png" alt="DevSpace logo" width="140">
   </picture>
 </p>
 
@@ -14,7 +14,7 @@
   <a href="https://github.com/Waishnav/devspace/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/%40waishnav%2Fdevspace?style=flat-square" /></a>
 </p>
 
-[![DevSpace connected to ChatGPT](https://raw.githubusercontent.com/Waishnav/devspace/main/docs/assets/devspace-screenshot.png)](https://raw.githubusercontent.com/Waishnav/devspace/main/docs/assets/devspace-screenshot.png)
+[![DevSpace connected to ChatGPT](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)
 
 **Give ChatGPT a secure connection to your own machine and Turn ChatGPT into Codex**
 
@@ -188,13 +188,16 @@ devspace doctor
 
 ## Documentation
 
-- [Setup Guide](https://github.com/Waishnav/devspace/blob/main/docs/setup.md)
-- [ChatGPT Coding Workflow](https://github.com/Waishnav/devspace/blob/main/docs/chatgpt-coding-workflow.md)
-- [Configuration Reference](https://github.com/Waishnav/devspace/blob/main/docs/configuration.md)
-- [Agents CLI for Claude Code, Cursor, OpenCode, Codex, and bots](https://github.com/Waishnav/devspace/blob/main/docs/agents-cli.md)
-- [Native File Download](https://github.com/Waishnav/devspace/blob/main/docs/artifact-exchange.md)
-- [Security Model](https://github.com/Waishnav/devspace/blob/main/docs/security.md)
-- [Troubleshooting Gotchas](https://github.com/Waishnav/devspace/blob/main/docs/gotchas.md)
+Full documentation lives at [devspace.run/docs](https://devspace.run/docs):
+
+- [Quickstart](https://devspace.run/docs/quickstart)
+- [Connect ChatGPT, Claude, and other MCP hosts](https://devspace.run/docs/connect/mcp-hosts)
+- [Agents CLI for Claude Code, Cursor, OpenCode, Codex, and bots](https://devspace.run/docs/connect/coding-agents)
+- [Configuration reference](https://devspace.run/docs/reference/configuration)
+- [CLI reference](https://devspace.run/docs/reference/cli)
+- [Native file download](https://devspace.run/docs/reference/artifacts)
+- [Security model](https://devspace.run/docs/concepts/security)
+- [Troubleshooting](https://devspace.run/docs/reference/troubleshooting)
 
 ## Philosophy
 
@@ -269,5 +272,5 @@ pnpm start
 `dev:seed` forks your normal DevSpace config and SQLite state into an ignored
 checkout-local `.devspace-dev/` directory so source builds and migrations do not
 modify your normal installation. Use `pnpm dev:reset` to discard that QA state
-and fork it again. See [Development and Manual QA](docs/development.md) for
-worktree switching, ChatGPT, and database-migration workflows.
+and fork it again. See [DEVELOPMENT.md](DEVELOPMENT.md) for worktree
+switching, real-host QA, and database-migration workflows.

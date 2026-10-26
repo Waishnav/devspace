@@ -11,6 +11,10 @@ completion comes from the versioned
 
 The Owner password lives separately in `~/.devspace/auth.json`.
 
+DevSpace reads configuration when `devspace serve` starts. After editing
+`config.jsonc` or running `devspace config set`, restart the server to apply
+changes, including allowed roots. Changes on disk do not hot-reload.
+
 ## Complete example
 
 ```jsonc ~/.devspace/config.jsonc lineNumbers
@@ -93,7 +97,16 @@ redacted, but file contents and command output are kept as the tools returned
 them.
 
 `activity.maxTurns` caps the closed turns kept per workspace; older turns and
-their calls are deleted. `activity.enabled: false` stops recording.
+their calls are deleted. `activity.enabled: false` stops new recording without
+deleting existing history.
+
+## Skills
+
+DevSpace discovers skills from `~/.agents/skills`, project `.agents/skills`,
+`~/.devspace/skills`, `skills.agentDir/skills` (default `~/.codex/skills`), and
+`skills.paths`. Relative custom paths resolve from the active workspace; add
+legacy paths such as `.pi/skills` there when needed. Set `skills.enabled` to
+`false` to hide skills from workspace output. See [Workspaces](/concepts/workspaces#skills).
 
 ## Subagents
 
@@ -111,15 +124,38 @@ Neither mode tells the model to prefer subagents for routine work.
 
 ## OAuth
 
-`allowedResourceUrls` accepts exact alternate MCP resource URLs (HTTPS, or HTTP
-on localhost) for clients connecting through an alias. Restart after changing
-it. The default `allowedRedirectHosts` covers ChatGPT and Claude; add hosts for
+### Resource aliases
+
+`allowedResourceUrls` accepts exact alternate MCP resource URLs for clients
+connecting through an alias. The normal `server.publicBaseUrl` `/mcp` resource
+is always allowed automatically. Supply a complete resource URL, such as
+`https://alias.example.com/mcp`, rather than a hostname or origin. Aliases do
+not change discovery URLs or proxy routing.
+
+HTTPS is required, except HTTP on `localhost`, `127.0.0.1`, or `[::1]`, with
+optional ports. Restart after changing the list. After restarting, refresh
+tokens for removed aliases can no longer mint tokens.
+
+The default `allowedRedirectHosts` covers ChatGPT and Claude; add hosts for
 other MCP clients. An explicit list replaces the default, so keep `claude.ai`
 in it to connect Claude.
 
-`refreshTokenGraceSeconds` (default `0`, up to `600`) lets a trusted host retry
-a refresh with the token it just rotated, so a lost response doesn't force a
-new sign-in.
+### Refresh-token retries
+
+`refreshTokenGraceSeconds` accepts integers from `0` to `600`. The default,
+`0`, consumes a refresh token immediately. A positive value lets a trusted host
+retry with the token it just rotated after a lost response or concurrent refresh.
+
+On first use, the old token's expiry becomes the earlier of its original expiry
+and first-use time plus the grace window. Retries never extend that deadline.
+New refresh tokens keep `refreshTokenTtlSeconds`, and the old token's shortened
+deadline persists across server restarts.
+
+:::caution
+Anyone holding the rotated token can reuse it during the grace window. Leave
+this disabled unless you need it. Client, scope, resource, and revocation
+checks still apply.
+:::
 
 ## Environment
 
@@ -131,8 +167,72 @@ Only two persistent environment variables remain:
 | `DEVSPACE_OAUTH_OWNER_TOKEN` | Optional override for the stored Owner password. |
 
 Two switches enable experimental features: `DEVSPACE_EXPERIMENTAL_CODE_MODE=1`
-(code mode for MCP hosts) and `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`
+([code mode](/connect/code-mode) for MCP hosts) and `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`
 ([dynamic workflows](/orchestration/dynamic-workflows)).
 
 Provider command overrides such as `CODEX_COMMAND`, `CODEX_HOME`, and
 `CLAUDE_COMMAND` are still honored; provider config wins when both are set.
+
+## v1.1 environment migration
+
+Durable environment settings were removed in v1.1. Move existing deployment
+values to these JSONC keys:
+
+| Removed setting | JSONC key |
+| --- | --- |
+| `HOST`, `PORT` | `server.host`, `server.port` |
+| `DEVSPACE_PUBLIC_BASE_URL` | `server.publicBaseUrl` |
+| `DEVSPACE_ALLOWED_HOSTS` | `server.allowedHosts` |
+| `DEVSPACE_TRUST_PROXY` | `server.trustProxy` |
+| `DEVSPACE_ALLOWED_ROOTS` | `workspaces.allowedRoots` |
+| `DEVSPACE_WORKTREE_ROOT` | `workspaces.worktreeRoot` |
+| `DEVSPACE_STATE_DIR` | `storage.stateDir` |
+| `DEVSPACE_TOOL_MODE`, `DEVSPACE_MINIMAL_TOOLS` | The tool surface is picked per MCP host; `tools.mode` is the optional override. |
+| `DEVSPACE_WIDGETS` | `ui.enabled` |
+| `DEVSPACE_ARTIFACTS` | `artifacts.enabled` |
+| `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` | `artifacts.maxFileBytes` |
+| `DEVSPACE_SKILLS` | `skills.enabled` |
+| `DEVSPACE_SKILL_PATHS` | `skills.paths` |
+| `DEVSPACE_AGENT_DIR` | `skills.agentDir` |
+| `DEVSPACE_SUBAGENTS` | `subagents.enabled` |
+| `DEVSPACE_LOG_LEVEL` | `logging.level` |
+| `DEVSPACE_LOG_FORMAT` | `logging.format` |
+| `DEVSPACE_LOG_REQUESTS` | `logging.requests` |
+| `DEVSPACE_LOG_ASSETS` | `logging.assets` |
+| `DEVSPACE_LOG_TOOL_CALLS` | `logging.toolCalls` |
+| `DEVSPACE_LOG_SHELL_COMMANDS` | `logging.shellCommands` |
+| `DEVSPACE_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `oauth.accessTokenTtlSeconds` |
+| `DEVSPACE_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `oauth.refreshTokenTtlSeconds` |
+| `DEVSPACE_OAUTH_SCOPES` | `oauth.scopes` |
+| `DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS` | `oauth.allowedRedirectHosts` |
+
+These variables are not read or auto-imported. Environment is process state,
+so DevSpace has no reliable file to migrate on your behalf.
+
+## v1.0 file migration
+
+On the first v1.1 load, DevSpace migrates only when `config.jsonc` is absent and
+`config.json` exists:
+
+1. Validate the old JSON document.
+2. Translate its known fields into the versioned JSONC structure.
+3. Write and validate a temporary `config.jsonc`.
+4. Publish it atomically.
+5. Rename the old file to `config.json.v1.0.bak`.
+
+An existing JSONC file always wins. Invalid JSONC never falls back to the old
+file, and unsupported legacy keys stop migration with an actionable error.
+
+| v1.0 JSON field | v1.1 JSONC key |
+| --- | --- |
+| `host`, `port` | `server.host`, `server.port` |
+| `publicBaseUrl`, `allowedHosts` | `server.publicBaseUrl`, `server.allowedHosts` |
+| `allowedRoots`, `worktreeRoot` | `workspaces.allowedRoots`, `workspaces.worktreeRoot` |
+| `stateDir` | `storage.stateDir` |
+| `artifactsEnabled`, `artifactMaxFileBytes` | `artifacts.enabled`, `artifacts.maxFileBytes` |
+| `agentDir` | `skills.agentDir` |
+| `subagents` | `subagents` |
+| `ui.enabled` | unchanged nested key |
+| `tool_mode` | `tools.mode` |
+
+`auth.json` is unchanged.

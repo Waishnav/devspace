@@ -7,9 +7,17 @@ sidebar:
 
 :::caution
 Workflows are experimental in v1.1 and hidden by default. Set
-`DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` in the environment that runs `devspace`
-to enable the `workflow` commands and the skill that teaches agents to use
-them. The script API may change.
+`DEVSPACE_EXPERIMENTAL_WORKFLOWS=1` for both the CLI and daemon to enable the
+`workflow` commands and managed workflows skill. If a daemon is already
+running, stop it first:
+
+```bash
+devspace agents daemon stop
+export DEVSPACE_EXPERIMENTAL_WORKFLOWS=1
+```
+
+The next workflow command starts the daemon with the flag. There is no
+config-file switch or MCP workflow tool. The script API may change.
 :::
 
 A subagent is one delegation. A **workflow** is the loop around many of them,
@@ -66,7 +74,12 @@ return { reviews, summary };
 
 Ask for typed JSON when a later step consumes the output. DevSpace validates
 the response against the schema and asks the agent once to correct invalid
-JSON:
+JSON. The single correction turn is read-only, uses the same agent session,
+and counts toward the run's 128-turn budget.
+
+Schemas use strict draft-07 structural constraints, with limits of 16 KiB,
+512 nodes, and 16 levels. `$ref`, `$dynamicRef`, `$recursiveRef`, `$async`,
+`pattern`, `patternProperties`, and `format` are rejected.
 
 ```js
 const review = await agent("Return the discovered bugs.", {
@@ -94,6 +107,15 @@ const [lru, ttl] = await parallel(
 );
 ```
 
+Profiles resolve in each call's execution workspace. Isolated worktrees start
+from committed `HEAD`, without uncommitted source changes, so use global
+profiles or commit project profiles before launching isolated calls.
+
+These are managed workspaces retained for inspection. Normal stale-worktree
+cleanup preserves recovery snapshots for commits and dirty tracked changes,
+and skips worktrees with untracked files. CLI agent worktrees created by
+`agents run --worktree` have a separate lifecycle and are ignored by prune.
+
 ## Run and inspect
 
 ```bash
@@ -108,8 +130,43 @@ devspace workflow cancel <run-id>
 devspace workflow ls
 ```
 
-`run` returns a receipt with the run ID. From an agent harness, `wait` in
-bounded steps instead of polling `status`; add `--json` for scripts.
+`run` returns a receipt with the run ID, then the CLI exits. Active workflows
+keep the daemon alive. Records, calls, and provider continuation state survive
+CLI exit and daemon restarts. After a restart, unfinished runs become
+`interrupted`; DevSpace does not automatically dispatch calls.
+
+Choose exactly one of `--file`, `--name`, or `--resume`. Pass JSON arguments
+with `--args <json>` or `--args-file <file>`, never both. Named workflows,
+arguments, and run lookups are scoped to the current checkout or worktree;
+an ID from another scope is rejected.
+
+| Inspection | Behavior |
+| --- | --- |
+| `wait` | Wait 0–60 seconds, default 60; return the latest stored state on timeout. |
+| `calls` | Compact summaries without prompts, results, or fingerprints. |
+| `call` | Full stored record for one zero-based call index. |
+| `events --after <sequence>` | Up to 100 persisted entries after the sequence. |
+
+From an agent harness, `wait` in bounded steps instead of polling `status`.
+Add `--json` for scripts.
+
+## Limits
+
+| Boundary | Limit |
+| --- | --- |
+| `meta.concurrency` | 1–16, default 4. |
+| Active workflows per daemon | 8. |
+| Aggregate workflow agent turns per daemon | 8 at once. |
+| Script runners per daemon | 16, including nested scripts. |
+| Agent turns per run | 128, including schema corrections. |
+| Nested invocations per run | 8; maximum nesting depth 1. Nested calls share the parent's budgets and cancellation. |
+| QuickJS heap / stack | 32 MiB / 512 KiB. |
+| Script wall clock | 15 minutes. |
+| Script source / arguments | 64 KiB / 128 KiB. |
+| Workflow or agent result | 256 KiB. |
+| Guest `log` / `phase` events | 64 KiB combined per run; bounded internal events are additional. |
+
+These are execution boundaries, not config tuning controls.
 
 ## Resume
 
@@ -120,12 +177,18 @@ completed calls:
 devspace workflow run --resume <run-id>
 ```
 
-A resumed run replays the original script and arguments, reuses each completed
-call whose prompt and options are unchanged, and runs live from the first call
-that failed. Only runs whose calls were all read-only can be resumed — a run
-that may have changed files is never replayed; inspect its calls and start a
-new one. Resume also refuses if the workspace changed since the original run
-(its commit, staged changes, or files).
+A resumed run uses the original script, arguments, and authority. It reuses
+only a matching prefix of completed read-only calls, then executes live from
+the first nonmatching or unfinished call. **Any** recorded call with write
+authority, `isolation`, or a named `workspace` disables replay for the run;
+inspect its calls and preserved worktrees, then start a new run.
+
+DevSpace fingerprints `HEAD`, the staged diff, and files selected by
+`git ls-files --cached --others --exclude-standard`. Ignored untracked files
+are excluded, so changes to ignored build output do not block resume. A changed
+context, more than 20,000 entries or 64 MiB of files, a symlink, a special or
+unreadable file, or another fingerprint failure produces
+`RECOVERY_CONTEXT_CHANGED`.
 
 :::warning
 Scripts must be replayable. Do not use `Date.now()`, `Math.random()`, or

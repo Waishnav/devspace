@@ -1,0 +1,88 @@
+---
+title: Experimental code mode
+description: Compose workspace coding tools in JavaScript, with bounded executions and explicit polling.
+sidebar:
+  badge: Experimental
+---
+
+:::caution
+Code mode is experimental and hidden by default. Enable it when starting
+`devspace serve`; its script API may change.
+:::
+
+```bash
+DEVSPACE_EXPERIMENTAL_CODE_MODE=1 devspace serve
+```
+
+This replaces the model-facing coding tools with:
+
+| Tool | Purpose |
+| --- | --- |
+| `open_workspace` | Open a workspace and return JavaScript tool signatures. |
+| `execute` | Run a script against that workspace's coding primitives. |
+| `poll_execution` | Wait for an existing script without rerunning it. |
+| `cancel_execution` | Cancel a running script and stop its owned commands. |
+| `show_changes` | Review the combined changes after the final related edit. |
+
+When `artifacts.enabled` is true, `download_artifact` stays a separate tool.
+Code mode forces the internal Codex primitives regardless of host detection or
+`tools.mode`: `read`, `apply_patch`, `exec_command`, and `write_stdin`.
+
+## Write a script
+
+Call `open_workspace` first, then follow the JavaScript signatures it returns
+under `code_mode.tool_signatures`. Call those primitives through `tools` inside
+`execute`; `workspace_id` is bound automatically for nested calls. The outer
+`execute` call still takes the workspace ID.
+
+```txt
+execute({
+  workspace_id: "<workspace_id from open_workspace>",
+  code: "return await tools.exec_command({ cmd: 'git status --short' });"
+})
+```
+
+Scripts support top-level `await` and `return`. They cannot import modules or
+access Node.js globals directly. Workspace operations still go through the
+normal DevSpace tool handlers.
+
+## Wait without repeating work
+
+`execute` returns the result immediately when possible. If the script is still
+running after its yield window, it returns an `execution_id`. The default
+window is 10 seconds; `yield_time_ms` can be at most 12 seconds.
+
+Pass the ID and the same `workspace_id` to `poll_execution` until the script
+finishes. **Do not rerun `execute` to wait** — that starts another script and
+can repeat side effects. Use `cancel_execution` when the script is no longer
+needed.
+
+A long-running nested `tools.exec_command` can return a `session_id` before the
+script finishes. Poll that command with `tools.write_stdin` inside the script.
+An `execution_id` identifies a script; a `session_id` identifies a command.
+Await relevant nested work before returning, and set `tty: true` only when the
+command needs a terminal.
+
+## Limits and lifecycle
+
+| Limit | Value |
+| --- | --- |
+| Script deadline | 5 minutes |
+| Nested tool calls per script | 32 |
+| Concurrent nested calls per script | 4 |
+| Running scripts per server | 4 |
+
+Cancelling a script or shutting down the server stops commands owned by running
+scripts. Execution results and process sessions are memory-only and are lost
+on restart. Completed execution records expire after five minutes.
+
+Completed side effects are not rolled back when a script fails or is cancelled.
+After changing files, call the separate `show_changes` tool once to review the
+combined changes.
+
+## Restore the normal surface
+
+Unset `DEVSPACE_EXPERIMENTAL_CODE_MODE` or set it to `0`, then restart
+`devspace serve`. This restores the [tool surface](/connect/tool-surfaces)
+selected for the host or overridden by `tools.mode`. Code mode has no persistent
+configuration key.

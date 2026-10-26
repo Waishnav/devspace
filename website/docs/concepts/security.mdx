@@ -22,6 +22,9 @@ sandboxed because file tools are.
 MCP workspaces open only under configured roots. Keep them narrow —
 `~/work` rather than `~` or `/`. Direct `devspace agents` commands use the
 current project with your shell's authority and are not gated by MCP roots.
+Advertised skill directories are an explicit file-read exception: they may be
+outside the workspace, and DevSpace allows reads of supporting files within
+those directories. Worktrees provide workflow isolation, not a security boundary.
 
 ## Owner password
 
@@ -43,8 +46,42 @@ Subagents use the CLIs and logins already on your machine. Provider `env`
 values in `config.jsonc` are written with mode `0600` but are still plain text.
 Keep credentials in the process environment if you do not want them persisted.
 
+## Native file download
+
+Native download is an opt-in, one-shot transfer into an already-open workspace.
+`download_artifact` returns only a workspace-relative destination path; it does
+not create a persistent artifact service or reusable artifact ID.
+
+DevSpace validates the whole native-file object before downloading. Malformed
+references, unknown object fields, arbitrary URL strings, local source paths,
+and credentials are rejected. Only trusted OpenAI download hosts and redirects
+are accepted. Absolute paths, traversal, symlinked parents, and existing
+destinations fail closed; downloads stream under the configured per-file limit
+and publish without overwrite.
+
+Destination operations use pinned directory descriptors on Linux and macOS,
+and native directory handles on Windows. POSIX partial files are created with
+mode `0600`; Windows files follow destination ACL inheritance. Content is never
+extracted or executed. See [Native file download](/reference/artifacts).
+
 ## Logs
 
 Requests and tool calls are logged by default. Shell command previews are off
 unless `logging.shellCommands` is `true` — leave it off if commands may carry
 secrets.
+
+Native download tool logs record the workspace ID, download hostname,
+destination, byte count, hash, duration, and status. They exclude the file
+value, raw content, connector references, native file IDs, bearer credentials,
+full presigned URLs, temporary paths, and base64 chunks. When a call passes input
+validation but is then rejected, the log keeps the destination and workspace ID
+as requested, so an invalid absolute path appears verbatim. Calls that fail
+schema validation are rejected before the tool runs and are not logged. The tool result returns only the
+workspace-relative path.
+
+Activity history is a separate store of workspace tool arguments and results.
+When enabled, it can record native-file arguments including the short-lived
+download URL. Strings are truncated and common secret patterns are redacted,
+but file contents and command output are retained as returned by the tools.
+Disabling `activity.enabled` stops new recording without deleting existing
+history. See [Activity](/reference/configuration#activity).

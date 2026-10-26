@@ -21,19 +21,36 @@ download_artifact({
 ```
 
 DevSpace creates missing parent directories and refuses to overwrite an
-existing file. Afterwards, ordinary tools can inspect, move, or replace it.
+existing file. This is a one-shot transfer: the result contains only the
+workspace-relative path, with no persistent artifact service or reusable
+artifact ID. Afterwards, ordinary tools can inspect, move, or replace the file.
 
 ## Safety
 
 - Only the host's native file object is accepted — no pasted URLs or local
-  source paths.
+  source paths. DevSpace validates the whole object before downloading;
+  malformed references and unknown object fields are rejected.
 - Trusted OpenAI download hosts and redirects only.
 - Absolute paths, traversal, symlinked parents, and existing destinations fail
   closed.
 - Streams under `artifacts.maxFileBytes` and publishes without overwrite.
 - Available on Linux, macOS, and Windows using descriptor- or handle-anchored
   filesystem operations. Not registered on BSD.
-- Content is never extracted or executed, and request logs never include file
-  values. With [activity history](/reference/configuration) on, the
-  `download_artifact` call is recorded like any other tool call — including
-  its arguments, which carry the host's short-lived download URL.
+- POSIX partial downloads are created with mode `0600`. Windows files inherit
+  the destination directory's ACLs.
+- Content is never extracted or executed.
+
+## Logs and activity history
+
+`download_artifact` tool logs record the workspace ID, download hostname,
+destination, byte count, hash, duration, and status. They exclude the file
+value, raw content, connector references, native file IDs, bearer credentials,
+full presigned URLs, temporary paths, and base64 chunks. When a call passes input validation but is then rejected, the log keeps the
+destination and workspace ID as requested, so an invalid absolute path or
+untrusted hostname appears in it. Calls that fail schema validation are rejected
+before the tool runs and are not logged. Tool results return only the relative
+path.
+
+[Activity history](/reference/configuration#activity) is separate from tool
+logging. When enabled, it records the call's native-file arguments, including
+the host's short-lived download URL, like any other tool call.

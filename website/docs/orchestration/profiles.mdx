@@ -35,10 +35,16 @@ Cite files and return concise findings.
 | `schema` | no | `devspace-agent/v1`. |
 | `name` | no | Stable kebab-case identifier. Defaults to the filename. |
 | `description` | yes | Shown to the orchestrator so it can choose. Make it specific. |
-| `provider` | yes | `codex`, `claude`, `opencode`, `pi`, `cursor`, `copilot`, or `grok`. |
+| `provider` | yes | A configured provider instance ID, such as `codex` or `codex-work`. The default IDs are `codex`, `claude`, `opencode`, `pi`, `cursor`, `copilot`, and `grok`. |
 | `model` | no | Provider model id or alias, such as `gpt-5.4` or `sonnet`. |
 | `effort` | no | Provider-specific passthrough: `low`, `high`, `xhigh`, … |
 | `disabled` | no | Hide the profile without deleting it. |
+
+A provider instance is an entry under `subagents.providers`; its ID can differ
+from its driver. For example, `provider: codex-work` selects that configured
+instance, not a different built-in integration. Omit `model` or `effort` to
+inherit the instance setting, then the provider's default. Effort values pass
+through to the provider without translation.
 
 The markdown body is prepended when the profile launches. It never enters the
 orchestrator's context — the catalog exposes only name, description, provider,

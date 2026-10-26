@@ -17,7 +17,8 @@ Bash, public URL, allowed hosts, and native SQLite status.
 </Accordion>
 
 <Accordion title="better-sqlite3 could not load">
-  Native dependencies were built for a different Node runtime. Reinstall with
+  Release starts check native dependencies before launching. A load failure
+  usually means they were built for a different Node runtime. Reinstall with
   the Node you run DevSpace with, then rerun `doctor`:
 
   - global install: `npm install -g @waishnav/devspace`
@@ -30,7 +31,7 @@ Bash, public URL, allowed hosts, and native SQLite status.
 <Accordion title="Public URL includes /mcp">
   Setup wants the origin (`https://host`); the client wants the endpoint
   (`https://host/mcp`). Fix it with
-  `devspace config set publicBaseUrl https://host`.
+  `devspace config set publicBaseUrl https://host`, then restart `serve`.
 </Accordion>
 
 <Accordion title="Tailscale Funnel /mcp returns 404">
@@ -59,13 +60,18 @@ Bash, public URL, allowed hosts, and native SQLite status.
 </Accordion>
 
 <Accordion title="Unknown workspace_id">
-  Workspace IDs are session handles. After a server restart, call
-  `open_workspace` again.
+  Workspace session metadata is persisted, so IDs survive server restarts.
+  Keep using the existing ID; call `open_workspace` again only when a tool
+  rejects it as unknown. Optional OpenAI conversation metadata can recover the
+  same checkout workspace on a repeated open; other hosts receive a new one.
+  Every worktree open creates a new workspace with full context. See
+  [Workspaces](/concepts/workspaces).
 </Accordion>
 
 <Accordion title="Workspace path rejected">
   `open_workspace` paths must be inside an allowed root. Check with
-  `devspace config get` or rerun `devspace init --force`.
+  `devspace config get` or rerun `devspace init --force`. Restart `serve`
+  after changing allowed roots; configuration does not hot-reload.
 </Accordion>
 
 <Accordion title="Worktree mode fails">
@@ -74,7 +80,9 @@ Bash, public URL, allowed hosts, and native SQLite status.
 </Accordion>
 
 <Accordion title="Shell commands fail on Windows">
-  DevSpace needs Bash. Install Git for Windows (Git Bash) or use WSL.
+  DevSpace's Bash tools need Bash. Install Git for Windows (Git Bash), or use
+  WSL, MSYS2, or Cygwin Bash. Native PowerShell and `cmd.exe` execution are not
+  supported by the Bash tools. Run `devspace doctor` to confirm Bash is detected.
 </Accordion>
 
 <Accordion title="PROVIDER_UNAVAILABLE">
@@ -87,7 +95,9 @@ Bash, public URL, allowed hosts, and native SQLite status.
 <Accordion title="A read-only subagent refuses to start">
   `--write-mode read_only` is enforced by the provider itself — Cursor's ask
   mode, Copilot's plan mode. An older CLI that can't switch modes fails the
-  turn instead of running with write access. Update the CLI or use `allowed`.
+  turn instead of running with write access. Update the CLI. Generic ACP
+  instances support only explicit `full_access`; `read_only` and the default
+  `allowed` both fail. See [Providers](/orchestration/providers#any-acp-agent).
 </Accordion>
 
 <Accordion title="A subagent provider is missing from targets">
@@ -95,4 +105,38 @@ Bash, public URL, allowed hosts, and native SQLite status.
   and logged in, and check `devspace agents daemon logs`. A daemon with active
   work returns `DAEMON_CONFIG_CHANGED` until that work finishes, then picks up
   the new configuration.
+</Accordion>
+
+<Accordion title="Owner password not accepted">
+  Use the Owner password stored in `~/.devspace/auth.json`, or the
+  `DEVSPACE_OAUTH_OWNER_TOKEN` override if one is set in the server environment.
+  `devspace init --force` preserves the stored owner token; it does not reset
+  the password.
+</Accordion>
+
+<Accordion title="Skills do not appear">
+  Confirm `skills.enabled` is `true`. DevSpace checks `~/.agents/skills`, project
+  `.agents/skills`, `~/.devspace/skills`, `skills.agentDir/skills` (default
+  `~/.codex/skills`), and `skills.paths`. Relative custom paths resolve from the
+  active workspace; add legacy paths such as `.pi/skills` there. Restart `serve`
+  after changing configuration. See [Skills](/concepts/workspaces#skills).
+</Accordion>
+
+<Accordion title="Review or workspace cards do not appear in ChatGPT">
+  Cards are attached only to `open_workspace` and `show_changes`; reads, edits,
+  and commands return normal tool results. Check that `ui.enabled` is not
+  `false`, restart `serve` after config changes, and reconnect the MCP server.
+  Plain MCP clients may show text only; `show_changes` still works.
+
+  If the host restores only structured content, a review card uses its
+  `review_ref` to reopen the exact Git-backed review without advancing the
+  review point. The workspace card can be rebuilt from its structured result.
+</Accordion>
+
+<Accordion title="Local state keeps growing">
+  Workspace session metadata, conversation bindings, and review refs have no
+  automatic retention pruning. This is separate from `activity.maxTurns`, which
+  caps closed activity turns per workspace, and managed worktree cleanup, which
+  removes stale worktree directories. Disabling activity stops new recording
+  without deleting existing history.
 </Accordion>

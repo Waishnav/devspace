@@ -13,7 +13,9 @@ then the request's `User-Agent`. The client is fixed per connector, so a host
 keeps the same tool list across requests.
 
 To give every host one surface, set `tools.mode` to `"codex"` or `"claude"` in
-`~/.devspace/config.jsonc`. When set, it wins over detection.
+`~/.devspace/config.jsonc` and restart `serve`. When set, it wins over detection.
+[Experimental code mode](/connect/code-mode) overrides both surfaces with
+JavaScript tool composition.
 
 <Tabs>
   <Tab title="codex (ChatGPT)">
@@ -42,12 +44,33 @@ Dedicated `grep`, `glob`, and `ls` tools are intentionally absent; the shell
 tool uses `rg`, `find`, and `ls`. File writes go through the edit tools rather
 than shell redirection.
 
+On the Codex surface, set `tty: true` only for commands that need a terminal.
+Use `write_stdin` with the returned `session_id` for commands that outlive the
+yield window; do not rerun them.
+
+## Workspace context
+
+Reuse the `workspace_id` returned by `open_workspace`, including after a server
+restart. Optional OpenAI conversation metadata can make a repeated open of the
+same checkout reuse its ID. This is adapter behavior, not a model option; hosts
+without that metadata get a new workspace. New checkout workspaces return full
+context, reused checkouts omit repeated model-visible bootstrap context while
+the UI keeps the details, and each new worktree gets full context. See
+[Workspaces](/concepts/workspaces).
+
 ## Review cards
 
 Widget UI is attached only to `open_workspace` and `show_changes` — never to
-every read or command. `show_changes` returns a compact `review_ref`; hosts
-that support MCP Apps render the full file list and patch. Inspect any review
-locally with:
+every read or command. Call `show_changes` once after the final related file
+change to review the combined diff and advance the review point.
+
+Its structured result contains `workspace_id`, a Git-backed `review_ref`, and
+summary text in `result`. The full file list and patch travel in result metadata
+for MCP Apps hosts to render. If a host restores only structured content, the
+card reopens that exact saved review without advancing the current review
+point. The `open_workspace` card can also be rebuilt from its structured result.
+
+Inspect any review locally with:
 
 ```bash
 devspace show-changes <review-ref> --json
