@@ -122,6 +122,25 @@
       },
       "additionalProperties": false
     },
+    "activity": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Record workspace tool calls, with their arguments and results, in the local state database.",
+          "type": "boolean"
+        },
+        "maxTurns": {
+          "default": 200,
+          "description": "Closed turns kept per workspace. Older turns and their tool calls are deleted.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
     "artifacts": {
       "default": {},
       "type": "object",

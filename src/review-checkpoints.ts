@@ -36,6 +36,7 @@ interface WorkspaceReviewState {
   gitRoot?: string;
   openRef: string;
   baselineRef: string;
+  checkpointRefPrefix: string;
   openRefAvailable: boolean;
   baselineRefAvailable: boolean;
   diagnostic?: string;
@@ -123,6 +124,10 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       const review = await readReviewBetween(state.gitRoot, baseline, current);
 
       if (markReviewed) {
+        // The baseline only reaches the latest checkpoint, and a workspace-open
+        // fallback rewrites its history. Pin each checkpoint so past turns stay
+        // reviewable instead of becoming garbage-collectable.
+        await git(state.gitRoot, ["update-ref", `${state.checkpointRefPrefix}/${current}`, current]);
         await git(state.gitRoot, ["update-ref", state.baselineRef, current]);
         state.baselineRefAvailable = true;
       }
@@ -159,6 +164,12 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
         commitForRef(state.gitRoot, state.baselineRef),
         resolveReviewCommitOrUndefined(state.gitRoot, reviewRef),
       ]);
+      if (
+        reviewCommit
+        && await commitForRef(state.gitRoot, `${state.checkpointRefPrefix}/${reviewCommit}`) === reviewCommit
+      ) {
+        return readReviewCommit(state.gitRoot, reviewCommit);
+      }
       if (
         !openCommit
         || !baselineCommit
@@ -274,11 +285,12 @@ async function commitForRef(gitRoot: string, ref: string): Promise<string | unde
 
 function reviewRefs(
   workspaceId: string,
-): Pick<WorkspaceReviewState, "openRef" | "baselineRef"> {
+): Pick<WorkspaceReviewState, "openRef" | "baselineRef" | "checkpointRefPrefix"> {
   const segment = safeWorkspaceRefSegment(workspaceId);
   return {
     openRef: `${REVIEW_REF_PREFIX}/${segment}/open`,
     baselineRef: `${REVIEW_REF_PREFIX}/${segment}/baseline`,
+    checkpointRefPrefix: `${REVIEW_REF_PREFIX}/${segment}/checkpoints`,
   };
 }
 
@@ -373,6 +385,7 @@ async function isKnownReviewCommit(gitRoot: string, reviewCommit: string): Promi
   for (const line of refs.split("\n")) {
     const [ref, commit] = line.split("\t");
     if (!ref || !commit) continue;
+    if (commit === reviewCommit && ref.endsWith(`/checkpoints/${reviewCommit}`)) return true;
 
     const match = ref.match(/^refs\/devspace\/review\/(.+)\/(open|baseline)$/);
     if (!match) continue;

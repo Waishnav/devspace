@@ -49,6 +49,8 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
+import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -379,6 +381,7 @@ export function createMcpServer(
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
+  workspaceActivityJournal?: WorkspaceActivityJournal,
 ): McpServer {
   const toolSurface = getToolSurface(config.experimentalCodeMode ? "codex" : surface);
   const server = new McpServer(
@@ -402,6 +405,7 @@ export function createMcpServer(
     trackToolActivity,
     codeModeRegistry,
     codeModeExecutions,
+    workspaceActivityJournal,
   );
   if (codeModeExecutions) {
     // Scripts and the commands they start must not outlive the MCP server that ran them.
@@ -431,9 +435,10 @@ function registerMcpSurface(
   trackToolActivity?: TrackToolActivity,
   codeModeRegistry?: CodeModeRegistry,
   codeModeExecutions?: CodeModeExecutions,
+  workspaceActivityJournal?: WorkspaceActivityJournal,
 ): void {
-  const registrationTarget = trackToolActivity
-    ? withTrackedToolHandlers(server, trackToolActivity)
+  const registrationTarget = trackToolActivity || workspaceActivityJournal
+    ? withObservedToolHandlers(server, { trackToolActivity, workspaceActivityJournal })
     : server;
   const internalTarget = codeModeRegistry?.registrationTarget ?? registrationTarget;
 
@@ -954,18 +959,33 @@ function registerCodeModeTools(
   });
 }
 
-function withTrackedToolHandlers(
+function withObservedToolHandlers(
   server: McpRegistrationTarget,
-  trackToolActivity: TrackToolActivity,
+  options: {
+    trackToolActivity?: TrackToolActivity;
+    workspaceActivityJournal?: WorkspaceActivityJournal;
+  },
 ): McpRegistrationTarget {
   return {
     registerTool: ((...args: unknown[]) => {
+      const toolName = args[0] as string;
       const handler = args.at(-1) as (...handlerArgs: unknown[]) => unknown;
       return (server.registerTool as (...callArgs: unknown[]) => unknown)(
         ...args.slice(0, -1),
-        (...handlerArgs: unknown[]) => trackToolActivity(
-          () => Promise.resolve(handler(...handlerArgs)),
-        ),
+        (...handlerArgs: unknown[]) => {
+          const operation = () => Promise.resolve(handler(...handlerArgs));
+          const observedOperation = options.workspaceActivityJournal
+            ? () => options.workspaceActivityJournal!.capture({
+                toolName,
+                arguments: handlerArgs[0],
+                extra: (handlerArgs[1] ?? {}) as Record<string, unknown>,
+                operation,
+              })
+            : operation;
+          return options.trackToolActivity
+            ? options.trackToolActivity(observedOperation)
+            : observedOperation();
+        },
       );
     }) as McpRegistrationTarget["registerTool"],
     registerResource: server.registerResource.bind(server),
@@ -1004,6 +1024,14 @@ export function createServer(
   const codeModeRegistry = config.experimentalCodeMode ? new CodeModeRegistry() : undefined;
   const codeModeExecutions = codeModeRegistry ? new CodeModeExecutions(codeModeRegistry, processSessions) : undefined;
   const toolActivities = new ToolActivityTracker();
+  const workspaceActivity = new WorkspaceActivityStore(config.stateDir, config.activity.maxTurns);
+  const workspaceActivityJournal = config.activity.enabled
+    ? new WorkspaceActivityJournal(workspaceActivity, (error) => {
+      logEvent(config.logging, "warn", "workspace_activity_journal_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    })
+    : undefined;
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
@@ -1027,6 +1055,7 @@ export function createServer(
         toolActivities.track,
         codeModeRegistry,
         codeModeExecutions,
+        workspaceActivityJournal,
       );
     });
     return { toolSurface, bind };
@@ -1230,6 +1259,7 @@ export function createServer(
         }
         await codeModeExecutions?.shutdown();
         await toolActivities.waitForIdle();
+        workspaceActivity.close();
         processSessions.shutdown();
         oauthProvider.close();
         workspaceStore.close?.();

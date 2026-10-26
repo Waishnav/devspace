@@ -28,6 +28,14 @@ import type { ToolSurfaceName } from "./tool-surfaces/index.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import {
+  listActivityWorkspaces,
+  listTurnToolCalls,
+  listWorkspaceTurns,
+  readTurnDiff,
+} from "./workspace-activity.js";
+import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
+import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -488,6 +496,75 @@ test("show_changes can reopen a historical review without advancing the checkpoi
     (((responseCard(current).payload as { patch?: string } | undefined)?.patch) ?? ""),
     /-first\n\+second/,
   );
+});
+
+test("workspace activity records turns between review checkpoints", async (t) => {
+  const context = await fixture(t, { git: true, captureActivity: true });
+  const activity = context.activity!;
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "activity-turns"),
+  ).workspace_id as string;
+  const patch = (from: string, to: string) => context.client.callTool({
+    name: "apply_patch",
+    arguments: {
+      workspace_id: workspaceId,
+      patch: `*** Begin Patch\n*** Update File: README.md\n@@\n-${from}\n+${to}\n*** End Patch`,
+    },
+  });
+  const showChanges = async () => structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+  })).review_ref as string;
+
+  await patch("hello", "hello turn one");
+  const firstRef = await showChanges();
+  await patch("hello turn one", "hello turn two");
+  await context.client.callTool({
+    name: "exec_command",
+    arguments: { workspace_id: workspaceId, cmd: "printf activity" },
+  });
+  const secondRef = await showChanges();
+  await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+    _meta: { "devspace/reviewRef": firstRef },
+  } as Parameters<Client["callTool"]>[0]);
+
+  const turns = listWorkspaceTurns(activity, workspaceId);
+  assert.deepEqual(
+    turns.map(({ sequence, status, reviewRef }) => ({ sequence, status, reviewRef })),
+    [
+      { sequence: 3, status: "open", reviewRef: undefined },
+      { sequence: 2, status: "closed", reviewRef: secondRef },
+      { sequence: 1, status: "closed", reviewRef: firstRef },
+    ],
+  );
+  assert.deepEqual(
+    listTurnToolCalls(activity, workspaceId, 1)?.map((call) => call.toolName),
+    ["open_workspace", "apply_patch", "show_changes"],
+  );
+  assert.deepEqual(
+    listTurnToolCalls(activity, workspaceId, 2)?.map((call) => call.toolName),
+    ["apply_patch", "exec_command", "show_changes"],
+  );
+  assert.equal(listTurnToolCalls(activity, workspaceId, 3)?.[0]?.origin, "card");
+
+  const secondDiff = await readTurnDiff(activity, workspaceId, 2);
+  assert.equal(secondDiff?.status, "available");
+  if (secondDiff?.status === "available") {
+    assert.match(secondDiff.review.patch, /-hello turn one\n\+hello turn two/);
+    assert.doesNotMatch(secondDiff.review.patch, /^-hello$/m);
+  }
+  assert.deepEqual(await readTurnDiff(activity, workspaceId, 3), { status: "open" });
+
+  const pinned = await execFileAsync("git", ["for-each-ref", "--format=%(refname)", "refs/devspace/review"], {
+    cwd: context.project,
+  });
+  for (const ref of [firstRef, secondRef]) assert.match(pinned.stdout, new RegExp(`/checkpoints/${ref}$`, "m"));
+
+  const [listed] = await listActivityWorkspaces(activity);
+  assert.equal(listed?.workspaceId, workspaceId);
+  assert.equal(listed?.turns, 3);
 });
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
@@ -1049,6 +1126,7 @@ interface ServerFixture {
   client: Client;
   project: string;
   close: () => Promise<void>;
+  activity?: WorkspaceActivityStore;
 }
 
 function schemaPropertyPaths(
@@ -1137,6 +1215,7 @@ async function fixture(
     surface?: ToolSurfaceName;
     uiEnabled?: boolean;
     experimentalCodeMode?: boolean;
+    captureActivity?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -1208,6 +1287,10 @@ async function fixture(
     resolveProviderAvailability(),
   );
   const store = new SqliteWorkspaceStore(stateDir);
+  const activity = options.captureActivity
+    ? new WorkspaceActivityStore(stateDir)
+    : undefined;
+  const activityJournal = activity ? new WorkspaceActivityJournal(activity) : undefined;
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
     config,
@@ -1217,6 +1300,8 @@ async function fixture(
     new ProcessSessionManager(),
     resolveLocalAgentProviders,
     [],
+    undefined,
+    activityJournal,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "devspace-test-client", version: "1.0.0" });
@@ -1231,6 +1316,7 @@ async function fixture(
     closed = true;
     await client.close();
     await server.close();
+    activity?.close();
     store.close();
   };
 
@@ -1239,7 +1325,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project, close };
+  return { client, project, close, ...(activity ? { activity } : {}) };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {

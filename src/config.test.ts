@@ -23,6 +23,7 @@ try {
   assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "1" }).experimentalCodeMode, true);
   assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "0" }).experimentalCodeMode, false);
   assert.equal(defaults.uiEnabled, true);
+  assert.deepEqual(defaults.activity, { enabled: true, maxTurns: 200 });
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
   assert.deepEqual(defaults.subagents, {

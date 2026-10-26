@@ -31,6 +31,7 @@ export interface ServerConfig extends AgentConfig {
   toolSurfaceOverride: "claude" | "codex" | undefined;
   experimentalCodeMode: boolean;
   uiEnabled: boolean;
+  activity: { enabled: boolean; maxTurns: number };
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
   skillsEnabled: boolean;
@@ -100,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     toolSurfaceOverride: stored.tools.mode,
     experimentalCodeMode: env.DEVSPACE_EXPERIMENTAL_CODE_MODE === "1",
     uiEnabled: stored.ui.enabled,
+    activity: stored.activity,
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,
     skillsEnabled: stored.skills.enabled,

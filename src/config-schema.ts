@@ -38,6 +38,13 @@ const artifactsConfigSchema = z.object({
   maxFileBytes: z.number().int().positive().default(100 * 1024 * 1024),
 }).strict().prefault({});
 
+const activityConfigSchema = z.object({
+  enabled: z.boolean().default(true)
+    .describe("Record workspace tool calls, with their arguments and results, in the local state database."),
+  maxTurns: z.number().int().positive().default(200)
+    .describe("Closed turns kept per workspace. Older turns and their tool calls are deleted."),
+}).strict().prefault({});
+
 const skillsConfigSchema = z.object({
   enabled: z.boolean().default(true),
   paths: z.array(z.string().trim().min(1)).default([]),
@@ -81,6 +88,7 @@ export const devspaceConfigSchema = z.object({
   storage: storageConfigSchema,
   tools: toolsConfigSchema,
   ui: uiConfigSchema,
+  activity: activityConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
   // Absent means "never configured", which differs from an explicit `enabled: false`.

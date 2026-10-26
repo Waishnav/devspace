@@ -107,6 +107,11 @@ const migrations: Migration[] = [
       addColumnIfMissing(sqlite, "local_agent_sessions", "branch", "text");
     },
   },
+  {
+    version: 15,
+    name: "workspace-activity",
+    up: migrateWorkspaceActivity,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -401,6 +406,52 @@ function migrateLocalAgentTurnEvents(sqlite: Database.Database): void {
       primary key (turn_row_id, seq),
       foreign key (turn_row_id) references local_agent_turns(id) on delete cascade
     );
+  `);
+}
+
+function migrateWorkspaceActivity(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists workspace_turns (
+      id integer primary key autoincrement,
+      workspace_session_id text not null,
+      sequence integer not null,
+      status text not null default 'open',
+      review_ref text,
+      started_at text not null,
+      closed_at text,
+      foreign key (workspace_session_id)
+        references workspace_sessions(id)
+        on delete cascade
+    );
+
+    create unique index if not exists workspace_turns_sequence_idx
+      on workspace_turns(workspace_session_id, sequence);
+
+    create unique index if not exists workspace_turns_open_idx
+      on workspace_turns(workspace_session_id)
+      where status = 'open';
+
+    create table if not exists workspace_turn_tool_calls (
+      id integer primary key autoincrement,
+      turn_id integer not null,
+      origin text not null default 'model',
+      conversation_scope_id text,
+      request_id text,
+      tool_name text not null,
+      arguments_json text not null,
+      result_json text,
+      error_json text,
+      is_error integer not null default 0,
+      started_at text not null,
+      completed_at text not null,
+      duration_ms integer not null,
+      foreign key (turn_id)
+        references workspace_turns(id)
+        on delete cascade
+    );
+
+    create index if not exists workspace_turn_tool_calls_turn_idx
+      on workspace_turn_tool_calls(turn_id, started_at);
   `);
 }
 

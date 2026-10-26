@@ -58,6 +58,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 12, name: "local-agent-authority" },
       { version: 13, name: "dynamic-workflows" },
       { version: 14, name: "local-agent-worktrees" },
+      { version: 15, name: "workspace-activity" },
     ]);
   } finally {
     database.close();
