@@ -1,14 +1,14 @@
 import type { SubagentsConfig } from "./local-agent-config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
-import {
-  LOCAL_AGENT_PROVIDERS,
-  type LocalAgentProfile,
-  type LocalAgentProfileSummary,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
+import type { LocalAgentProfile, LocalAgentProfileSummary } from "./local-agent-profiles.js";
+import type {
+  LocalAgentDriverKind,
+  LocalAgentProviderInstanceId,
+} from "./local-agent-provider.js";
 
 export interface LocalAgentProviderStatus {
-  id: LocalAgentProvider;
+  id: LocalAgentProviderInstanceId;
+  driver: LocalAgentDriverKind;
   enabled: boolean;
   available: boolean;
   usable: boolean;
@@ -28,13 +28,14 @@ export function buildLocalAgentProviderStatuses(
   config: SubagentsConfig,
   availability: readonly LocalAgentProviderAvailability[],
 ): LocalAgentProviderStatus[] {
-  return LOCAL_AGENT_PROVIDERS.map((id) => {
-    const configured = config.providers.find((entry) => entry.id === id);
+  return config.providers.map((configured) => {
+    const id = configured.id;
     const live = availability.find((entry) => entry.name === id);
     const enabled = configured?.enabled === true;
     const available = live?.available === true;
     return {
       id,
+      driver: configured.driver,
       enabled,
       available,
       usable: config.enabled && enabled && available,

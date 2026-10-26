@@ -43,6 +43,7 @@ assert.equal(
         instructions: "on-demand",
         providers: [{
           id: "codex",
+          driver: "codex",
           enabled: true,
           command: executable,
           env: { OPENAI_API_KEY: "configured-secret", EMPTY_VALUE: "" },

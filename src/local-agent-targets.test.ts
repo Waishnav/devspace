@@ -106,7 +106,8 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
 }
 
 {
-  const target = resolveLocalAgentTarget("opencode", profiles);
+  const providers = [{ id: "opencode", driver: "opencode", enabled: true }] as const;
+  const target = resolveLocalAgentTarget("opencode", profiles, undefined, undefined, providers);
   assert.equal(target?.kind, "provider");
   assert.equal(target?.name, "opencode");
   assert.equal(target?.provider, "opencode");
@@ -115,7 +116,8 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
 }
 
 {
-  const target = resolveLocalAgentTarget("opencode", profiles, "kimi-k2", "deep");
+  const providers = [{ id: "opencode", driver: "opencode", enabled: true }] as const;
+  const target = resolveLocalAgentTarget("opencode", profiles, "kimi-k2", "deep", providers);
   assert.equal(target?.kind, "provider");
   assert.equal(target?.model, "kimi-k2");
   assert.equal(target?.effort, "deep");
@@ -124,6 +126,7 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
 {
   const providerDefaults = [{
     id: "codex",
+    driver: "codex",
     enabled: true,
     model: "gpt-default",
     effort: "medium",
@@ -137,6 +140,19 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
   const overridden = resolveLocalAgentTarget("reviewer", profiles, "gpt-run", "xhigh", providerDefaults);
   assert.equal(overridden?.model, "gpt-run");
   assert.equal(overridden?.effort, "xhigh");
+}
+
+{
+  const providerInstances = [{
+    id: "codex-work",
+    driver: "codex",
+    enabled: true,
+    model: "gpt-work",
+  }] as const;
+  const target = resolveLocalAgentTarget("codex-work", profiles, undefined, undefined, providerInstances);
+  assert.equal(target?.kind, "provider");
+  assert.equal(target?.provider, "codex-work");
+  assert.equal(target?.model, "gpt-work");
 }
 
 {

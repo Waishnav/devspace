@@ -22,8 +22,8 @@ assert.deepEqual(
     enabled: true,
     instructions: "on-demand",
     providers: [
-      { id: "codex", enabled: true },
-      { id: "claude", enabled: true },
+      { id: "codex", driver: "codex", enabled: true },
+      { id: "claude", driver: "claude", enabled: true },
     ],
   },
 );
@@ -34,30 +34,34 @@ const configured = {
   providers: [
     {
       id: "codex" as const,
+      driver: "codex" as const,
       enabled: true,
       model: "gpt-5.4",
       effort: "high",
       command: "/opt/bin/codex-wrapper",
       env: { OPENAI_API_KEY: "configured", EMPTY_VALUE: "" },
     },
-    { id: "claude" as const, enabled: true, model: "sonnet" },
+    { id: "claude" as const, driver: "claude" as const, enabled: true, model: "sonnet" },
+    { id: "codex-work", driver: "codex" as const, enabled: true, model: "gpt-work" },
   ],
 };
 assert.deepEqual(
-  updateOnboardingSubagentsConfig(configured, ["claude"]),
+  updateOnboardingSubagentsConfig(configured, ["claude", "codex-work"]),
   {
     enabled: true,
     instructions: "preload",
     providers: [
       {
         id: "codex",
+        driver: "codex",
         enabled: false,
         model: "gpt-5.4",
         effort: "high",
         command: "/opt/bin/codex-wrapper",
         env: { OPENAI_API_KEY: "configured", EMPTY_VALUE: "" },
       },
-      { id: "claude", enabled: true, model: "sonnet" },
+      { id: "claude", driver: "claude", enabled: true, model: "sonnet" },
+      { id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" },
     ],
   },
 );

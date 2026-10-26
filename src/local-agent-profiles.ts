@@ -3,23 +3,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
-
-export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot" | "grok";
-
-export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
-  "codex",
-  "claude",
-  "opencode",
-  "pi",
-  "cursor",
-  "copilot",
-  "grok",
-];
+import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
 
 export interface LocalAgentProfile {
   name: string;
   description: string;
-  provider: LocalAgentProvider;
+  provider: LocalAgentProviderInstanceId;
   model?: string;
   effort?: string;
   filePath: string;
@@ -30,7 +19,7 @@ export interface LocalAgentProfile {
 export interface LocalAgentProfileSummary {
   name: string;
   description: string;
-  provider: LocalAgentProvider;
+  provider: LocalAgentProviderInstanceId;
   model?: string;
   effort?: string;
 }
@@ -41,7 +30,6 @@ interface ParsedFrontmatter {
 }
 
 const FRONTMATTER_DELIMITER = "---";
-const PROVIDERS = new Set<LocalAgentProvider>(LOCAL_AGENT_PROVIDERS);
 
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
@@ -154,21 +142,12 @@ function profileFromFrontmatter(
   };
 }
 
-function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProvider {
+function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProviderInstanceId {
   const provider = readString(frontmatter, "provider");
   if (!provider) {
     throw new Error(`Subagent profile is missing provider: ${filePath}`);
   }
-  if (!PROVIDERS.has(provider as LocalAgentProvider)) {
-    throw new Error(
-      `Subagent profile provider must be codex, claude, opencode, pi, cursor, copilot, or grok: ${filePath}`,
-    );
-  }
-  return provider as LocalAgentProvider;
-}
-
-export function isLocalAgentProvider(value: string): value is LocalAgentProvider {
-  return PROVIDERS.has(value as LocalAgentProvider);
+  return provider;
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {

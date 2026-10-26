@@ -58,6 +58,7 @@ const pool = new LocalAgentRuntimePool();
 
 const first = await pool.run(driver, {
   agentId: "agt_one",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
   }, {
@@ -68,6 +69,7 @@ const first = await pool.run(driver, {
   });
 const second = await pool.run(driver, {
   agentId: "agt_two",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
@@ -142,6 +144,7 @@ if (process.platform !== "win32") {
     });
     const created = await envDriver.createRuntime({
       agentId: "agt_env",
+      providerInstanceId: "opencode",
       provider: "opencode",
       workspaceRoot: "/tmp/project",
     });
@@ -179,6 +182,7 @@ assert.deepEqual(promptInputs[0], {
 let callbackSessionId: string | undefined;
 await pool.run(driver, {
   agentId: "agt_one",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
@@ -283,6 +287,7 @@ const applicationErrorDriver = new OpencodeLocalAgentDriver(async () => ({
 }));
 const applicationFailure = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, { prompt: "bad input", workspaceRoot: "/tmp/project" });
@@ -295,6 +300,7 @@ if (applicationFailure.isErr()) {
 assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
 const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, { prompt: "valid input", workspaceRoot: "/tmp/project" });
@@ -312,6 +318,7 @@ const recoveringDriver = new OpencodeLocalAgentDriver(async () => {
 const recoveringPool = new LocalAgentRuntimePool();
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
@@ -321,6 +328,7 @@ await recoveringPool.run(recoveringDriver, {
 healthAvailable = false;
 const deadRuntime = await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
@@ -335,6 +343,7 @@ if (deadRuntime.isErr()) {
 assert.equal(recoveringPool.size, 0, "a failed health check removes the dead runtime immediately");
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",
+  providerInstanceId: "opencode",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {

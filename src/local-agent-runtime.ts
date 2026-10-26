@@ -1,6 +1,9 @@
 import type { Result } from "better-result";
 import type { AgentProviderError } from "./local-agent-errors.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type {
+  LocalAgentDriverKind,
+  LocalAgentProviderInstanceId,
+} from "./local-agent-provider.js";
 
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 
@@ -16,7 +19,7 @@ export interface LocalAgentRunInput {
 }
 
 export interface LocalAgentRunResult {
-  provider: LocalAgentProvider;
+  provider: LocalAgentDriverKind;
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
@@ -33,7 +36,8 @@ export interface LocalAgentRunCallbacks {
 
 export interface LocalAgentRuntimeContext {
   agentId: string;
-  provider: LocalAgentProvider;
+  providerInstanceId: LocalAgentProviderInstanceId;
+  provider: LocalAgentDriverKind;
   workspaceRoot: string;
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
@@ -48,7 +52,7 @@ export interface LocalAgentRuntimeContext {
  * identity used when a later runtime is created.
  */
 export interface LocalAgentRuntime {
-  readonly provider: LocalAgentProvider;
+  readonly provider: LocalAgentDriverKind;
   run(
     input: LocalAgentRunInput,
     callbacks?: LocalAgentRunCallbacks,
@@ -59,7 +63,8 @@ export interface LocalAgentRuntime {
 }
 
 export interface LocalAgentDriver {
-  readonly provider: LocalAgentProvider;
+  readonly providerInstanceId: LocalAgentProviderInstanceId;
+  readonly provider: LocalAgentDriverKind;
   runtimeKey(context: LocalAgentRuntimeContext): string;
   createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
   readonly idleTimeoutMs?: number;

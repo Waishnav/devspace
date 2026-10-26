@@ -6,7 +6,7 @@ import {
   type ClaudeUserMessage,
 } from "./local-agent-claude.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
-import { subagentsConfigSchema } from "./local-agent-config.js";
+import { parseSubagentsConfig } from "./local-agent-config.js";
 import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
 class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
@@ -56,6 +56,7 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
 
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_claude",
+  providerInstanceId: "claude",
   provider: "claude",
   workspaceRoot: "/tmp/project",
   model: "sonnet",
@@ -241,7 +242,7 @@ const configuredDriver = createLocalAgentDrivers({
     ANTHROPIC_API_KEY: "inherited",
     INHERITED: "yes",
   },
-  subagents: subagentsConfigSchema.parse({
+  subagents: parseSubagentsConfig({
     enabled: true,
     providers: [{
       id: "claude",

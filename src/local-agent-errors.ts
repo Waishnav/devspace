@@ -5,9 +5,9 @@ import {
   type Result as BetterResult,
 } from "better-result";
 import {
-  isLocalAgentProvider,
-  type LocalAgentProvider,
-} from "./local-agent-profiles.js";
+  isLocalAgentDriverKind,
+  type LocalAgentDriverKind,
+} from "./local-agent-provider.js";
 
 export type AgentTargetErrorCode =
   | "UNKNOWN_TARGET"
@@ -19,7 +19,7 @@ export type AgentTargetErrorCode =
 export class AgentTargetError extends TaggedError("AgentTargetError")<{
   code: AgentTargetErrorCode;
   target: string;
-  provider?: LocalAgentProvider;
+  provider?: string;
   operation?: string;
   retryable: boolean;
   cause?: unknown;
@@ -50,7 +50,7 @@ export class AgentScopeError extends TaggedError("AgentScopeError")<{
 }>() {}
 
 interface AgentProviderErrorFields extends Record<string, unknown> {
-  provider: LocalAgentProvider;
+  provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
   retryable: boolean;
@@ -165,7 +165,7 @@ export interface AgentErrorPayload {
   code: LocalAgentError["code"];
   message: string;
   retryable?: boolean;
-  provider?: LocalAgentProvider;
+  provider?: string;
   agentId?: string;
   workspaceId?: string;
   operation?: string;
@@ -233,7 +233,7 @@ export function agentErrorFromPayload(payload: {
   target?: string;
 }): LocalAgentError | undefined {
   const retryable = payload.retryable ?? false;
-  const provider = payload.provider && isLocalAgentProvider(payload.provider)
+  const provider = payload.provider && isLocalAgentDriverKind(payload.provider)
     ? payload.provider
     : undefined;
   switch (payload.code) {
@@ -245,7 +245,7 @@ export function agentErrorFromPayload(payload: {
       return new AgentTargetError({
         code: payload.code,
         target: payload.target ?? payload.agentId ?? payload.provider ?? "unknown",
-        provider,
+        provider: payload.provider,
         operation: payload.operation,
         retryable,
         message: payload.message,
@@ -363,7 +363,7 @@ export function agentErrorFromPayload(payload: {
 }
 
 export function providerErrorFromCause(input: {
-  provider: LocalAgentProvider;
+  provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
   cause: unknown;
@@ -406,7 +406,7 @@ export function providerErrorFromCause(input: {
 }
 
 export async function captureAgentProviderResult<T>(input: {
-  provider: LocalAgentProvider;
+  provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
   run: () => T | Promise<T>;
@@ -456,7 +456,7 @@ function unavailableCauseKind(error: unknown): "permanent" | "transient" | undef
   return undefined;
 }
 
-function displayProvider(provider: LocalAgentProvider): string {
+function displayProvider(provider: LocalAgentDriverKind): string {
   switch (provider) {
     case "codex": return "Codex";
     case "claude": return "Claude";

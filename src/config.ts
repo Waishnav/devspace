@@ -3,7 +3,7 @@ import { expandHomePath } from "./roots.js";
 import type { LoggingConfig } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
-import type { SubagentsConfig } from "./local-agent-config.js";
+import { resolveSubagentsConfig, type SubagentsConfig } from "./local-agent-config.js";
 
 export interface ServerConfig {
   configDir: string;
@@ -74,7 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     skillPaths: stored.skills.paths,
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),
-    subagents: stored.subagents,
+    subagents: resolveSubagentsConfig(stored.subagents),
     agentDir: normalizePath(stored.skills.agentDir),
     logging: {
       ...stored.logging,

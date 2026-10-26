@@ -16,7 +16,8 @@ try {
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
     profileName: "reviewer",
-    provider: "codex",
+    providerInstanceId: "codex-work",
+    driver: "codex",
     model: "gpt-5.4",
     effort: "high",
   });
@@ -25,6 +26,8 @@ try {
   assert.equal(created.status, "starting");
   assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");
+  assert.equal(store.getById(created.id)?.providerInstanceId, "codex-work");
+  assert.equal(store.getById(created.id)?.driver, "codex");
   assert.equal(store.getById(created.id.slice(0, 7)), undefined);
 
   const updated = store.update(created.id, {
@@ -130,7 +133,8 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
     profileName: "explorer",
-    provider: "claude",
+    providerInstanceId: "claude",
+    driver: "claude",
   });
 
   assert.deepEqual(
@@ -194,6 +198,13 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   const legacyRecord = upgradedStore.getById("agt_legacy");
   assert.equal(legacyRecord?.error, "old error");
   assert.equal(legacyRecord?.effort, "high");
+  assert.equal(legacyRecord?.providerInstanceId, "codex");
+  assert.equal(legacyRecord?.driver, "codex");
+  const inspect = new Database(databasePath(legacyStateDir), { readonly: true });
+  const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)
+    .find((column) => column.name === "driver");
+  inspect.close();
+  assert.equal(driverColumn?.notnull, 1, "migrated driver column rejects NULL like a fresh schema");
   assert.equal(legacyRecord?.errorCode, undefined);
   assert.equal(legacyRecord?.errorRetryable, undefined);
   const upgradedRecord = upgradedStore.update("agt_legacy", {

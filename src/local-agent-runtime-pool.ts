@@ -12,7 +12,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 60_000;
@@ -209,7 +209,7 @@ export class LocalAgentRuntimePool {
 
   private async discardRuntime(
     entry: RuntimeEntry,
-    provider: LocalAgentProvider,
+    provider: LocalAgentDriverKind,
     reason: string,
   ): Promise<void> {
     try {

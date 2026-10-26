@@ -10,9 +10,9 @@ const config: SubagentsConfig = {
   enabled: true,
   instructions: "on-demand",
   providers: [
-    { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
-    { id: "claude", enabled: true, model: "sonnet" },
-    { id: "pi", enabled: false },
+    { id: "codex", driver: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+    { id: "claude", driver: "claude", enabled: true, model: "sonnet" },
+    { id: "pi", driver: "pi", enabled: false },
   ],
 };
 const statuses = buildLocalAgentProviderStatuses(config, [
@@ -23,7 +23,7 @@ const statuses = buildLocalAgentProviderStatuses(config, [
 assert.equal(statuses.find((provider) => provider.id === "codex")?.usable, true);
 assert.equal(statuses.find((provider) => provider.id === "claude")?.usable, false);
 assert.equal(statuses.find((provider) => provider.id === "pi")?.usable, false);
-assert.equal(statuses.find((provider) => provider.id === "opencode")?.enabled, false);
+assert.equal(statuses.find((provider) => provider.id === "opencode"), undefined);
 
 const profiles: LocalAgentProfile[] = [
   {
