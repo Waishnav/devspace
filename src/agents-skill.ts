@@ -16,8 +16,12 @@ interface SkillSource {
 }
 
 function bundledSkill(): SkillSource {
-  const source = readFileSync(fileURLToPath(new URL("../skills/subagents/SKILL.md", import.meta.url)), "utf8");
-  const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(source);
+  return parseSkillSource(readFileSync(fileURLToPath(new URL("../skills/subagents/SKILL.md", import.meta.url)), "utf8"));
+}
+
+/** Accepts CRLF: git's autocrlf checks the file out that way on Windows. */
+export function parseSkillSource(source: string): SkillSource {
+  const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(source.replace(/\r\n/g, "\n"));
   const description = match?.[1]?.match(/^description:\s*(.+)$/m)?.[1];
   if (!match || !description) throw new Error("Bundled subagents skill is missing its frontmatter.");
   return { description, body: match[2]! };
