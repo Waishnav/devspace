@@ -51,6 +51,8 @@ const transcriptsDir = join(harnessDir, "transcripts");
 const TURN_TIMEOUT_SECONDS = 180;
 const STOP_BOUND_MS = 15_000;
 const NON_STREAMING_TOOL_DELAY_MS = 8_000;
+// The stop scenario's `sleep 20` plus slack for the provider to start it.
+const LATE_WRITE_DEADLINE_MS = 25_000;
 
 const SCENARIOS: Scenario[] = [
   {
@@ -94,6 +96,7 @@ const SCENARIOS: Scenario[] = [
     description: "C4: stop during a long tool call ends the turn as stopped, with no later writes",
     transcript: true,
     async run(run) {
+      const promptedAt = Date.now();
       const id = await start(run, "Run the shell command `sleep 20 && echo late > late.txt`, then reply SLEPT.");
       if (streams(run.provider)) {
         await waitForEvent(run, id, (event) => event.type === "tool_started");
@@ -117,6 +120,9 @@ const SCENARIOS: Scenario[] = [
       const events = (await cli(run, ["agents", "events", id, "--json"])).json.events;
       expect(after.json.status === "stopped", `status changed after stop: ${describe(after.json)}`);
       expect(events.length === before, "events were appended after the turn stopped");
+      // Replay runs no tools, so only a live provider can prove the sleep was killed:
+      // check after it would have finished.
+      if (run.mode !== "replay") await delay(Math.max(0, promptedAt + LATE_WRITE_DEADLINE_MS - Date.now()));
       expect(!existsSync(join(run.workspace, "late.txt")), "the stopped turn kept writing");
     },
   },
