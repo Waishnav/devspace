@@ -1,5 +1,8 @@
 {
   "description": "Open an isolated worktree from a dirty checkout and review a change made inside it.",
+  "host": {
+    "clientName": "ChatGPT"
+  },
   "fixture": {
     "files": {
       "README.md": "# QA fixture\n\nbaseline line\n"
