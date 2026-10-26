@@ -10,6 +10,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import {
@@ -68,6 +69,8 @@ interface AcpCapabilities {
 
 interface AcpSessionQueue {
   values: unknown[];
+  /** Set while a turn runs so session/update notifications are reported as they arrive. */
+  onUpdate?: (value: unknown) => void;
 }
 
 export interface AcpRuntimeOptions {
@@ -190,6 +193,8 @@ export class AcpRuntime implements LocalAgentRuntime {
               }),
             )
           : undefined;
+        const activity = callbacks?.onEvent ? new AcpActivityReporter(callbacks.onEvent) : undefined;
+        if (activity) queue.onUpdate = (value) => activity.handle(value);
         try {
           queue.values.length = 0;
           const standardResponse = this.connection.agent.request("session/prompt", {
@@ -215,6 +220,7 @@ export class AcpRuntime implements LocalAgentRuntime {
             this.grokCompletionRegistry?.markCompleted(sessionId, promptId);
           }
           const updates = queue.values.splice(0);
+          activity?.flush();
           const finalResponse = extractAcpText(updates);
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
@@ -233,6 +239,7 @@ export class AcpRuntime implements LocalAgentRuntime {
             items: updates,
           };
         } finally {
+          queue.onUpdate = undefined;
           removeAbort();
           clearTimeout(cancelTimer);
           if (onAbort) input.signal?.removeEventListener("abort", onAbort);
@@ -463,7 +470,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
   } as const;
   readonly capabilities = {
     sessions: { resume: true, close: true },
-    turns: { interrupt: true },
+    turns: { interrupt: true, streaming: true },
     configuration: { modelOverride: true, effortOverride: true },
     permissions: { enforcement: "native" },
     mcp: { supported: true },
@@ -577,9 +584,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
                 : { outcome: { outcome: "cancelled" } };
             })
             .onNotification(methods.client.session.update, (context) => {
-              const sessionId = context.params.sessionId;
-              const queue = queues.get(sessionId);
-              if (queue) appendAcpQueueValue(queue, context.params);
+              deliverAcpSessionUpdate(queues, context.params);
             });
           if (grokCompletionRegistry) {
             for (const method of [
@@ -890,9 +895,73 @@ function hasAcpConfigOptions(value: unknown): boolean {
   return Array.isArray(response?.configOptions);
 }
 
+/** Routes one session/update notification to the session's queue, if DevSpace is tracking it. */
+export function deliverAcpSessionUpdate(
+  queues: Map<string, AcpSessionQueue>,
+  params: { sessionId: string },
+): void {
+  const queue = queues.get(params.sessionId);
+  if (queue) appendAcpQueueValue(queue, params);
+}
+
 function appendAcpQueueValue(queue: AcpSessionQueue, value: unknown): void {
   if (queue.values.length >= MAX_ACP_QUEUE_ITEMS) queue.values.shift();
   queue.values.push(value);
+  queue.onUpdate?.(value);
+}
+
+/**
+ * Maps ACP session updates onto activity events. Message chunks are deltas,
+ * so they are buffered into one message per stretch of assistant text.
+ */
+export class AcpActivityReporter {
+  private readonly toolCalls = new Map<string, { tool: string; summary?: string }>();
+  private text = "";
+
+  constructor(private readonly onEvent: (event: LocalAgentActivityEvent) => void) {}
+
+  handle(value: unknown): void {
+    const update = asRecord(asRecord(value)?.update);
+    switch (update?.sessionUpdate) {
+      case "agent_message_chunk": {
+        const content = asRecord(update.content);
+        if (content?.type === "text" && typeof content.text === "string") this.text += content.text;
+        return;
+      }
+      case "tool_call": {
+        this.flush();
+        const call = {
+          tool: typeof update.kind === "string" && update.kind ? update.kind : "tool",
+          summary: typeof update.title === "string" ? update.title : summarizeToolInput(update.rawInput),
+        };
+        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+        if (id) this.toolCalls.set(id, call);
+        this.onEvent({ type: "tool_started", ...call });
+        this.complete(id, update.status);
+        return;
+      }
+      case "tool_call_update": {
+        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+        const call = id ? this.toolCalls.get(id) : undefined;
+        if (call && typeof update.title === "string") call.summary = update.title;
+        this.complete(id, update.status);
+        return;
+      }
+    }
+  }
+
+  flush(): void {
+    if (this.text.trim()) this.onEvent({ type: "message", text: this.text });
+    this.text = "";
+  }
+
+  private complete(id: string | undefined, status: unknown): void {
+    if (status !== "completed" && status !== "failed") return;
+    const call = id ? this.toolCalls.get(id) : undefined;
+    if (!call || !id) return;
+    this.toolCalls.delete(id);
+    this.onEvent({ type: "tool_completed", ...call, status });
+  }
 }
 
 function appendTail(current: string, chunk: string, maxBytes: number): string {

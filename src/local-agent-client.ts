@@ -27,6 +27,7 @@ import {
   decodeDaemonHello,
   decodeDaemonLogs,
   decodeDaemonStatus,
+  decodeTurnEvents,
   decodeLocalAgentDaemonResponse,
   encodeLocalAgentDaemonRequest,
   LocalAgentDaemonProtocolError,
@@ -49,8 +50,11 @@ import type {
   AgentListError,
   AgentLookupError,
   AgentStartError,
+  AgentEventsError,
   AgentStopError,
   AgentWaitError,
+  LocalAgentTurnEvents,
+  LocalAgentTurnEventsQuery,
   LocalAgentWaitResult,
   RunOverrides,
   StartLocalAgentInput,
@@ -68,6 +72,7 @@ type RequestError<M extends LocalAgentDaemonRequest["method"]> =
       : M extends "agent.get" ? AgentLookupError | AgentDaemonError
         : M extends "agent.list" ? AgentListError | AgentDaemonError
           : M extends "agent.wait" ? AgentWaitError | AgentDaemonError
+          : M extends "agent.events" ? AgentEventsError | AgentDaemonError
           : AgentDaemonError;
 
 export interface LocalAgentClientOptions {
@@ -167,6 +172,15 @@ export class LocalAgentClient {
   ): Promise<BetterResult<LocalAgentRecord, AgentStopError | AgentDaemonError>> {
     const result = await this.request("agent.stop", { id: agentId, scope });
     return decodeRequestResult(result, "agent.stop", decodeAgentRecord);
+  }
+
+  async events(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+    query: LocalAgentTurnEventsQuery = {},
+  ): Promise<BetterResult<LocalAgentTurnEvents, AgentEventsError | AgentDaemonError>> {
+    const result = await this.request("agent.events", { id: agentId, scope, ...query });
+    return decodeRequestResult(result, "agent.events", decodeTurnEvents);
   }
 
   async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
@@ -500,8 +514,8 @@ export class LocalAgentClient {
 
 function isObservationRequest(
   method: LocalAgentDaemonRequest["method"],
-): method is "agent.get" | "agent.list" | "agent.wait" {
-  return method === "agent.get" || method === "agent.list" || method === "agent.wait";
+): method is "agent.get" | "agent.list" | "agent.wait" | "agent.events" {
+  return method === "agent.get" || method === "agent.list" || method === "agent.wait" || method === "agent.events";
 }
 
 export function createLocalAgentClient(
@@ -703,6 +717,7 @@ function isRequestError(
         || category === "store";
     case "agent.get":
     case "agent.wait":
+    case "agent.events":
       return category === "target" || category === "scope" || category === "store";
     case "agent.stop":
       return category === "target"

@@ -11,6 +11,7 @@ import {
   sandboxFor,
 } from "./local-agent-codex.js";
 import { toAgentErrorPayload } from "./local-agent-errors.js";
+import { providerErrorDetail } from "./local-agent-events.js";
 
 const cachedContext = {
   agentId: "agt_test",
@@ -78,6 +79,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [] } } });
         return;
       }
+      if (message.params.input[0].text === "tools") {
+        const threadId = message.params.threadId;
+        const command = { type: "commandExecution", id: "cmd_1", command: "pnpm test", status: "inProgress" };
+        const reply = { type: "agentMessage", text: "Tests fail." };
+        output({ method: "item/started", params: { threadId, turnId, item: command } });
+        output({ method: "item/completed", params: { threadId, turnId, item: { ...command, status: "failed", exitCode: 1 } } });
+        output({ method: "item/completed", params: { threadId, turnId, item: reply } });
+        output({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", items: [reply] } } });
+        return;
+      }
       if (message.params.input[0].text === "notLoaded") {
         const item = { type: "agentMessage", text: "CODEXOK" };
         output({ method: "item/completed", params: { threadId: message.params.threadId, turnId, item } });
@@ -132,7 +143,20 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       assert.equal(failed.error.code, "PROVIDER_EXECUTION_ERROR");
       assert.equal(failed.error.provider, "codex");
       assert.equal(failed.error.retryable, false);
+      assert.equal(providerErrorDetail(failed.error), "fake failure");
     }
+    const codexEvents: unknown[] = [];
+    const tools = await runtime.run({
+      prompt: "tools",
+      workspaceRoot: "/tmp/project",
+      providerSessionId: first.providerSessionId ?? undefined,
+    }, { onEvent: (event) => { codexEvents.push(event); } });
+    assert.equal(tools.isOk() && tools.value.finalResponse, "Tests fail.");
+    assert.deepEqual(codexEvents, [
+      { type: "tool_started", tool: "shell", summary: "pnpm test" },
+      { type: "tool_completed", tool: "shell", summary: "pnpm test", status: "failed" },
+      { type: "message", text: "Tests fail." },
+    ]);
     const protocolFailure = await runtime.run({
       prompt: "empty",
       workspaceRoot: "/tmp/project",

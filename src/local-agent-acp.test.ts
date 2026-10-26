@@ -7,6 +7,7 @@ import {
   AcpLocalAgentDriver,
   AcpRuntime,
   acpCommandArgs,
+  deliverAcpSessionUpdate,
   resolveAcpCommand,
   selectAcpPermissionOption,
 } from "./local-agent-acp.js";
@@ -35,6 +36,17 @@ const connection = {
         const sessionId = input?.sessionId ?? "cursor_session_1";
         queues.set(sessionId, { values: [] });
         return { sessionId };
+      }
+      if (method === "session/prompt" && (params as { prompt: Array<{ text: string }> }).prompt[0]?.text === "use tools") {
+        const sessionId = input?.sessionId ?? "";
+        for (const update of [
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Let me " } },
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "look." } },
+          { sessionUpdate: "tool_call", toolCallId: "call_1", title: "Read README.md", kind: "read", status: "pending" },
+          { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed" },
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
+        ]) deliverAcpSessionUpdate(queues, { sessionId, update } as never);
+        return { stopReason: "end_turn" };
       }
       if (method === "session/prompt") {
         const queue = queues.get(input?.sessionId ?? "");
@@ -99,6 +111,21 @@ assert.equal(
   Object.hasOwn(requests.find(({ method }) => method === "session/new")?.params as object, "additionalDirectories"),
   false,
 );
+
+// Session updates stream as activity; message chunks are joined between tool calls.
+const acpEvents: unknown[] = [];
+const toolsResult = await runtime.run({
+  prompt: "use tools",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: first.providerSessionId ?? undefined,
+}, { onEvent: (event) => { acpEvents.push(event); } });
+assert.equal(toolsResult.isOk() && toolsResult.value.finalResponse, "Let me look.Done.");
+assert.deepEqual(acpEvents, [
+  { type: "message", text: "Let me look." },
+  { type: "tool_started", tool: "read", summary: "Read README.md" },
+  { type: "tool_completed", tool: "read", summary: "Read README.md", status: "completed" },
+  { type: "message", text: "Done." },
+]);
 
 await runtime.releaseSession("cursor_session_1");
 assert.equal(queues.has("cursor_session_1"), false);

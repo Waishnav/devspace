@@ -51,6 +51,13 @@ class FakePiRpcConnection implements PiRpcRuntimeConnection {
         return undefined;
       case "prompt":
         this.lastPrompt = String(record.message);
+        if (this.lastPrompt === "use tools") {
+          this.events.push(
+            { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } },
+            { type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", result: {}, isError: false },
+            { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Two files." }] } },
+          );
+        }
         this.events.push(
           { type: "agent_start" },
           { type: "agent_end" },
@@ -278,3 +285,20 @@ const staleResult = await staleRuntime.value.run({ prompt: "fresh", workspaceRoo
 if (staleResult.isErr()) throw staleResult.error;
 assert.ok(staleResult.value.items.some((event: any) => event.type === "agent_end"), "leftover events from an earlier turn do not settle this one");
 await staleRuntime.value.close();
+
+// Pi RPC tool and message frames map onto DevSpace activity events.
+const streamingConnection = new FakePiRpcConnection();
+const streamingRuntime = await new PiLocalAgentDriver(async () => ({ connection: streamingConnection })).createRuntime(context);
+if (streamingRuntime.isErr()) throw streamingRuntime.error;
+const piEvents: unknown[] = [];
+const streamed = await streamingRuntime.value.run({ prompt: "use tools", workspaceRoot: "/tmp/project" }, {
+  onEvent: (event) => { piEvents.push(event); },
+});
+if (streamed.isErr()) throw streamed.error;
+assert.equal(driver.capabilities.turns.streaming, true);
+assert.deepEqual(piEvents, [
+  { type: "tool_started", tool: "bash", summary: "ls" },
+  { type: "tool_completed", tool: "bash", summary: "ls", status: "completed" },
+  { type: "message", text: "Two files." },
+]);
+await streamingRuntime.value.close();

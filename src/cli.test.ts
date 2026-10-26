@@ -116,7 +116,24 @@ try {
         }));
         return;
       }
-      const result = request.method === "agent.list"
+      const eventsPage = (afterSeq: unknown) => ({
+        agentId: current.id,
+        turnId: "trn_follow",
+        status: afterSeq === 0 ? "running" : "completed",
+        events: afterSeq === 0
+          ? [
+              { type: "turn_started", turnId: "trn_follow", seq: 1, at: "t1" },
+              { type: "tool_started", tool: "bash", summary: "git status", turnId: "trn_follow", seq: 2, at: "t2" },
+            ]
+          : [
+              { type: "tool_completed", tool: "bash", summary: "git status", status: "completed", turnId: "trn_follow", seq: 3, at: "t3" },
+              { type: "message", text: "Clean tree.", turnId: "trn_follow", seq: 4, at: "t4" },
+              { type: "turn_completed", status: "completed", turnId: "trn_follow", seq: 5, at: "t5" },
+            ],
+      });
+      const result = request.method === "agent.events"
+        ? eventsPage(request.params?.afterSeq)
+        : request.method === "agent.list"
         ? [current]
         : request.method === "agent.get"
           ? current
@@ -269,6 +286,37 @@ try {
       scope: { workspaceId: "ws_current", workspaceRoot: realpathSync.native(projectRoot) },
       timeoutMs: 0,
     });
+
+    const { stdout: followOutput } = await execFileAsync(
+      "node",
+      ["--import", "tsx", "src/cli.ts", "agents", "events", current.id, "--follow"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    );
+    assert.equal(followOutput, [
+      '<event seq="1" type="turn_started" turn="trn_follow" at="t1"/>',
+      '<event seq="2" type="tool_started" turn="trn_follow" tool="bash">git status</event>',
+      '<event seq="3" type="tool_completed" turn="trn_follow" tool="bash" status="completed">git status</event>',
+      '<event seq="4" type="message" turn="trn_follow">Clean tree.</event>',
+      '<event seq="5" type="turn_completed" turn="trn_follow" status="completed" at="t5"/>',
+      "",
+    ].join("\n"));
+    // Following pins the turn it started on and resumes after the last seen event.
+    assert.deepEqual(
+      daemonRequests.filter((request) => request.method === "agent.events").map((request) => request.params),
+      [
+        { id: current.id, scope: { workspaceId: "ws_current", workspaceRoot: realpathSync.native(projectRoot) }, afterSeq: 0 },
+        { id: current.id, scope: { workspaceId: "ws_current", workspaceRoot: realpathSync.native(projectRoot) }, turnId: "trn_follow", afterSeq: 2 },
+      ],
+    );
 
     let commandFailure: unknown;
     try {

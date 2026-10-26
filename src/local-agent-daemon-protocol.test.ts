@@ -211,6 +211,11 @@ assert.equal(stopRequest.params.id, "agt_stop");
 assert.deepEqual(waitRequest.params.ids, ["agt_one", "agt_two"]);
 assert.equal(waitRequest.params.timeoutMs, 5_000);
 
+assert.deepEqual(
+  decodeAgentWaitResults([{ id: "agt_turn", status: "completed", response: "Ok.", turnId: "trn_abc12345" }]),
+  [{ id: "agt_turn", status: "completed", response: "Ok.", turnId: "trn_abc12345" }],
+);
+
 assert.deepEqual(decodeAgentWaitResults([
   { id: "agt_one", status: "completed", response: "Done." },
   { id: "agt_empty", status: "completed", response: "" },

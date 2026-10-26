@@ -28,6 +28,7 @@ import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.
 import {
   formatAgentCommandError,
   formatAgentObservation,
+  formatAgentTurnEvent,
   formatAgentReceipt,
   formatAgentSummary,
   formatAgentTargetCatalog,
@@ -500,6 +501,7 @@ function printHelp(): void {
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents stop <id> [--json]",
+      "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents daemon <status|stop|logs>",
       "  devspace -v, --version   Print the installed version",
       "",
@@ -549,6 +551,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       return;
     case "stop":
       await runAgentWorkflowCommand(json, () => runAgentsStop(commandArgs, json));
+      return;
+    case "events":
+      await runAgentWorkflowCommand(json, () => runAgentsEvents(commandArgs, json));
       return;
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
@@ -682,6 +687,63 @@ async function runAgentsStop(args: string[], json: boolean): Promise<void> {
   const observation = presentAgentObservation(record);
   if (json) printJson(observation);
   else printAgentXml(formatAgentObservation(observation));
+}
+
+// The daemon protocol is request/response, so following a turn polls for events after the last seen seq.
+const AGENT_EVENTS_FOLLOW_POLL_MS = 500;
+
+async function runAgentsEvents(args: string[], json: boolean): Promise<void> {
+  const parsed = parseAgentsEventsArgs(args);
+  const config = loadConfig();
+  const client = createLocalAgentClient(config);
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  let turnId = parsed.turnId;
+  let afterSeq = 0;
+  for (;;) {
+    const page = presentAgentWorkflowResult(await client.events(parsed.id, scope, { turnId, afterSeq }), json);
+    if (!page) return;
+    if (json && !parsed.follow) {
+      printJson(page);
+      return;
+    }
+    let completed = false;
+    for (const event of page.events) {
+      if (json) printJson(event);
+      else printAgentXml(formatAgentTurnEvent(event));
+      afterSeq = event.seq;
+      completed ||= event.type === "turn_completed";
+    }
+    if (!parsed.follow || completed || page.status !== "running") return;
+    // Stay on the turn being followed even if the agent is continued meanwhile.
+    turnId = page.turnId;
+    await new Promise<void>((resolve) => setTimeout(resolve, AGENT_EVENTS_FOLLOW_POLL_MS));
+  }
+}
+
+function parseAgentsEventsArgs(args: string[]): { id: string; turnId?: string; follow: boolean } {
+  const usage = "Usage: devspace agents events <id> [--turn <turn-id>] [--follow] [--json]";
+  const positional: string[] = [];
+  let turnId: string | undefined;
+  let follow = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--follow" || argument === "-f") {
+      follow = true;
+    } else if (argument === "--turn") {
+      turnId = args[index + 1];
+      index += 1;
+      if (!turnId) throw new Error(usage);
+    } else if (argument.startsWith("--turn=")) {
+      turnId = argument.slice("--turn=".length) || undefined;
+      if (!turnId) throw new Error(usage);
+    } else if (argument.startsWith("-")) {
+      throw new Error(`Unknown option: ${argument}.`);
+    } else {
+      positional.push(argument);
+    }
+  }
+  if (positional.length !== 1) throw new Error(usage);
+  return { id: positional[0]!, follow, ...(turnId ? { turnId } : {}) };
 }
 
 function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: number } {
@@ -828,6 +890,7 @@ function printAgentsHelp(): void {
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents stop <id> [--json]",
+      "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents targets [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),

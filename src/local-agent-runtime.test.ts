@@ -17,7 +17,7 @@ import type {
 
 const TEST_CAPABILITIES = {
   sessions: { resume: true, close: false },
-  turns: { interrupt: true },
+  turns: { interrupt: true, streaming: true },
   configuration: { modelOverride: true, effortOverride: true },
   permissions: { enforcement: "native" },
   mcp: { supported: false },

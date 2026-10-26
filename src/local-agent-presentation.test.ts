@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import {
+  formatAgentObservation,
+  formatAgentTurnEvent,
   presentAgentObservation,
   presentAgentReceipt,
   presentAgentSummary,
@@ -62,6 +64,29 @@ assert.deepEqual(failed, {
     retryable: true,
   },
 });
+
+// The turn id and the provider's own error cause are visible in fragments.
+const failedWithCause = presentAgentObservation({
+  ...record,
+  status: "error",
+  latestTurnId: "trn_12345678",
+  error: "Claude agent turn failed.",
+  errorCode: "PROVIDER_EXECUTION_ERROR",
+  errorRetryable: false,
+  errorDetail: "Claude returned an error result: rate <limited>",
+});
+assert.equal(
+  formatAgentObservation(failedWithCause),
+  '<agent id="agt_test" status="failed" turn="trn_12345678" code="PROVIDER_EXECUTION_ERROR" retryable="false">Claude agent turn failed.<cause>Claude returned an error result: rate &lt;limited&gt;</cause></agent>',
+);
+assert.equal(
+  formatAgentObservation(presentAgentObservation({ ...record, latestTurnId: "trn_12345678" })),
+  '<agent id="agt_test" status="running" turn="trn_12345678"/>',
+);
+assert.equal(
+  formatAgentTurnEvent({ type: "tool_completed", tool: "edit", status: "failed", turnId: "trn_1", seq: 3, at: "now" }),
+  '<event seq="3" type="tool_completed" turn="trn_1" tool="edit" status="failed"/>',
+);
 
 const catalog: LocalAgentCatalog = {
   enabled: true,

@@ -11,6 +11,7 @@ import {
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
 import { localAgentCancelledError } from "./local-agent-cancellation.js";
+import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
 import {
   PiRpcConnection,
@@ -84,7 +85,7 @@ export class PiRpcRuntime implements LocalAgentRuntime {
         this.connection.clearEvents();
         try {
           await this.connection.request({ type: "prompt", message: input.prompt });
-          await this.waitForSettlement(events, input.signal);
+          await this.waitForSettlement(events, input.signal, callbacks?.onEvent);
           if (input.signal?.aborted) {
             await this.abortTurn();
             throw localAgentCancelledError("pi", "run");
@@ -217,8 +218,13 @@ export class PiRpcRuntime implements LocalAgentRuntime {
     this.connection.close();
   }
 
-  private async waitForSettlement(events: PiRpcRecord[], signal?: AbortSignal): Promise<void> {
+  private async waitForSettlement(
+    events: PiRpcRecord[],
+    signal?: AbortSignal,
+    onEvent?: (event: LocalAgentActivityEvent) => void,
+  ): Promise<void> {
     const deadline = Date.now() + PI_TURN_TIMEOUT_MS;
+    const toolSummaries = new Map<string, string | undefined>();
     let sawAgentActivity = false;
     for (;;) {
       if (signal?.aborted) return;
@@ -230,6 +236,7 @@ export class PiRpcRuntime implements LocalAgentRuntime {
       if (event) {
         if (events.length >= MAX_PI_EVENTS) events.shift();
         events.push(event);
+        if (onEvent) reportPiActivity(event, toolSummaries, onEvent);
         if (event.type === "agent_start" || event.type === "message_start" || event.type === "tool_execution_start") {
           sawAgentActivity = true;
         }
@@ -259,7 +266,7 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
   } as const;
   readonly capabilities = {
     sessions: { resume: true, close: false },
-    turns: { interrupt: true },
+    turns: { interrupt: true, streaming: true },
     configuration: { modelOverride: true, effortOverride: true },
     permissions: { enforcement: "client-boundary" },
     mcp: { supported: false },
@@ -353,6 +360,27 @@ async function materializePiSandboxExtension(
     path: extensionPath,
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
+}
+
+export function reportPiActivity(
+  event: PiRpcRecord,
+  toolSummaries: Map<string, string | undefined>,
+  onEvent: (event: LocalAgentActivityEvent) => void,
+): void {
+  const tool = piRecordString(event, "toolName");
+  const callId = piRecordString(event, "toolCallId");
+  if (event.type === "tool_execution_start" && tool) {
+    const summary = summarizeToolInput(event.args);
+    if (callId) toolSummaries.set(callId, summary);
+    onEvent({ type: "tool_started", tool, summary });
+  } else if (event.type === "tool_execution_end" && tool) {
+    const summary = callId ? toolSummaries.get(callId) : undefined;
+    if (callId) toolSummaries.delete(callId);
+    onEvent({ type: "tool_completed", tool, summary, status: event.isError === true ? "failed" : "completed" });
+  } else if (event.type === "message_end") {
+    const text = extractPiFinalResponse(event.message);
+    if (text) onEvent({ type: "message", text });
+  }
 }
 
 async function cancelPiUiRequest(connection: PiRpcRuntimeConnection, event: PiRpcRecord): Promise<void> {

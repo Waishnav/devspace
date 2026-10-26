@@ -161,6 +161,7 @@ devspace agents run <profile-or-provider> "<prompt>"
 devspace agents continue <id> "<prompt>"
 devspace agents show <id>
 devspace agents wait <id>...
+devspace agents events <id> [--follow]
 ```
 
 The commands do not add a document-level wrapper. `targets`, `ls`, and `wait`
@@ -170,9 +171,9 @@ model-facing result small:
 ```xml
 <provider name="codex" model="gpt-5.4" effort="high"/>
 <profile name="reviewer" provider="codex">Read-only code review.</profile>
-<agent id="agt_123" status="running"/>
-<agent id="agt_123" status="completed">Review complete.</agent>
-<agent id="agt_456" status="failed" code="PROVIDER_EXECUTION_ERROR" retryable="true">Provider disconnected.</agent>
+<agent id="agt_123" status="running" turn="trn_9f2c1a7b"/>
+<agent id="agt_123" status="completed" turn="trn_9f2c1a7b">Review complete.</agent>
+<agent id="agt_456" status="failed" turn="trn_0d41e6c2" code="PROVIDER_EXECUTION_ERROR" retryable="false">Claude agent turn failed.<cause>Claude returned an error result: usage limit reached</cause></agent>
 <error code="AGENT_NOT_FOUND" retryable="false" agent-id="agt_missing">Subagent not found.</error>
 ```
 
@@ -182,9 +183,30 @@ agents finish. With `--timeout <seconds>`, it returns each unique agent in
 first-seen order and marks unfinished work with `status="running"
 wait="timeout"`.
 
+Every turn has a DevSpace-owned `turn` id. A failed turn includes the
+provider's own explanation in `<cause>`, redacted and truncated.
+
+`events` prints the current turn's activity as normalized fragments, and
+`--follow` keeps printing until the turn ends. `--turn <turn-id>` selects an
+earlier turn:
+
+```xml
+<event seq="1" type="turn_started" turn="trn_9f2c1a7b" at="2026-10-26T10:00:00.000Z"/>
+<event seq="2" type="tool_started" turn="trn_9f2c1a7b" tool="Bash">git status --short</event>
+<event seq="3" type="tool_completed" turn="trn_9f2c1a7b" tool="Bash" status="completed">git status --short</event>
+<event seq="4" type="message" turn="trn_9f2c1a7b">The tree is clean.</event>
+<event seq="5" type="turn_completed" turn="trn_9f2c1a7b" status="completed" at="2026-10-26T10:00:09.000Z"/>
+```
+
+Providers that cannot stream (currently OpenCode) report only `turn_started`
+and `turn_completed`. The daemon keeps at most 500 events and 256 KiB per turn,
+keeps events for the 20 most recent turns of each agent, truncates messages and
+tool summaries, and redacts common credential shapes. Tool summaries carry the
+identifying argument (a command, path, or query), never the full input or output.
+
 `--json` remains available for scripts that need it, but the bundled skill does
-not request it. Internal turn records, prompts, provider session IDs, workspace
-paths, and timestamps are absent from both output formats.
+not request it. Prompts, provider session IDs, and workspace paths are absent
+from both output formats.
 
 `open_workspace` exposes compact profile metadata:
 

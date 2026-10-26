@@ -6,6 +6,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type {
   LocalAgentDriver,
@@ -129,6 +130,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         });
 
         const items: unknown[] = [];
+        const toolCalls = new Map<string, ClaudeToolCall>();
         for (;;) {
           let next: IteratorResult<unknown>;
           try {
@@ -159,6 +161,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           const message = next.value;
           items.push(message);
           const record = asRecord(message);
+          if (record && callbacks?.onEvent) reportClaudeActivity(record, toolCalls, callbacks.onEvent);
           if (typeof record?.session_id === "string") {
             const previousSessionId = this.providerSessionId;
             this.providerSessionId = record.session_id;
@@ -231,7 +234,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   } as const;
   readonly capabilities = {
     sessions: { resume: true, close: false },
-    turns: { interrupt: true },
+    turns: { interrupt: true, streaming: true },
     configuration: { modelOverride: true, effortOverride: true },
     permissions: { enforcement: "native" },
     mcp: { supported: true },
@@ -385,6 +388,37 @@ export function claudeResultError(record: Record<string, unknown>): string | und
     subtype ??
     "Claude returned an error result.";
   return `Claude returned an error result: ${message}`;
+}
+
+interface ClaudeToolCall {
+  tool: string;
+  summary?: string;
+}
+
+/** Maps complete SDK messages (no partial deltas) onto DevSpace activity events. */
+export function reportClaudeActivity(
+  record: Record<string, unknown>,
+  toolCalls: Map<string, ClaudeToolCall>,
+  onEvent: (event: LocalAgentActivityEvent) => void,
+): void {
+  if (record.type !== "assistant" && record.type !== "user") return;
+  const content = asRecord(record.message)?.content;
+  if (!Array.isArray(content)) return;
+  for (const value of content) {
+    const block = asRecord(value);
+    if (record.type === "assistant" && block?.type === "text" && typeof block.text === "string") {
+      onEvent({ type: "message", text: block.text });
+    } else if (record.type === "assistant" && block?.type === "tool_use" && typeof block.name === "string") {
+      const call = { tool: block.name, summary: summarizeToolInput(block.input) };
+      if (typeof block.id === "string") toolCalls.set(block.id, call);
+      onEvent({ type: "tool_started", ...call });
+    } else if (record.type === "user" && block?.type === "tool_result" && typeof block.tool_use_id === "string") {
+      const call = toolCalls.get(block.tool_use_id);
+      if (!call) continue;
+      toolCalls.delete(block.tool_use_id);
+      onEvent({ type: "tool_completed", ...call, status: block.is_error === true ? "failed" : "completed" });
+    }
+  }
 }
 
 export interface ClaudeUserMessage {
