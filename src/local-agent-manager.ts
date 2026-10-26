@@ -685,7 +685,10 @@ export class LocalAgentManager {
     profiles: readonly LocalAgentProfile[],
   ): BetterResult<LocalAgentProfile | undefined, AgentTargetError> {
     // Profiles win over provider instances of the same name, matching start-time target resolution.
-    const profile = profiles.find((candidate) => candidate.name === record.profileName);
+    // A same-name profile for another provider instance would not match the runtime that executes the turn.
+    const profile = profiles.find(
+      (candidate) => candidate.name === record.profileName && candidate.provider === record.providerInstanceId,
+    );
     if (!profile && record.profileName === record.providerInstanceId) return Result.ok(undefined);
     if (!profile) {
       return Result.err(new AgentTargetError({
