@@ -453,8 +453,10 @@ export class AcpRuntime implements LocalAgentRuntime {
 export class AcpLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "acp" as const;
   readonly providerInstanceId = "acp";
+  // Agent-scoped: a stop that outlives the cancel grace period closes the
+  // runtime, which must not take other agents' turns down with it.
   readonly runtimePolicy = {
-    scope: "workspace",
+    scope: "agent",
     authority: "write_mode",
     idleTimeoutMs: 5 * 60_000,
   } as const;

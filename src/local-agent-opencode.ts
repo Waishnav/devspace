@@ -126,14 +126,14 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
-    // Abort the local request first so a stalled provider abort cannot keep the turn pending.
+    // End the local request only once OpenCode confirms the abort. A failed or
+    // stalled abort keeps the turn running, and the manager reports the stop as a conflict.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
-      const aborting = this.client.session.abort({
+      const aborted = await this.client.session.abort({
         sessionID: sessionId,
         directory: input.workspaceRoot,
       }, { throwOnError: false });
-      controller.abort();
-      await aborting;
+      if (!aborted.error) controller.abort();
     });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -142,7 +142,8 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     try {
       return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
     } catch (error) {
-      if (input.signal?.aborted) throw localAgentCancelledError("opencode", "prompt", error);
+      // A provider timeout after a stop request is still a timeout: the abort was never confirmed.
+      if (input.signal?.aborted && !timedOut) throw localAgentCancelledError("opencode", "prompt", error);
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",

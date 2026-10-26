@@ -296,6 +296,8 @@ const missingCommandDriver = new AcpLocalAgentDriver({
   env: process.env,
   commandResolver: () => join(tmpdir(), "devspace-definitely-missing-acp-command"),
 });
+// A stop that outlives the cancel grace period closes the runtime, so it must not be shared.
+assert.equal(missingCommandDriver.runtimePolicy.scope, "agent");
 const missingCommand = await missingCommandDriver.createRuntime(cachedContext);
 assert.equal(missingCommand.isErr(), true);
 if (missingCommand.isErr()) {
