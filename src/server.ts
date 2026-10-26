@@ -839,12 +839,14 @@ export function createServer(
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
   const toolActivities = new ToolActivityTracker();
-  const workspaceActivity = new WorkspaceActivityStore(config.stateDir);
-  const workspaceActivityJournal = new WorkspaceActivityJournal(workspaceActivity, (error) => {
-    logEvent(config.logging, "warn", "workspace_activity_journal_error", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
+  const workspaceActivity = new WorkspaceActivityStore(config.stateDir, config.activity.maxTurns);
+  const workspaceActivityJournal = config.activity.enabled
+    ? new WorkspaceActivityJournal(workspaceActivity, (error) => {
+      logEvent(config.logging, "warn", "workspace_activity_journal_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    })
+    : undefined;
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),

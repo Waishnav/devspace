@@ -30,6 +30,19 @@ test("tool calls belong to the open turn until a model show_changes closes it", 
   assert.deepEqual(activity.listToolCalls(first!.id).map((entry) => entry.toolName), ["read", "show_changes"]);
 });
 
+test("closing a turn deletes closed turns beyond maxTurns with their calls", async (t) => {
+  const { journal, activity } = await journalFixture(t, ["ws_cap"], undefined, 2);
+
+  for (let index = 0; index < 3; index += 1) {
+    await call(journal, "read", { workspace_id: "ws_cap", path: "README.md" });
+    await call(journal, "show_changes", { workspace_id: "ws_cap" }, {
+      result: { structuredContent: { workspace_id: "ws_cap", review_ref: REVIEW_REF } },
+    });
+  }
+
+  assert.deepEqual(activity.listTurns("ws_cap").map((turn) => turn.sequence), [3, 2]);
+});
+
 test("card replays are recorded without closing the turn", async (t) => {
   const { journal, activity } = await journalFixture(t, ["ws_card"]);
 
@@ -162,11 +175,12 @@ async function journalFixture(
   t: TestContext,
   workspaceIds: string[],
   onError?: (error: unknown) => void,
+  maxTurns?: number,
 ) {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-activity-journal-test-"));
   const workspaces = new SqliteWorkspaceStore(stateDir);
   for (const id of workspaceIds) workspaces.createSession({ id, root: "/tmp/project" });
-  const activity = new WorkspaceActivityStore(stateDir);
+  const activity = new WorkspaceActivityStore(stateDir, maxTurns);
   const journal = new WorkspaceActivityJournal(activity, onError);
   t.after(async () => {
     try {

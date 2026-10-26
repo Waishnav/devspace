@@ -77,7 +77,7 @@ export interface RecordWorkspaceToolCall {
 export class WorkspaceActivityStore {
   private readonly database: DatabaseHandle;
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, private readonly maxTurns = Number.POSITIVE_INFINITY) {
     this.database = openDatabase(stateDir);
   }
 
@@ -127,6 +127,7 @@ export class WorkspaceActivityStore {
       .set({ status: "closed", reviewRef, closedAt: now.toISOString() })
       .where(eq(workspaceTurns.id, turn.id))
       .run();
+    this.pruneClosedTurns(workspaceId);
     return { ...turn, status: "closed", reviewRef, closedAt: now.toISOString() };
   }
 
@@ -217,6 +218,20 @@ export class WorkspaceActivityStore {
 
   close(): void {
     this.database.close();
+  }
+
+  /** Keeps the newest `maxTurns` closed turns; their tool calls cascade. */
+  private pruneClosedTurns(workspaceId: string): void {
+    if (!Number.isFinite(this.maxTurns)) return;
+    this.database.sqlite.prepare(`
+      delete from workspace_turns
+      where workspace_session_id = ? and status = 'closed' and id not in (
+        select id from workspace_turns
+        where workspace_session_id = ? and status = 'closed'
+        order by sequence desc
+        limit ?
+      )
+    `).run(workspaceId, workspaceId, this.maxTurns);
   }
 
   private findOpenTurnRow(workspaceId: string): WorkspaceTurnRow | undefined {

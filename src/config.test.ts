@@ -20,6 +20,7 @@ try {
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
   assert.equal(defaults.toolMode, "codex");
   assert.equal(defaults.uiEnabled, true);
+  assert.deepEqual(defaults.activity, { enabled: true, maxTurns: 200 });
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
   assert.deepEqual(defaults.subagents, {

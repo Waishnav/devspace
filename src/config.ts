@@ -18,6 +18,7 @@ export interface ServerConfig {
   publicBaseUrl: string;
   toolMode: ToolMode;
   uiEnabled: boolean;
+  activity: { enabled: boolean; maxTurns: number };
   stateDir: string;
   worktreeRoot: string;
   artifactsEnabled: boolean;
@@ -67,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     publicBaseUrl,
     toolMode: stored.tools.mode,
     uiEnabled: stored.ui.enabled,
+    activity: stored.activity,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),
     artifactsEnabled: stored.artifacts.enabled,

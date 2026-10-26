@@ -43,6 +43,10 @@ Run `devspace init` to create both files. `devspace config set publicBaseUrl
   "ui": {
     "enabled": true,
   },
+  "activity": {
+    "enabled": true,
+    "maxTurns": 200,
+  },
   "artifacts": {
     "enabled": false,
     "maxFileBytes": 104857600,
@@ -106,6 +110,18 @@ DevSpace attaches Apps UI metadata only to `open_workspace` and `show_changes`.
 This avoids rendering an iframe for every read, edit, search, or command call.
 Setting `ui.enabled` to `false` removes the metadata but does not remove the
 `show_changes` tool.
+
+## Workspace activity
+
+DevSpace records each workspace tool call, with its arguments and result, in the
+local state database (`storage.stateDir`, readable only by your user). Calls are
+grouped into turns that close at each review checkpoint. Strings are truncated
+and common secret patterns are redacted, but file contents and command output
+are kept as the tools returned them.
+
+`activity.maxTurns` (default 200) caps the closed turns kept per workspace;
+older turns and their tool calls are deleted. Set `activity.enabled` to `false`
+to stop recording; turns already recorded stay until their workspace is removed.
 
 ## Skills and subagents
 
