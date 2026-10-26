@@ -22,8 +22,9 @@ export async function createAgentWorktree(input: {
   worktreeRoot: string;
   branch?: string;
 }): Promise<BetterResult<AgentWorktree, AgentScopeError>> {
+  // No agentId: the caller drops the half-created record, so the id would name nothing.
   const failure = (code: "WORKTREE_NOT_GIT_REPOSITORY" | "WORKTREE_CREATE_FAILED", message: string, cause?: unknown) =>
-    Result.err(new AgentScopeError({ code, agentId: input.agentId, operation: "start", retryable: false, cause, message }));
+    Result.err(new AgentScopeError({ code, operation: "start", retryable: false, cause, message }));
 
   const eligibility = await getGitEligibility(input.workspaceRoot).catch(() => undefined);
   if (!eligibility?.ok) {

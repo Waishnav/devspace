@@ -133,6 +133,7 @@ assert.equal(unwrap(await start({ agentId: "job-3", worktree: { branch: "feature
 // Outside a git repository the error is typed and names the problem.
 const outside = await start({ worktree: {}, workspaceRoot: notGit });
 assert.equal(code(outside), "WORKTREE_NOT_GIT_REPOSITORY");
+assert.equal((outside as { error: { agentId?: string } }).error.agentId, undefined, "the rolled-back id is not reported");
 assert.match((outside as { error: Error }).error.message, /needs a git repository/);
 assert.deepEqual(store.list({ workspaceRoot: notGit }), []);
 
