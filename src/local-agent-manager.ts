@@ -4,6 +4,7 @@ import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentConflictError,
   AgentProviderCancelledError,
+  AgentProviderUnavailableError,
   AgentScopeError,
   AgentStoreError,
   AgentTargetError,
@@ -24,6 +25,7 @@ import {
   type LocalAgentProfile,
 } from "./local-agent-profiles.js";
 import { localAgentCancelledError } from "./local-agent-cancellation.js";
+import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import {
   resolveLocalAgentTarget,
@@ -86,9 +88,16 @@ export interface LocalAgentManagerOptions {
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
   stopTimeoutMs?: number;
+  /** Preflight for a provider's executable, so a missing one fails the request instead of the turn. */
+  providerAvailability?: (providerInstanceId: string) => LocalAgentProviderAvailability;
 }
 
-export type AgentStartError = AgentTargetError | AgentScopeError | AgentConflictError | AgentStoreError;
+export type AgentStartError =
+  | AgentTargetError
+  | AgentScopeError
+  | AgentConflictError
+  | AgentStoreError
+  | AgentProviderUnavailableError;
 export type AgentContinueError = AgentStartError;
 export type AgentLookupError = AgentTargetError | AgentScopeError | AgentStoreError;
 export type AgentListError = AgentScopeError | AgentStoreError;
@@ -145,6 +154,7 @@ export class LocalAgentManager {
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
   private readonly stopTimeoutMs: number;
+  private readonly providerAvailability?: (providerInstanceId: string) => LocalAgentProviderAvailability;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
   private accepting = true;
   private closePromise?: Promise<void>;
@@ -160,6 +170,7 @@ export class LocalAgentManager {
     this.logger = options.logger;
     this.subagents = options.subagents;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
+    this.providerAvailability = options.providerAvailability;
   }
 
   reconcileActiveRuns(message?: string): BetterResult<number, AgentStoreError> {
@@ -204,6 +215,7 @@ export class LocalAgentManager {
       }
       yield* manager.providerEnabledResult(target.provider, target.name, "start");
       const driver = yield* manager.driverResult(target.provider, "start");
+      yield* manager.providerAvailableResult(target.provider, driver, "start");
       const createdResult = manager.store.createResult({
         id: input.agentId,
         workspaceId: input.workspaceId,
@@ -249,7 +261,8 @@ export class LocalAgentManager {
       const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
       yield* manager.profileForRecordResult(record, profiles);
       yield* manager.providerEnabledResult(record.providerInstanceId, record.profileName, "continue");
-      yield* manager.driverResult(record.providerInstanceId, "continue", agentId, record.driver);
+      const driver = yield* manager.driverResult(record.providerInstanceId, "continue", agentId, record.driver);
+      yield* manager.providerAvailableResult(record.providerInstanceId, driver, "continue", agentId);
       return manager.begin(record, prompt, overrides, scope.workspaceId);
     });
   }
@@ -767,6 +780,24 @@ export class LocalAgentManager {
       operation,
       retryable: false,
       message: `Subagent provider is disabled: ${providerInstanceId}.`,
+    }));
+  }
+
+  private providerAvailableResult(
+    providerInstanceId: string,
+    driver: LocalAgentDriver,
+    operation: string,
+    agentId?: string,
+  ): BetterResult<void, AgentProviderUnavailableError> {
+    const availability = this.providerAvailability?.(providerInstanceId);
+    if (!availability || availability.available) return Result.ok(undefined);
+    return Result.err(new AgentProviderUnavailableError({
+      code: "PROVIDER_UNAVAILABLE",
+      provider: driver.provider,
+      agentId,
+      operation,
+      retryable: true,
+      message: `${providerInstanceId} provider is not available: ${availability.reason ?? "provider preflight failed"}.`,
     }));
   }
 

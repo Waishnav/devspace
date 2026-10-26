@@ -96,6 +96,23 @@ pnpm test
 pnpm build
 ```
 
+### Subagent conformance replay
+
+`pnpm qa:agents` runs the same six conformance scenarios for every subagent
+provider: run and wait, continue, a read-only write attempt, stop, events, and
+a missing command. Each runs through the built CLI, the daemon, and the real
+driver against an isolated config, state directory, and Git fixture. By
+default the provider process is a shim that replays a recorded transcript, so
+replay needs no provider login or quota. `--live` uses the real provider
+binaries, and `pnpm qa:agents <provider> --record` runs live through a recorder and rewrites
+that provider's transcripts. Run `pnpm build` first.
+
+Re-record a provider after upgrading its CLI or SDK, or after changing the
+frames its driver sends. To add a provider, add one entry to
+`test/agents-replay/providers.ts`, check it with `--live`, then record.
+`test/agents-replay/README.md` covers the transcript format, scrubbing, and
+known provider setup issues.
+
 ## Releases
 
 Releases are published by the manual `Release` GitHub Actions workflow. Do not

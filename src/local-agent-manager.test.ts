@@ -224,6 +224,27 @@ await assert.rejects(
 );
 await defectManager.close();
 
+// A missing provider executable fails the request itself, before any agent record exists.
+const unavailableStore = new LocalAgentStore(join(root, "unavailable-state"));
+const unavailableManager = new LocalAgentManager({
+  store: unavailableStore,
+  drivers: [driver],
+  pool: new LocalAgentRuntimePool(),
+  loadProfiles: async () => [profile],
+  allowedRoots: [root],
+  subagents,
+  providerAvailability: (name) => ({ name, available: false, reason: "codex executable not found" }),
+});
+const unavailable = await unavailableManager.start({
+  target: "reviewer",
+  prompt: "inspect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+});
+assert.equal(unavailable.isErr() && unavailable.error.code, "PROVIDER_UNAVAILABLE");
+assert.deepEqual(unwrap(unavailableManager.list(scope)), []);
+await unavailableManager.close();
+
 let releaseQueuedProfiles!: () => void;
 const queuedProfiles = new Promise<void>((resolve) => { releaseQueuedProfiles = resolve; });
 let queuedProfileLoads = 0;

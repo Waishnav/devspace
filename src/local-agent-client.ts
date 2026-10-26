@@ -14,6 +14,7 @@ import {
   AgentDaemonTimeoutError,
   AgentDaemonUnauthorizedError,
   AgentDaemonUnavailableError,
+  AgentProviderUnavailableError,
   agentErrorFromPayload,
   isAgentDaemonError,
   isProgrammerDefect,
@@ -811,7 +812,8 @@ function isRequestError(
       return category === "target"
         || category === "scope"
         || category === "conflict"
-        || category === "store";
+        || category === "store"
+        || error instanceof AgentProviderUnavailableError;
     case "agent.get":
     case "agent.wait":
     case "agent.events":

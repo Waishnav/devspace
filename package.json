@@ -42,8 +42,9 @@
     "start": "node dist/cli.js serve",
     "test": "tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/qa/tsconfig.json",
-    "qa": "tsx scripts/qa/run.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/qa/tsconfig.json && tsc -p test/agents-replay/tsconfig.json",
+    "qa": "tsx scripts/qa/run.ts",
+    "qa:agents": "tsx test/agents-replay/conformance.ts"
   },
   "keywords": [],
   "author": "",

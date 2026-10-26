@@ -70,3 +70,7 @@ jobs:
 
       - name: Doctor
         run: node dist/cli.js doctor
+
+      - name: Subagent conformance replay
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm qa:agents

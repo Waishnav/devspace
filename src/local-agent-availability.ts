@@ -87,20 +87,17 @@ function checkLocalAgentProviderAvailability(
   }
 }
 
-export function assertLocalAgentProviderAvailable(
+/** Resolves a provider's executable exactly as its driver will, without starting it. */
+export function localAgentProviderAvailability(
   providerInstanceId: LocalAgentProviderInstanceId,
   env: NodeJS.ProcessEnv = process.env,
   config?: SubagentsConfig,
-): void {
+): LocalAgentProviderAvailability {
   const provider = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
   const driver = provider?.driver
     ?? defaultDriverForProviderId(providerInstanceId);
-  if (!driver) throw new Error(`${providerInstanceId} provider is not configured.`);
-  const availability = checkLocalAgentProviderAvailability(providerInstanceId, driver, env, config);
-  if (availability.available) return;
-  throw new Error(
-    `${providerInstanceId} provider is not available: ${availability.reason ?? "provider preflight failed"}`,
-  );
+  if (!driver) return { name: providerInstanceId, available: false, reason: "provider is not configured" };
+  return checkLocalAgentProviderAvailability(providerInstanceId, driver, env, config);
 }
 
 function packageAvailability(
