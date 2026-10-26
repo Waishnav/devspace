@@ -237,33 +237,33 @@ if (timedOutPrompt.isErr()) {
 }
 await timeoutRuntime.close();
 
-// Stop cancels the local request even when the provider's abort call never returns.
-const stalledAbortClient = {
+// Stop ends the turn only once OpenCode confirms the abort; a stalled abort leaves it running.
+const abortClient = (abort: () => Promise<unknown>) => ({
   global: {
     async health() { return { data: { healthy: true } }; },
   },
   session: {
-    async create() { return { data: { id: "session_stalled_abort" } }; },
-    abort() { return new Promise<never>(() => undefined); },
+    async create() { return { data: { id: "session_abort" } }; },
+    abort,
     async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
       return new Promise<never>((_resolve, reject) => {
         options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       });
     },
   },
-} as unknown as OpencodeClientLike;
-const stalledAbortRuntime = new OpencodeRuntime(stalledAbortClient, { close: () => undefined });
-const stalledAbort = new AbortController();
-const stalledAbortRun = stalledAbortRuntime.run({
-  prompt: "stop me",
-  workspaceRoot: "/tmp/project",
-  signal: stalledAbort.signal,
-});
-setTimeout(() => stalledAbort.abort(), 10);
-const stalledAbortResult = await stalledAbortRun;
-assert.equal(stalledAbortResult.isErr(), true);
-if (stalledAbortResult.isErr()) assert.equal(stalledAbortResult.error.code, "PROVIDER_CANCELLED");
-await stalledAbortRuntime.close();
+}) as unknown as OpencodeClientLike;
+const stopRun = async (abort: () => Promise<unknown>) => {
+  const stopRuntime = new OpencodeRuntime(abortClient(abort), { close: () => undefined }, 100);
+  const stop = new AbortController();
+  const run = stopRuntime.run({ prompt: "stop me", workspaceRoot: "/tmp/project", signal: stop.signal });
+  setTimeout(() => stop.abort(), 10);
+  const result = await run;
+  await stopRuntime.close();
+  return result.isErr() ? result.error.code : "ok";
+};
+assert.equal(await stopRun(async () => ({ data: true })), "PROVIDER_CANCELLED");
+assert.equal(await stopRun(async () => ({ error: { name: "UnknownError" } })), "PROVIDER_PROTOCOL_ERROR");
+assert.equal(await stopRun(() => new Promise<never>(() => undefined)), "PROVIDER_PROTOCOL_ERROR");
 
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");

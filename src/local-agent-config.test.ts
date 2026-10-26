@@ -132,6 +132,13 @@ assert.deepEqual(genericAcp.providers[0], {
   command: "kiro",
   config: { args: ["acp"] },
 });
+// Built-in ACP flavors derive sandbox flags from the write mode; custom args would drop them.
+for (const provider of [
+  { id: "cursor", driver: "cursor", enabled: true, config: { args: ["acp"] } },
+  { id: "copilot-work", driver: "acp", enabled: true, command: "copilot", config: { flavor: "copilot", args: ["--acp"] } },
+]) {
+  assert.throws(() => parseSubagentsConfig({ enabled: true, providers: [provider] }), /config\.args applies only to generic/);
+}
 const legacyAcp = parseSubagentsConfig({
   enabled: true,
   providers: [{ id: "cursor", driver: "cursor", enabled: true }],

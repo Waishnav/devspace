@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
+  AgentProviderExecutionError,
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
   captureAgentProviderResult,
@@ -460,8 +461,10 @@ export class AcpRuntime implements LocalAgentRuntime {
 export class AcpLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "acp" as const;
   readonly providerInstanceId = "acp";
+  // Agent-scoped: a stop that outlives the cancel grace period closes the
+  // runtime, which must not take other agents' turns down with it.
   readonly runtimePolicy = {
-    scope: "workspace",
+    scope: "agent",
     authority: "write_mode",
     idleTimeoutMs: 5 * 60_000,
   } as const;
@@ -511,7 +514,23 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             message: `${this.provider} executable was not found.`,
           });
         }
-        const args = this.configuredArgs ?? acpCommandArgs(this.flavor, context, this.env);
+        if (this.flavor === "generic" && context.writeMode !== "full_access") {
+          // DevSpace cannot bound what an arbitrary ACP agent writes: it may act
+          // without asking for permission, so only an explicit full_access turn may run it.
+          throw new AgentProviderExecutionError({
+            code: "PROVIDER_EXECUTION_ERROR",
+            provider: this.provider,
+            agentId: context.agentId,
+            operation: "create_runtime",
+            retryable: false,
+            message: `Generic ACP providers cannot enforce the ${context.writeMode ?? "allowed"} write mode; run them with full_access.`,
+          });
+        }
+        // Built-in flavors derive their sandbox flags from the write mode, so only
+        // generic providers take configured arguments.
+        const args = this.flavor === "generic"
+          ? this.configuredArgs ?? []
+          : acpCommandArgs(this.flavor, context, this.env);
         const child = spawn(command, args, {
           cwd: resolve(context.workspaceRoot),
           env: this.env,

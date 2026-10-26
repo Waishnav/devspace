@@ -265,3 +265,53 @@ if (failedRun.isErr()) {
   assert.match(failedRun.error.message, /invalid_grant/);
 }
 await failedRuntime.close();
+
+// A continued turn that fails before output must not return the previous turn's response.
+const staleClient = {
+  ...client,
+  session: {
+    ...client.session,
+    async prompt() {
+      return { id: "inbox", sessionID: "ses_v2", time: { created: 5 }, type: "user", payload: { text: "x" }, delivery: "queue" };
+    },
+  },
+  message: {
+    async list(input: { type?: string }) {
+      return { data: input.type === "assistant" ? [assistant] : [failedIdle], cursor: { previous: null, next: null } };
+    },
+  },
+} as unknown as OpencodeV2ClientLike;
+const staleRuntime = new OpencodeV2Runtime(staleClient, { close: () => undefined });
+const staleRun = await staleRuntime.run({
+  prompt: "continued but failing",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: "opencode:v2:ses_v2",
+});
+assert.equal(staleRun.isErr(), true);
+if (staleRun.isErr()) assert.match(staleRun.error.message, /invalid_grant/);
+await staleRuntime.close();
+
+// Stop ends the turn only once OpenCode confirms the interrupt; a failed interrupt leaves it running.
+const interruptRun = async (interrupt: () => Promise<unknown>) => {
+  const interruptClient = {
+    ...client,
+    session: {
+      ...client.session,
+      interrupt,
+      async wait(_input: unknown, options?: { signal?: AbortSignal }) {
+        return new Promise<never>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      },
+    },
+  } as unknown as OpencodeV2ClientLike;
+  const interruptRuntime = new OpencodeV2Runtime(interruptClient, { close: () => undefined }, 100);
+  const stop = new AbortController();
+  const run = interruptRuntime.run({ prompt: "stop me", workspaceRoot: "/tmp/project", signal: stop.signal });
+  setTimeout(() => stop.abort(), 10);
+  const result = await run;
+  await interruptRuntime.close();
+  return result.isErr() ? result.error.code : "ok";
+};
+assert.equal(await interruptRun(async () => ({ interrupted: true })), "PROVIDER_CANCELLED");
+assert.equal(await interruptRun(async () => { throw new Error("interrupt failed"); }), "PROVIDER_PROTOCOL_ERROR");
