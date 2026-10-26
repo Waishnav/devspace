@@ -19,6 +19,7 @@ const request = decodeLocalAgentDaemonRequest({
   authToken: "test-secret",
   method: "agent.start",
   params: {
+    agentId: "job-1",
     target: "reviewer",
     prompt: "Review this",
     workspaceId: "ws_test",
@@ -29,6 +30,7 @@ const request = decodeLocalAgentDaemonRequest({
 assert.equal(request.method, "agent.start");
 if (request.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(request.params.writeMode, "read_only");
+assert.equal(request.params.agentId, "job-1");
 
 const whitespaceRequest = decodeLocalAgentDaemonRequest({
   requestId: "req_whitespace",

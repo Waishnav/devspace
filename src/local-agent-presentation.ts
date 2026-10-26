@@ -60,6 +60,20 @@ export type AgentObservationOutput = { turnId?: string } & (
   | { id: string; status: "stopped"; error?: AgentFailureOutput }
 );
 
+/**
+ * Process exit codes for `agents wait` and `--wait`. 1 is reserved for command errors
+ * (usage, unknown target, daemon failure) and is set where those are reported.
+ */
+export const AGENT_EXIT_CODES = { completed: 0, failed: 2, stopped: 3, timeout: 4 } as const;
+
+/** With several agents, the most severe outcome wins: failed, then stopped, then timeout. */
+export function agentObservationExitCode(observations: readonly AgentObservationOutput[]): number {
+  if (observations.some((entry) => entry.status === "failed")) return AGENT_EXIT_CODES.failed;
+  if (observations.some((entry) => entry.status === "stopped")) return AGENT_EXIT_CODES.stopped;
+  if (observations.some((entry) => entry.status === "running")) return AGENT_EXIT_CODES.timeout;
+  return AGENT_EXIT_CODES.completed;
+}
+
 export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTargetCatalogOutput {
   return {
     enabled: catalog.enabled,
