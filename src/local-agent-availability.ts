@@ -1,5 +1,6 @@
 import { resolveExecutableCommand } from "./local-agent-command.js";
 import { resolveAcpCommand } from "./local-agent-acp.js";
+import { resolvePiCommand } from "./local-agent-pi.js";
 import {
   localAgentProviderEnvironment,
   subagentAcpFlavor,
@@ -55,7 +56,17 @@ function checkLocalAgentProviderAvailability(
     case "opencode":
       return commandAvailability(providerInstanceId, "opencode", providerEnv);
     case "pi":
-      return packageAvailability(providerInstanceId, "@earendil-works/pi-coding-agent");
+      // Same resolution as the runtime: PI_COMMAND, then `pi` on PATH, then the bundled package.
+      try {
+        resolvePiCommand(providerEnv);
+        return { name: providerInstanceId, available: true };
+      } catch (cause) {
+        return {
+          name: providerInstanceId,
+          available: false,
+          reason: cause instanceof Error ? cause.message : "Pi executable not found",
+        };
+      }
     case "acp": {
       // Resolve exactly as the driver does, so preflight and startup agree on the executable.
       const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
