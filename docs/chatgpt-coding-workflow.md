@@ -157,7 +157,10 @@ sessions for that workspace.
 
 ## Tool Names
 
-The Claude surface exposes these tool names:
+DevSpace picks the tool surface from the connecting MCP host, so there is
+nothing to configure (see
+[Tool surfaces and UI](configuration.md#tool-surfaces-and-ui)). Claude, and any
+host DevSpace does not recognise, get:
 
 - `open_workspace`
 - `read`
@@ -166,7 +169,7 @@ The Claude surface exposes these tool names:
 - `bash`
 - `show_changes`
 
-DevSpace uses the Codex-style surface by default. It exposes:
+ChatGPT gets the Codex-style surface:
 
 - `open_workspace`
 - `read`
@@ -175,20 +178,18 @@ DevSpace uses the Codex-style surface by default. It exposes:
 - `write_stdin`
 - `show_changes`
 
-In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
+On this surface `exec_command`
 returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
-Set `tools.mode` to `claude` in `~/.devspace/config.jsonc` to expose `write`,
-`edit`, and `bash` instead of the Codex mutation and command tools. Dedicated
-MCP tools for `grep`, `glob`, and `ls` are not registered in either mode; use
-the configured shell tool with command-line tools such as `rg`, `find`, and
-`ls`.
+Dedicated MCP tools for `grep`, `glob`, and `ls` are not
+registered on either surface; use the shell tool with command-line tools such as
+`rg`, `find`, and `ls`.
 
 ## Show Changes
 
-DevSpace exposes `show_changes` in both tool modes and attaches widget UI only
+DevSpace exposes `show_changes` on both tool surfaces and attaches widget UI only
 to `open_workspace` and `show_changes`. Reads, edits, and commands return normal
 MCP results without creating an iframe for each call. Set `ui.enabled` to
 `false` in `~/.devspace/config.jsonc` to disable UI metadata while keeping the

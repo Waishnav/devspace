@@ -76,7 +76,7 @@ withConfigDir((configDir, env) => {
 
   const files = loadDevspaceFiles(env);
   assert.equal(files.config.server.port, 8787);
-  assert.equal(files.config.tools.mode, "codex");
+  assert.equal(files.config.tools.mode, undefined);
 
   setDevspaceConfigValue(["server", "publicBaseUrl"], "https://new.example.com", env);
   const updated = readFileSync(join(configDir, "config.jsonc"), "utf8");

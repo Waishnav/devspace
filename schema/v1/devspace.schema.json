@@ -101,7 +101,7 @@
       "type": "object",
       "properties": {
         "mode": {
-          "default": "codex",
+          "description": "Optional override. When unset, DevSpace picks the tool surface from the connecting MCP host.",
           "type": "string",
           "enum": [
             "claude",

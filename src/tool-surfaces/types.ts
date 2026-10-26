@@ -88,6 +88,8 @@ export interface ToolInstructionContext {
   skills: string;
 }
 
+export type ToolSurfaceName = "codex" | "claude";
+
 export interface ToolSurface {
   register(context: ToolRegistrationContext): void;
   instructions(context: ToolInstructionContext): string;

@@ -1,12 +1,9 @@
 import { resolve } from "node:path";
-import type { ToolMode } from "./config-schema.js";
 import { expandHomePath } from "./roots.js";
 import type { LoggingConfig } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { devspaceAgentsDir, devspaceSkillsDir, loadDevspaceFiles } from "./user-config.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
-
-export type { ToolMode } from "./config-schema.js";
 
 export interface ServerConfig {
   configDir: string;
@@ -16,7 +13,8 @@ export interface ServerConfig {
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
-  toolMode: ToolMode;
+  /** Explicit `tools.mode`; when set it wins over host detection. */
+  toolSurfaceOverride: "claude" | "codex" | undefined;
   uiEnabled: boolean;
   stateDir: string;
   worktreeRoot: string;
@@ -66,7 +64,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
-    toolMode: stored.tools.mode,
+    toolSurfaceOverride: stored.tools.mode,
     uiEnabled: stored.ui.enabled,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),

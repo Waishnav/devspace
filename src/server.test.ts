@@ -9,7 +9,7 @@ import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
+import { loadConfig, type ServerConfig } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -22,30 +22,31 @@ import {
   createServer,
   DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS,
 } from "./server.js";
+import type { ToolSurfaceName } from "./tool-surfaces/index.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 
-test("tool modes expose the expected host-facing tool surface", async (t) => {
+test("tool surfaces expose the expected host-facing tools", async (t) => {
   const cases: Array<{
-    mode: ToolMode;
+    surface: ToolSurfaceName;
     expected: string[];
   }> = [
     {
-      mode: "claude",
+      surface: "claude",
       expected: ["open_workspace", "read", "write", "edit", "bash", "show_changes"],
     },
     {
-      mode: "codex",
+      surface: "codex",
       expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "show_changes"],
     },
   ];
 
-  for (const { mode, expected } of cases) {
-    await t.test(mode, async (nested) => {
-      const context = await fixture(nested, { toolMode: mode, uiEnabled: false });
+  for (const { surface, expected } of cases) {
+    await t.test(surface, async (nested) => {
+      const context = await fixture(nested, { surface, uiEnabled: false });
       const tools = await context.client.listTools();
 
       assert.deepEqual(
@@ -57,9 +58,9 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
 });
 
 test("model-facing tool schemas use snake_case recursively", async (t) => {
-  for (const toolMode of ["claude", "codex"] as const) {
-    await t.test(toolMode, async (nested) => {
-      const context = await fixture(nested, { toolMode, uiEnabled: false });
+  for (const surface of ["claude", "codex"] as const) {
+    await t.test(surface, async (nested) => {
+      const context = await fixture(nested, { surface, uiEnabled: false });
       const tools = await context.client.listTools();
       const invalidPaths = tools.tools.flatMap((tool) => [
         ...schemaPropertyPaths(tool.inputSchema)
@@ -76,7 +77,7 @@ test("model-facing tool schemas use snake_case recursively", async (t) => {
 });
 
 test("Codex process tools bound model-facing yield windows to 12 seconds", async (t) => {
-  const context = await fixture(t, { toolMode: "codex", uiEnabled: false });
+  const context = await fixture(t, { surface: "codex", uiEnabled: false });
   const tools = await context.client.listTools();
 
   for (const toolName of ["exec_command", "write_stdin"] as const) {
@@ -92,7 +93,7 @@ test("Codex process tools bound model-facing yield windows to 12 seconds", async
 });
 
 test("Claude edit and bash tools accept snake_case runtime inputs", async (t) => {
-  const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
+  const context = await fixture(t, { surface: "claude", uiEnabled: false });
   const workspaceId = structuredContent(
     await callOpen(context.client, context.project, "snake-case-claude"),
   ).workspace_id;
@@ -124,7 +125,7 @@ test("Claude edit and bash tools accept snake_case runtime inputs", async (t) =>
 });
 
 test("read rejects a symlink that leaves the workspace", async (t) => {
-  const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
+  const context = await fixture(t, { surface: "claude", uiEnabled: false });
   const outside = await mkdtemp(join(tmpdir(), "devspace-server-outside-test-"));
   t.after(async () => rm(outside, { recursive: true, force: true }));
   await writeFile(join(outside, "secret.txt"), "outside secret\n");
@@ -144,7 +145,7 @@ test("read rejects a symlink that leaves the workspace", async (t) => {
 });
 
 test("write rejects a new file through a symlink that leaves the workspace", async (t) => {
-  const context = await fixture(t, { toolMode: "claude", uiEnabled: false });
+  const context = await fixture(t, { surface: "claude", uiEnabled: false });
   const outside = await mkdtemp(join(tmpdir(), "devspace-server-outside-test-"));
   t.after(async () => rm(outside, { recursive: true, force: true }));
 
@@ -170,7 +171,7 @@ test("write rejects a new file through a symlink that leaves the workspace", asy
 test("UI metadata is limited to workspace and aggregate review", async (t) => {
   for (const uiEnabled of [true, false]) {
     await t.test(uiEnabled ? "enabled" : "disabled", async (nested) => {
-      const context = await fixture(nested, { toolMode: "claude", uiEnabled });
+      const context = await fixture(nested, { surface: "claude", uiEnabled });
       const tools = await context.client.listTools();
       const toolsWithUi = tools.tools
         .filter((tool) => Boolean((tool._meta as { ui?: unknown } | undefined)?.ui))
@@ -572,6 +573,50 @@ test("HTTP conflicting workspace aliases preserve request IDs and notification s
   }
 });
 
+test("HTTP endpoint picks the tool surface from the OAuth client", async (t) => {
+  const { localBaseUrl, issueAccessToken } = await httpServerFixture(
+    t,
+    "devspace-surface-http-test-",
+  );
+
+  const surfaceFor = async (clientName: string) => {
+    const token = await issueAccessToken(clientName);
+    const [listed, discovered] = await Promise.all([
+      postModernMcp(localBaseUrl, token, "tools/list", {}),
+      postModernMcp(localBaseUrl, token, "server/discover", {}),
+    ]);
+    const tools = (await listed.json() as { result: { tools: Array<{ name: string }> } })
+      .result.tools.map((tool) => tool.name);
+    const { instructions } = (await discovered.json() as { result: { instructions: string } }).result;
+    return { tools, instructions };
+  };
+
+  const chatgpt = await surfaceFor("ChatGPT");
+  assert.ok(chatgpt.tools.includes("apply_patch"));
+  assert.ok(!chatgpt.tools.includes("edit"));
+  assert.ok(!chatgpt.instructions.includes("available_agents_files"));
+
+  const claude = await surfaceFor("Claude");
+  assert.ok(claude.tools.includes("edit") && claude.tools.includes("bash"));
+  assert.ok(!claude.tools.includes("apply_patch"));
+  assert.ok(claude.instructions.includes("available_agents_files"));
+
+  const unknown = await surfaceFor("Some other host");
+  assert.ok(unknown.tools.includes("bash") && !unknown.tools.includes("apply_patch"));
+});
+
+test("HTTP endpoint honours an explicit tools.mode over host detection", async (t) => {
+  const { localBaseUrl, issueAccessToken } = await httpServerFixture(
+    t,
+    "devspace-surface-override-test-",
+    { tools: { mode: "claude" } },
+  );
+  const listed = await postModernMcp(localBaseUrl, await issueAccessToken("ChatGPT"), "tools/list", {});
+  const tools = (await listed.json() as { result: { tools: Array<{ name: string }> } })
+    .result.tools.map((tool) => tool.name);
+  assert.ok(tools.includes("edit") && !tools.includes("apply_patch"));
+});
+
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(
     t,
@@ -823,12 +868,14 @@ interface HttpServerFixture {
   root: string;
   localBaseUrl: string;
   accessToken: string;
+  issueAccessToken: (clientName: string) => Promise<string>;
   running: ReturnType<typeof createServer>;
 }
 
 async function httpServerFixture(
   t: TestContext,
   prefix: string,
+  extraConfig: { tools?: { mode: ToolSurfaceName } } = {},
 ): Promise<HttpServerFixture> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const ownerToken = "test-owner-token-that-is-long-enough";
@@ -842,6 +889,7 @@ async function httpServerFixture(
       worktreeRoot: join(root, ".worktrees"),
     },
     storage: { stateDir: join(root, ".state") },
+    ...extraConfig,
   }));
   const running = createServer(config, { incomingArtifactAdapters: [] });
   const httpServer = running.app.listen(0, "127.0.0.1");
@@ -856,12 +904,15 @@ async function httpServerFixture(
   const address = httpServer.address();
   assert.ok(address && typeof address === "object");
   const localBaseUrl = `http://127.0.0.1:${address.port}`;
-  const accessToken = await issueTestAccessToken(
+  const issueAccessToken = (clientName: string) => issueTestAccessToken(
     localBaseUrl,
     config.publicBaseUrl,
     ownerToken,
+    clientName,
   );
-  return { root, localBaseUrl, accessToken, running };
+  // Named as ChatGPT so HTTP tests get the Codex surface; unknown hosts get Claude tools.
+  const accessToken = await issueAccessToken("ChatGPT");
+  return { root, localBaseUrl, accessToken, issueAccessToken, running };
 }
 
 async function fixture(
@@ -870,7 +921,7 @@ async function fixture(
     git?: boolean;
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
-    toolMode?: ToolMode;
+    surface?: ToolSurfaceName;
     uiEnabled?: boolean;
   } = {},
 ): Promise<ServerFixture> {
@@ -916,7 +967,6 @@ async function fixture(
   }));
   const modeConfig: ServerConfig = {
     ...loadedConfig,
-    toolMode: options.toolMode ?? loadedConfig.toolMode,
     uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
   };
   const config: ServerConfig = options.localAgentProviders
@@ -944,6 +994,7 @@ async function fixture(
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
     config,
+    options.surface ?? "codex",
     workspaces,
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
@@ -994,6 +1045,7 @@ async function issueTestAccessToken(
   localBaseUrl: string,
   publicBaseUrl: string,
   ownerToken: string,
+  clientName: string,
 ): Promise<string> {
   const redirectUri = "http://127.0.0.1/callback";
   const resource = new URL("/mcp", publicBaseUrl).href;
@@ -1003,7 +1055,7 @@ async function issueTestAccessToken(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_name: "DevSpace modern protocol test",
+      client_name: clientName,
       redirect_uris: [redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
