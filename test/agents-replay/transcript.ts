@@ -14,6 +14,8 @@ export interface TranscriptMeta {
   scenario: string;
   /** Provider arguments, scrubbed like frames. */
   args: string[];
+  /** Where the driver started the provider process, scrubbed; replay requires the same. */
+  cwd?: string;
   /** Output of `<command> --version`, replayed for drivers that probe it. */
   version?: string;
   recordedAt: string;
@@ -43,6 +45,8 @@ export function readTranscript(path: string): Transcript {
 /** Machine-specific values replaced by placeholders, most specific first. */
 export interface ScrubContext {
   workspace: string;
+  /** The `--worktree` checkout the provider runs in, when the scenario uses one. */
+  worktree?: string;
   home: string;
   tmp: string;
 }
@@ -51,6 +55,9 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 function placeholders(context: ScrubContext): Array<[string, string]> {
   return [
+    ...(context.worktree
+      ? [[context.worktree, "$WORKTREE"], [context.worktree.replace(/[/\\.:]/g, "-"), "$WORKTREE_SLUG"]] as Array<[string, string]>
+      : []),
     [context.workspace, "$WORKSPACE"],
     // Providers name per-project state directories after the cwd with separators dashed.
     [context.workspace.replace(/[/\\.:]/g, "-"), "$CWD_SLUG"],

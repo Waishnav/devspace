@@ -37,7 +37,8 @@ wrapper script that runs `shim.ts`.
   path-by-path diff in the failing scenario's output.
 - Transcripts are scrubbed at record time:
   - the workspace, its dashed per-project form, the temp dir, and `$HOME`
-    become placeholders;
+    become placeholders, as does a `--worktree` checkout (`$WORKTREE`), whose
+    name has a random suffix;
   - credential shapes are redacted with `redactSecrets`, and emails are
     replaced;
   - `redactFrame` drops user environment the driver never reads (for Claude:
@@ -63,6 +64,7 @@ These apply to every provider, with the same assertions:
 | C4 | `stop` | `stop` during a `sleep` tool call yields `stopped` within 15s, and two seconds later there are no new events and no `late.txt`. Drivers that do not stream report no `tool_started`, so the stop is sent 8s after `turn_started`. |
 | C5 | `events` | One turn id covers `turn_started` … `message` … `turn_completed`. When the driver's `capabilities.turns.streaming` is true, the tool-using prompt also produces `tool_started` and `tool_completed`. |
 | C6 | `missing-command` | `agents run` exits non-zero with `PROVIDER_UNAVAILABLE`. No transcript is needed. |
+| C7 | `worktree` | `run --worktree --write-mode full_access` reports a `worktree` and `branch` on `run`, `wait`, and `show`; the worktree is a checkout on that branch and the source checkout stays clean. Live and record runs also check that the agent's `probe.txt` exists in the worktree, not in the source, and shows in `git status` there. A replayed provider executes no tools, so replay checks the rest, and the shim fails it if the provider was not started in the worktree. |
 
 ## Adding a stdio provider (ACP)
 

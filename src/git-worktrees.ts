@@ -42,6 +42,8 @@ export interface ManagedWorktree {
   dirtySource: boolean;
   detached: boolean;
   managed: boolean;
+  /** Set when the worktree was created on a new branch instead of a detached HEAD. */
+  branch?: string;
 }
 
 export type ManagedWorktreeErrorCode =
@@ -83,7 +85,9 @@ export interface ManagedWorktreeCleanupResult {
 export async function createManagedWorktree(input: {
   sourcePath: string;
   baseRef?: string;
-  config: AgentConfig;
+  /** Create a new branch at the base commit instead of detaching HEAD. */
+  branch?: string;
+  config: Pick<AgentConfig, "allowedRoots" | "worktreeRoot">;
 }): Promise<ManagedWorktree> {
   const sourcePath = assertAllowedPath(input.sourcePath, input.config.allowedRoots);
 
@@ -116,7 +120,12 @@ export async function createManagedWorktree(input: {
   assertAllowedPath(worktreePath, [input.config.worktreeRoot]);
 
   try {
-    await git(["worktree", "add", "--detach", worktreePath, baseSha], sourceRoot);
+    await git(
+      input.branch
+        ? ["worktree", "add", "-b", input.branch, worktreePath, baseSha]
+        : ["worktree", "add", "--detach", worktreePath, baseSha],
+      sourceRoot,
+    );
   } catch (error) {
     await rm(worktreePath, { recursive: true, force: true });
     const message = error instanceof Error ? error.message : String(error);
@@ -132,8 +141,9 @@ export async function createManagedWorktree(input: {
     baseRef,
     baseSha,
     dirtySource,
-    detached: true,
+    detached: !input.branch,
     managed: true,
+    ...(input.branch ? { branch: input.branch } : {}),
   };
 }
 

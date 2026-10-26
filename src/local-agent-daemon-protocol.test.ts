@@ -31,6 +31,16 @@ assert.equal(request.method, "agent.start");
 if (request.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(request.params.writeMode, "read_only");
 assert.equal(request.params.agentId, "job-1");
+assert.equal(request.params.worktree, undefined);
+const worktreeRequest = decodeLocalAgentDaemonRequest({
+  requestId: "req_wt",
+  protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  authToken: "test-secret",
+  method: "agent.start",
+  params: { target: "reviewer", prompt: "Review this", workspaceRoot: "/tmp/project", worktree: { branch: "feature/x" } },
+});
+if (worktreeRequest.method !== "agent.start") throw new Error("expected agent.start request");
+assert.deepEqual(worktreeRequest.params.worktree, { branch: "feature/x" });
 
 const whitespaceRequest = decodeLocalAgentDaemonRequest({
   requestId: "req_whitespace",
@@ -135,6 +145,15 @@ assert.equal(record.id, "agt_1234");
 assert.equal(record.latestResponse, "  response whitespace  \n");
 assert.equal(decodeAgentRecord({ ...record, latestResponse: "" }).latestResponse, "");
 assert.equal(decodeAgentRecord({ ...record, latestResponse: "  \n" }).latestResponse, "  \n");
+
+const worktreeRecord = decodeAgentRecord({ ...record, worktreePath: "/wt/app-1a2b", branch: "devspace/agt_1234" });
+assert.equal(worktreeRecord.worktreePath, "/wt/app-1a2b");
+assert.equal(worktreeRecord.branch, "devspace/agt_1234");
+assert.equal(record.worktreePath, undefined);
+
+const waited = decodeAgentWaitResults([{ id: "agt_1234", status: "completed", response: "ok", worktree: "/wt/app-1a2b", branch: "devspace/agt_1234" }]);
+assert.deepEqual(waited, [{ id: "agt_1234", status: "completed", response: "ok", worktree: "/wt/app-1a2b", branch: "devspace/agt_1234" }]);
+assert.deepEqual(decodeAgentWaitResults([{ id: "agt_1234", status: "running" }]), [{ id: "agt_1234", status: "running" }]);
 
 const directRecord = decodeAgentRecord({ ...record, workspaceId: undefined });
 assert.equal(directRecord.workspaceId, undefined);

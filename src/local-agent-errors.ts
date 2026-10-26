@@ -37,7 +37,10 @@ export class AgentConflictError extends TaggedError("AgentConflictError")<{
 export type AgentScopeErrorCode =
   | "WORKSPACE_MISMATCH"
   | "WORKSPACE_NOT_ALLOWED"
-  | "WORKSPACE_SCOPE_REQUIRED";
+  | "WORKSPACE_SCOPE_REQUIRED"
+  | "WORKTREE_NOT_GIT_REPOSITORY"
+  | "WORKTREE_CREATE_FAILED"
+  | "WORKTREE_MISSING";
 
 export class AgentScopeError extends TaggedError("AgentScopeError")<{
   code: AgentScopeErrorCode;
@@ -261,6 +264,9 @@ export function agentErrorFromPayload(payload: {
     case "WORKSPACE_MISMATCH":
     case "WORKSPACE_NOT_ALLOWED":
     case "WORKSPACE_SCOPE_REQUIRED":
+    case "WORKTREE_NOT_GIT_REPOSITORY":
+    case "WORKTREE_CREATE_FAILED":
+    case "WORKTREE_MISSING":
       return new AgentScopeError({
         code: payload.code,
         agentId: payload.agentId,

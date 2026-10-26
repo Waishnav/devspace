@@ -148,6 +148,32 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: "worktree",
+    description: "C7: --worktree runs the agent on its own branch checkout and leaves the source checkout untouched",
+    transcript: true,
+    async run(run) {
+      const started = await cli(run, ["agents", "run", run.provider.id, "--worktree", "--write-mode", "full_access", "--json", "Run `pwd`, then create a file named probe.txt containing the word hello in that directory using your file tools. Then reply DONE."]);
+      expect(started.code === 0 && typeof started.json?.id === "string", `run failed: ${started.stdout}${started.stderr}`);
+      const { id, worktree, branch } = started.json;
+      expect(typeof worktree === "string" && typeof branch === "string", `run output lacks worktree and branch: ${started.stdout}`);
+      const result = await waitFor(run, id);
+      expect(result.status === "completed", `expected completed, got ${describe(result)}`);
+      const shown = (await cli(run, ["agents", "show", id, "--json"])).json;
+      for (const output of [result, shown]) {
+        expect(output.worktree === worktree && output.branch === branch, `worktree and branch were not reported: ${describe(output)}`);
+      }
+      expect(worktree !== run.workspace && existsSync(join(worktree, "README.md")), `${worktree} is not a checkout of the fixture`);
+      expect(git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]) === branch, `worktree is not on ${branch}`);
+      expect(git(run.workspace, ["status", "--porcelain"]) === "", "the source checkout was modified");
+      expect(!existsSync(join(run.workspace, "probe.txt")), "probe.txt appeared in the source checkout");
+      // A replayed provider executes no tools, so the file can only be checked against a real one.
+      if (run.mode !== "replay") {
+        expect(existsSync(join(worktree, "probe.txt")), `probe.txt is missing from ${worktree}`);
+        expect(git(worktree, ["status", "--porcelain"]).includes("probe.txt"), "git status in the worktree does not show probe.txt");
+      }
+    },
+  },
+  {
     name: "missing-command",
     description: "C6: a missing provider command fails with PROVIDER_UNAVAILABLE and a non-zero exit",
     transcript: false,
@@ -213,7 +239,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
   mkdirSync(configDir);
   writeFileSync(join(configDir, "config.jsonc"), JSON.stringify({
     configVersion: 1,
-    workspaces: { allowedRoots: [root] },
+    workspaces: { allowedRoots: [root], worktreeRoot: join(root, "worktrees") },
     storage: { stateDir: join(root, "state") },
     subagents: {
       enabled: true,
@@ -271,6 +297,7 @@ function writeShimWrapper(
     DEVSPACE_AGENT_SHIM_TRANSCRIPT: transcriptPath(provider, scenario),
     DEVSPACE_AGENT_SHIM_RUN_DIR: runDir,
     DEVSPACE_AGENT_SHIM_WORKSPACE: workspace,
+    DEVSPACE_AGENT_SHIM_WORKTREE_ROOT: join(root, "worktrees"),
     ...(process.env.DEVSPACE_AGENT_SHIM_TRACE ? { DEVSPACE_AGENT_SHIM_TRACE: "1" } : {}),
   };
   const tsx = import.meta.resolve("tsx");
@@ -363,9 +390,10 @@ function transcriptPath(provider: ProviderDefinition, scenario: Scenario): strin
   return join(transcriptsDir, provider.id, scenario.name);
 }
 
-function git(cwd: string, args: string[]): void {
+function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  return result.stdout.trim();
 }
 
 function expect(condition: unknown, message: string): asserts condition {

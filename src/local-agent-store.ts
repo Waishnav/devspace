@@ -14,7 +14,11 @@ export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped
 export interface LocalAgentRecord {
   id: string;
   workspaceId?: string;
+  /** The checkout the agent belongs to; it scopes `ls`, `show`, and `continue`. */
   workspaceRoot: string;
+  /** Set for `--worktree` agents: the isolated checkout they run in, on `branch`. */
+  worktreePath?: string;
+  branch?: string;
   profileName: string;
   providerInstanceId: string;
   driver: LocalAgentDriverKind;
@@ -109,6 +113,8 @@ interface LocalAgentRow {
   effort: string | null;
   write_mode: string;
   dispatch_signature: string | null;
+  worktree_path: string | null;
+  branch: string | null;
   provider_session_id: string | null;
   status: string;
   latest_response: string | null;
@@ -314,6 +320,8 @@ export class LocalAgentStore {
         `update local_agent_sessions set
           workspace_id = ?,
           workspace_root = ?,
+          worktree_path = ?,
+          branch = ?,
           profile_name = ?,
           provider_instance_id = ?,
           driver = ?,
@@ -334,6 +342,8 @@ export class LocalAgentStore {
       .run(
         updated.workspaceId ?? null,
         resolve(updated.workspaceRoot),
+        updated.worktreePath ?? null,
+        updated.branch ?? null,
         updated.profileName,
         updated.providerInstanceId,
         updated.driver,
@@ -353,6 +363,15 @@ export class LocalAgentStore {
       );
 
     return updated;
+  }
+
+  /** Drops a record that never ran, so its caller-supplied id can be reused. */
+  delete(id: string): void {
+    this.database.sqlite.prepare("delete from local_agent_sessions where id = ?").run(id);
+  }
+
+  deleteResult(id: string): BetterResult<void, AgentStoreError> {
+    return storeResult("delete", () => this.delete(id));
   }
 
   updateResult(
@@ -617,6 +636,8 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     id: row.id,
     workspaceId: row.workspace_id ?? undefined,
     workspaceRoot: row.workspace_root,
+    worktreePath: row.worktree_path ?? undefined,
+    branch: row.branch ?? undefined,
     profileName: row.profile_name,
     providerInstanceId: row.provider_instance_id,
     driver: row.driver,

@@ -115,6 +115,15 @@ assert.throws(() => parseLocalAgentRunArgs(["codex", "--write-mode", "root", "hi
 assert.throws(() => parseLocalAgentRunArgs(["codex", "--timeout", "5", "hi"]), /--timeout requires --wait/);
 assert.throws(() => parseLocalAgentRunArgs(["codex", "--request-id", "a/b", "hi"]), /Request id must be 1-128/);
 assert.throws(() => parseLocalAgentContinueArgs(["agt_1", "--request-id", "x", "hi"]), /Unknown option: --request-id/);
+assert.deepEqual(parseLocalAgentRunArgs(["codex", "--worktree", "hi"]).worktree, { branch: undefined });
+assert.deepEqual(
+  parseLocalAgentRunArgs(["codex", "--branch", "feature/x", "--worktree", "hi"]).worktree,
+  { branch: "feature/x" },
+);
+assert.equal(parseLocalAgentRunArgs(["codex", "hi"]).worktree, undefined);
+assert.throws(() => parseLocalAgentRunArgs(["codex", "--branch", "feature/x", "hi"]), /--branch requires --worktree/);
+assert.throws(() => parseLocalAgentContinueArgs(["agt_1", "--worktree", "hi"]), /Unknown option: --worktree/);
+assert.throws(() => parseLocalAgentContinueArgs(["agt_1", "--branch", "x", "hi"]), /Unknown option: --branch/);
 assert.deepEqual(parseLocalAgentContinueArgs(["agt_1", "--wait", "go on"]), {
   agentId: "agt_1",
   prompt: "go on",

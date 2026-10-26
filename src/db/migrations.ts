@@ -99,6 +99,14 @@ const migrations: Migration[] = [
       create index workflow_events_run_idx on workflow_events(run_id, sequence);
     `),
   },
+  {
+    version: 14,
+    name: "local-agent-worktrees",
+    up: (sqlite) => {
+      addColumnIfMissing(sqlite, "local_agent_sessions", "worktree_path", "text");
+      addColumnIfMissing(sqlite, "local_agent_sessions", "branch", "text");
+    },
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {

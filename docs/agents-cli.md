@@ -55,7 +55,7 @@ for providers, models, and profiles.
 | `daemon <status\|stop\|logs>` | Diagnose or stop the background daemon. |
 
 `run` and `continue` accept `--model`, `--effort`, `--write-mode`, `--wait`, and
-`--timeout`. `run` also accepts `--request-id`.
+`--timeout`. `run` also accepts `--request-id`, `--worktree`, and `--branch`.
 
 ### Single-shot use
 
@@ -93,6 +93,61 @@ key (letters, digits, `. _ : -`, up to 128 characters) becomes the agent id, so
 use something unique per job, such as `nightly-2026-08-21`. The same key with
 different arguments fails with `AGENT_CONFLICT`.
 
+### Parallel writing agents
+
+Agents run in your checkout by default, so two agents that write, or an agent
+and you, can overwrite each other. `--worktree` gives an agent its own
+[git worktree](https://git-scm.com/docs/git-worktree) on a new branch, so
+parallel agents cannot collide and each hands back something you can review:
+
+```bash
+devspace agents run claude --worktree --write-mode allowed "Add retries to src/fetch.ts"
+devspace agents run codex  --worktree --branch fix/flaky-test "Fix the flaky retry test"
+```
+
+```text
+<agent id="agt_1a2b3c4d" status="running" turn="trn_5e6f7a8b" worktree="/home/you/.devspace/worktrees/app-9c8d7e6f" branch="devspace/agt_1a2b3c4d"/>
+```
+
+- The worktree is created from the **committed `HEAD`** of the checkout you ran
+  from. Uncommitted changes there, staged or not, are **not** copied; commit or
+  stash first if the agent needs them.
+- It lives under `workspaces.worktreeRoot` (default `~/.devspace/worktrees`) as
+  `<repo>-<8 hex>`. The branch is `devspace/<agent id>` unless you pass
+  `--branch`, which must not already exist. A `:` in a `--request-id` becomes `-`
+  in the default branch name.
+- `worktree` and `branch` appear on `run`, `continue`, `show`, `wait`, and `ls`
+  output, in XML and in `--json`. `continue` reuses the same worktree and branch.
+  Agents stay listed under the checkout they were started from.
+- With `--request-id`, a retry returns the existing agent and creates no second
+  worktree. The same key with a different `--branch`, or without `--worktree`,
+  is an `AGENT_CONFLICT`.
+- Outside a git repository, or in one with no commits, `--worktree` fails with
+  `WORKTREE_NOT_GIT_REPOSITORY` or `WORKTREE_CREATE_FAILED`. An existing branch
+  name also fails with `WORKTREE_CREATE_FAILED`, and no agent is created.
+
+DevSpace never merges or deletes these worktrees; `devspace worktrees prune`
+ignores them too. When an agent finishes, review its work with git, from your
+checkout:
+
+```bash
+git -C <worktree> status                 # what the agent left, committed or not
+git -C <worktree> diff                   # uncommitted changes
+git log main..devspace/agt_1a2b3c4d      # commits, if the agent made any
+git -C <worktree> add -A && git -C <worktree> commit -m "Add retries"   # keep uncommitted work
+git merge devspace/agt_1a2b3c4d          # take it
+git worktree remove <worktree>           # then clean up (--force if files remain)
+git branch -d devspace/agt_1a2b3c4d
+```
+
+Whether an agent can commit depends on its write mode and provider sandbox, so
+expect uncommitted changes. If you remove a worktree and then `continue` its
+agent, the command fails with `WORKTREE_MISSING`; the branch is kept, and
+`git worktree add <worktree> <branch>` brings the agent's checkout back.
+
+A worktree isolates files, not authority. The agent still runs as you, and with
+`full_access` can reach your original checkout by absolute path.
+
 ### Output
 
 Output is compact XML for models by default and one JSON value per command with
@@ -106,7 +161,8 @@ $ devspace agents run claude --wait --json "Reply with exactly PONG"
 {"id":"agt_1a2b3c4d","status":"completed","response":"PONG","turnId":"trn_5e6f7a8b"}
 ```
 
-`status` is `running`, `completed`, `failed`, or `stopped`. A failure adds
+`status` is `running`, `completed`, `failed`, or `stopped`. An agent started with
+`--worktree` adds `worktree` and `branch` (attributes in XML). A failure adds
 `error: {code, message, retryable, detail?}`; an unfinished wait adds
 `wait: "timeout"`. Command errors print `{"error":{"code","message","retryable",...}}` and exit 1.
 `wait` prints an array of observations, `run`/`continue` without `--wait` print
@@ -191,7 +247,10 @@ DevSpace's state directory, not on a network port.
 - **`AGENT_CONFLICT`.** The `--request-id` was already used with a different
   project or arguments, or `continue` tried to raise the write mode.
 - **The wrong project.** Agents belong to the git root of the directory you
-  run from. Run `devspace agents ls` from that project.
+  run from. Run `devspace agents ls` from that project, not from the agent's
+  worktree.
+- **`--worktree` agent cannot see my uncommitted changes.** The worktree starts from
+  the committed `HEAD`. Commit first.
 - **The daemon seems stuck.** `devspace agents daemon status`, then
   `devspace agents daemon logs`. `devspace agents daemon stop` asks it to exit;
   agents that were running are marked failed on the next start and can be

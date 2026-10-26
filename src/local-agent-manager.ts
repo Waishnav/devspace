@@ -47,6 +47,7 @@ import {
 } from "./local-agent-runtime.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { assertAllowedPath } from "./roots.js";
+import { createAgentWorktree, missingWorktreeError, type AgentWorktree } from "./local-agent-worktree.js";
 import {
   isSubagentProviderEnabled,
   subagentProviderConfig,
@@ -62,6 +63,8 @@ export interface StartLocalAgentInput {
   model?: string;
   effort?: string;
   writeMode?: LocalAgentWriteMode;
+  /** Run in a new git worktree of `workspaceRoot` instead of in `workspaceRoot` itself. */
+  worktree?: { branch?: string };
 }
 
 export interface RunOverrides {
@@ -85,6 +88,8 @@ export interface LocalAgentManagerOptions {
   agentDir?: string;
   allowedRoots?: readonly string[];
   authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean;
+  /** Where `worktree` starts create their checkouts. Without it they are refused. */
+  worktreeRoot?: string;
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
   stopTimeoutMs?: number;
@@ -112,7 +117,7 @@ export interface LocalAgentFailure {
   detail?: string;
 }
 
-export type LocalAgentWaitResult = { turnId?: string } & (
+export type LocalAgentWaitResult = { turnId?: string; worktree?: string; branch?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: LocalAgentFailure }
@@ -151,6 +156,7 @@ export class LocalAgentManager {
   private readonly agentDir?: string;
   private readonly allowedRoots?: readonly string[];
   private readonly authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean;
+  private readonly worktreeRoot?: string;
   private readonly logger?: LocalAgentManagerLogger;
   private readonly subagents: SubagentsConfig;
   private readonly stopTimeoutMs: number;
@@ -167,6 +173,7 @@ export class LocalAgentManager {
     this.agentDir = options.agentDir;
     this.allowedRoots = options.allowedRoots;
     this.authorizeManagedWorkspace = options.authorizeManagedWorkspace;
+    this.worktreeRoot = options.worktreeRoot;
     this.logger = options.logger;
     this.subagents = options.subagents;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
@@ -237,12 +244,43 @@ export class LocalAgentManager {
       const created = yield* createdResult;
       // An idempotent retry of a workflow dispatch returns the existing agent.
       if (!created.created) return Result.ok(created.record);
-      return manager.begin(created.record, input.prompt, {
+      let record = created.record;
+      if (input.worktree) {
+        // Created only for a new record, so a retried request id never makes a second worktree.
+        const worktree = await manager.createWorktree(record, workspaceRoot, input.worktree.branch);
+        if (worktree.isErr()) {
+          manager.store.deleteResult(record.id);
+          return Result.err(worktree.error);
+        }
+        const updated = yield* manager.store.updateResult(record.id, {
+          worktreePath: worktree.value.path,
+          branch: worktree.value.branch,
+        });
+        record = updated;
+      }
+      return manager.begin(record, input.prompt, {
         model: target.model,
         effort: target.effort,
         writeMode: input.writeMode,
       }, input.workspaceId);
     });
+  }
+
+  private async createWorktree(
+    record: LocalAgentRecord,
+    workspaceRoot: string,
+    branch: string | undefined,
+  ): Promise<BetterResult<AgentWorktree, AgentScopeError>> {
+    if (!this.worktreeRoot) {
+      return Result.err(new AgentScopeError({
+        code: "WORKTREE_CREATE_FAILED",
+        agentId: record.id,
+        operation: "start",
+        retryable: false,
+        message: "Worktrees are not configured: no worktree root.",
+      }));
+    }
+    return createAgentWorktree({ agentId: record.id, workspaceRoot, worktreeRoot: this.worktreeRoot, branch });
   }
 
   async continue(
@@ -257,6 +295,8 @@ export class LocalAgentManager {
       const record = yield* manager.store.getByIdResult(agentId);
       if (!record) return Result.err(agentNotFound(agentId));
       yield* manager.agentWorkspaceResult(record, scope, "continue");
+      const missingWorktree = missingWorktreeError(record, "continue");
+      if (missingWorktree) return Result.err(missingWorktree);
       yield* manager.writeModeResult(record, overrides.writeMode);
       const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
       yield* manager.profileForRecordResult(record, profiles);
@@ -332,15 +372,21 @@ export class LocalAgentManager {
       : false;
     const results: LocalAgentWaitResult[] = [];
     for (const capture of captures) {
+      const worktree = capture.agent.worktreePath
+        ? { worktree: capture.agent.worktreePath, branch: capture.agent.branch }
+        : {};
       if (!capture.turn) {
-        results.push(waitResultFromAgent(capture.agent, timedOut));
+        results.push({ ...waitResultFromAgent(capture.agent, timedOut), ...worktree });
         continue;
       }
       const turn = this.store.getTurnByIdResult(capture.turn.id);
       if (turn.isErr()) return turn;
-      results.push(turn.value
-        ? waitResultFromTurn(turn.value, timedOut)
-        : waitResultFromAgent(capture.agent, timedOut));
+      results.push({
+        ...(turn.value
+          ? waitResultFromTurn(turn.value, timedOut)
+          : waitResultFromAgent(capture.agent, timedOut)),
+        ...worktree,
+      });
     }
     return Result.ok(results);
   }
@@ -562,7 +608,7 @@ export class LocalAgentManager {
         agentId: record.id,
         providerInstanceId: record.providerInstanceId,
         provider: driver.value.provider,
-        workspaceRoot,
+        workspaceRoot: record.worktreePath ?? workspaceRoot,
         providerSessionId: record.providerSessionId,
         writeMode: input.value.writeMode,
         model: input.value.model,
@@ -685,7 +731,7 @@ export class LocalAgentManager {
     const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
     return Result.ok({
       prompt: fullPrompt,
-      workspaceRoot: record.workspaceRoot,
+      workspaceRoot: record.worktreePath ?? record.workspaceRoot,
       providerSessionId: record.providerSessionId,
       writeMode: overrides.writeMode ?? record.writeMode,
       model: record.model ?? profile?.model,
@@ -1009,6 +1055,8 @@ function dispatchSignature(
     model ?? null,
     effort ?? null,
     input.writeMode ?? "allowed",
+    // Appended only when set, so signatures of ordinary dispatches stay as they were.
+    ...(input.worktree ? [{ worktree: input.worktree.branch ?? null }] : []),
   ])).digest("hex");
 }
 
