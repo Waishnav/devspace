@@ -548,6 +548,13 @@ async function runShowChanges(args: string[]): Promise<void> {
 
 async function runAgentsCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
+  // Agents call `--help` on every subcommand; answer with the usage instead of a parse error.
+  const terminator = rest.indexOf("--");
+  const optionArgs = terminator === -1 ? rest : rest.slice(0, terminator);
+  if (subcommand !== undefined && optionArgs.some((arg) => arg === "--help" || arg === "-h")) {
+    printAgentsHelp();
+    return;
+  }
   const { args: commandArgs, json } = extractJsonOption(rest);
   switch (subcommand) {
     case "ls":
