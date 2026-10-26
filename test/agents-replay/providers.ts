@@ -1,4 +1,6 @@
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -47,6 +49,50 @@ export interface ProviderDefinition {
 }
 
 const require = createRequire(import.meta.url);
+
+/**
+ * ACP agents announce the user's installed skills and commands, and list every model the account
+ * can use. DevSpace reads neither, so recordings drop the first and keep only the current model.
+ */
+function redactAcpFrame(frame: Record<string, unknown>): unknown {
+  const update = (frame.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update;
+  if (frame.method === "session/update" && update?.sessionUpdate === "available_commands_update") return undefined;
+  const result = frame.result as Record<string, unknown> | undefined;
+  if (!result || !("sessionId" in result)) return frame;
+  const models = result.models as { currentModelId?: unknown; availableModels?: unknown[] } | undefined;
+  return {
+    ...frame,
+    result: {
+      ...result,
+      ...(models && Array.isArray(models.availableModels) ? {
+        models: {
+          ...models,
+          availableModels: models.availableModels.filter((model) => (model as { modelId?: unknown }).modelId === models.currentModelId),
+        },
+      } : {}),
+      ...(Array.isArray(result.configOptions) ? {
+        configOptions: result.configOptions.map((option: { category?: unknown; currentValue?: unknown; options?: unknown[] }) => (
+          option.category === "model" && Array.isArray(option.options)
+            ? { ...option, options: option.options.filter((entry) => (entry as { value?: unknown }).value === option.currentValue) }
+            : option
+        )),
+      } : {}),
+    },
+  };
+}
+
+/**
+ * Grok also streams its own `_x.ai/` notifications (hooks, announcements, settings, workspace
+ * paths) and describes the host in `_meta`. The driver only reads the prompt-completion ones.
+ */
+function redactGrokFrame(frame: Record<string, unknown>): unknown {
+  if (typeof frame.method === "string" && /^_?x\.ai\//.test(frame.method) && !frame.method.endsWith("/session/prompt_complete")) {
+    return undefined;
+  }
+  const redacted = redactAcpFrame(frame) as Record<string, unknown> | undefined;
+  const result = redacted?.result as Record<string, unknown> | undefined;
+  return redacted && result && "_meta" in result ? { ...redacted, result: { ...result, _meta: {} } } : redacted;
+}
 
 const jsonRpc: ReplayProtocol = {
   kind: (frame) => typeof frame.method === "string"
@@ -169,6 +215,33 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
       return frame;
     },
     realCommand: () => "codex",
+  },
+  // ACP agents speak JSON-RPC over stdio; DevSpace's AcpLocalAgentDriver is shared by all three.
+  cursor: {
+    id: "cursor",
+    redactFrame: redactAcpFrame,
+    // Recorded with the account's default (Auto): cheaper models such as gpt-5.4-nano need a paid plan.
+    protocol: jsonRpc,
+    realCommand: () => "cursor-agent",
+  },
+  copilot: {
+    id: "copilot",
+    redactFrame: redactAcpFrame,
+    protocol: jsonRpc,
+    // The user's Copilot hooks run in Copilot's tool sandbox and can fail a turn, and they would
+    // be recorded. A separate config dir keeps the login (it is not stored there) and drops them.
+    liveEnv: (): Record<string, string> => {
+      const home = join(tmpdir(), "devspace-agents-qa-copilot-home");
+      mkdirSync(home, { recursive: true });
+      return { COPILOT_HOME: home };
+    },
+    realCommand: () => "copilot",
+  },
+  grok: {
+    id: "grok",
+    redactFrame: redactGrokFrame,
+    protocol: jsonRpc,
+    realCommand: () => "grok",
   },
 };
 

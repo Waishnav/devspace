@@ -46,6 +46,14 @@ const spawn = require("cross-spawn") as typeof import("node:child_process").spaw
 
 const observeChildError = (): void => {};
 
+// `--mode plan` is ignored by `cursor-agent acp` and `copilot --acp`, so a read-only turn selects a
+// restricted session mode instead. Cursor's plan mode blocks on a plan approval that an unattended
+// turn never gets, so it uses ask mode.
+const ACP_READ_ONLY_MODES: Partial<Record<AcpFlavor, string>> = {
+  cursor: "ask",
+  copilot: "https://agentclientprotocol.com/protocol/session-modes#plan",
+};
+
 const ACP_COMMANDS: Partial<Record<AcpFlavor, [string, ...string[]]>> = {
   cursor: ["cursor-agent", "acp"],
   copilot: ["copilot", "--acp"],
@@ -310,6 +318,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         cwd: input.workspaceRoot,
         mcpServers: [],
         ...this.additionalDirectoryParams(),
+        ...this.permissionMeta(input),
       });
       this.cacheSessionMetadata(input.providerSessionId, response);
       this.queues.set(input.providerSessionId, { values: [] });
@@ -324,6 +333,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       cwd: input.workspaceRoot,
       mcpServers: [],
       ...this.additionalDirectoryParams(),
+      ...this.permissionMeta(input),
     });
     const sessionId = readString(response, "sessionId");
     if (!sessionId) {
@@ -362,6 +372,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       await this.configureGrokSession(sessionId, input, metadata, isNewSession);
       return;
     }
+    await this.enforceReadOnlyMode(sessionId, input);
     const canConfigure = isNewSession || hasAcpConfigOptions(metadata);
     if (!canConfigure) {
       const requested = [
@@ -391,6 +402,24 @@ export class AcpRuntime implements LocalAgentRuntime {
     if (input.effort) {
       const config = resolveAcpEffortConfigUpdate(metadata, input.effort, this.flavor, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
+    }
+  }
+
+  private async enforceReadOnlyMode(sessionId: string, input: LocalAgentRunInput): Promise<void> {
+    const modeId = ACP_READ_ONLY_MODES[this.flavor];
+    if (input.writeMode !== "read_only" || !modeId) return;
+    try {
+      await this.connection.agent.request("session/set_mode", { sessionId, modeId });
+    } catch (cause) {
+      // Fail closed: without the restricted mode the turn could write.
+      throw new AgentProviderProtocolError({
+        code: "PROVIDER_PROTOCOL_ERROR",
+        provider: this.provider,
+        operation: "configure_session",
+        retryable: false,
+        cause,
+        message: `${this.provider} ACP could not enter its read-only mode '${modeId}'.`,
+      });
     }
   }
 
@@ -444,6 +473,14 @@ export class AcpRuntime implements LocalAgentRuntime {
         message: `${this.provider} ACP could not select model '${requestedModel}'.`,
       });
     }
+  }
+
+  /**
+   * Grok follows the user's own always-approve setting unless the client says otherwise, which would
+   * bypass the permission requests that enforce the write mode. Only full_access may skip them.
+   */
+  private permissionMeta(input: LocalAgentRunInput): { _meta?: { yoloMode: boolean } } {
+    return this.flavor === "grok" ? { _meta: { yoloMode: input.writeMode === "full_access" } } : {};
   }
 
   private additionalDirectoryParams(): { additionalDirectories?: string[] } {
@@ -727,7 +764,6 @@ export function acpCommandArgs(
       "acp",
       "--sandbox", writeMode === "full_access" ? "disabled" : "enabled",
       "--workspace", resolve(context.workspaceRoot),
-      ...(writeMode === "read_only" ? ["--mode", "plan"] : []),
       ...(writeMode === "full_access" ? ["--force"] : []),
     ];
   }
@@ -754,7 +790,6 @@ export function acpCommandArgs(
       ? ["--allow-all"]
       : ["--allow-all-tools", "--add-dir", resolve(context.workspaceRoot)]),
     "-C", resolve(context.workspaceRoot),
-    ...(writeMode === "read_only" ? ["--mode", "plan"] : []),
   ];
 }
 
