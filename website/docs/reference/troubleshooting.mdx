@@ -17,8 +17,13 @@ Bash, public URL, allowed hosts, and native SQLite status.
 </Accordion>
 
 <Accordion title="better-sqlite3 could not load">
-  Native dependencies were built for a different Node runtime. Run
-  `npm rebuild better-sqlite3`, then `doctor`.
+  Native dependencies were built for a different Node runtime. Reinstall with
+  the Node you run DevSpace with, then rerun `doctor`:
+
+  - global install: `npm install -g @waishnav/devspace`
+  - npx: clear the cached copy with `rm -rf ~/.npm/_npx`, then rerun the `npx`
+    command
+  - local project install: `npm rebuild better-sqlite3` in that project
 </Accordion>
 
 <Accordion title="Public URL includes /mcp">

@@ -60,6 +60,11 @@ const [review, qa] = await phase("Verify", (agent) => parallel(
   ({ target, brief }) => agent(brief, { target }),
 ));
 
+// parallel() reports a failed worker instead of throwing; fail the run here.
+if (review.status === "failed" || qa.status === "failed") {
+  throw new Error("Verification failed: see the review and QA calls.");
+}
+
 return { plan, build, review, qa };
 ```
 

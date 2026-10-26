@@ -20,6 +20,11 @@ export default function WorkflowRun() {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    // Reduced motion shows the finished run instead of animating it.
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setTick(LAST_TICK);
+      return;
+    }
     const timer = setTimeout(
       () => setTick((t) => (t > LAST_TICK + 6 ? 0 : t + 1)),
       TICK_MS,

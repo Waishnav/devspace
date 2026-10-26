@@ -33,4 +33,7 @@ existing file. Afterwards, ordinary tools can inspect, move, or replace it.
 - Streams under `artifacts.maxFileBytes` and publishes without overwrite.
 - Available on Linux, macOS, and Windows using descriptor- or handle-anchored
   filesystem operations. Not registered on BSD.
-- Content is never extracted or executed, and file values are never logged.
+- Content is never extracted or executed, and request logs never include file
+  values. With [activity history](/reference/configuration) on, the
+  `download_artifact` call is recorded like any other tool call — including
+  its arguments, which carry the host's short-lived download URL.

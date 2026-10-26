@@ -62,7 +62,8 @@ DevSpace requires Node `>=22.19 <27`, Git, and a Bash-compatible shell
 ## Your first delegation
 
 From a project directory, ask your harness to delegate — or try the commands
-yourself:
+yourself. They assume a global install; with npx, prefix each with
+`npx @waishnav/devspace` instead of `devspace`.
 
 ```bash
 devspace agents targets
@@ -71,11 +72,13 @@ devspace agents targets
 ```xml
 <provider name="codex" model="gpt-5.4" effort="high"/>
 <provider name="claude" model="sonnet"/>
-<profile name="reviewer" provider="codex">Read-only reviewer for bugs and missing tests.</profile>
 ```
 
+Pick any listed target — a provider, or a [profile](/orchestration/profiles)
+you've created:
+
 ```bash
-devspace agents run reviewer "Review the uncommitted diff for correctness and missing tests. Cite files."
+devspace agents run codex --write-mode read_only "Review the uncommitted diff for correctness and missing tests. Cite files."
 # <agent id="agt_7Kq2" status="running"/>
 
 devspace agents wait agt_7Kq2

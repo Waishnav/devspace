@@ -36,7 +36,13 @@ const {
   document.addEventListener("click", async (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-copy]");
     if (!target) return;
-    await navigator.clipboard?.writeText(target.dataset.copy ?? "");
+    // Only claim success when the clipboard write actually happened.
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(target.dataset.copy ?? "");
+    } catch {
+      return;
+    }
     target.dataset.copied = "";
     setTimeout(() => delete target.dataset.copied, 1400);
   });

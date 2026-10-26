@@ -34,7 +34,7 @@ For routine edits, the orchestrator should just do the work.
     and the expected result.
 
     ```bash
-    devspace agents run reviewer "Review src/auth/ for session fixation. Report file:line findings."
+    devspace agents run reviewer --write-mode read_only "Review src/auth/ for session fixation. Report file:line findings."
     devspace agents run claude --model opus --effort high "Implement …"
     ```
 
