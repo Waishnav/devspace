@@ -80,10 +80,13 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
           if (fresh.length === 0) await this.assertTurnNotFailed(nativeSessionId);
           const assistant = requireLatestAssistant(fresh);
           assertOpenCodeV2AssistantSucceeded(assistant);
+          const finalResponse = requireOpenCodeV2FinalResponse(assistant);
+          // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
+          callbacks?.onEvent?.({ type: "message", text: finalResponse });
           return {
             provider: this.provider,
             providerSessionId,
-            finalResponse: requireOpenCodeV2FinalResponse(assistant),
+            finalResponse,
             items: fresh,
           };
         } catch (error) {

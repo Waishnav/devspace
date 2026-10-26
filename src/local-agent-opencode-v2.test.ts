@@ -100,6 +100,7 @@ const runtime = new OpencodeV2Runtime(client, {
   close: () => { closeCalls += 1; },
 });
 let sessionId: string | undefined;
+const firstEvents: unknown[] = [];
 const first = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
@@ -108,12 +109,14 @@ const first = await runtime.run({
   effort: "high",
 }, {
   onSessionId: (id) => { sessionId = id; },
+  onEvent: (event) => { firstEvents.push(event); },
 });
 assert.equal(first.isOk(), true);
 if (first.isErr()) throw first.error;
 assert.equal(sessionId, "opencode:v2:ses_v2");
 assert.equal(first.value.providerSessionId, "opencode:v2:ses_v2");
 assert.equal(first.value.finalResponse, "hello world");
+assert.deepEqual(firstEvents, [{ type: "message", text: "hello world" }]);
 assert.deepEqual(createInputs[0], {
   location: { directory: "/tmp/project" },
   permissions: opencodeV2Permissions("read_only"),
