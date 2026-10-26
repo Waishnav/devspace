@@ -15,6 +15,14 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 
+const TEST_CAPABILITIES = {
+  sessions: { resume: true, close: false },
+  turns: { interrupt: true },
+  configuration: { modelOverride: true, effortOverride: true },
+  permissions: { enforcement: "native" },
+  mcp: { supported: false },
+} as const;
+
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_test",
   providerInstanceId: "codex",
@@ -96,6 +104,7 @@ const driver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: async () => {
     createCount += 1;
     await Promise.resolve();
@@ -136,6 +145,7 @@ const sessionDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: async () => Result.ok(sessionRuntime),
 };
 await sessionPool.run(sessionDriver, context, input);
@@ -164,6 +174,7 @@ const shutdownReleaseDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: async () => Result.ok(shutdownReleaseRuntime),
 };
 await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
@@ -213,6 +224,7 @@ const cleanupDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "instance" },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: async () => Result.ok(cleanupRuntime),
 };
 const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
@@ -230,6 +242,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
     providerInstanceId: "codex",
     provider: "codex",
     runtimePolicy: { scope: "instance" },
+    capabilities: TEST_CAPABILITIES,
     createRuntime: async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime),
   };
 
@@ -255,6 +268,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
     providerInstanceId: "codex",
     provider: "codex",
     runtimePolicy: { scope: "instance" },
+    capabilities: TEST_CAPABILITIES,
     createRuntime: async () => Result.ok(completedTurnRuntime),
   };
 
@@ -272,6 +286,7 @@ const raceDriver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
   runtimePolicy: { scope: "instance" },
+  capabilities: TEST_CAPABILITIES,
   createRuntime: () => creating,
 };
 const pendingRun = racePool.run(raceDriver, context, input);
@@ -304,6 +319,7 @@ if (afterClose.isErr()) {
     providerInstanceId: "codex",
     provider: "codex",
     runtimePolicy: { scope: "instance" },
+    capabilities: TEST_CAPABILITIES,
     async createRuntime() {
       createAttempts += 1;
       if (createAttempts === 1) {
@@ -358,6 +374,7 @@ if (afterClose.isErr()) {
     providerInstanceId: "codex",
     provider: "codex",
     runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
+    capabilities: TEST_CAPABILITIES,
     createRuntime: async () => Result.ok(releaseRuntime),
   };
 
@@ -384,6 +401,7 @@ if (afterClose.isErr()) {
     providerInstanceId,
     provider: "codex",
     runtimePolicy,
+    capabilities: TEST_CAPABILITIES,
     createRuntime: async () => {
       creates += 1;
       return Result.ok(new FakeRuntime());

@@ -51,6 +51,7 @@ export class LocalAgentProviderRegistry {
 class ProviderInstanceDriver implements LocalAgentDriver {
   readonly provider: LocalAgentDriverKind;
   readonly runtimePolicy: LocalAgentDriver["runtimePolicy"];
+  readonly capabilities: LocalAgentDriver["capabilities"];
 
   constructor(
     readonly providerInstanceId: LocalAgentProviderInstanceId,
@@ -58,6 +59,7 @@ class ProviderInstanceDriver implements LocalAgentDriver {
   ) {
     this.provider = driver.provider;
     this.runtimePolicy = driver.runtimePolicy;
+    this.capabilities = driver.capabilities;
   }
 
   createRuntime(context: Parameters<LocalAgentDriver["createRuntime"]>[0]) {

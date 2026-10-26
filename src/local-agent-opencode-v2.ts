@@ -12,6 +12,7 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import type {
   LocalAgentRunCallbacks,
   LocalAgentRunInput,
@@ -178,6 +179,13 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+    // End the local request only once OpenCode confirms the interrupt (`interrupted: false`
+    // means the session was already idle). A failed or stalled interrupt keeps the turn
+    // running, and the manager reports the stop as a conflict.
+    const removeAbort = bindLocalAgentAbort(input.signal, async () => {
+      await this.client.session.interrupt({ sessionID: sessionId });
+      controller.abort();
+    });
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
@@ -196,6 +204,8 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
       }, { signal: controller.signal });
       return { promptedAt: prompted.time.created, messages };
     } catch (error) {
+      // A provider timeout after a stop request is still a timeout: the interrupt was never confirmed.
+      if (input.signal?.aborted && !timedOut) throw localAgentCancelledError("opencode", "prompt", error);
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -207,6 +217,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
       });
     } finally {
       clearTimeout(timer);
+      removeAbort();
       this.promptControllers.delete(controller);
     }
   }

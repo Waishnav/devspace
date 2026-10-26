@@ -290,3 +290,28 @@ const staleRun = await staleRuntime.run({
 assert.equal(staleRun.isErr(), true);
 if (staleRun.isErr()) assert.match(staleRun.error.message, /invalid_grant/);
 await staleRuntime.close();
+
+// Stop ends the turn only once OpenCode confirms the interrupt; a failed interrupt leaves it running.
+const interruptRun = async (interrupt: () => Promise<unknown>) => {
+  const interruptClient = {
+    ...client,
+    session: {
+      ...client.session,
+      interrupt,
+      async wait(_input: unknown, options?: { signal?: AbortSignal }) {
+        return new Promise<never>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      },
+    },
+  } as unknown as OpencodeV2ClientLike;
+  const interruptRuntime = new OpencodeV2Runtime(interruptClient, { close: () => undefined }, 100);
+  const stop = new AbortController();
+  const run = interruptRuntime.run({ prompt: "stop me", workspaceRoot: "/tmp/project", signal: stop.signal });
+  setTimeout(() => stop.abort(), 10);
+  const result = await run;
+  await interruptRuntime.close();
+  return result.isErr() ? result.error.code : "ok";
+};
+assert.equal(await interruptRun(async () => ({ interrupted: true })), "PROVIDER_CANCELLED");
+assert.equal(await interruptRun(async () => { throw new Error("interrupt failed"); }), "PROVIDER_PROTOCOL_ERROR");
