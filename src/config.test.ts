@@ -130,7 +130,7 @@ try {
   const serverEnv = { DEVSPACE_CONFIG_DIR: unconfiguredDir, DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough" };
   writeDevspaceConfig({ configVersion: 1 }, serverEnv);
   assert.equal(loadConfig(serverEnv).subagents.enabled, false);
-  assert.equal(loadAgentConfig(serverEnv).subagents.enabled, true, "init-written config must stay unconfigured");
+  assert.equal(loadAgentConfig(serverEnv).subagents.enabled, true, "a config file that omits subagents stays unconfigured");
 } finally {
   rmSync(unconfiguredDir, { recursive: true, force: true });
 }
