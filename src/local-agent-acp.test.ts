@@ -294,6 +294,10 @@ const resolvedProject = resolve("/tmp/project");
 assert.deepEqual(acpCommandArgs("cursor", cachedContext), [
   "acp", "--sandbox", "enabled", "--workspace", resolvedProject,
 ]);
+// `--mode plan` is ignored by cursor-agent acp; read-only is a session mode (see below).
+assert.deepEqual(acpCommandArgs("cursor", { ...cachedContext, writeMode: "read_only" }), [
+  "acp", "--sandbox", "enabled", "--workspace", resolvedProject,
+]);
 assert.deepEqual(acpCommandArgs("grok", {
   ...cachedContext,
   providerInstanceId: "grok",
@@ -312,7 +316,7 @@ assert.deepEqual(acpCommandArgs("copilot", cachedContext), [
   "--acp", "--experimental", "--sandbox", "--allow-all-tools", "--add-dir", resolvedProject, "-C", resolvedProject,
 ]);
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "read_only" }), [
-  "--acp", "--experimental", "--sandbox", "--allow-all-tools", "--add-dir", resolvedProject, "-C", resolvedProject, "--mode", "plan",
+  "--acp", "--experimental", "--sandbox", "--allow-all-tools", "--add-dir", resolvedProject, "-C", resolvedProject,
 ]);
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_access" }), [
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
@@ -387,6 +391,65 @@ if (process.platform !== "win32") {
   } finally {
     await rm(commandRoot, { recursive: true, force: true });
   }
+}
+
+// Cursor and Copilot ignore a read-only command-line mode under ACP, so a read_only turn selects
+// the provider's restricted session mode and fails closed if that is refused.
+for (const [flavor, modeId] of [
+  ["cursor", "ask"],
+  ["copilot", "https://agentclientprotocol.com/protocol/session-modes#plan"],
+] as const) {
+  const modeRequests: Array<{ method: string; params?: unknown }> = [];
+  const modeQueues = new Map<string, { values: unknown[] }>();
+  let refuseMode = false;
+  const modeRuntime = new AcpRuntime({
+    flavor,
+    command: flavor,
+    args: [],
+    env: {},
+    queues: modeQueues,
+  }, {
+    agent: {
+      async notify(): Promise<void> {},
+      async request(method: string, params?: unknown): Promise<unknown> {
+        modeRequests.push({ method, params });
+        if (method === "session/new") {
+          modeQueues.set(`${flavor}_mode_session`, { values: [] });
+          return { sessionId: `${flavor}_mode_session` };
+        }
+        if (method === "session/set_mode" && refuseMode) throw new Error("unknown mode");
+        if (method === "session/prompt") {
+          modeQueues.get(`${flavor}_mode_session`)?.values.push({
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } },
+          });
+        }
+        return {};
+      },
+    },
+    close() {},
+    closed: new Promise<void>(() => undefined),
+  });
+  const modeMethods = () => modeRequests.map(({ method }) => method);
+
+  await modeRuntime.run({ prompt: "write", workspaceRoot: "/tmp/project", writeMode: "allowed" });
+  assert.equal(modeMethods().includes("session/set_mode"), false, `${flavor} allowed turns keep the default mode`);
+
+  modeRequests.length = 0;
+  const readOnly = await modeRuntime.run({ prompt: "write", workspaceRoot: "/tmp/project", writeMode: "read_only", providerSessionId: `${flavor}_mode_session` });
+  assert.equal(readOnly.isOk(), true);
+  assert.deepEqual(modeMethods(), ["session/set_mode", "session/prompt"], `${flavor} selects its read-only mode before prompting`);
+  assert.deepEqual(modeRequests[0]?.params, { sessionId: `${flavor}_mode_session`, modeId });
+
+  refuseMode = true;
+  modeRequests.length = 0;
+  const refused = await modeRuntime.run({ prompt: "write", workspaceRoot: "/tmp/project", writeMode: "read_only", providerSessionId: `${flavor}_mode_session` });
+  assert.equal(refused.isErr(), true);
+  if (refused.isErr()) {
+    assert.equal(refused.error.code, "PROVIDER_PROTOCOL_ERROR");
+    assert.match(refused.error.message, /read-only mode/);
+  }
+  assert.equal(modeMethods().includes("session/prompt"), false, `${flavor} must not prompt without its read-only mode`);
+  await modeRuntime.close();
 }
 
 const grokRequests: Array<{ method: string; params?: unknown }> = [];
