@@ -84,9 +84,10 @@ any of them can fan out to several at once:
 devspace agents wait agt_a agt_b agt_c --timeout 120
 ```
 
-A multi-agent wait returns one aggregate result after all current turns end or
-the timeout passes. Duplicate IDs appear once, in first-seen order. If outcomes
-differ, the exit-code precedence is failed (`2`), stopped (`3`), timeout (`4`).
+A multi-agent wait returns once all current turns end or the timeout passes. It
+prints one observation per agent (a JSON array with `--json`), with duplicate
+IDs once in first-seen order. Only the exit code is aggregated: if outcomes
+differ, failed (`2`) wins over stopped (`3`), which wins over timeout (`4`).
 
 ## Parallel writers
 

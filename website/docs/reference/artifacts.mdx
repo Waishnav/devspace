@@ -45,9 +45,10 @@ artifact ID. Afterwards, ordinary tools can inspect, move, or replace the file.
 `download_artifact` tool logs record the workspace ID, download hostname,
 destination, byte count, hash, duration, and status. They exclude the file
 value, raw content, connector references, native file IDs, bearer credentials,
-full presigned URLs, temporary paths, and base64 chunks. A rejected call logs
-the destination and workspace ID as requested, so an invalid absolute path or
-untrusted hostname appears in the log. Tool results return only the relative
+full presigned URLs, temporary paths, and base64 chunks. When a call passes input validation but is then rejected, the log keeps the
+destination and workspace ID as requested, so an invalid absolute path or
+untrusted hostname appears in it. Calls that fail schema validation are rejected
+before the tool runs and are not logged. Tool results return only the relative
 path.
 
 [Activity history](/reference/configuration#activity) is separate from tool

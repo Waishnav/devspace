@@ -58,8 +58,8 @@ For routine edits, the orchestrator should just do the work.
     ```
 
     Without `--timeout`, `wait` blocks until every named agent finishes its
-    current turn. It returns one aggregate result, not individual completions
-    as they arrive. Duplicate IDs appear once, in first-seen order. At a
+    current turn. It prints one observation per agent once all are done, not
+    individual completions as they arrive. Duplicate IDs appear once, in first-seen order. At a
     timeout, unfinished work is marked `status="running" wait="timeout"`.
     A timeout or Ctrl-C interrupts the wait, not the agent. Scripts should
     pass `--timeout`, then `wait` again or `stop` the agent.

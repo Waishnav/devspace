@@ -31,7 +31,7 @@ replaces detection. Availability does not check sign-in.
 | `devspace agents run <target> [options] <prompt>` | Start a new logical agent. |
 | `devspace agents continue <id> [options] <prompt>` | Send a follow-up to an existing agent. |
 | `devspace agents show <id>` | Immediate snapshot. |
-| `devspace agents wait <id>... [--timeout s]` | Wait for all current turns or the timeout; return one aggregate result, with duplicate IDs once in first-seen order. |
+| `devspace agents wait <id>... [--timeout s]` | Wait for all current turns or the timeout, then print one observation per agent (duplicate IDs once, in first-seen order). The exit code is aggregated. |
 | `devspace agents stop <id>` | Cancel the agent's running turn. The agent can be continued later. |
 | `devspace agents events <id> [--turn <turn-id>] [--follow]` | Tool calls, messages, and errors from a turn, as they happen with `--follow`. |
 | `devspace agents ls` | List agents in the current project. |
