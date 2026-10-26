@@ -127,7 +127,8 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
   },
   codex: {
     id: "codex",
-    // codex app-server JSON-RPC (not yet recorded).
+    model: "gpt-6-luna",
+    // codex app-server JSON-RPC.
     protocol: jsonRpc,
     realCommand: () => "codex",
   },

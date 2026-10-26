@@ -236,7 +236,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     const detail = existsSync(report) ? `\n${readFileSync(report, "utf8").trim()}` : "";
     throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}\nstate kept at ${root}`);
   } finally {
-    await cli(run, ["agents", "daemon", "stop"]).catch(() => undefined);
+    await stopDaemon(run).catch(() => undefined);
   }
   if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true });
 }
@@ -271,6 +271,22 @@ function writeShimWrapper(
   writeFileSync(path, lines.join("\n"));
   chmodSync(path, 0o755);
   return path;
+}
+
+/** `daemon stop` only requests shutdown; wait for that daemon to exit so it stops logging into the directory we remove. */
+async function stopDaemon(run: Run): Promise<void> {
+  const pid = (await cli(run, ["agents", "daemon", "stop", "--json"])).json?.pid;
+  if (typeof pid !== "number") return;
+  for (let waited = 0; waited < 10_000 && isAlive(pid); waited += 100) await delay(100);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function start(run: Run, prompt: string, flags: string[] = []): Promise<string> {
