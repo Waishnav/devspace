@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
+import { resolveOpenCodeCommand } from "./local-agent-opencode-version.js";
 import { terminateProcessTree } from "./process-platform.js";
 
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
@@ -30,7 +31,7 @@ export async function startOpencodeServer(env: NodeJS.ProcessEnv): Promise<Start
 
 async function launchOpencodeServer(env: NodeJS.ProcessEnv, port: number): Promise<StartedOpencodeServer> {
   const detached = process.platform !== "win32";
-  const child = spawn("opencode", [
+  const child = spawn(resolveOpenCodeCommand(env), [
     "serve",
     `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
     `--port=${port}`,

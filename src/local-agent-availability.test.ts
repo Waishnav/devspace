@@ -103,6 +103,10 @@ assert.equal(
     assert.equal(availability({ PATH: directory })?.available, true, "a system pi on PATH is launchable");
     assert.equal(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.available, false);
     assert.match(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.reason ?? "", /missing\/pi/);
+    const opencode = (env: NodeJS.ProcessEnv) => getLocalAgentProviderAvailabilitySnapshot(env)
+      .find((provider) => provider.name === "opencode");
+    assert.equal(opencode({ PATH: "", OPENCODE_COMMAND: pi })?.available, true, "OPENCODE_COMMAND names the executable");
+    assert.equal(opencode({ PATH: directory, OPENCODE_COMMAND: "/definitely/missing/opencode" })?.available, false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
