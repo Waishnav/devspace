@@ -216,6 +216,9 @@ executable and may provide fixed startup arguments under `config.args`:
 
 `config.flavor` is reserved for the small built-in protocol quirks currently
 needed by `cursor`, `copilot`, and `grok`; generic ACP agents normally omit it.
+Those built-in flavors derive their sandbox arguments from the write mode, so
+they reject `config.args`. DevSpace cannot enforce `read_only` or `allowed` on an
+arbitrary ACP agent, so generic ACP instances run only with `full_access`.
 
 Pi runs as the normal CLI in `--mode rpc`, so user-installed extensions,
 skills, context files, auth, models, and settings load normally. Restricted

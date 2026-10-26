@@ -67,6 +67,16 @@ const providerSchema = z.object({
       message: `${driver} does not support ACP config.`,
     });
   }
+  const flavor = provider.config?.flavor
+    ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
+    ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+  if (driver === "acp" && flavor && provider.config?.args !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["config", "args"],
+      message: `${flavor} sets its own ACP arguments for each write mode; config.args applies only to generic ACP providers.`,
+    });
+  }
   if (driver === "acp" && !provider.command && !isLegacyAcpDriverKind(provider.id)) {
     context.addIssue({
       code: "custom",
