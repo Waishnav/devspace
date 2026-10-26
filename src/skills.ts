@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { expandHomePath, isPathInsideRoot } from "./roots.js";
+import { workflowsEnabled } from "./workflow-flag.js";
 
 export interface LoadedSkills {
   skills: Skill[];
@@ -30,19 +31,22 @@ export interface SkillReadResolution {
 }
 
 const SUBAGENTS_SKILL_NAME = "subagents";
-const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
+const WORKFLOWS_SKILL_NAME = "workflows";
+type ManagedSkillName = typeof SUBAGENTS_SKILL_NAME | typeof WORKFLOWS_SKILL_NAME;
+
+// The workflows skill is part of the hidden DEVSPACE_EXPERIMENTAL_WORKFLOWS feature.
+function managedSkillNames(): ManagedSkillName[] {
+  return workflowsEnabled() ? [SUBAGENTS_SKILL_NAME, WORKFLOWS_SKILL_NAME] : [SUBAGENTS_SKILL_NAME];
+}
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function bundledSubagentsSkillPath(): string {
-  return join(bundledSkillsDir(), SUBAGENTS_SKILL);
-}
-
-function syncManagedSubagentsSkill(config: ServerConfig): string {
-  const sourcePath = bundledSubagentsSkillPath();
-  const targetPath = join(config.devspaceSkillsDir, SUBAGENTS_SKILL);
+function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): string {
+  const skillPath = join(name, "SKILL.md");
+  const sourcePath = join(bundledSkillsDir(), skillPath);
+  const targetPath = join(config.devspaceSkillsDir, skillPath);
   const source = readFileSync(sourcePath, "utf8");
 
   if (existsSync(targetPath)) {
@@ -51,7 +55,7 @@ function syncManagedSubagentsSkill(config: ServerConfig): string {
       return targetPath;
     }
     if (stat.isDirectory()) {
-      throw new Error(`Managed subagents skill path is a directory: ${targetPath}`);
+      throw new Error(`Managed ${name} skill path is a directory: ${targetPath}`);
     }
   }
 
@@ -96,8 +100,9 @@ function resolveSkillPath(path: string, cwd: string): string {
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
+  const managedNames = managedSkillNames();
   if (config.subagents.enabled) {
-    syncManagedSubagentsSkill(config);
+    for (const name of managedNames) syncManagedSkill(config, name);
   }
 
   const result = loadSkills({
@@ -107,30 +112,38 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  const withoutSubagents = withoutSubagentsSkill(result);
-  if (!config.subagents.enabled) return withoutSubagents;
+  const withoutManaged = withoutManagedSkills(config, result, managedNames);
+  if (!config.subagents.enabled) return withoutManaged;
 
-  const managedDir = dirname(join(config.devspaceSkillsDir, SUBAGENTS_SKILL));
-  const managed = loadSkillsFromDir({
-    dir: managedDir,
-    source: "devspace",
-  }).skills.find((skill) => skill.name === SUBAGENTS_SKILL_NAME);
-  if (!managed) {
-    throw new Error("Managed subagents skill could not be loaded.");
-  }
+  const managed = managedNames.map((name) => {
+    const managedDir = dirname(join(config.devspaceSkillsDir, name, "SKILL.md"));
+    const skill = loadSkillsFromDir({ dir: managedDir, source: "devspace" })
+      .skills.find((entry) => entry.name === name);
+    if (!skill) throw new Error(`Managed ${name} skill could not be loaded.`);
+    return skill;
+  });
 
   return {
-    skills: [...withoutSubagents.skills, managed],
-    diagnostics: withoutSubagents.diagnostics,
+    skills: [...withoutManaged.skills, ...managed],
+    diagnostics: withoutManaged.diagnostics,
   };
 }
 
-function withoutSubagentsSkill(result: LoadSkillsResult): LoadedSkills {
+function withoutManagedSkills(
+  config: ServerConfig,
+  result: LoadSkillsResult,
+  managedNames: readonly ManagedSkillName[],
+): LoadedSkills {
+  // A managed workflows copy left behind while the feature was on must not be advertised once it is off.
+  const staleWorkflows = join(config.devspaceSkillsDir, WORKFLOWS_SKILL_NAME);
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENTS_SKILL_NAME),
+    skills: result.skills.filter((skill) => (
+      !managedNames.includes(skill.name as ManagedSkillName)
+      && !(skill.name === WORKFLOWS_SKILL_NAME && isPathInsideRoot(skill.filePath, staleWorkflows))
+    )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
-      return !(collision?.resourceType === "skill" && collision.name === SUBAGENTS_SKILL_NAME);
+      return !(collision?.resourceType === "skill" && managedNames.includes(collision.name as ManagedSkillName));
     }),
   };
 }

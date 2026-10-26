@@ -55,6 +55,8 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 9, name: "local-agent-provider-instances" },
       { version: 10, name: "local-agent-generic-acp-driver" },
       { version: 11, name: "local-agent-turn-events" },
+      { version: 12, name: "local-agent-authority" },
+      { version: 13, name: "dynamic-workflows" },
     ]);
   } finally {
     database.close();

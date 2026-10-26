@@ -100,6 +100,8 @@ export const localAgentSessions = sqliteTable(
     profileName: text("profile_name").notNull(),
     providerInstanceId: text("provider_instance_id").notNull(),
     driver: text("driver").notNull(),
+    writeMode: text("write_mode").notNull().default("allowed"),
+    dispatchSignature: text("dispatch_signature"),
     model: text("model"),
     effort: text("effort"),
     providerSessionId: text("provider_session_id"),

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mock } from "node:test";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -24,11 +27,66 @@ try {
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
+  assert.equal(created.writeMode, "allowed");
   assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");
   assert.equal(store.getById(created.id)?.providerInstanceId, "codex-work");
   assert.equal(store.getById(created.id)?.driver, "codex");
   assert.equal(store.getById(created.id.slice(0, 7)), undefined);
+
+  // A generated id that collides with an existing agent must be redrawn, never aliased.
+  const uuids = [
+    `${created.id.slice(4)}-0000-4000-8000-000000000000`,
+    "bbbbbbbb-0000-4000-8000-000000000000",
+  ];
+  const uuidMock = mock.method(crypto, "randomUUID", () => uuids.shift() as `${string}-${string}-${string}-${string}-${string}`);
+  syncBuiltinESMExports();
+  try {
+    const redrawn = store.create({
+      workspaceId: "ws_collision",
+      workspaceRoot: join(root, "collision-project"),
+      profileName: "reviewer",
+      providerInstanceId: "codex-work",
+      driver: "codex",
+      model: "gpt-5.4",
+      effort: "high",
+    });
+    assert.equal(redrawn.id, "agt_bbbbbbbb");
+    assert.notEqual(redrawn.id, created.id);
+  } finally {
+    uuidMock.mock.restore();
+    syncBuiltinESMExports();
+  }
+
+  const ownedDispatch = store.create({
+    id: "workflow-dispatch-store",
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  });
+  assert.equal(ownedDispatch.id, "workflow-dispatch-store");
+  assert.equal(ownedDispatch.writeMode, "read_only");
+  assert.equal(store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  }).id, ownedDispatch.id);
+  assert.throws(() => store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "other"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  }), /different dispatch/);
 
   const updated = store.update(created.id, {
     status: "error",

@@ -10,7 +10,11 @@ import {
   localAgentDaemonEnvironment,
   LocalAgentClient,
 } from "./local-agent-client.js";
-import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
+import {
+  LocalAgentDaemon,
+  type LocalAgentDaemonManager,
+  type LocalAgentDaemonWorkflowManager,
+} from "./local-agent-daemon.js";
 import {
   ensureLocalAgentDaemonSecret,
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -22,8 +26,10 @@ import {
 } from "./local-agent-daemon-protocol.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
+import type { WorkflowCall, WorkflowEvent, WorkflowRun, WorkflowRunInput } from "./workflow-types.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-agentd-test-"));
+// macOS limits the complete Unix socket path to 104 bytes.
+const root = await mkdtemp(join(tmpdir(), "ds-ad-"));
 const CONFIG_REVISION = "test-provider-config";
 const record: LocalAgentRecord = {
   id: "agt_test",
@@ -32,10 +38,44 @@ const record: LocalAgentRecord = {
   profileName: "reviewer",
   providerInstanceId: "codex",
   driver: "codex",
+  writeMode: "read_only",
   status: "running",
   createdAt: "now",
   updatedAt: "now",
 };
+const workflowRun: WorkflowRun = {
+  id: "wfl_test",
+  workspaceId: "ws_test",
+  workspaceRoot: join(root, "project"),
+  name: "review",
+  status: "running",
+  writeMode: "read_only",
+  concurrency: 1,
+  createdAt: "now",
+  updatedAt: "now",
+  callCount: 1,
+};
+const workflowCall: WorkflowCall = {
+  runId: workflowRun.id,
+  index: 0,
+  agentId: record.id,
+  status: "running",
+  prompt: "Review this",
+  options: { target: "reviewer" },
+  fingerprint: "fingerprint",
+  workspaceRoot: workflowRun.workspaceRoot,
+  workspaceId: workflowRun.workspaceId,
+  createdAt: "now",
+  updatedAt: "now",
+};
+const workflowEvent: WorkflowEvent = {
+  sequence: 1,
+  runId: workflowRun.id,
+  type: "phase_started",
+  data: { phase: "review" },
+  createdAt: "now",
+};
+const closeOrder: string[] = [];
 
 class FakeManager implements LocalAgentDaemonManager {
   activeTurnCount = 1;
@@ -119,16 +159,55 @@ class FakeManager implements LocalAgentDaemonManager {
   async evictIdle(): Promise<void> {}
 
   async close(): Promise<void> {
+    closeOrder.push("agents");
     this.closed = true;
     this.activeTurnCount = 0;
   }
 }
 
+class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
+  activeRunCount = 0;
+  closed = false;
+  cancelled = false;
+  hangClose = false;
+  blockWaitUntilAbort = false;
+  waitAborted = false;
+  lastInput?: WorkflowRunInput;
+  async run(input: WorkflowRunInput): Promise<WorkflowRun> {
+    this.lastInput = input;
+    return workflowRun;
+  }
+  get(): WorkflowRun { return workflowRun; }
+  list(): WorkflowRun[] { return [workflowRun]; }
+  async wait(_id: string, _scope: unknown, _timeoutMs?: number, signal?: AbortSignal): Promise<WorkflowRun> {
+    if (this.blockWaitUntilAbort) {
+      await new Promise<void>((resolveAbort) => {
+        const onAbort = () => { this.waitAborted = true; resolveAbort(); };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    return workflowRun;
+  }
+  calls(): WorkflowCall[] { return [workflowCall]; }
+  call(): WorkflowCall { return workflowCall; }
+  events(): WorkflowEvent[] { return [workflowEvent]; }
+  async cancel(): Promise<WorkflowRun> { this.cancelled = true; return { ...workflowRun, status: "cancelled" }; }
+  async close(): Promise<void> {
+    closeOrder.push("workflows");
+    if (this.hangClose) await new Promise<void>(() => {});
+    this.closed = true;
+    this.activeRunCount = 0;
+  }
+}
+
 const manager = new FakeManager();
+const workflows = new FakeWorkflows();
 const daemon = new LocalAgentDaemon({
   stateDir: join(root, "state"),
   configRevision: CONFIG_REVISION,
   manager,
+  workflows,
   idleShutdownMs: 60_000,
 });
 const client = new LocalAgentClient({
@@ -199,12 +278,139 @@ try {
   assert.deepEqual(manager.lastEventsQuery, { turnId: undefined, afterSeq: 0 });
   assert.equal(events.turnId, "trn_test");
   assert.deepEqual(events.events.map((event) => event.type), ["turn_started", "tool_started"]);
+  assert.equal(unwrap(await client.runWorkflow({
+    ...recordScope,
+    name: "review",
+  })).id, workflowRun.id);
+  assert.equal(workflows.lastInput?.name, "review");
+  assert.equal(workflows.lastInput?.workspaceId, recordScope.workspaceId);
+  assert.equal(workflows.lastInput?.workspaceRoot, recordScope.workspaceRoot);
+  assert.equal(unwrap(await client.getWorkflow(workflowRun.id, recordScope)).id, workflowRun.id);
+  assert.equal(unwrap(await client.listWorkflows(recordScope))[0]?.id, workflowRun.id);
+  assert.equal(unwrap(await client.waitWorkflow(workflowRun.id, recordScope, 0)).status, "running");
+  assert.equal(unwrap(await client.workflowCalls(workflowRun.id, recordScope))[0]?.index, 0);
+  assert.equal(unwrap(await client.workflowCall(workflowRun.id, 0, recordScope)).agentId, record.id);
+  assert.equal(unwrap(await client.workflowEvents(workflowRun.id, recordScope))[0]?.type, "phase_started");
+  assert.equal(unwrap(await client.cancelWorkflow(workflowRun.id, recordScope)).status, "cancelled");
   assert.equal(unwrap(await client.status()).state, "ready");
 
+  closeOrder.length = 0;
   unwrap(await client.stop());
   await waitFor(() => manager.closed && !existsSync(daemon.paths.socketPath));
+  assert.deepEqual(closeOrder, ["workflows", "agents"]);
 } finally {
   await daemon.close();
+}
+
+const workflowWaitStateDir = join(root, "ww");
+const workflowWaitManager = new FakeManager();
+workflowWaitManager.activeTurnCount = 0;
+const workflowWaits = new FakeWorkflows();
+workflowWaits.blockWaitUntilAbort = true;
+workflowWaits.activeRunCount = 1;
+const workflowWaitDaemon = new LocalAgentDaemon({
+  stateDir: workflowWaitStateDir,
+  configRevision: CONFIG_REVISION,
+  manager: workflowWaitManager,
+  workflows: workflowWaits,
+  idleShutdownMs: 60_000,
+});
+const workflowWaitClient = new LocalAgentClient({
+  stateDir: workflowWaitStateDir,
+  configRevision: CONFIG_REVISION,
+  startupTimeoutMs: 2_000,
+  requestTimeoutMs: 20,
+  spawnDaemon: () => { void workflowWaitDaemon.start(); },
+});
+try {
+  const result = await workflowWaitClient.waitWorkflow(workflowRun.id, {
+    workspaceId: workflowRun.workspaceId,
+    workspaceRoot: workflowRun.workspaceRoot,
+  }, 0);
+  assert.equal(result.isErr(), true);
+  await waitFor(() => workflowWaits.waitAborted);
+  assert.equal(workflowWaits.cancelled, false, "disconnecting a wait must not cancel the workflow");
+  assert.equal(workflowWaits.activeRunCount, 1);
+} finally {
+  workflowWaits.activeRunCount = 0;
+  await workflowWaitDaemon.close();
+}
+
+// A stalled workflow shutdown must leave budget for the agent manager phase.
+const stalledManager = new FakeManager();
+stalledManager.activeTurnCount = 0;
+const stalledWorkflows = new FakeWorkflows();
+stalledWorkflows.hangClose = true;
+const stalledDaemon = new LocalAgentDaemon({
+  stateDir: join(root, "stalled-workflows"),
+  configRevision: CONFIG_REVISION,
+  manager: stalledManager,
+  workflows: stalledWorkflows,
+  shutdownTimeoutMs: 400,
+  idleShutdownMs: 60_000,
+});
+const keepAlive = setInterval(() => {}, 50); // withTimeout timers are unref'd; a never-settling close would otherwise end the process
+try {
+  await stalledDaemon.start();
+  const stalledStart = Date.now();
+  await stalledDaemon.close();
+  assert.equal(stalledManager.closed, true, "agent manager must close even when workflows stall");
+  assert.ok(Date.now() - stalledStart < 350, "a stalled workflow phase is capped at half the shutdown budget");
+} finally {
+  clearInterval(keepAlive);
+  await stalledDaemon.close();
+}
+
+const activeWorkflowStateDir = join(root, "aw");
+const activeWorkflowManager = new FakeManager();
+activeWorkflowManager.activeTurnCount = 0;
+const activeWorkflows = new FakeWorkflows();
+activeWorkflows.activeRunCount = 1;
+const activeWorkflowDaemon = new LocalAgentDaemon({
+  stateDir: activeWorkflowStateDir,
+  configRevision: CONFIG_REVISION,
+  manager: activeWorkflowManager,
+  workflows: activeWorkflows,
+  idleShutdownMs: 20,
+  idleCheckIntervalMs: 5,
+});
+try {
+  await activeWorkflowDaemon.start();
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 60));
+  assert.equal(activeWorkflowManager.closed, false, "active workflows must keep the daemon alive");
+  activeWorkflows.activeRunCount = 0;
+  await waitFor(() => activeWorkflowManager.closed);
+} finally {
+  await activeWorkflowDaemon.close();
+}
+
+// Hidden in v1.1: a daemon built without a workflow manager rejects workflow requests with guidance.
+const hiddenStateDir = join(root, "hidden-workflows-state");
+const hiddenManager = new FakeManager();
+hiddenManager.activeTurnCount = 0;
+const hiddenDaemon = new LocalAgentDaemon({
+  stateDir: hiddenStateDir,
+  configRevision: CONFIG_REVISION,
+  manager: hiddenManager,
+  idleShutdownMs: 60_000,
+});
+const hiddenClient = new LocalAgentClient({
+  stateDir: hiddenStateDir,
+  configRevision: CONFIG_REVISION,
+  startupTimeoutMs: 2_000,
+  requestTimeoutMs: 2_000,
+  spawnDaemon: () => { void hiddenDaemon.start(); },
+});
+try {
+  const rejected = await hiddenClient.runWorkflow({ workspaceId: record.workspaceId, workspaceRoot: record.workspaceRoot, name: "review" });
+  assert.equal(rejected.isErr(), true);
+  if (rejected.isErr()) {
+    assert.equal(rejected.error.code, "WORKFLOWS_UNAVAILABLE");
+    assert.match(rejected.error.message, /DEVSPACE_EXPERIMENTAL_WORKFLOWS=1/);
+  }
+  assert.equal(unwrap(await hiddenClient.status()).activeWorkflows, 0);
+} finally {
+  await hiddenDaemon.close();
 }
 
 const idleStateDir = join(root, "idle-state");
@@ -331,10 +537,12 @@ try {
 
 const staleActiveStateDir = join(root, "sa");
 const staleActiveManager = new FakeManager();
+const staleActiveWorkflows = new FakeWorkflows();
 const staleActiveDaemon = new LocalAgentDaemon({
   stateDir: staleActiveStateDir,
   configRevision: "old-provider-config",
   manager: staleActiveManager,
+  workflows: staleActiveWorkflows,
   idleShutdownMs: 60_000,
 });
 let staleActiveSpawns = 0;
@@ -361,6 +569,7 @@ try {
   assert.deepEqual(unwrap(await staleActiveClient.wait([record.id], staleScope, 0)), [
     { id: record.id, status: "running" },
   ]);
+  assert.equal(unwrap(await staleActiveClient.cancelWorkflow(workflowRun.id, staleScope)).status, "cancelled");
   const blockedStart = await staleActiveClient.run({
     target: "reviewer",
     prompt: "must use current provider config",
