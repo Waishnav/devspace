@@ -6,6 +6,11 @@ import type { Result as BetterResult } from "better-result";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
+import {
+  AGENT_SKILL_INSTALL_TARGETS,
+  installAgentsSkill,
+  renderAgentsSkill,
+} from "./agents-skill.js";
 import { loadAgentConfig, loadConfig } from "./config.js";
 import type { AgentConfig, ServerConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
@@ -512,6 +517,7 @@ function printHelp(): void {
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
+      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
       "  devspace agents daemon <status|stop|logs>",
       ...(workflowsEnabled() ? ["  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]"] : []),
       "  devspace -v, --version   Print the installed version",
@@ -571,6 +577,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
+      return;
+    case "skill":
+      await runAgentWorkflowCommand(json, async () => runAgentsSkill(commandArgs));
       return;
     case undefined:
     case "help":
@@ -814,6 +823,27 @@ function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: numbe
   return { ids, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
 }
 
+function runAgentsSkill(args: string[]): void {
+  const usage = `Usage: devspace agents skill [--install <${AGENT_SKILL_INSTALL_TARGETS.join("|")}> [--project]]`;
+  let target: string | undefined;
+  let project = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--project") project = true;
+    else if (argument === "--install") target = args[++index];
+    else if (argument.startsWith("--install=")) target = argument.slice("--install=".length);
+    else throw new Error(usage);
+  }
+  if (target === undefined) {
+    if (project) throw new Error(usage);
+    process.stdout.write(renderAgentsSkill());
+    return;
+  }
+  const installTarget = AGENT_SKILL_INSTALL_TARGETS.find((candidate) => candidate === target);
+  if (!installTarget) throw new Error(usage);
+  console.log(`Installed ${installAgentsSkill(installTarget, { project })}`);
+}
+
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand, ...extra] = args;
   if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
@@ -926,7 +956,14 @@ function printAgentsHelp(): void {
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents targets [--json]",
+      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
       "  devspace agents daemon <status|stop|logs> [--json]",
+      "",
+      "Options for run and continue:",
+      "  --model <model>  --effort <level>",
+      "  --write-mode <read_only|allowed|full_access>   default: allowed",
+      "  --wait [--timeout <seconds>]                   exit 0 completed, 2 failed, 3 stopped, 4 timed out",
+      "  --request-id <key>                             run only: a retry with the same key returns the same agent",
     ].join("\n"),
   );
 }
