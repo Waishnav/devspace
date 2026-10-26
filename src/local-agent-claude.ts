@@ -138,7 +138,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           } catch (error) {
             if (input.signal?.aborted) throw localAgentCancelledError("claude", "run", error);
             this.alive = false;
-            if (isProgrammerDefect(error)) throw error;
+            if (isProgrammerDefect(error) && !isClaudeExecutableError(error)) throw error;
             throw new AgentProviderUnavailableError({
               code: "PROVIDER_UNAVAILABLE",
               provider: "claude",
@@ -425,6 +425,11 @@ export interface ClaudeUserMessage {
   type: "user";
   message: { role: "user"; content: string };
   parent_tool_use_id: null;
+}
+
+/** The SDK reports a missing or unlaunchable Claude CLI as a ReferenceError, not as a spawn error. */
+function isClaudeExecutableError(error: unknown): boolean {
+  return error instanceof ReferenceError && /^Claude Code (native binary|executable) /.test(error.message);
 }
 
 function directString(value: unknown): string | undefined {

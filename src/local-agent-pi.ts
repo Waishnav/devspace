@@ -294,7 +294,20 @@ async function defaultPiRpcFactory(
   context: LocalAgentRuntimeContext,
   env: NodeJS.ProcessEnv,
 ): Promise<{ connection: PiRpcRuntimeConnection; cleanup?: () => Promise<void> }> {
-  const launch = resolvePiCommand(env);
+  let launch: { command: string; args: string[] };
+  try {
+    launch = resolvePiCommand(env);
+  } catch (cause) {
+    throw new AgentProviderUnavailableError({
+      code: "PROVIDER_UNAVAILABLE",
+      provider: "pi",
+      agentId: context.agentId,
+      operation: "create_runtime",
+      retryable: true,
+      cause,
+      message: "Pi executable not found.",
+    });
+  }
   const writeMode = context.writeMode ?? "allowed";
   const sandbox = writeMode === "full_access"
     ? undefined

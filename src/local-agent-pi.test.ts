@@ -302,3 +302,6 @@ assert.deepEqual(piEvents, [
   { type: "message", text: "Two files." },
 ]);
 await streamingRuntime.value.close();
+
+const missingCommand = await new PiLocalAgentDriver(undefined, { PATH: "", PI_COMMAND: "/missing/pi" }).createRuntime(context);
+assert.equal(missingCommand.isErr() && missingCommand.error.code, "PROVIDER_UNAVAILABLE");

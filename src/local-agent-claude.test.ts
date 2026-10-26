@@ -239,6 +239,21 @@ if (brokenStream.isErr()) {
   assert.equal(brokenStream.error.retryable, true);
 }
 
+const missingExecutableQuery: ClaudeQueryLike = {
+  ...brokenStreamQuery,
+  [Symbol.asyncIterator]() {
+    return {
+      next: async () => {
+        throw new ReferenceError("Claude Code native binary not found at /missing/claude. Please ensure Claude Code is installed.");
+      },
+    };
+  },
+};
+const missingExecutableRuntime = await new ClaudeLocalAgentDriver(async () => missingExecutableQuery).createRuntime(context);
+if (missingExecutableRuntime.isErr()) throw missingExecutableRuntime.error;
+const missingExecutable = await missingExecutableRuntime.value.run({ prompt: "fail", workspaceRoot: "/tmp/project" });
+assert.equal(missingExecutable.isErr() && missingExecutable.error.code, "PROVIDER_UNAVAILABLE");
+
 await assert.rejects(
   new ClaudeLocalAgentDriver(async () => {
     throw new TypeError("internal defect");
