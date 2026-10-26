@@ -154,6 +154,8 @@ function providerFailure(message: string): AgentProviderExecutionError {
   });
 }
 
+// Profiles added after an agent started, to exercise continuation lookups.
+const lateProfiles: LocalAgentProfile[] = [];
 const store = new LocalAgentStore(stateDir);
 const stale = store.create({
   workspaceId: scope.workspaceId,
@@ -169,7 +171,7 @@ const manager = new LocalAgentManager({
   store,
   drivers: [driver, workDriver, shadowDriver],
   pool: new LocalAgentRuntimePool(),
-  loadProfiles: async () => [profile, disabledProfile, shadowProfile],
+  loadProfiles: async () => [profile, disabledProfile, shadowProfile, ...lateProfiles],
   allowedRoots: [root],
   subagents,
   stopTimeoutMs: 200,
@@ -270,6 +272,14 @@ assert.equal(namedInstance.providerInstanceId, "codex-work");
 assert.equal(namedInstance.driver, "codex");
 assert.equal(namedInstance.model, "gpt-work");
 await waitFor(() => getRecord(namedInstance.id).status === "idle");
+
+// A later same-name profile for another provider instance does not apply to the stored instance.
+lateProfiles.push({ ...profile, name: "codex-work", provider: "claude", body: "Claude profile body." });
+unwrap(await manager.continue(namedInstance.id, "again", {}, scope));
+await waitFor(() => runtimes.get(namedInstance.id)?.inputs.length === 2);
+assert.equal(runtimes.get(namedInstance.id)?.inputs[1]?.prompt, "again");
+await waitFor(() => getRecord(namedInstance.id).status === "idle");
+lateProfiles.length = 0;
 
 // A profile shadows a provider instance with the same name, on start and on every continuation.
 const shadowed = unwrap(await manager.start({
