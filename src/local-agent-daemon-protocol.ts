@@ -582,6 +582,7 @@ function decodeEmptyParams(value: unknown): Record<string, never> {
 function decodeStartInput(value: unknown): StartLocalAgentInput {
   const record = asRecord(value);
   return {
+    agentId: optionalString(record?.agentId),
     target: requiredString(record?.target, "target"),
     prompt: requiredContentString(record?.prompt, "prompt"),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),

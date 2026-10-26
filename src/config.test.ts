@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { loadConfig } from "./config.js";
+import { loadAgentConfig, loadConfig } from "./config.js";
 import { writeDevspaceAuth, writeDevspaceConfig } from "./user-config.js";
 
 const configDir = mkdtempSync(join(tmpdir(), "devspace-config-test-"));
@@ -125,12 +125,38 @@ try {
   rmSync(configDir, { recursive: true, force: true });
 }
 
+const unconfiguredDir = mkdtempSync(join(tmpdir(), "devspace-config-unconfigured-test-"));
+try {
+  const serverEnv = { DEVSPACE_CONFIG_DIR: unconfiguredDir, DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough" };
+  writeDevspaceConfig({ configVersion: 1 }, serverEnv);
+  assert.equal(loadConfig(serverEnv).subagents.enabled, false);
+  assert.equal(loadAgentConfig(serverEnv).subagents.enabled, true, "a config file that omits subagents stays unconfigured");
+} finally {
+  rmSync(unconfiguredDir, { recursive: true, force: true });
+}
+
 const missingAuthDir = mkdtempSync(join(tmpdir(), "devspace-config-no-auth-test-"));
 try {
   assert.throws(
     () => loadConfig({ DEVSPACE_CONFIG_DIR: missingAuthDir }),
     /OAuth owner token is required/,
   );
+
+  // Agent commands need no server setup. Without a subagents key every built-in provider is on.
+  const implicit = loadAgentConfig({ DEVSPACE_CONFIG_DIR: missingAuthDir }).subagents;
+  assert.equal(implicit.enabled, true);
+  assert.deepEqual(
+    implicit.providers.map((provider) => provider.id),
+    ["codex", "claude", "opencode", "pi", "cursor", "copilot", "grok"],
+  );
+  assert.ok(implicit.providers.every((provider) => provider.enabled));
+
+  // An explicit subagents config wins, including enabled: false; the server never opts in implicitly.
+  writeDevspaceConfig({
+    configVersion: 1,
+    subagents: { enabled: false, instructions: "on-demand", providers: [] },
+  }, { DEVSPACE_CONFIG_DIR: missingAuthDir });
+  assert.equal(loadAgentConfig({ DEVSPACE_CONFIG_DIR: missingAuthDir }).subagents.enabled, false);
 } finally {
   rmSync(missingAuthDir, { recursive: true, force: true });
 }

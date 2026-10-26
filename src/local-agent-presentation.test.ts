@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import {
+  agentObservationExitCode,
   formatAgentObservation,
+  formatAgentTargetCatalog,
   formatAgentTurnEvent,
   presentAgentObservation,
   presentAgentReceipt,
@@ -112,6 +114,8 @@ const catalog: LocalAgentCatalog = {
 };
 const targetCatalog = presentAgentTargetCatalog(catalog);
 assert.deepEqual(targetCatalog, {
+  enabled: true,
+  unavailable: [{ name: "claude", reason: "credentials missing" }],
   targets: [
     { name: "codex", kind: "provider", model: "gpt-5.4", effort: "high" },
     {
@@ -124,3 +128,29 @@ assert.deepEqual(targetCatalog, {
     },
   ],
 });
+assert.equal(
+  formatAgentTargetCatalog(targetCatalog),
+  [
+    '<provider name="codex" model="gpt-5.4" effort="high"/>',
+    '<profile name="reviewer" provider="codex" model="gpt-5.4" effort="high">Review changes.</profile>',
+    '<unavailable name="claude">credentials missing</unavailable>',
+  ].join("\n"),
+);
+assert.match(
+  formatAgentTargetCatalog(presentAgentTargetCatalog({ ...catalog, enabled: false })),
+  /^<disabled>Subagents are disabled/,
+);
+
+const failure = { code: "AGENT_FAILED", message: "boom", retryable: false };
+assert.equal(agentObservationExitCode([{ id: "a", status: "completed" }]), 0);
+assert.equal(agentObservationExitCode([{ id: "a", status: "running", wait: "timeout" }]), 4);
+assert.equal(agentObservationExitCode([{ id: "a", status: "stopped" }]), 3);
+assert.equal(agentObservationExitCode([{ id: "a", status: "failed", error: failure }]), 2);
+assert.equal(
+  agentObservationExitCode([
+    { id: "a", status: "running", wait: "timeout" },
+    { id: "b", status: "stopped" },
+    { id: "c", status: "failed", error: failure },
+  ]),
+  2,
+);

@@ -199,7 +199,9 @@ export class LocalAgentManager {
           code: "UNKNOWN_TARGET",
           target: input.target,
           retryable: false,
-          message: `Unknown subagent profile or provider: ${input.target}.`,
+          message: `Unknown subagent profile or provider: ${input.target}.${
+            manager.subagents.enabled ? "" : " Subagents are disabled by subagents.enabled in config."
+          }`,
         }));
       }
       if (target.kind === "profile" && target.profile.disabled) {

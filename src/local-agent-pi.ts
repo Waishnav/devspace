@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,7 +27,6 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 
-const require = createRequire(import.meta.url);
 const PI_READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
 const PI_ALLOWED_TOOLS = [...PI_READ_ONLY_TOOLS, "edit", "write", "bash"] as const;
 const PI_TURN_TIMEOUT_MS = 5 * 60_000;
@@ -349,8 +347,9 @@ export function resolvePiCommand(env: NodeJS.ProcessEnv): { command: string; arg
   }
   const system = resolveExecutableCommand("pi", env);
   if (system) return { command: system, args: [] };
-  const packageJson = require.resolve("@earendil-works/pi-coding-agent/package.json");
-  const cli = join(dirname(packageJson), "dist", "cli.js");
+  // The package is ESM-only and does not export package.json; cli.js sits beside its entry point.
+  const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+  const cli = join(dirname(entry), "cli.js");
   return { command: process.execPath, args: [cli] };
 }
 

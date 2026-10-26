@@ -1,6 +1,6 @@
 import { open } from "node:fs/promises";
 import type { Result } from "better-result";
-import { loadConfig } from "./config.js";
+import { loadAgentConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
 import type { WorkflowCall, WorkflowRun, WorkflowRunInput } from "./workflow-types.js";
@@ -13,7 +13,7 @@ export async function runWorkflowCommand(args: string[], json: boolean): Promise
       printWorkflowHelp();
       return;
     }
-    const config = loadConfig();
+    const config = loadAgentConfig();
     const scope = resolveCliWorkspaceContext(
       config.allowedRoots,
       process.env,

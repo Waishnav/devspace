@@ -6,8 +6,13 @@ import type { Result as BetterResult } from "better-result";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
-import { loadConfig } from "./config.js";
-import type { ServerConfig } from "./config.js";
+import {
+  AGENT_SKILL_INSTALL_TARGETS,
+  installAgentsSkill,
+  renderAgentsSkill,
+} from "./agents-skill.js";
+import { loadAgentConfig, loadConfig } from "./config.js";
+import type { AgentConfig, ServerConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -18,14 +23,16 @@ import {
   formatLocalAgentProviderStatusSummary,
 } from "./local-agent-catalog.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
-import { resolveSubagentsConfig } from "./local-agent-config.js";
+import { disabledSubagentsConfig, resolveSubagentsConfig } from "./local-agent-config.js";
 import {
+  parseAgentWaitTimeout,
   parseLocalAgentContinueArgs,
   parseLocalAgentRunArgs,
 } from "./local-agent-targets.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import {
+  agentObservationExitCode,
   formatAgentCommandError,
   formatAgentObservation,
   formatAgentTurnEvent,
@@ -229,7 +236,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       }));
     }
 
-    const currentSubagents = resolveSubagentsConfig(files.config.subagents);
+    const currentSubagents = resolveSubagentsConfig(files.config.subagents ?? disabledSubagentsConfig());
     const availability = getLocalAgentProviderAvailabilitySnapshot(
       process.env,
       currentSubagents,
@@ -504,12 +511,13 @@ function printHelp(): void {
       "  devspace show-changes <review-ref> [--json]",
       "  devspace agents targets [--json]  List usable subagent providers and profiles",
       "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] <prompt>",
-      "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
+      "  devspace agents run <profile-or-provider> [options] <prompt>",
+      "  devspace agents continue <id> [options] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
+      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
       "  devspace agents daemon <status|stop|logs>",
       ...(workflowsEnabled() ? ["  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]"] : []),
       "  devspace -v, --version   Print the installed version",
@@ -570,6 +578,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
       return;
+    case "skill":
+      await runAgentWorkflowCommand(json, async () => runAgentsSkill(commandArgs));
+      return;
     case undefined:
     case "help":
     case "--help":
@@ -581,7 +592,7 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   }
 }
 
-function resolveAgentCliWorkspaceContext(config: ServerConfig) {
+function resolveAgentCliWorkspaceContext(config: AgentConfig) {
   return resolveCliWorkspaceContext(
     config.allowedRoots,
     process.env,
@@ -592,7 +603,7 @@ function resolveAgentCliWorkspaceContext(config: ServerConfig) {
 
 async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
   if (args.length > 0) throw new Error("Usage: devspace agents targets [--json]");
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const scope = resolveAgentCliWorkspaceContext(config);
   const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
   const providers = buildLocalAgentProviderStatuses(
@@ -607,7 +618,7 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
   if (args.length > 0) throw new Error("Usage: devspace agents ls [--json]");
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const result = await client.list(resolveAgentCliWorkspaceContext(config));
   const agents = presentAgentWorkflowResult(result, json);
@@ -624,19 +635,25 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
 
 async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const scope = resolveAgentCliWorkspaceContext(config);
   const client = createLocalAgentClient(config);
   const result = await client.start({
+    agentId: parsed.requestId,
     target: parsed.target,
     prompt: parsed.prompt,
     workspaceRoot: scope.workspaceRoot,
     workspaceId: scope.workspaceId,
     model: parsed.model,
     effort: parsed.effort,
+    writeMode: parsed.writeMode,
   });
   const record = presentAgentWorkflowResult(result, json);
   if (!record) return;
+  if (parsed.wait) {
+    await waitForStartedAgent(client, record.id, scope, parsed.timeoutMs, json);
+    return;
+  }
   const receipt = presentAgentReceipt(record);
   if (json) {
     printJson(receipt);
@@ -647,15 +664,20 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
 
 async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentContinueArgs(args);
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     effort: parsed.effort,
+    writeMode: parsed.writeMode,
   }, scope);
   const record = presentAgentWorkflowResult(result, json);
   if (!record) return;
+  if (parsed.wait) {
+    await waitForStartedAgent(client, record.id, scope, parsed.timeoutMs, json);
+    return;
+  }
   const receipt = presentAgentReceipt(record);
   if (json) {
     printJson(receipt);
@@ -668,7 +690,7 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
   if (!id || extra.length > 0) throw new Error("Usage: devspace agents show <id> [--json]");
 
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const initial = await client.get(id, scope);
@@ -682,22 +704,36 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
 
 async function runAgentsWait(args: string[], json: boolean): Promise<void> {
   const { ids, timeoutMs } = parseAgentsWaitArgs(args);
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const results = presentAgentWorkflowResult(await client.wait(ids, scope, timeoutMs), json);
   if (!results) return;
-  if (json) {
-    printJson(results);
-    return;
-  }
-  printAgentXml(results.map(formatAgentObservation).join("\n"));
+  if (json) printJson(results);
+  else printAgentXml(results.map(formatAgentObservation).join("\n"));
+  process.exitCode = agentObservationExitCode(results);
+}
+
+/** `run --wait` and `continue --wait`: print the single observation, not an array, and exit by outcome. */
+async function waitForStartedAgent(
+  client: ReturnType<typeof createLocalAgentClient>,
+  id: string,
+  scope: ReturnType<typeof resolveAgentCliWorkspaceContext>,
+  timeoutMs: number | undefined,
+  json: boolean,
+): Promise<void> {
+  const results = presentAgentWorkflowResult(await client.wait([id], scope, timeoutMs), json);
+  const observation = results?.[0];
+  if (!observation) return;
+  if (json) printJson(observation);
+  else printAgentXml(formatAgentObservation(observation));
+  process.exitCode = agentObservationExitCode([observation]);
 }
 
 async function runAgentsStop(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
   if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const record = presentAgentWorkflowResult(await client.stopAgent(id, scope), json);
@@ -712,7 +748,7 @@ const AGENT_EVENTS_FOLLOW_POLL_MS = 500;
 
 async function runAgentsEvents(args: string[], json: boolean): Promise<void> {
   const parsed = parseAgentsEventsArgs(args);
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   let turnId = parsed.turnId;
@@ -787,21 +823,31 @@ function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: numbe
   return { ids, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
 }
 
-function parseAgentWaitTimeout(value: string | undefined): number {
-  if (!value || !/^\d+$/.test(value)) {
-    throw new Error("Agent wait timeout must be a non-negative integer number of seconds.");
+function runAgentsSkill(args: string[]): void {
+  const usage = `Usage: devspace agents skill [--install <${AGENT_SKILL_INSTALL_TARGETS.join("|")}> [--project]]`;
+  let target: string | undefined;
+  let project = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--project") project = true;
+    else if (argument === "--install") target = args[++index];
+    else if (argument.startsWith("--install=")) target = argument.slice("--install=".length);
+    else throw new Error(usage);
   }
-  const timeoutMs = Number(value) * 1_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs > 2_147_483_647) {
-    throw new Error("Agent wait timeout is too large.");
+  if (target === undefined) {
+    if (project) throw new Error(usage);
+    process.stdout.write(renderAgentsSkill());
+    return;
   }
-  return timeoutMs;
+  const installTarget = AGENT_SKILL_INSTALL_TARGETS.find((candidate) => candidate === target);
+  if (!installTarget) throw new Error(usage);
+  console.log(`Installed ${installAgentsSkill(installTarget, { project })}`);
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand, ...extra] = args;
   if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
-  const config = loadConfig();
+  const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   switch (subcommand) {
     case "status": {
@@ -903,14 +949,21 @@ function printAgentsHelp(): void {
       "",
       "Usage:",
       "  devspace agents ls [--json]",
-      "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--json] <prompt>",
-      "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
+      "  devspace agents run <profile-or-provider> [options] [--json] <prompt>",
+      "  devspace agents continue <id> [options] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents targets [--json]",
+      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
       "  devspace agents daemon <status|stop|logs> [--json]",
+      "",
+      "Options for run and continue:",
+      "  --model <model>  --effort <level>",
+      "  --write-mode <read_only|allowed|full_access>   default: allowed",
+      "  --wait [--timeout <seconds>]                   exit 0 completed, 2 failed, 3 stopped, 4 timed out",
+      "  --request-id <key>                             run only: a retry with the same key returns the same agent",
     ].join("\n"),
   );
 }
