@@ -14,12 +14,23 @@ npx blume validate
 If `blume dev` is already running, `blume build` refuses to run; use
 `npx blume build --isolated` (output in `.blume-verify/dist`).
 
-## Staging deploy
+## Deploy
 
-`staging.devspace.run` is a Cloudflare Worker serving the static build
-(`wrangler.jsonc`). To redeploy: build, copy the output to `.staging-dist`, add
-the noindex `_headers` and `robots.txt` (staging must not be indexed), then
-`npx wrangler deploy`.
+`devspace.run` is the Worker `devspace-site` serving the static build in `dist/`
+(`wrangler.jsonc`). It deploys from `main` through Cloudflare Workers Builds:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `website` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+
+The `devspace.run` custom domain is declared in `wrangler.jsonc`, so the first
+deploy attaches it.
+
+`staging.devspace.run` is a manual deploy that must not be indexed: build, copy
+`dist/` to `.staging-dist`, add the noindex `_headers` and `robots.txt`, then
+`npx wrangler deploy --env staging`.
 
 ## Layout
 
@@ -41,5 +52,5 @@ visualizer of its run.
 a retired dark exploration. No page uses it; see the comment at its top for what
 it needs.
 
-Dynamic workflows are documented as a v1.1 preview; they are implemented on the
-`codex/workflow-stack-main-reconciliation` branch, not yet on `main`.
+Dynamic workflows are documented as experimental: in v1.1 they are hidden
+behind `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`.
