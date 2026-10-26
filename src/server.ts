@@ -96,11 +96,9 @@ interface RunningServer {
 // Keep the local origin alive longer than the reverse proxy's pooled connection.
 // Node must also advertise this timeout itself, so MCP responses drop hop-by-hop headers below.
 export const DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS = 5 * 60 * 1_000;
-export const DEVSPACE_HTTP_HEADERS_TIMEOUT_MS = DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS + 5_000;
 
 export function configureHttpServer(httpServer: HttpServer): void {
   httpServer.keepAliveTimeout = DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS;
-  httpServer.headersTimeout = DEVSPACE_HTTP_HEADERS_TIMEOUT_MS;
 }
 
 type TrackToolActivity = <T>(operation: () => Promise<T>) => Promise<T>;

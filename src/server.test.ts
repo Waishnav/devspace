@@ -20,7 +20,6 @@ import {
   configureHttpServer,
   createMcpServer,
   createServer,
-  DEVSPACE_HTTP_HEADERS_TIMEOUT_MS,
   DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS,
 } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
@@ -483,7 +482,8 @@ test("HTTP listener advertises a tunnel-safe keep-alive lifetime", () => {
   configureHttpServer(httpServer);
 
   assert.equal(httpServer.keepAliveTimeout, DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS);
-  assert.equal(httpServer.headersTimeout, DEVSPACE_HTTP_HEADERS_TIMEOUT_MS);
+  // Node applies the header deadline per request, so it keeps its short default.
+  assert.equal(httpServer.headersTimeout, 60_000);
 });
 
 test("HTTP endpoint serves modern MCP and stateless legacy clients", async (t) => {
@@ -631,8 +631,9 @@ test("aborting one MCP request does not poison the next stateless request", asyn
       name: "exec_command",
       arguments: {
         workspace_id: workspaceId,
-        cmd: "node -e \"const fs=require('node:fs');fs.writeFileSync('started','');setTimeout(()=>fs.writeFileSync('finished',''),500)\"",
-        yield_time_ms: 1_000,
+        // The command holds until the test releases it, so it cannot finish before the abort.
+        cmd: "node -e \"const fs=require('node:fs');fs.writeFileSync('started','');const t=setInterval(()=>{if(fs.existsSync('release')){clearInterval(t);fs.writeFileSync('finished','')}},20)\"",
+        yield_time_ms: 10_000,
       },
     },
     { signal: controller.signal },
@@ -640,6 +641,7 @@ test("aborting one MCP request does not poison the next stateless request", asyn
   await waitForFile(join(root, "started"));
   controller.abort();
   await assert.rejects(toolCall, /abort/i);
+  await writeFile(join(root, "release"), "");
 
   const listed = await postModernMcp(localBaseUrl, accessToken, "tools/list", {});
   assert.equal(listed.status, 200, await listed.clone().text());
