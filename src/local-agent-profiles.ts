@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { ServerConfig } from "./config.js";
+import type { AgentConfig } from "./config.js";
 import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
 
 export interface LocalAgentProfile {
@@ -32,7 +32,7 @@ interface ParsedFrontmatter {
 const FRONTMATTER_DELIMITER = "---";
 
 export async function loadLocalAgentProfiles(
-  config: ServerConfig,
+  config: Pick<AgentConfig, "devspaceAgentsDir" | "subagents">,
   workspaceRoot: string,
   options: { includeDisabled?: boolean } = {},
 ): Promise<LocalAgentProfile[]> {

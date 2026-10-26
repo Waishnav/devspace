@@ -5,6 +5,7 @@ import {
   isLocalAgentDriverKind,
   isLegacyAcpDriverKind,
   LEGACY_ACP_DRIVER_KINDS,
+  LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
   LOCAL_AGENT_DRIVER_KINDS,
   type LocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
@@ -147,6 +148,28 @@ export function subagentAcpFlavor(
   provider: Pick<SubagentProviderConfig, "id" | "config">,
 ): typeof LEGACY_ACP_DRIVER_KINDS[number] | undefined {
   return provider.config?.flavor ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+}
+
+/** The server's default: delegation is an explicit opt-in. */
+export function disabledSubagentsConfig(): ParsedSubagentsConfig {
+  return { enabled: false, instructions: "on-demand", providers: [] };
+}
+
+/**
+ * Used by `devspace agents` when config has no `subagents` key: every built-in provider is on
+ * and availability is checked when a target is used. The list is static so the daemon's config
+ * revision does not change with PATH.
+ */
+export function implicitSubagentsConfig(): SubagentsConfig {
+  return {
+    enabled: true,
+    instructions: "on-demand",
+    providers: LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => ({
+      id,
+      driver: defaultDriverForProviderId(id)!,
+      enabled: true,
+    })),
+  };
 }
 
 export function parseSubagentsConfig(value: unknown): SubagentsConfig {

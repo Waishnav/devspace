@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { loadConfig } from "./config.js";
+import { loadAgentConfig } from "./config.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
 import { LocalAgentDaemon, writeLocalAgentDaemonLog } from "./local-agent-daemon.js";
@@ -16,7 +16,7 @@ import { WorkflowManager } from "./workflow-manager.js";
 import { workflowsEnabled } from "./workflow-flag.js";
 import { WorkflowStore } from "./workflow-store.js";
 
-const config = loadConfig();
+const config = loadAgentConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 const paths = localAgentDaemonPaths(config.stateDir);
 const log = (

@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
-import type { ServerConfig } from "./config.js";
+import type { AgentConfig } from "./config.js";
 import {
   assertAllowedPath,
   isPathInsideRoot,
@@ -83,7 +83,7 @@ export interface ManagedWorktreeCleanupResult {
 export async function createManagedWorktree(input: {
   sourcePath: string;
   baseRef?: string;
-  config: ServerConfig;
+  config: AgentConfig;
 }): Promise<ManagedWorktree> {
   const sourcePath = assertAllowedPath(input.sourcePath, input.config.allowedRoots);
 
