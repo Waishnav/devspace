@@ -39,6 +39,24 @@ assert.deepEqual(presentAgentSummary({ ...record, status: "idle" }), {
   target: "reviewer",
 });
 
+// Worktree agents report where their branch lives, in every output shape.
+const worktreeRecord = { ...record, status: "idle" as const, worktreePath: "/wt/app-1a2b", branch: "devspace/agt_test" };
+assert.deepEqual(presentAgentReceipt(worktreeRecord), {
+  id: "agt_test",
+  status: "completed",
+  worktree: "/wt/app-1a2b",
+  branch: "devspace/agt_test",
+});
+assert.equal(
+  formatAgentObservation(presentAgentObservation(worktreeRecord)),
+  '<agent id="agt_test" status="completed" worktree="/wt/app-1a2b" branch="devspace/agt_test">previous response</agent>',
+);
+assert.equal(
+  formatAgentObservation(presentAgentObservation({ ...worktreeRecord, status: "running" })),
+  '<agent id="agt_test" status="running" worktree="/wt/app-1a2b" branch="devspace/agt_test"/>',
+);
+assert.equal(presentAgentSummary(worktreeRecord).branch, "devspace/agt_test");
+
 const completed = presentAgentObservation({
   ...record,
   status: "idle",

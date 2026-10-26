@@ -376,6 +376,32 @@ try {
       '<error code="UNKNOWN_TARGET" retryable="false">Unknown subagent profile or provider: missing.</error>\n',
     );
 
+    // --worktree reaches the daemon as a start option; the daemon, not the CLI, creates the worktree.
+    await assert.rejects(execFileAsync(
+      "node",
+      ["--import", "tsx", "src/cli.ts", "agents", "run", "missing", "--worktree", "--branch", "feature/x", "inspect"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...cliConfigEnv,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+        },
+      },
+    ));
+    const worktreeStart = [...daemonRequests].reverse().find((request) => request.method === "agent.start");
+    assert.deepEqual(worktreeStart?.params?.worktree, { branch: "feature/x" });
+    await assert.rejects(
+      execFileAsync(
+        "node",
+        ["--import", "tsx", "src/cli.ts", "agents", "run", "codex", "--branch", "feature/x", "inspect"],
+        { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, ...cliConfigEnv } },
+      ),
+      (error: unknown) => /--branch requires --worktree/.test((error as { stderr?: string }).stderr ?? ""),
+    );
+
     await assert.rejects(
       execFileAsync(
         "node",
