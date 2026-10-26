@@ -44,6 +44,8 @@ export interface ProviderDefinition {
   liveEnv?(): Record<string, string>;
   /** The real executable the record shim spawns; the driver's default resolution. */
   realCommand(): string;
+  /** The provider runs `<command> serve --port=P` and speaks HTTP instead of stdio (see http-shim.ts). */
+  http?: boolean;
 }
 
 const require = createRequire(import.meta.url);
@@ -101,6 +103,18 @@ const jsonRpc: ReplayProtocol = {
   volatileKeys: new Set(["id", "sessionId", "threadId", "turnId", "itemId", "timestamp"]),
   elasticKinds: new Set(),
 };
+
+/** Codex notifications about the user's own hosts, account, MCP servers, hooks, and config. The driver ignores them. */
+const CODEX_USER_ENVIRONMENT_METHODS: ReadonlySet<string> = new Set([
+  "account/rateLimits/updated",
+  "account/updated",
+  "configWarning",
+  "hook/completed",
+  "hook/started",
+  "mcpServer/startupStatus/updated",
+  "remoteControl/status/changed",
+  "warning",
+]);
 
 export const PROVIDERS: Record<string, ProviderDefinition> = {
   claude: {
@@ -171,10 +185,35 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     },
     realCommand: () => "pi",
   },
+  opencode: {
+    id: "opencode",
+    model: "openai/gpt-5.6-luna",
+    http: true,
+    // HTTP frames from http-shim.ts: requests in, responses and SSE events out, correlated by request counter.
+    protocol: {
+      kind: (frame) => typeof frame.method === "string"
+        ? `${frame.method} ${String(frame.path).split("?")[0]!.replace(/\/[a-z]+_[A-Za-z0-9]+/g, "/{id}")}`
+        : "response",
+      requestId: (frame) => typeof frame.method === "string" ? frame.id : undefined,
+      responseTo: (frame) => typeof frame.method === "string" ? undefined : frame.id,
+      volatileKeys: new Set(["id"]),
+      elasticKinds: new Set(),
+    },
+    realCommand: () => "opencode",
+  },
   codex: {
     id: "codex",
-    // codex app-server JSON-RPC (not yet recorded).
+    model: "gpt-6-luna",
+    // codex app-server JSON-RPC.
     protocol: jsonRpc,
+    redactFrame: (frame) => {
+      if (typeof frame.method === "string") return CODEX_USER_ENVIRONMENT_METHODS.has(frame.method) ? undefined : frame;
+      const result = frame.result as Record<string, unknown> | undefined;
+      // The initialize reply names the OS; thread replies list the user's instruction files.
+      if (result && "userAgent" in result) return { ...frame, result: { ...result, userAgent: "codex" } };
+      if (result && "instructionSources" in result) return { ...frame, result: { ...result, instructionSources: [] } };
+      return frame;
+    },
     realCommand: () => "codex",
   },
   // ACP agents speak JSON-RPC over stdio; DevSpace's AcpLocalAgentDriver is shared by all three.

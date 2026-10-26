@@ -54,13 +54,6 @@ const providerSchema = z.object({
     });
     return;
   }
-  if (driver === "opencode" && provider.command !== undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["command"],
-      message: `${driver} does not support a command override.`,
-    });
-  }
   if (driver !== "acp" && provider.config !== undefined) {
     context.addIssue({
       code: "custom",
@@ -215,7 +208,7 @@ export function providerCommandVariable(driver: LocalAgentDriverKind): string | 
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
     case "pi": return "PI_COMMAND";
-    case "opencode":
+    case "opencode": return "OPENCODE_COMMAND";
     case "acp":
       return undefined;
   }

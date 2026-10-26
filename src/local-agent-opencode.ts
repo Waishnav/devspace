@@ -81,6 +81,8 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           const promptResult = await this.prompt(sessionId, input);
           assertOpenCodePromptSucceeded(promptResult);
           const finalResponse = requireFinalResponse(extractOpenCodeFinalResponse(promptResult));
+          // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
+          callbacks?.onEvent?.({ type: "message", text: finalResponse });
           return {
             provider: this.provider,
             providerSessionId: sessionId,

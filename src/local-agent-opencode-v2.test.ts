@@ -7,7 +7,7 @@ import {
   parseOpenCodeV2Model,
   type OpencodeV2ClientLike,
 } from "./local-agent-opencode-v2.js";
-import type { SessionMessageAssistant } from "@opencode/client";
+import { ClientError, type SessionMessageAssistant } from "@opencode/client";
 import { OpencodeLocalAgentDriver } from "./local-agent-opencode.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 
@@ -100,6 +100,7 @@ const runtime = new OpencodeV2Runtime(client, {
   close: () => { closeCalls += 1; },
 });
 let sessionId: string | undefined;
+const firstEvents: unknown[] = [];
 const first = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
@@ -108,12 +109,14 @@ const first = await runtime.run({
   effort: "high",
 }, {
   onSessionId: (id) => { sessionId = id; },
+  onEvent: (event) => { firstEvents.push(event); },
 });
 assert.equal(first.isOk(), true);
 if (first.isErr()) throw first.error;
 assert.equal(sessionId, "opencode:v2:ses_v2");
 assert.equal(first.value.providerSessionId, "opencode:v2:ses_v2");
 assert.equal(first.value.finalResponse, "hello world");
+assert.deepEqual(firstEvents, [{ type: "message", text: "hello world" }]);
 assert.deepEqual(createInputs[0], {
   location: { directory: "/tmp/project" },
   permissions: opencodeV2Permissions("read_only"),
@@ -315,3 +318,17 @@ const interruptRun = async (interrupt: () => Promise<unknown>) => {
 };
 assert.equal(await interruptRun(async () => ({ interrupted: true })), "PROVIDER_CANCELLED");
 assert.equal(await interruptRun(async () => { throw new Error("interrupt failed"); }), "PROVIDER_PROTOCOL_ERROR");
+
+// A dead server surfaces as a Transport ClientError; the runtime must report itself unavailable.
+const deadRuntime = new OpencodeV2Runtime({
+  ...client,
+  server: {
+    async info() {
+      throw new ClientError("Transport", { cause: new TypeError("fetch failed") });
+    },
+  },
+} as unknown as OpencodeV2ClientLike, { close: () => undefined });
+const deadRun = await deadRuntime.run({ prompt: "server gone", workspaceRoot: "/tmp/project" });
+assert.equal(deadRun.isErr() ? deadRun.error.code : "ok", "PROVIDER_UNAVAILABLE");
+assert.equal(deadRuntime.isAlive(), false);
+await deadRuntime.close();
