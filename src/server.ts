@@ -51,6 +51,7 @@ import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
+import { createWorkspaceWebRouter, WORKSPACE_WEB_PATH, workspaceWebUrl } from "./workspace-web.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
@@ -1180,6 +1181,12 @@ export function createServer(
     }),
   );
 
+  app.use(WORKSPACE_WEB_PATH, createWorkspaceWebRouter({
+    config,
+    activity: workspaceActivity,
+    workspaces,
+  }));
+
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, name: "devspace" });
   });
@@ -1285,6 +1292,7 @@ if (await isMainModule()) {
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log("auth: oauth owner-token flow required");
+    console.log(`workspace pages: ${workspaceWebUrl(config)} (sign in with the owner password)`);
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);

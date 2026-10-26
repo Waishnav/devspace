@@ -66,6 +66,15 @@ export interface Workspace {
   agentProfiles: LocalAgentProfile[];
 }
 
+export type WorkspaceDescription =
+  | {
+      available: true;
+      agentsFiles: string[];
+      availableAgentsFiles: string[];
+      skills: Array<{ name: string; description: string }>;
+    }
+  | { available: false; reason: string };
+
 export interface WorkspaceContext {
   workspace: Workspace;
   agentsFiles: LoadedAgentsFile[];
@@ -519,6 +528,30 @@ export class WorkspaceRegistry {
       workspaceReused: false,
       includeBootstrapContext: true,
     };
+  }
+
+  /**
+   * Describes a stored workspace's instruction files and skills, as the
+   * open_workspace card shows them, without reactivating or touching it.
+   */
+  async describeWorkspace(
+    session: Pick<WorkspaceSession, "root" | "mode" | "sourceRoot">,
+  ): Promise<WorkspaceDescription> {
+    try {
+      this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+      const agentsFiles = await this.loadInitialAgentsFiles(session.root);
+      const availableAgentsFiles = await this.findAvailableAgentsFiles(session.root, agentsFiles);
+      return {
+        available: true,
+        agentsFiles: agentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
+        availableAgentsFiles: availableAgentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
+        skills: this.loadSkillsForWorkspace(session.root).skills
+          .filter((skill) => !skill.disableModelInvocation)
+          .map((skill) => ({ name: skill.name, description: skill.description })),
+      };
+    } catch (error) {
+      return { available: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private rememberWorkspace(workspace: Workspace): void {

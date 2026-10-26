@@ -1,3 +1,5 @@
+@import "./review-diff.css";
+
 :root {
   color-scheme: light dark;
   /* Defaults for hosts that send no style variables. They follow the effective
@@ -13,6 +15,9 @@
   --color-text-success: light-dark(#1a7f37, #6fda83);
   --color-text-danger: light-dark(#cf222e, #ee7676);
   --color-text-warning: light-dark(#9a6700, #e6b566);
+  --color-success-text: var(--color-text-success);
+  --color-danger-text: var(--color-text-danger);
+  --color-warning-text: var(--color-text-warning);
   font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
   background: transparent;
   color: var(--color-text-primary);
@@ -194,14 +199,6 @@ body {
 
 .header-meta.empty {
   width: 0;
-}
-
-.add {
-  color: var(--color-text-success);
-}
-
-.remove {
-  color: var(--color-text-danger);
 }
 
 .chevron {
@@ -623,12 +620,6 @@ body {
   background: var(--tool-card-body-bg);
 }
 
-.review-diff-file-stats {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .review-empty {
   color: var(--color-text-secondary);
   font-size: var(--font-text-sm-size, 13px);
@@ -666,152 +657,10 @@ body {
   padding: 0;
 }
 
-.review-diff-file {
-  overflow: clip;
-  border: 0;
-  border-radius: 0;
-}
-
-.review-diff-file + .review-diff-file {
-  border-top: 1px solid var(--tool-card-divider);
-}
-
-.review-diff-file-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 42px;
-  padding: 0 12px;
-  border: 0;
-  background: var(--tool-card-body-bg);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.review-file-kind {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  align-self: center;
-  place-items: center;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--color-text-tertiary) 10%, transparent);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.review-file-kind.added {
-  background: color-mix(in srgb, var(--color-text-success) 12%, transparent);
-  color: var(--color-text-success);
-}
-
-.review-file-kind.edited,
-.review-file-kind.renamed,
-.review-file-kind.renamed-edited {
-  background: color-mix(in srgb, var(--color-text-warning) 12%, transparent);
-  color: var(--color-text-warning);
-}
-
-.review-file-kind.deleted {
-  background: color-mix(in srgb, var(--color-text-danger) 12%, transparent);
-  color: var(--color-text-danger);
-}
-
 .review-single-file {
   max-height: 520px;
   overflow-x: hidden;
   overflow-y: auto;
-}
-
-.review-diff-file-name,
-.review-diff-file-stats {
-  overflow: hidden;
-  font-size: 13px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-diff-file-name {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-}
-
-.review-diff-file-name.renamed {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  text-overflow: clip;
-}
-
-.review-diff-file-path {
-  min-width: 0;
-  max-width: calc(50% - 10px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-diff-file-path.previous {
-  color: var(--color-text-tertiary);
-}
-
-.review-diff-file-path.current {
-  color: var(--color-text-primary);
-}
-
-.review-diff-file-arrow {
-  flex: 0 0 auto;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-}
-
-.review-diff-file-stats {
-  justify-content: flex-end;
-  overflow: visible;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: var(--font-text-sm-size, 12px);
-  font-variant-numeric: tabular-nums;
-}
-
-.status {
-  padding: 10px 12px;
-  font-size: var(--font-text-sm-size, 12px);
-}
-
-.status.muted {
-  color: var(--color-text-secondary);
-}
-
-.status.error {
-  color: var(--color-text-danger);
-}
-
-.pierre-diff {
-  --diffs-bg: var(--tool-payload-bg, var(--color-background-primary));
-  --diffs-light-bg: var(--color-background-primary);
-  --diffs-dark-bg: var(--tool-payload-bg, var(--color-background-primary));
-  --diffs-font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  --diffs-header-font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-  /* Keep iOS WebKit from inflating dense diff text independently of the card UI. */
-  --diffs-font-size: 12px;
-  --diffs-line-height: 20px;
-
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-  display: block;
-  overflow: visible;
-  border-bottom-right-radius: 8px;
-  border-bottom-left-radius: 8px;
 }
 
 @media (max-width: 520px) {
