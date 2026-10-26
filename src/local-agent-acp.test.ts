@@ -298,6 +298,13 @@ const missingCommandDriver = new AcpLocalAgentDriver({
 });
 // A stop that outlives the cancel grace period closes the runtime, so it must not be shared.
 assert.equal(missingCommandDriver.runtimePolicy.scope, "agent");
+// Generic ACP agents cannot be held to a restricted write mode, so they run only with full_access.
+const genericDriver = new AcpLocalAgentDriver({ command: process.execPath, args: ["-e", ""] });
+for (const writeMode of ["read_only", "allowed"] as const) {
+  const restricted = await genericDriver.createRuntime({ ...cachedContext, writeMode });
+  assert.equal(restricted.isErr(), true);
+  if (restricted.isErr()) assert.match(restricted.error.message, /full_access/);
+}
 const missingCommand = await missingCommandDriver.createRuntime(cachedContext);
 assert.equal(missingCommand.isErr(), true);
 if (missingCommand.isErr()) {
