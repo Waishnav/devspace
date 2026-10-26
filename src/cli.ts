@@ -511,7 +511,7 @@ function printHelp(): void {
       "  devspace show-changes <review-ref> [--json]",
       "  devspace agents targets [--json]  List usable subagent providers and profiles",
       "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider> [options] <prompt>",
+      "  devspace agents run <profile-or-provider> [options] [--worktree [--branch <name>]] <prompt>",
       "  devspace agents continue <id> [options] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
@@ -647,6 +647,7 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
     model: parsed.model,
     effort: parsed.effort,
     writeMode: parsed.writeMode,
+    worktree: parsed.worktree,
   });
   const record = presentAgentWorkflowResult(result, json);
   if (!record) return;
@@ -949,7 +950,7 @@ function printAgentsHelp(): void {
       "",
       "Usage:",
       "  devspace agents ls [--json]",
-      "  devspace agents run <profile-or-provider> [options] [--json] <prompt>",
+      "  devspace agents run <profile-or-provider> [options] [--worktree [--branch <name>]] [--json] <prompt>",
       "  devspace agents continue <id> [options] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents wait <id>... [--timeout <seconds>] [--json]",

@@ -320,6 +320,8 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     id: requiredString(record?.id, "id"),
     workspaceId: optionalString(record?.workspaceId),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
+    worktreePath: optionalString(record?.worktreePath),
+    branch: optionalString(record?.branch),
     profileName: requiredString(record?.profileName, "profileName"),
     providerInstanceId: requiredString(record?.providerInstanceId, "providerInstanceId"),
     driver,
@@ -581,6 +583,7 @@ function decodeEmptyParams(value: unknown): Record<string, never> {
 
 function decodeStartInput(value: unknown): StartLocalAgentInput {
   const record = asRecord(value);
+  const worktree = asRecord(record?.worktree);
   return {
     agentId: optionalString(record?.agentId),
     target: requiredString(record?.target, "target"),
@@ -590,6 +593,7 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
     model: optionalString(record?.model),
     effort: optionalString(record?.effort),
     writeMode: decodeWriteMode(record?.writeMode),
+    ...(worktree ? { worktree: { branch: optionalString(worktree.branch) } } : {}),
   };
 }
 

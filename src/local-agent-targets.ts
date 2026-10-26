@@ -18,6 +18,8 @@ export interface ParsedLocalAgentRunArgs extends Omit<ParsedLocalAgentContinueAr
   target: string;
   /** Caller-supplied idempotency key; becomes the agent id. */
   requestId?: string;
+  /** `--worktree [--branch <name>]`: run in a new git worktree instead of the current checkout. */
+  worktree?: { branch?: string };
 }
 
 export type LocalAgentTarget =
@@ -38,13 +40,14 @@ export type LocalAgentTarget =
     };
 
 const WRITE_MODES: readonly LocalAgentWriteMode[] = ["read_only", "allowed", "full_access"];
-const VALUE_OPTIONS = ["--model", "--effort", "--write-mode", "--request-id", "--timeout"] as const;
+const VALUE_OPTIONS = ["--model", "--effort", "--write-mode", "--request-id", "--branch", "--timeout"] as const;
+const RUN_ONLY_OPTIONS: readonly string[] = ["--request-id", "--branch"];
 type ValueOption = typeof VALUE_OPTIONS[number];
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
   return parseAgentPromptArgs(
     args,
-    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--request-id <key>] [--wait [--timeout <seconds>]] "<prompt>"',
+    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--request-id <key>] [--worktree [--branch <name>]] [--wait [--timeout <seconds>]] "<prompt>"',
     true,
   );
 }
@@ -61,7 +64,7 @@ export function parseLocalAgentContinueArgs(args: string[]): ParsedLocalAgentCon
 function parseAgentPromptArgs(
   args: string[],
   usage: string,
-  allowRequestId: boolean,
+  isRun: boolean,
 ): ParsedLocalAgentRunArgs {
   const [target, ...rest] = args;
   if (!target) {
@@ -70,6 +73,7 @@ function parseAgentPromptArgs(
 
   const values: Partial<Record<ValueOption, string>> = {};
   let wait = false;
+  let worktree = false;
   const promptParts: string[] = [];
   let optionsEnded = false;
   for (let index = 0; index < rest.length; index += 1) {
@@ -86,8 +90,12 @@ function parseAgentPromptArgs(
       wait = true;
       continue;
     }
+    if (isRun && part === "--worktree") {
+      worktree = true;
+      continue;
+    }
     const option = VALUE_OPTIONS.find((name) => part === name || part.startsWith(`${name}=`));
-    if (!option || (option === "--request-id" && !allowRequestId)) throw unknownOptionError(part);
+    if (!option || (!isRun && RUN_ONLY_OPTIONS.includes(option))) throw unknownOptionError(part);
     if (part === option) {
       values[option] = parseOptionValue(rest[index + 1], option);
       index += 1;
@@ -101,6 +109,7 @@ function parseAgentPromptArgs(
     throw new Error(usage);
   }
   if (values["--timeout"] !== undefined && !wait) throw new Error("--timeout requires --wait.");
+  if (values["--branch"] !== undefined && !worktree) throw new Error("--branch requires --worktree.");
 
   return {
     target,
@@ -109,6 +118,7 @@ function parseAgentPromptArgs(
     effort: values["--effort"],
     writeMode: parseWriteMode(values["--write-mode"]),
     requestId: values["--request-id"] === undefined ? undefined : validateAgentId(values["--request-id"], "Request id"),
+    ...(worktree ? { worktree: { branch: values["--branch"] } } : {}),
     wait,
     timeoutMs: values["--timeout"] === undefined ? undefined : parseAgentWaitTimeout(values["--timeout"]),
   };

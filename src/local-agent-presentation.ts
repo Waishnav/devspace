@@ -32,6 +32,9 @@ export interface AgentReceiptOutput {
   id: string;
   status: AgentCommandStatus;
   turnId?: string;
+  /** `--worktree` agents only: the isolated checkout the agent works in, and its branch. */
+  worktree?: string;
+  branch?: string;
 }
 
 export interface AgentSummaryOutput extends AgentReceiptOutput {
@@ -53,7 +56,7 @@ export interface AgentCommandErrorOutput {
   agentId?: string;
 }
 
-export type AgentObservationOutput = { turnId?: string } & (
+export type AgentObservationOutput = { turnId?: string; worktree?: string; branch?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: AgentFailureOutput }
@@ -108,6 +111,8 @@ export function presentAgentReceipt(record: LocalAgentRecord): AgentReceiptOutpu
     id: record.id,
     status: presentAgentStatus(record.status),
     ...(record.latestTurnId ? { turnId: record.latestTurnId } : {}),
+    ...(record.worktreePath ? { worktree: record.worktreePath } : {}),
+    ...(record.branch ? { branch: record.branch } : {}),
   };
 }
 
@@ -212,10 +217,17 @@ export function formatAgentCommandError(error: AgentCommandErrorOutput): string 
 }
 
 function agentAttributes(
-  agent: { id: string; status: string; turnId?: string },
+  agent: { id: string; status: string; turnId?: string; worktree?: string; branch?: string },
   extra: Record<string, string | undefined> = {},
 ): string {
-  return xmlAttributes({ id: agent.id, status: agent.status, turn: agent.turnId, ...extra });
+  return xmlAttributes({
+    id: agent.id,
+    status: agent.status,
+    turn: agent.turnId,
+    worktree: agent.worktree,
+    branch: agent.branch,
+    ...extra,
+  });
 }
 
 function xmlAttributes(values: Record<string, string | undefined>): string {

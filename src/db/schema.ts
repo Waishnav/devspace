@@ -102,6 +102,8 @@ export const localAgentSessions = sqliteTable(
     driver: text("driver").notNull(),
     writeMode: text("write_mode").notNull().default("allowed"),
     dispatchSignature: text("dispatch_signature"),
+    worktreePath: text("worktree_path"),
+    branch: text("branch"),
     model: text("model"),
     effort: text("effort"),
     providerSessionId: text("provider_session_id"),

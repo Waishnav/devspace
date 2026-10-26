@@ -33,6 +33,7 @@ const manager = new LocalAgentManager({
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,
   allowedRoots: config.allowedRoots,
+  worktreeRoot: config.worktreeRoot,
   logger: log,
   subagents: config.subagents,
   providerAvailability: (providerInstanceId) => localAgentProviderAvailability(providerInstanceId, process.env, config.subagents),
