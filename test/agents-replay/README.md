@@ -82,6 +82,29 @@ A provider that spawns more than one process in a scenario gets
 `--version` probe (Codex runs one) replays the version recorded in the meta
 line.
 
+## ACP providers (Cursor, Copilot, Grok)
+
+All three run through the same `AcpLocalAgentDriver`, so a divergence in one is usually a
+divergence in how that provider implements ACP. `redactFrame` drops what the driver never reads
+and a recording should not carry: the user's installed skills and commands
+(`available_commands_update`), the account's model catalogue, and for Grok its `_x.ai/` hook,
+announcement, and settings notifications.
+
+- **Copilot** records with `COPILOT_HOME` pointed at a scratch directory. The login survives, but
+  the user's own hooks do not; they run inside Copilot's tool sandbox and fail the turn on hosts
+  without the sandbox dependencies. On Linux that sandbox also needs `slirp4netns`. Without it
+  Copilot's shell tool fails as it starts, so the checked-in `stop` recording interrupts a model
+  that is still thinking rather than a running command. Re-record it on a host that has the
+  dependencies.
+- **Cursor** is recorded with the account's default model (Auto); cheaper models need a paid plan.
+  When the plan's usage is spent, Cursor reports "Upgrade your plan to continue" as an ordinary
+  assistant message, which the scenarios see as a wrong answer.
+- **Grok** needs free or paid usage for its default model, and answers some "reply with exactly
+  the token" prompts with a refusal; re-run C1 before suspecting the driver.
+- Read-only is enforced differently for each: Cursor `ask` mode and Copilot `plan` mode through
+  `session/set_mode`, and Grok through permission requests (the driver sends
+  `_meta.yoloMode: false`, otherwise the user's own always-approve setting skips them).
+
 ## HTTP providers (OpenCode)
 
 OpenCode runs `opencode serve` and talks HTTP and SSE, so this stdio shim
