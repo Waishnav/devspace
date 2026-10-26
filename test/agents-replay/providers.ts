@@ -58,6 +58,18 @@ const jsonRpc: ReplayProtocol = {
   elasticKinds: new Set(),
 };
 
+/** Codex notifications about the user's own hosts, account, MCP servers, hooks, and config. The driver ignores them. */
+const CODEX_USER_ENVIRONMENT_METHODS: ReadonlySet<string> = new Set([
+  "account/rateLimits/updated",
+  "account/updated",
+  "configWarning",
+  "hook/completed",
+  "hook/started",
+  "mcpServer/startupStatus/updated",
+  "remoteControl/status/changed",
+  "warning",
+]);
+
 export const PROVIDERS: Record<string, ProviderDefinition> = {
   claude: {
     id: "claude",
@@ -145,8 +157,17 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
   },
   codex: {
     id: "codex",
-    // codex app-server JSON-RPC (not yet recorded).
+    model: "gpt-6-luna",
+    // codex app-server JSON-RPC.
     protocol: jsonRpc,
+    redactFrame: (frame) => {
+      if (typeof frame.method === "string") return CODEX_USER_ENVIRONMENT_METHODS.has(frame.method) ? undefined : frame;
+      const result = frame.result as Record<string, unknown> | undefined;
+      // The initialize reply names the OS; thread replies list the user's instruction files.
+      if (result && "userAgent" in result) return { ...frame, result: { ...result, userAgent: "codex" } };
+      if (result && "instructionSources" in result) return { ...frame, result: { ...result, instructionSources: [] } };
+      return frame;
+    },
     realCommand: () => "codex",
   },
 };

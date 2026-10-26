@@ -64,7 +64,7 @@ These apply to every provider, with the same assertions:
 | C5 | `events` | One turn id covers `turn_started` … `message` … `turn_completed`. When the driver's `capabilities.turns.streaming` is true, the tool-using prompt also produces `tool_started` and `tool_completed`. |
 | C6 | `missing-command` | `agents run` exits non-zero with `PROVIDER_UNAVAILABLE`. No transcript is needed. |
 
-## Adding a stdio provider (Codex, ACP)
+## Adding a stdio provider (ACP)
 
 1. Add or adjust its entry in `PROVIDERS` in `providers.ts`. `id` is the
    default provider instance id (`codex`, `cursor`, `copilot`, `grok`).
@@ -133,3 +133,9 @@ SSE, so the current transcripts contain no stream frames.
   expired provider login fails C1 with the provider's own message, for example
   `OAuth access token is invalid.` OpenCode 1.x (the v1 driver) is covered by
   its unit tests only. Recording it needs a 1.x install.
+- **Codex** runs against the normal `~/.codex` login and config, so its
+  sessions appear in `~/.codex/sessions`. Recordings pin `gpt-6-luna`, the
+  cheapest listed model. Each scenario has two transcripts: `<scenario>.jsonl`
+  is the `app-server --help` support probe and `<scenario>.2.jsonl` is the
+  app-server session. `redactFrame` drops notifications about the user's
+  hooks, MCP servers, account, and config, which the driver ignores.
