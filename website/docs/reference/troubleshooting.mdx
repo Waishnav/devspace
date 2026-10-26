@@ -21,8 +21,9 @@ Bash, public URL, allowed hosts, and native SQLite status.
   the Node you run DevSpace with, then rerun `doctor`:
 
   - global install: `npm install -g @waishnav/devspace`
-  - npx: clear the cached copy with `rm -rf ~/.npm/_npx`, then rerun the `npx`
-    command
+  - npx: run it with an explicit version, such as
+    `npx @waishnav/devspace@1.1.0 doctor`; a new package spec gets its own
+    fresh install for the current Node. Or switch to a global install.
   - local project install: `npm rebuild better-sqlite3` in that project
 </Accordion>
 
