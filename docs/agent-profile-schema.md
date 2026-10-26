@@ -82,17 +82,20 @@ to one of these built-in driver integrations:
 
 - `codex`: the host-installed `codex app-server` command
 - `claude`: Claude Code SDK
-- `opencode`: OpenCode SDK
+- `opencode`: the host-installed OpenCode CLI; DevSpace probes its major version
+  and uses the matching 1.x or 2.x protocol internally
 - `pi`: the installed Pi coding-agent SDK, one in-process session per DevSpace agent
 - `cursor`: ACP
 - `copilot`: ACP
 - `grok`: Grok Build ACP (`grok agent stdio`)
 
-Codex is resolved from the user's environment rather than bundled with
-DevSpace. Run `codex login` normally before using it; set `CODEX_COMMAND` when
-the executable is not on the normal PATH. OpenCode, Cursor, and Copilot
-runtimes are started and reused by the daemon internally, while Pi is embedded
-through its Node SDK.
+Codex and OpenCode are resolved from the user's environment rather than bundled
+as executables. Run their normal login/setup flows before using them; set
+`CODEX_COMMAND` when Codex is not on the normal PATH. OpenCode is discovered as
+`opencode`, and DevSpace automatically routes OpenCode 1.x and 2.x to their
+matching runtime implementations. OpenCode, Cursor, and Copilot runtimes are
+started and reused by the daemon internally, while Pi is embedded through its
+Node SDK.
 
 ### `model`
 
