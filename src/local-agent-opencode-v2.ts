@@ -73,15 +73,18 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
           const providerSessionId = encodeOpenCodeV2SessionId(nativeSessionId);
           await callbacks?.onSessionId?.(providerSessionId);
           if (continuing) await this.configureSession(nativeSessionId, input);
-          const messages = await this.prompt(nativeSessionId, input);
-          if (messages.data.length === 0) await this.assertTurnNotFailed(nativeSessionId);
-          const assistant = requireLatestAssistant(messages.data);
+          const { promptedAt, messages } = await this.prompt(nativeSessionId, input);
+          // On a continued session the latest assistant message may predate this
+          // prompt when the new turn failed before producing output.
+          const fresh = messages.data.filter((message) => message.time.created >= promptedAt);
+          if (fresh.length === 0) await this.assertTurnNotFailed(nativeSessionId);
+          const assistant = requireLatestAssistant(fresh);
           assertOpenCodeV2AssistantSucceeded(assistant);
           return {
             provider: this.provider,
             providerSessionId,
             finalResponse: requireOpenCodeV2FinalResponse(assistant),
-            items: messages.data,
+            items: fresh,
           };
         } catch (error) {
           if (isOpenCodeTransportFailure(error)) {
@@ -187,17 +190,18 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
       controller.abort();
     }, this.promptTimeoutMs);
     try {
-      await this.client.session.prompt({
+      const prompted = await this.client.session.prompt({
         sessionID: sessionId,
         text: input.prompt,
       }, { signal: controller.signal });
       await this.client.session.wait({ sessionID: sessionId }, { signal: controller.signal });
-      return await this.client.message.list({
+      const messages = await this.client.message.list({
         sessionID: sessionId,
         limit: 1,
         order: "desc",
         type: "assistant",
       }, { signal: controller.signal });
+      return { promptedAt: prompted.time.created, messages };
     } catch (error) {
       if (input.signal?.aborted) throw localAgentCancelledError("opencode", "prompt", error);
       if (!timedOut) throw error;

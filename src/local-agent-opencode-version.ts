@@ -113,7 +113,8 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
           : `OpenCode version probe failed to start: ${cause.message}`,
       }));
     });
-    child.once("exit", (code) => {
+    // `close` waits for stdout/stderr to drain; `exit` can fire before the version is read.
+    child.once("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
