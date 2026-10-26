@@ -27,6 +27,30 @@ assert.equal(
 );
 await drainingShutdown;
 
+let idleCloseCalls = 0;
+let allCloseCalls = 0;
+let finishIdleAwareHttpClose: (() => void) | undefined;
+const idleAwareShutdown = shutdownHttpServer(
+  {
+    close(callback: (error?: Error) => void) {
+      finishIdleAwareHttpClose = () => callback();
+    },
+    closeIdleConnections() {
+      idleCloseCalls += 1;
+    },
+    closeAllConnections() {
+      allCloseCalls += 1;
+    },
+  },
+  async () => {
+    assert.equal(idleCloseCalls, 1, "idle connections close when draining starts");
+    finishIdleAwareHttpClose?.();
+  },
+);
+await idleAwareShutdown;
+assert.equal(idleCloseCalls, 2, "idle connections close again after application cleanup");
+assert.equal(allCloseCalls, 1, "remaining connections close only after application cleanup");
+
 let finishApplicationClose: (() => void) | undefined;
 let shutdownResolved = false;
 
