@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  ClientError,
   OpenCode,
   type ModelRef,
   type OpenCodeClient,
@@ -80,10 +81,13 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
           if (fresh.length === 0) await this.assertTurnNotFailed(nativeSessionId);
           const assistant = requireLatestAssistant(fresh);
           assertOpenCodeV2AssistantSucceeded(assistant);
+          const finalResponse = requireOpenCodeV2FinalResponse(assistant);
+          // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
+          callbacks?.onEvent?.({ type: "message", text: finalResponse });
           return {
             provider: this.provider,
             providerSessionId,
-            finalResponse: requireOpenCodeV2FinalResponse(assistant),
+            finalResponse,
             items: fresh,
           };
         } catch (error) {
@@ -360,22 +364,7 @@ function assertOpenCodeV2AssistantSucceeded(message: SessionMessageAssistant): v
   });
 }
 
+/** @opencode/client wraps every connection failure, whatever its errno, in a Transport ClientError. */
 function isOpenCodeTransportFailure(error: unknown): boolean {
-  const code = transportErrorCode(error);
-  return code === "ECONNREFUSED"
-    || code === "ECONNRESET"
-    || code === "EPIPE"
-    || code === "ENETDOWN"
-    || code === "ENETUNREACH"
-    || code === "ETIMEDOUT";
-}
-
-function transportErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const code = (error as NodeJS.ErrnoException).code;
-  if (typeof code === "string") return code;
-  const cause = (error as Error & { cause?: unknown }).cause;
-  return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
-    ? (cause as NodeJS.ErrnoException).code
-    : undefined;
+  return error instanceof ClientError && error.reason === "Transport";
 }

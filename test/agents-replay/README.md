@@ -9,7 +9,7 @@ fixture repo, and runs with exactly one provider configured.
 ```bash
 pnpm build
 pnpm qa:agents                       # replay every provider that has transcripts
-pnpm qa:agents claude pi             # replay chosen providers
+pnpm qa:agents claude pi opencode    # replay chosen providers
 pnpm qa:agents pi --scenario stop    # one scenario
 pnpm qa:agents claude --live         # real provider binaries, no shim
 pnpm qa:agents claude --record       # live, through the record shim; rewrites transcripts
@@ -21,8 +21,8 @@ the provider's normal login and spend a little quota.
 ## How it works
 
 The runner points the provider's `command` override (`CLAUDE_COMMAND`,
-`PI_COMMAND`, `CODEX_COMMAND`, or the ACP `command`) at a wrapper script that
-runs `shim.ts`.
+`PI_COMMAND`, `CODEX_COMMAND`, `OPENCODE_COMMAND`, or the ACP `command`) at a
+wrapper script that runs `shim.ts`.
 
 - **Record** spawns the real binary with the same arguments and env, passes
   stdio through unchanged, and tees each newline-delimited frame into
@@ -61,12 +61,12 @@ These apply to every provider, with the same assertions:
 | C1 | `run-wait` | `run` + `wait` completes and the response contains `PAPAYA-7`. |
 | C2 | `continue` | `continue` on the same agent recalls the codename from turn one. |
 | C3 | `read-only` | A `read_only` agent asked to create `probe.txt` ends `completed` and the file does not exist. The provider may refuse, be denied, or lack a write tool; all of these are the same outcome. It starts the agent with `agents run --write-mode read_only`. |
-| C4 | `stop` | `stop` during a `sleep` tool call yields `stopped` within 15s, and two seconds later there are no new events and no `late.txt`. |
+| C4 | `stop` | `stop` during a `sleep` tool call yields `stopped` within 15s, and two seconds later there are no new events and no `late.txt`. Drivers that do not stream report no `tool_started`, so the stop is sent 8s after `turn_started`. |
 | C5 | `events` | One turn id covers `turn_started` … `message` … `turn_completed`. When the driver's `capabilities.turns.streaming` is true, the tool-using prompt also produces `tool_started` and `tool_completed`. |
 | C6 | `missing-command` | `agents run` exits non-zero with `PROVIDER_UNAVAILABLE`. No transcript is needed. |
 | C7 | `worktree` | `run --worktree --write-mode full_access` reports a `worktree` and `branch` on `run`, `wait`, and `show`; the worktree is a checkout on that branch and the source checkout stays clean. Live and record runs also check that the agent's `probe.txt` exists in the worktree, not in the source, and shows in `git status` there. A replayed provider executes no tools, so replay checks the rest, and the shim fails it if the provider was not started in the worktree. |
 
-## Adding a stdio provider (Codex, ACP)
+## Adding a stdio provider (ACP)
 
 1. Add or adjust its entry in `PROVIDERS` in `providers.ts`. `id` is the
    default provider instance id (`codex`, `cursor`, `copilot`, `grok`).
@@ -84,13 +84,53 @@ A provider that spawns more than one process in a scenario gets
 `--version` probe (Codex runs one) replays the version recorded in the meta
 line.
 
+## ACP providers (Cursor, Copilot, Grok)
+
+All three run through the same `AcpLocalAgentDriver`, so a divergence in one is usually a
+divergence in how that provider implements ACP. `redactFrame` drops what the driver never reads
+and a recording should not carry: the user's installed skills and commands
+(`available_commands_update`), the account's model catalogue, and for Grok its `_x.ai/` hook,
+announcement, and settings notifications.
+
+- **Copilot** records with `COPILOT_HOME` pointed at a scratch directory. The login survives, but
+  the user's own hooks do not; they run inside Copilot's tool sandbox and fail the turn on hosts
+  without the sandbox dependencies. On Linux that sandbox also needs `slirp4netns`. Without it
+  Copilot's shell tool fails as it starts, so the checked-in `stop` recording interrupts a model
+  that is still thinking rather than a running command. Re-record it on a host that has the
+  dependencies.
+- **Cursor** is recorded with the account's default model (Auto); cheaper models need a paid plan.
+  When the plan's usage is spent, Cursor reports "Upgrade your plan to continue" as an ordinary
+  assistant message, which the scenarios see as a wrong answer.
+- **Grok** needs free or paid usage for its default model, and answers some "reply with exactly
+  the token" prompts with a refusal; re-run C1 before suspecting the driver.
+- Read-only is enforced differently for each: Cursor `ask` mode and Copilot `plan` mode through
+  `session/set_mode`, and Grok through permission requests (the driver sends
+  `_meta.yoloMode: false`, otherwise the user's own always-approve setting skips them).
+
 ## HTTP providers (OpenCode)
 
-OpenCode runs `opencode serve` and talks HTTP and SSE, so this stdio shim
-cannot sit between it and the driver. The design leaves room for an HTTP
-record/replay proxy with the same transcript shape (`in` = request,
-`out` = response or SSE event) and the same matching rules. Until that exists,
-run OpenCode with `--live` only.
+OpenCode drivers run `opencode serve --hostname=H --port=P` and wait for
+`opencode server listening on http://H:P`. For a provider marked `http` in
+`providers.ts`, `http-shim.ts` takes the place of stdio:
+
+- **Record** starts the real `opencode serve` on a private port, prints the
+  ready line for the port the driver chose, and reverse-proxies to it. Each
+  request is an `in` frame `{ id, method, path, body }`, and each response an
+  `out` frame `{ id, status, type, body }`. An event stream is recorded as
+  `{ id, status, type, stream: true }`, then one `{ id, event }` per SSE event
+  and `{ id, end: true }`. `id` counts requests and correlates responses,
+  because requests overlap: a stop's `interrupt` arrives while the
+  `session/wait` long poll is still open. Request paths are URL-decoded so
+  query paths scrub, and `accept-encoding` is dropped so bodies stay readable.
+- **Replay** listens on the driver's port and runs the same `Replayer`.
+  Requests match by method and path template (ids become `{id}`), then by
+  path and body shape. Session and message ids come from the recording, so the
+  driver echoes recorded values back. A mismatch exits the shim, and the
+  driver reports `PROVIDER_UNAVAILABLE`.
+
+The `--port` argument is normalized when replay compares launch arguments.
+Both OpenCode generations wait on blocking requests rather than subscribing to
+SSE, so the current transcripts contain no stream frames.
 
 ## Re-recording and troubleshooting
 
@@ -113,3 +153,14 @@ run OpenCode with `--live` only.
   passes the dir as `PI_CODING_AGENT_DIR`.
 - **Claude** runs the Agent SDK's bundled CLI, matching DevSpace's default,
   with `model: haiku`.
+- **OpenCode** recordings use OpenCode 2.x (the v2 driver) with
+  `openai/gpt-5.6-luna`, which needs a working OpenAI login in OpenCode. An
+  expired provider login fails C1 with the provider's own message, for example
+  `OAuth access token is invalid.` OpenCode 1.x (the v1 driver) is covered by
+  its unit tests only. Recording it needs a 1.x install.
+- **Codex** runs against the normal `~/.codex` login and config, so its
+  sessions appear in `~/.codex/sessions`. Recordings pin `gpt-6-luna`, the
+  cheapest listed model. Each scenario has two transcripts: `<scenario>.jsonl`
+  is the `app-server --help` support probe and `<scenario>.2.jsonl` is the
+  app-server session. `redactFrame` drops notifications about the user's
+  hooks, MCP servers, account, and config, which the driver ignores.

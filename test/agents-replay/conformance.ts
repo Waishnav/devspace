@@ -50,6 +50,7 @@ const shimPath = join(harnessDir, "shim.ts");
 const transcriptsDir = join(harnessDir, "transcripts");
 const TURN_TIMEOUT_SECONDS = 180;
 const STOP_BOUND_MS = 15_000;
+const NON_STREAMING_TOOL_DELAY_MS = 8_000;
 
 const SCENARIOS: Scenario[] = [
   {
@@ -94,7 +95,13 @@ const SCENARIOS: Scenario[] = [
     transcript: true,
     async run(run) {
       const id = await start(run, "Run the shell command `sleep 20 && echo late > late.txt`, then reply SLEPT.");
-      await waitForEvent(run, id, (event) => event.type === "tool_started");
+      if (streams(run.provider)) {
+        await waitForEvent(run, id, (event) => event.type === "tool_started");
+      } else {
+        // A non-streaming driver reports no tool activity, so give the provider time to reach the sleep.
+        await waitForEvent(run, id, (event) => event.type === "turn_started");
+        await delay(NON_STREAMING_TOOL_DELAY_MS);
+      }
       const stoppedAt = Date.now();
       const stopped = await cli(run, ["agents", "stop", id, "--json"]);
       expect(stopped.code === 0, `stop failed: ${stopped.stdout}${stopped.stderr}`);
@@ -262,9 +269,10 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     const detail = existsSync(report) ? `\n${readFileSync(report, "utf8").trim()}` : "";
     throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}\nstate kept at ${root}`);
   } finally {
-    await cli(run, ["agents", "daemon", "stop"]).catch(() => undefined);
+    await stopDaemon(run).catch(() => undefined);
   }
-  if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true });
+  // A provider process that was just stopped may still be writing as the daemon exits.
+  if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 /** Provider commands take no arguments, so a small wrapper selects the shim's mode and transcript. */
@@ -298,6 +306,22 @@ function writeShimWrapper(
   writeFileSync(path, lines.join("\n"));
   chmodSync(path, 0o755);
   return path;
+}
+
+/** `daemon stop` only requests shutdown; wait for that daemon to exit so it stops logging into the directory we remove. */
+async function stopDaemon(run: Run): Promise<void> {
+  const pid = (await cli(run, ["agents", "daemon", "stop", "--json"])).json?.pid;
+  if (typeof pid !== "number") return;
+  for (let waited = 0; waited < 10_000 && isAlive(pid); waited += 100) await delay(100);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function start(run: Run, prompt: string, flags: string[] = []): Promise<string> {

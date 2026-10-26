@@ -19,6 +19,11 @@ export type OpenCodeRuntimeProbeFunction = () => Promise<ProbedOpenCodeRuntime>;
 
 const OPENCODE_V2_SESSION_PREFIX = "opencode:v2:";
 
+/** The executable for the version probe, `opencode serve`, and availability; OPENCODE_COMMAND overrides it. */
+export function resolveOpenCodeCommand(env: NodeJS.ProcessEnv): string {
+  return env.OPENCODE_COMMAND?.trim() || "opencode";
+}
+
 export function classifyOpenCodeCliVersion(output: string): ProbedOpenCodeRuntime | undefined {
   const match = output.trim().match(/(?:^|\s)v?((\d+)\.\d+\.\d+(?:[-+][^\s]+)?)(?:$|\s)/);
   if (!match?.[1] || !match[2]) return undefined;
@@ -77,7 +82,7 @@ export async function probeOpenCodeBinary(
 
 function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("opencode", ["--version"], {
+    const child = spawn(resolveOpenCodeCommand(env), ["--version"], {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
