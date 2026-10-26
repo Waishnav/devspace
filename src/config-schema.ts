@@ -75,6 +75,8 @@ const oauthConfigSchema = z.object({
     .default([]),
   allowedRedirectHosts: z.array(z.string().trim().min(1)).min(1).default([
     "chatgpt.com",
+    "claude.ai",
+    "claude.com",
     "localhost",
     "127.0.0.1",
   ]),

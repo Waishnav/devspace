@@ -367,6 +367,8 @@
         "allowedRedirectHosts": {
           "default": [
             "chatgpt.com",
+            "claude.ai",
+            "claude.com",
             "localhost",
             "127.0.0.1"
           ],

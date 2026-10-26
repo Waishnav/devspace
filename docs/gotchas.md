@@ -116,6 +116,8 @@ By default, DevSpace allows redirects for:
 
 ```text
 chatgpt.com
+claude.ai
+claude.com
 localhost
 127.0.0.1
 ```
