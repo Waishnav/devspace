@@ -20,6 +20,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.5.1
         version: 1.5.1
+      '@earendil-works/pi-codemode':
+        specifier: 1.1.0
+        version: 1.1.0
       '@earendil-works/pi-coding-agent':
         specifier: ^0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
@@ -328,6 +331,10 @@ packages:
     resolution: {integrity: sha512-Moe/H8c87yacDGK9dPbWphZNjVsrb3nTrIHycOQJAkFEnY9PYxOOd74+ny44kATfPU9Dm7aTHefar3pZF+UKUA==}
     engines: {node: '>=22.19.0'}
     hasBin: true
+
+  '@earendil-works/pi-codemode@1.1.0':
+    resolution: {integrity: sha512-8Asc2AzhoNaXS1snmRFa96OhcWIlFM5k1Kuiz6p2DvIYgi5QHQccRAmDVY9oO92TzWrizpvQpconZGQ7JhlI7Q==}
+    engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-coding-agent@0.80.10':
     resolution: {integrity: sha512-aL4apbupCHiVLSXASXvRzH4Q2vmtfrDa+0s909CJuVu/GgGylbDzr7oyF1mPmip5E+VxYYxKWmph4hV04wUcQg==}
@@ -1972,6 +1979,9 @@ packages:
     resolution: {integrity: sha512-So0Sqw869y/S2oE3Nuc0uT3Dhqgvsj8FSrwBdsuTosVsG8ME5/OcudU1GxsrIFdFABgy17GHnTVO9TYV/bLQcA==}
     engines: {node: '>=16.0.0'}
 
+  quickjs-wasi@3.6.2:
+    resolution: {integrity: sha512-FCqGtGOrMgzUiIrMNMA2YnsOxCNwo31dzqXvclXUC6xeT35NJLKXQJsvbeCTjvoFAwZgEAPg8U6+KAPDGXn8Mg==}
+
   range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
@@ -2625,6 +2635,10 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@earendil-works/pi-codemode@1.1.0':
+    dependencies:
+      quickjs-wasi: 3.6.2
 
   '@earendil-works/pi-coding-agent@0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
@@ -4073,6 +4087,8 @@ snapshots:
       '@jitl/quickjs-wasmfile-release-asyncify': 0.32.0
       '@jitl/quickjs-wasmfile-release-sync': 0.32.0
       quickjs-emscripten-core: 0.32.0
+
+  quickjs-wasi@3.6.2: {}
 
   range-parser@1.2.1: {}
 

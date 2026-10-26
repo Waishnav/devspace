@@ -1,0 +1,53 @@
+{
+  "description": "Without DEVSPACE_EXPERIMENTAL_CODE_MODE the configured Codex surface is unchanged: apply_patch and exec_command are direct tools and open_workspace returns no Code Mode signatures. The transcript's tool list has no execute, poll_execution, or cancel_execution.",
+  "host": {
+    "clientName": "ChatGPT",
+    "userAgent": "openai-mcp/1.0.0"
+  },
+  "fixture": {
+    "files": {
+      "AGENTS.md": "# Fixture\n\nKeep changes small.\n",
+      "README.md": "# QA fixture\n\nbaseline line\n",
+      "src/greet.ts": "export function greet(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+    }
+  },
+  "steps": [
+    {
+      "tool": "open_workspace",
+      "arguments": {
+        "path": "{{fixture}}"
+      }
+    },
+    {
+      "tool": "apply_patch",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "patch": "*** Begin Patch\n*** Update File: src/greet.ts\n@@\n export function greet(name: string): string {\n-  return `Hello, ${name}`;\n+  return `Hello, ${name.trim()}!`;\n }\n*** Add File: src/farewell.ts\n+export function farewell(name: string): string {\n+  return `Goodbye, ${name}`;\n+}\n*** End Patch"
+      }
+    },
+    {
+      "tool": "exec_command",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}",
+        "cmd": "git status --short"
+      },
+      "expect": {
+        "text": [
+          "src/greet.ts",
+          "src/farewell.ts"
+        ]
+      }
+    },
+    {
+      "tool": "show_changes",
+      "arguments": {
+        "workspace_id": "{{workspace_id}}"
+      }
+    }
+  ],
+  "config": {
+    "tools": {
+      "mode": "codex"
+    }
+  }
+}

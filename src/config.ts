@@ -29,6 +29,7 @@ export interface ServerConfig extends AgentConfig {
   publicBaseUrl: string;
   /** Explicit `tools.mode`; when set it wins over host detection. */
   toolSurfaceOverride: "claude" | "codex" | undefined;
+  experimentalCodeMode: boolean;
   uiEnabled: boolean;
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
@@ -97,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
     toolSurfaceOverride: stored.tools.mode,
+    experimentalCodeMode: env.DEVSPACE_EXPERIMENTAL_CODE_MODE === "1",
     uiEnabled: stored.ui.enabled,
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,

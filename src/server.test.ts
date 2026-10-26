@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
+import { access, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { MAX_RUNNING_EXECUTIONS } from "./code-mode-executions.js";
 import { loadConfig, type ServerConfig } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
@@ -56,6 +57,174 @@ test("tool surfaces expose the expected host-facing tools", async (t) => {
       );
     });
   }
+});
+
+test("experimental Code Mode bootstraps real tools and executes through MCP", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false, git: true });
+  const listed = await context.client.listTools();
+  assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
+    "cancel_execution", "execute", "open_workspace", "poll_execution", "show_changes",
+  ]);
+
+  const opened = await callOpen(context.client, context.project);
+  const workspaceId = structuredContent(opened).workspace_id as string;
+  const codeMode = structuredContent(opened).code_mode as { tool_signatures: string };
+  assert.match(codeMode.tool_signatures, /read\(/);
+  assert.match(codeMode.tool_signatures, /apply_patch\(/);
+  assert.match(JSON.stringify(opened.content), /declare const tools/);
+  assert.doesNotMatch(codeMode.tool_signatures, /workspace_id/);
+
+  await writeFile(join(context.project, "note.txt"), "hello world\n");
+  const executed = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: {
+      workspace_id: workspaceId,
+      code: `const file = await tools.read({ path: "note.txt" });
+        const found = await tools.exec_command({ cmd: "git status --short" });
+        return { content: file.result.trim(), status: found.result.trim() };`,
+    },
+  }));
+  assert.equal(executed.status, "completed");
+  assert.match((executed.value as { status: string }).status, /^\?\? note\.txt/);
+  assert.equal((executed.value as { content: string }).content, "hello world");
+
+  const patched = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: {
+      workspace_id: workspaceId,
+      code: `return await tools.apply_patch({ patch: "*** Begin Patch\\n*** Update File: note.txt\\n@@\\n-hello world\\n+hello code mode\\n*** End Patch" });`,
+    },
+  }));
+  assert.equal(patched.status, "completed");
+  assert.equal(await readFile(join(context.project, "note.txt"), "utf8"), "hello code mode\n");
+  const reviewed = structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspace_id: workspaceId },
+  }));
+  assert.match(reviewed.result as string, /Changed 1 file/);
+});
+
+test("Code Mode leaves the open_workspace schema unchanged when disabled", async (t) => {
+  const context = await fixture(t, { surface: "codex", uiEnabled: false });
+  const { tools } = await context.client.listTools();
+  const openWorkspace = tools.find((tool) => tool.name === "open_workspace");
+  assert.ok(openWorkspace?.outputSchema?.properties);
+  assert.equal("code_mode" in openWorkspace.outputSchema.properties, false);
+});
+
+test("experimental Code Mode polls a long-running script without restarting it", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const start = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: {
+      workspace_id: workspaceId,
+      yield_time_ms: 0,
+      code: `let s = await tools.exec_command({ cmd: "node -e \\\"setTimeout(() => console.log('done'), 300)\\\"", yield_time_ms: 0 });
+        while (s.running) s = await tools.write_stdin({ session_id: s.session_id, yield_time_ms: 1000 });
+        return s.exit_code;`,
+    },
+  }));
+  assert.equal(start.running, true);
+  assert.equal(typeof start.execution_id, "string");
+
+  const end = structuredContent(await context.client.callTool({
+    name: "poll_execution",
+    arguments: { workspace_id: workspaceId, execution_id: start.execution_id, yield_time_ms: 5000 },
+  }));
+  assert.equal(end.status, "completed");
+  assert.equal(end.value, 0);
+  assert.deepEqual((end.calls as { tool: string }[]).map((call) => call.tool).slice(0, 2), [
+    "exec_command", "write_stdin",
+  ]);
+});
+
+test("experimental Code Mode rejects invalid tool inputs and interrupts runaway scripts", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const invalid = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: 'return await tools.read({ offset: -1 })' },
+  }));
+  assert.equal(invalid.status, "failed");
+  assert.match(invalid.error as string, /path/);
+
+  const start = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: "while (true) {}", yield_time_ms: 0 },
+  }));
+  assert.equal(start.running, true);
+  await context.client.callTool({
+    name: "cancel_execution",
+    arguments: { workspace_id: workspaceId, execution_id: start.execution_id },
+  });
+  const cancelled = structuredContent(await context.client.callTool({
+    name: "poll_execution",
+    arguments: { workspace_id: workspaceId, execution_id: start.execution_id },
+  }));
+  assert.equal(cancelled.status, "cancelled");
+});
+
+// The command appends to `ticks` until stopped; its exec_command call is still awaiting its first result.
+const TICKING_SCRIPT = `await tools.exec_command({ cmd: "while true; do echo tick >> ticks; sleep 0.02; done", yield_time_ms: 10000 }); return "unreachable";`;
+
+async function assertStopsGrowing(path: string): Promise<void> {
+  const size = (await stat(path)).size;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await stat(path)).size, size, `${path} kept growing after the command was stopped`);
+}
+
+test("cancelling Code Mode stops a command whose exec_command call has not returned", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const start = structuredContent(await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: TICKING_SCRIPT, yield_time_ms: 0 },
+  }));
+  await waitForFile(join(context.project, "ticks"));
+
+  const cancelled = structuredContent(await context.client.callTool({
+    name: "cancel_execution",
+    arguments: { workspace_id: workspaceId, execution_id: start.execution_id },
+  }));
+  assert.equal(cancelled.status, "cancelled");
+  await assertStopsGrowing(join(context.project, "ticks"));
+});
+
+test("closing the MCP server stops running Code Mode scripts and their commands", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  await context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: TICKING_SCRIPT, yield_time_ms: 0 },
+  });
+  await waitForFile(join(context.project, "ticks"));
+
+  await context.close();
+  await assertStopsGrowing(join(context.project, "ticks"));
+});
+
+test("Code Mode rejects scripts beyond the server-wide running limit", async (t) => {
+  const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
+  const execute = () => context.client.callTool({
+    name: "execute",
+    arguments: { workspace_id: workspaceId, code: "while (true) {}", yield_time_ms: 0 },
+  });
+  const running = [];
+  for (let index = 0; index < MAX_RUNNING_EXECUTIONS; index += 1) {
+    running.push(structuredContent(await execute()).execution_id as string);
+  }
+
+  const rejected = await execute();
+  assert.equal(rejected.isError, true);
+  assert.match(JSON.stringify(rejected.content), /already running 4 Code Mode scripts.*cancel_execution/);
+
+  await context.client.callTool({
+    name: "cancel_execution",
+    arguments: { workspace_id: workspaceId, execution_id: running[0] },
+  });
+  assert.equal(structuredContent(await execute()).status, "running");
 });
 
 test("model-facing tool schemas use snake_case recursively", async (t) => {
@@ -610,6 +779,7 @@ test("HTTP endpoint honours an explicit tools.mode over host detection", async (
   const { localBaseUrl, issueAccessToken } = await httpServerFixture(
     t,
     "devspace-surface-override-test-",
+    false,
     { tools: { mode: "claude" } },
   );
   const listed = await postModernMcp(localBaseUrl, await issueAccessToken("ChatGPT"), "tools/list", {});
@@ -781,6 +951,46 @@ test("aborting one MCP request does not poison the next stateless request", asyn
   await waitForFile(join(root, "finished"));
 });
 
+test("experimental Code Mode executes over stateless HTTP MCP requests", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(
+    t,
+    "devspace-codemode-http-test-",
+    true,
+  );
+  await writeFile(join(root, "note.txt"), "through HTTP\n");
+
+  const listed = await postModernMcp(localBaseUrl, accessToken, "tools/list", {});
+  const inventory = await listed.json() as { result?: { tools?: Array<{ name: string }> } };
+  assert.deepEqual(inventory.result?.tools?.map((tool) => tool.name).sort(), [
+    "cancel_execution", "execute", "open_workspace", "poll_execution", "show_changes",
+  ]);
+
+  const opened = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "open_workspace",
+    arguments: { path: root },
+  });
+  const response = await opened.json() as {
+    result?: { structuredContent?: { workspace_id?: string; code_mode?: { tool_signatures: string } } };
+  };
+  const workspaceId = response.result?.structuredContent?.workspace_id;
+  assert.ok(workspaceId);
+  assert.match(response.result?.structuredContent?.code_mode?.tool_signatures ?? "", /tools/);
+
+  const call = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "execute",
+    arguments: {
+      workspace_id: workspaceId,
+      code: 'return (await tools.read({ path: "note.txt" })).result.trim()',
+    },
+  });
+  assert.equal(call.status, 200, await call.clone().text());
+  const result = await call.json() as {
+    result?: { structuredContent?: { status?: string; value?: string } };
+  };
+  assert.equal(result.result?.structuredContent?.status, "completed");
+  assert.equal(result.result?.structuredContent?.value, "through HTTP");
+});
+
 test("server shutdown waits for an active MCP tool call", async (t) => {
   const { root, localBaseUrl, accessToken, running } = await httpServerFixture(
     t,
@@ -838,6 +1048,7 @@ test("server shutdown waits for an active MCP tool call", async (t) => {
 interface ServerFixture {
   client: Client;
   project: string;
+  close: () => Promise<void>;
 }
 
 function schemaPropertyPaths(
@@ -876,11 +1087,12 @@ interface HttpServerFixture {
 async function httpServerFixture(
   t: TestContext,
   prefix: string,
+  experimentalCodeMode = false,
   extraConfig: { tools?: { mode: ToolSurfaceName } } = {},
 ): Promise<HttpServerFixture> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const ownerToken = "test-owner-token-that-is-long-enough";
-  const config = loadConfig(writeTestDevspaceConfig(join(root, ".config"), {
+  const config = { ...loadConfig(writeTestDevspaceConfig(join(root, ".config"), {
     server: {
       port: 1,
       publicBaseUrl: "https://example.test",
@@ -891,7 +1103,7 @@ async function httpServerFixture(
     },
     storage: { stateDir: join(root, ".state") },
     ...extraConfig,
-  }));
+  })), experimentalCodeMode };
   const running = createServer(config, { incomingArtifactAdapters: [] });
   const httpServer = running.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => httpServer.once("listening", resolve));
@@ -924,6 +1136,7 @@ async function fixture(
     subagents?: SubagentsConfig;
     surface?: ToolSurfaceName;
     uiEnabled?: boolean;
+    experimentalCodeMode?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -969,6 +1182,7 @@ async function fixture(
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
+    experimentalCodeMode: options.experimentalCodeMode ?? loadedConfig.experimentalCodeMode,
   };
   const config: ServerConfig = options.localAgentProviders
     ? {
@@ -1025,7 +1239,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project };
+  return { client, project, close };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {

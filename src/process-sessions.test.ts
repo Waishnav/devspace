@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { HeadTailBuffer, ProcessSessionManager } from "./process-sessions.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HeadTailBuffer, ProcessOwner, ProcessSessionManager } from "./process-sessions.js";
 
 const smallBuffer = new HeadTailBuffer(100);
 smallBuffer.append("hello\n");
@@ -215,3 +218,37 @@ try {
 } finally {
   manager.shutdown();
 }
+
+// A descendant that leaves the process group keeps the output pipe open after
+// the group is killed; termination must stay bounded and report it.
+if (process.platform === "linux") {
+  const escapeManager = new ProcessSessionManager();
+  const owner = new ProcessOwner();
+  const dir = mkdtempSync(join(tmpdir(), "devspace-escape-"));
+  const pidFile = join(dir, "escaped.pid");
+  try {
+    await escapeManager.runOwned(owner, () => escapeManager.start({
+      workspaceId: "workspace-escape",
+      command: `setsid sh -c 'echo $$ > ${pidFile}; exec sleep 30' & sleep 30`,
+      cwd: dir,
+      yieldTimeMs: 300,
+    }));
+    const startedAt = Date.now();
+    const unconfirmed = await owner.terminate();
+    assert.equal(unconfirmed, 1, "the escaped descendant's open pipe is reported");
+    assert.ok(Date.now() - startedAt < 10_000, "termination stays bounded");
+  } finally {
+    // Only signal a real positive PID: kill(0) would signal this test's own process group.
+    const escapedPid = existsSync(pidFile) ? Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10) : NaN;
+    if (Number.isSafeInteger(escapedPid) && escapedPid > 0) {
+      try {
+        process.kill(escapedPid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+    escapeManager.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
 
@@ -10,6 +11,20 @@ const DEFAULT_BUFFER_CHARACTERS = 1_000_000;
 const COMPLETED_SESSION_TTL_MS = 5 * 60 * 1_000;
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
+const OWNER_TERMINATE_GRACE_MS = 2_000;
+const OWNER_KILL_WAIT_MS = 2_000;
+
+async function allExitWithin(sessions: ProcessSession[], ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.all(sessions.map((session) => session.exitPromise)).then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface StartCommandInput {
   workspaceId: string;
@@ -210,8 +225,45 @@ function truncateOutput(output: string, maxCharacters: number): { output: string
   };
 }
 
+/**
+ * Groups the commands started on behalf of one caller, such as a Code Mode script.
+ * Commands are adopted as soon as they spawn, so terminate() also covers a command
+ * whose exec_command call has not returned its session ID yet.
+ */
+export class ProcessOwner {
+  private readonly sessions = new Set<ProcessSession>();
+  private terminated = false;
+
+  get isTerminated(): boolean {
+    return this.terminated;
+  }
+
+  adopt(session: ProcessSession): void {
+    this.sessions.add(session);
+    void session.exitPromise.then(() => this.sessions.delete(session));
+    if (this.terminated && session.running) session.process?.kill("SIGTERM");
+  }
+
+  /**
+   * Stops every adopted command. Resolves with how many commands were killed
+   * but never confirmed their exit: a descendant that left the process group
+   * (e.g. via setsid) can keep inherited output open indefinitely, so the
+   * final wait is bounded and reported instead of treated as success.
+   */
+  async terminate(): Promise<number> {
+    this.terminated = true;
+    const running = [...this.sessions].filter((session) => session.running);
+    for (const session of running) session.process?.kill("SIGTERM");
+    if (await allExitWithin(running, OWNER_TERMINATE_GRACE_MS)) return 0;
+    for (const session of running) if (session.running) session.process?.kill("SIGKILL");
+    await allExitWithin(running, OWNER_KILL_WAIT_MS);
+    return running.filter((session) => session.running).length;
+  }
+}
+
 export class ProcessSessionManager {
   private readonly sessions = new Map<number, ProcessSession>();
+  private readonly owners = new AsyncLocalStorage<ProcessOwner>();
   private readonly maxBufferCharacters: number;
   private readonly completedSessionTtlMs: number;
   private nextSessionId = 1;
@@ -221,7 +273,14 @@ export class ProcessSessionManager {
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
   }
 
+  /** Runs fn so that every command it starts is adopted by owner. */
+  runOwned<T>(owner: ProcessOwner, fn: () => T): T {
+    return this.owners.run(owner, fn);
+  }
+
   async start(input: StartCommandInput): Promise<ProcessSnapshot> {
+    const owner = this.owners.getStore();
+    if (owner?.isTerminated) throw new Error("The caller that owns this command was stopped.");
     const session = this.createSession(input);
     this.sessions.set(session.id, session);
 
@@ -232,6 +291,7 @@ export class ProcessSessionManager {
       this.sessions.delete(session.id);
       throw error;
     }
+    owner?.adopt(session);
 
     const yieldTimeMs = boundedInteger(input.yieldTimeMs, DEFAULT_EXEC_YIELD_MS, MAX_PROCESS_YIELD_MS);
     await this.waitForExit(session, yieldTimeMs);
