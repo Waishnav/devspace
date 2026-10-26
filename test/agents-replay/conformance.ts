@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createLocalAgentDrivers } from "../../src/local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "../../src/local-agent-path.js";
@@ -82,9 +82,7 @@ const SCENARIOS: Scenario[] = [
     description: "C3: a read_only agent asked to create a file completes without creating it",
     transcript: true,
     async run(run) {
-      // `agents run` always uses the default write mode; read_only reaches drivers through
-      // workflows and the daemon protocol, so this scenario starts the agent through the client.
-      const id = await startReadOnly(run, "Create a file named probe.txt containing the word hello using your file tools. Then reply DONE.");
+      const id = await start(run, "Create a file named probe.txt containing the word hello using your file tools. Then reply DONE.", ["--write-mode", "read_only"]);
       const result = await waitFor(run, id);
       expect(result.status === "completed", `expected completed, got ${describe(result)}`);
       expect(!existsSync(join(run.workspace, "probe.txt")), "probe.txt was created by a read_only agent");
@@ -275,26 +273,9 @@ function writeShimWrapper(
   return path;
 }
 
-async function start(run: Run, prompt: string): Promise<string> {
-  const result = await cli(run, ["agents", "run", run.provider.id, "--json", prompt]);
+async function start(run: Run, prompt: string, flags: string[] = []): Promise<string> {
+  const result = await cli(run, ["agents", "run", run.provider.id, ...flags, "--json", prompt]);
   expect(result.code === 0 && typeof result.json?.id === "string", `run failed: ${result.stdout}${result.stderr}`);
-  return result.json.id;
-}
-
-async function startReadOnly(run: Run, prompt: string): Promise<string> {
-  // A child process, so the client and the daemon it may spawn see only this scenario's env.
-  const script = `
-    const { loadConfig } = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "config.js")).href)});
-    const { createLocalAgentClient } = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "local-agent-client.js")).href)});
-    const result = await createLocalAgentClient(loadConfig()).start(JSON.parse(process.argv[2]));
-    console.log(JSON.stringify(result.isOk() ? { id: result.value.id } : { error: result.error }));
-  `;
-  const input = { target: run.provider.id, prompt, workspaceRoot: run.workspace, writeMode: "read_only" };
-  // A file rather than `-e`: the client re-spawns the daemon with this process's execArgv.
-  const scriptPath = join(run.runDir, "start-read-only.mjs");
-  writeFileSync(scriptPath, script);
-  const result = await exec(run, [scriptPath, JSON.stringify(input)]);
-  expect(typeof result.json?.id === "string", `read_only start failed: ${result.stdout}${result.stderr}`);
   return result.json.id;
 }
 
