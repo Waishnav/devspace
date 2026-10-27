@@ -67,10 +67,4 @@
 .dm__prompt { color: var(--ds-muted); }
 .dm__ok { color: var(--ds-ok); }
 
-@media (max-width: 720px) {
-  .dm__body { grid-template-columns: 1fr; gap: 22px; padding: 24px 16px; }
-  .dm__wire { display: none; }
-  .dm__hosts { justify-self: stretch; }
-  .dm__core { display: none; }
-}
 @media (prefers-reduced-motion: reduce) { .dm * { animation: none !important; transition: none !important; } }
