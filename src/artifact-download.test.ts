@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import test, { type TestContext } from "node:test";
 import * as z from "zod/v4";
 import {
   artifactToolLogFields,
@@ -28,24 +29,38 @@ import {
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-artifact-download-test-"));
+const requiresDownloadSupport = { skip: !isArtifactDownloadSupportedPlatform() };
 
-try {
-  testOneToolContract();
-  testPlatformSupportContract();
-  testWindowsPathValidationContract();
-  if (isArtifactDownloadSupportedPlatform()) {
-    await testSafeDownloadAndConflict(join(root, "downloads"));
-    await testDestinationValidation(join(root, "destinations"));
-    await testSizeLimitAndCleanup(join(root, "size-limit"));
-    await testCrashLeftoverCleanup(join(root, "stale-partials"));
-    await testSymlinkRejection(join(root, "symlinks"));
-    await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
-    await testPublishedPermissions(join(root, "permissions"));
-  }
-  testLogRedaction();
-} finally {
-  await rm(root, { recursive: true, force: true });
+test("artifact tools register only download_artifact with a strict file schema", testOneToolContract);
+test("artifact downloads are supported on Linux, macOS, and Windows only", testPlatformSupportContract);
+test("Windows artifact paths reject unsafe forms and normalize separators", testWindowsPathValidationContract);
+test("a download is written once and never overwrites an existing destination", requiresDownloadSupport, async (t) => {
+  await testSafeDownloadAndConflict(await fixture(t, "downloads"));
+});
+test("download destinations outside the workspace or naming a directory are invalid", requiresDownloadSupport, async (t) => {
+  await testDestinationValidation(await fixture(t, "destinations"));
+});
+test("oversized downloads are rejected and leave no partial files", requiresDownloadSupport, async (t) => {
+  await testSizeLimitAndCleanup(await fixture(t, "size-limit"));
+});
+test("stale download partials are removed while recent and unrelated files stay", requiresDownloadSupport, async (t) => {
+  await testCrashLeftoverCleanup(await fixture(t, "stale-partials"));
+});
+test("linked workspaces and destination parents are rejected", requiresDownloadSupport, async (t) => {
+  await testSymlinkRejection(await fixture(t, "symlinks"));
+});
+test("a failed publication keeps a concurrently created destination", requiresDownloadSupport, async (t) => {
+  await testPublicationFailurePreservesReplacement(await fixture(t, "publication-race"));
+});
+test("published downloads are private to the user", requiresDownloadSupport, async (t) => {
+  await testPublishedPermissions(await fixture(t, "permissions"));
+});
+test("artifact tool logs redact file secrets", testLogRedaction);
+
+async function fixture(t: TestContext, name: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "devspace-artifact-download-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return join(root, name);
 }
 
 function testOneToolContract(): void {
