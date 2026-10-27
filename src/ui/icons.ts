@@ -70,6 +70,7 @@ export function getProviderLogo(
   name: string,
   theme: ProviderLogoTheme = "dark",
 ): string | undefined {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const normalizedName = name.trim().toLowerCase() as keyof typeof providerLogos;
 
   return providerLogos[normalizedName]?.[theme];

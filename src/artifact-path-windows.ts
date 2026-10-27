@@ -14,6 +14,7 @@ export function parseSafeWindowsArtifactRelativePath(
 ): SafeWindowsArtifactPath | undefined {
   if (
     !value
+    // oxlint-disable-next-line eslint/no-control-regex -- Windows forbids control chars in artifact paths.
     || /[\u0000-\u001f\u007f]/u.test(value)
     || /^[\\/]/u.test(value)
     || /^[A-Za-z]:/u.test(value)

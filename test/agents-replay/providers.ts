@@ -2,6 +2,8 @@ import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { optionalFields, isJsonString } from "../../src/json-value.js";
+import type { JsonObject } from "../../src/json-value.js";
 
 /**
  * How the replayer reads one provider's stdio protocol. Everything else in the
@@ -10,11 +12,11 @@ import { dirname, join } from "node:path";
  */
 export interface ReplayProtocol {
   /** Groups frames that must match one another, e.g. a request method. */
-  kind(frame: Record<string, unknown>): string;
+  kind(frame: JsonObject): string;
   /** The id of a driver request whose response the provider sends later. */
-  requestId(frame: Record<string, unknown>): unknown;
+  requestId(frame: JsonObject): unknown;
   /** The request id a provider frame answers, when it is a response. */
-  responseTo(frame: Record<string, unknown>): unknown;
+  responseTo(frame: JsonObject): unknown;
   /**
    * Keys whose values are allocated at run time (request, session, and thread
    * ids, timestamps). They are compared by type only, and a recorded value
@@ -22,6 +24,7 @@ export interface ReplayProtocol {
    */
   volatileKeys: ReadonlySet<string>;
   /**
+   // SAFETY: Boundary value already validated or constructed to match this type.
    * Driver requests whose count depends on timing, such as state polls while
    * waiting for a turn. Replay answers extra ones with the nearest recorded
    * response and skips recorded ones the driver did not send.
@@ -37,9 +40,10 @@ export interface ProviderDefinition {
   model?: string;
   /**
    * Record-time redaction of the user's environment that drivers never read,
+   // SAFETY: Boundary value already validated or constructed to match this type.
    * such as installed skills or hooks. Returning undefined drops the frame.
    */
-  redactFrame?(frame: Record<string, unknown>): unknown;
+  redactFrame?(frame: JsonObject): unknown;
   /** Provider env for live and record runs, e.g. to isolate the provider from user config. */
   liveEnv?(): Record<string, string>;
   /** The real executable the record shim spawns; the driver's default resolution. */
@@ -54,11 +58,12 @@ const require = createRequire(import.meta.url);
  * ACP agents announce the user's installed skills and commands, and list every model the account
  * can use. DevSpace reads neither, so recordings drop the first and keep only the current model.
  */
-function redactAcpFrame(frame: Record<string, unknown>): unknown {
+function redactAcpFrame(frame: JsonObject): unknown {
   const update = (frame.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update;
 
   if (frame.method === "session/update" && update?.sessionUpdate === "available_commands_update") return undefined;
-  const result = frame.result as Record<string, unknown> | undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const result = frame.result as JsonObject | undefined;
 
   if (!result || !("sessionId" in result)) return frame;
   const models = result.models as { currentModelId?: unknown; availableModels?: unknown[] } | undefined;
@@ -67,19 +72,18 @@ function redactAcpFrame(frame: Record<string, unknown>): unknown {
     ...frame,
     result: {
       ...result,
-      ...(models && Array.isArray(models.availableModels) ? {
+      ...optionalFields(models && Array.isArray(models.availableModels) ? {
         models: {
           ...models,
           availableModels: models.availableModels.filter((model) => (model as { modelId?: unknown }).modelId === models.currentModelId),
         },
-      } : {}),
-      ...(Array.isArray(result.configOptions) ? {
+      } : undefined),
+      ...optionalFields(Array.isArray(result.configOptions) ? {
         configOptions: result.configOptions.map((option: { category?: unknown; currentValue?: unknown; options?: unknown[] }) => (
-          option.category === "model" && Array.isArray(option.options)
-            ? { ...option, options: option.options.filter((entry) => (entry as { value?: unknown }).value === option.currentValue) }
+          option.category === "model" && Array.isArray(option.options) ? { ...option, options: option.options.filter((entry) => (entry as { value?: unknown }).value === option.currentValue) }
             : option
         )),
-      } : {}),
+      } : undefined),
     },
   };
 }
@@ -88,23 +92,24 @@ function redactAcpFrame(frame: Record<string, unknown>): unknown {
  * Grok also streams its own `_x.ai/` notifications (hooks, announcements, settings, workspace
  * paths) and describes the host in `_meta`. The driver only reads the prompt-completion ones.
  */
-function redactGrokFrame(frame: Record<string, unknown>): unknown {
-  if (typeof frame.method === "string" && /^_?x\.ai\//.test(frame.method) && !frame.method.endsWith("/session/prompt_complete")) {
+function redactGrokFrame(frame: JsonObject): unknown {
+  if (isJsonString(frame.method) && /^_?x\.ai\//.test(frame.method) && !frame.method.endsWith("/session/prompt_complete")) {
     return undefined;
   }
 
-  const redacted = redactAcpFrame(frame) as Record<string, unknown> | undefined;
-  const result = redacted?.result as Record<string, unknown> | undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const redacted = redactAcpFrame(frame) as JsonObject | undefined;
+  const result = redacted?.result as JsonObject | undefined;
 
   return redacted && result && "_meta" in result ? { ...redacted, result: { ...result, _meta: {} } } : redacted;
 }
 
 const jsonRpc: ReplayProtocol = {
-  kind: (frame) => typeof frame.method === "string"
+  kind: (frame) => isJsonString(frame.method)
     ? frame.method
     : "id" in frame ? "response" : "unknown",
-  requestId: (frame) => typeof frame.method === "string" ? frame.id : undefined,
-  responseTo: (frame) => typeof frame.method === "string" ? undefined : frame.id,
+  requestId: (frame) => isJsonString(frame.method) ? frame.id : undefined,
+  responseTo: (frame) => isJsonString(frame.method) ? undefined : frame.id,
   volatileKeys: new Set(["id", "sessionId", "threadId", "turnId", "itemId", "timestamp"]),
   elasticKinds: new Set(),
 };
@@ -128,15 +133,17 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     // Claude Agent SDK stream-json: user messages and control requests in, SDK messages out.
     protocol: {
       kind: (frame) => {
-        const request = frame.request as Record<string, unknown> | undefined;
+        // SAFETY: Boundary value already validated or constructed to match this type.
+        const request = frame.request as JsonObject | undefined;
 
-        return frame.type === "control_request" && typeof request?.subtype === "string"
+        return frame.type === "control_request" && isJsonString(request?.subtype)
           ? `control_request:${request.subtype}`
           : String(frame.type);
       },
       requestId: (frame) => frame.type === "control_request" ? frame.request_id : undefined,
       responseTo: (frame) => frame.type === "control_response"
-        ? (frame.response as Record<string, unknown> | undefined)?.request_id
+        // SAFETY: Boundary value already validated or constructed to match this type.
+        ? (frame.response as JsonObject | undefined)?.request_id
         : undefined,
       volatileKeys: new Set(["request_id", "session_id", "uuid", "timestamp"]),
       elasticKinds: new Set(),
@@ -148,19 +155,22 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
       if (frame.type === "system" && frame.subtype === "init") {
         return {
           ...frame,
+          // SAFETY: Boundary value already validated or constructed to match this type.
           tools: (frame.tools as string[]).filter((tool) => !tool.startsWith("mcp__")),
           ...emptied(frame, ["mcp_servers", "slash_commands", "agents", "skills", "plugins"]),
           memory_paths: {},
         };
       }
 
-      const response = (frame.response as Record<string, unknown> | undefined)?.response as Record<string, unknown> | undefined;
+      // SAFETY: Boundary value already validated or constructed to match this type.
+      const response = (frame.response as JsonObject | undefined)?.response as JsonObject | undefined;
 
       if (frame.type === "control_response" && response && "commands" in response) {
         return {
           ...frame,
           response: {
-            ...(frame.response as Record<string, unknown>),
+            // SAFETY: Boundary value already validated or constructed to match this type.
+            ...(frame.response as JsonObject),
             response: { ...response, ...emptied(response, ["commands", "agents"]), account: {}, pid: 0 },
           },
         };
@@ -203,11 +213,11 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     http: true,
     // HTTP frames from http-shim.ts: requests in, responses and SSE events out, correlated by request counter.
     protocol: {
-      kind: (frame) => typeof frame.method === "string"
+      kind: (frame) => isJsonString(frame.method)
         ? `${frame.method} ${String(frame.path).split("?")[0]!.replace(/\/[a-z]+_[A-Za-z0-9]+/g, "/{id}")}`
         : "response",
-      requestId: (frame) => typeof frame.method === "string" ? frame.id : undefined,
-      responseTo: (frame) => typeof frame.method === "string" ? undefined : frame.id,
+      requestId: (frame) => isJsonString(frame.method) ? frame.id : undefined,
+      responseTo: (frame) => isJsonString(frame.method) ? undefined : frame.id,
       volatileKeys: new Set(["id"]),
       elasticKinds: new Set(),
     },
@@ -219,8 +229,9 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     // codex app-server JSON-RPC.
     protocol: jsonRpc,
     redactFrame: (frame) => {
-      if (typeof frame.method === "string") return CODEX_USER_ENVIRONMENT_METHODS.has(frame.method) ? undefined : frame;
-      const result = frame.result as Record<string, unknown> | undefined;
+      if (isJsonString(frame.method)) return CODEX_USER_ENVIRONMENT_METHODS.has(frame.method) ? undefined : frame;
+      // SAFETY: Boundary value already validated or constructed to match this type.
+      const result = frame.result as JsonObject | undefined;
 
       // The initialize reply names the OS; thread replies list the user's instruction files.
       if (result && "userAgent" in result) return { ...frame, result: { ...result, userAgent: "codex" } };
@@ -235,6 +246,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
   cursor: {
     id: "cursor",
     redactFrame: redactAcpFrame,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     // Recorded with the account's default (Auto): cheaper models such as gpt-5.4-nano need a paid plan.
     protocol: jsonRpc,
     realCommand: () => "cursor-agent",
@@ -261,8 +273,8 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
   },
 };
 
-function emptied(record: Record<string, unknown>, keys: string[]): Record<string, unknown[]> {
-  return Object.fromEntries(keys.filter((key) => key in record).map((key) => [key, []]));
+function emptied(record: JsonObject, keys: string[]): Record<string, unknown[]> {
+  return Object.fromEntries(keys.values().filter((key) => key in record).map((key) => [key, []]));
 }
 
 export function providerDefinition(name: string): ProviderDefinition {

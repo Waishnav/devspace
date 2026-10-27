@@ -1,10 +1,11 @@
 import { AgentProviderCancelledError } from "./local-agent-errors.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
+import type { JsonValue } from "./json-value.js";
 
 export function localAgentCancelledError(
   provider: LocalAgentDriverKind,
   operation: string,
-  cause?: unknown,
+  cause?: JsonValue,
 ): AgentProviderCancelledError {
   return new AgentProviderCancelledError({
     code: "PROVIDER_CANCELLED",

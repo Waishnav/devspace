@@ -1,4 +1,6 @@
 import type { Request } from "express";
+import { isJsonString } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
 
@@ -16,7 +18,7 @@ export interface LoggingConfig {
   trustProxy: TrustProxyMode;
 }
 
-type LogFields = Record<string, unknown>;
+type LogFields = JsonObject;
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
   silent: 0,
@@ -99,8 +101,8 @@ function formatPretty(entry: LogFields): string {
   return rest ? `${ts} ${level} ${event} ${rest}` : `${ts} ${level} ${event}`;
 }
 
-function formatPrettyValue(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
+function formatPrettyValue(value: JsonValue): string {
+  if (isJsonString(value)) return JSON.stringify(value);
 
   return JSON.stringify(value);
 }

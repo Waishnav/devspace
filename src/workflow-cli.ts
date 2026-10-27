@@ -5,6 +5,8 @@ import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
 import type { WorkflowCall, WorkflowRun, WorkflowRunInput } from "./workflow-types.js";
 import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
+import { optionalFields, isJsonString } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 export async function runWorkflowCommand(args: string[], json: boolean): Promise<void> {
   try {
@@ -152,10 +154,10 @@ async function parseWorkflowRunArgs(args: string[]): Promise<Omit<WorkflowRunInp
   }
 
   const input: Omit<WorkflowRunInput, "workspaceRoot" | "workspaceId"> = {
-    ...(file ? { source: await readBoundedFile(file, 64 * 1024, "Workflow source") } : {}),
-    ...(name ? { name } : {}),
-    ...(resume ? { resume } : {}),
-    ...(writeMode ? { writeMode } : {}),
+    ...optionalFields(file ? { source: await readBoundedFile(file, 64 * 1024, "Workflow source") } : undefined),
+    ...optionalFields(name ? { name } : undefined),
+    ...optionalFields(resume ? { resume } : undefined),
+    ...optionalFields(writeMode ? { writeMode } : undefined),
   };
 
   const argsJson = rawArgs ?? (argsFile ? await readBoundedFile(argsFile, 128 * 1024, "Workflow arguments") : undefined);
@@ -164,6 +166,7 @@ async function parseWorkflowRunArgs(args: string[]): Promise<Omit<WorkflowRunInp
     if (Buffer.byteLength(argsJson) > 128 * 1024) throw new Error("Workflow arguments exceed 131072 bytes.");
 
     try {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       input.args = JSON.parse(argsJson) as unknown;
     } catch (cause) {
       throw new Error(`Workflow arguments are not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -297,22 +300,23 @@ function formatCall(call: WorkflowCall, detailed = false): string {
   return `<call ${attributes}>${xml(JSON.stringify({ prompt: call.prompt, options: call.options, result: call.result, error: call.error }))}</call>`;
 }
 
-function workflowErrorPayload(error: unknown): { code: string; message: string; retryable: boolean } {
+function workflowErrorPayload(error: JsonValue): { code: string; message: string; retryable: boolean } {
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return {
-    code: typeof value?.code === "string" ? value.code : "WORKFLOW_COMMAND_ERROR",
-    message: typeof value?.message === "string" ? value.message : String(error),
+    code: isJsonString(value?.code) ? value.code : "WORKFLOW_COMMAND_ERROR",
+    message: isJsonString(value?.message) ? value.message : String(error),
     retryable: value?.retryable === true,
   };
 }
 
 function xml(value: string): string {
+  // oxlint-disable-next-line eslint/no-control-regex -- XML text must escape C0/C1 controls.
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
     .replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function printJson(value: unknown): void {
+function printJson(value: JsonValue): void {
   console.log(JSON.stringify(value));
 }
 

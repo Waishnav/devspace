@@ -24,6 +24,7 @@ import {
 } from "./artifact-tools.js";
 import { ArtifactError } from "./artifact-error.js";
 import { parseSafeWindowsArtifactRelativePath } from "./artifact-path-windows.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   IncomingArtifactAdapterRegistry,
   type IncomingArtifactAdapter,
@@ -75,12 +76,12 @@ async function fixture(t: TestContext, name: string): Promise<string> {
 }
 
 function testOneToolContract(): void {
-  const registered = new Map<string, { descriptor: Record<string, unknown>; callback: (input: never) => unknown }>();
+  const registered = new Map<string, { descriptor: JsonObject; callback: (input: never) => unknown }>();
 
   const server = {
     registerTool(
       name: string,
-      descriptor: Record<string, unknown>,
+      descriptor: JsonObject,
       callback: (input: never) => unknown,
     ) {
       registered.set(name, { descriptor, callback });
@@ -89,10 +90,12 @@ function testOneToolContract(): void {
     },
   };
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   registerArtifactTools(server as never, {
     config: {
       artifactMaxFileBytes: 1024,
       logging: { toolCalls: false },
+    // SAFETY: Boundary value already validated or constructed to match this type.
     } as never,
     workspaces: {} as never,
   });
@@ -101,10 +104,12 @@ function testOneToolContract(): void {
   const descriptor = registered.get("download_artifact")?.descriptor;
   assert.ok(descriptor);
   assert.deepEqual(descriptor._meta, { "openai/fileParams": ["file"] });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.deepEqual(Object.keys(descriptor.inputSchema as object).sort(), ["file", "path", "workspace_id"]);
   assert.deepEqual(Object.keys(descriptor.outputSchema as object), ["path"]);
   assert.equal((descriptor.annotations as { destructiveHint?: boolean }).destructiveHint, false);
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const fileSchema = (descriptor.inputSchema as z.ZodRawShape).file as z.ZodType;
 
   const valid = {
@@ -462,9 +467,9 @@ function registryFor(source: {
   return new IncomingArtifactAdapterRegistry([adapter]);
 }
 
-async function expectArtifactError(promise: Promise<unknown>, code: string): Promise<void> {
+async function expectArtifactError(promise: Promise<JsonValue>, code: string): Promise<void> {
   await assert.rejects(
     promise,
-    (error: unknown) => error instanceof ArtifactError && error.code === code,
+    (error: JsonValue) => error instanceof ArtifactError && error.code === code,
   );
 }

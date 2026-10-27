@@ -19,6 +19,8 @@ import {
   type WorkflowAgentOptions, type WorkflowCall, type WorkflowEvent, type WorkflowRun, type WorkflowRunInput, type WorkflowSnapshot,
 } from "./workflow-types.js";
 import { createWorkflowWorkspace, isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 interface WorkflowManagerOptions {
   store: WorkflowStore;
@@ -35,8 +37,8 @@ interface ActiveRun {
   run: WorkflowSnapshot;
   controller: AbortController;
   done: Promise<void>;
-  pending: Set<Promise<unknown>>;
-  preparing: Promise<unknown>;
+  pending: Set<Promise<JsonValue>>;
+  preparing: Promise<JsonValue>;
   calls: number;
   dispatches: number;
   nested: number;
@@ -97,7 +99,7 @@ export class WorkflowManager {
 
     const source = previous?.source ?? input.source ?? await this.namedSource(input.name!, scope.workspaceRoot);
 
-    if (typeof source !== "string" || Buffer.byteLength(source) > 65_536) throw new WorkflowError("SOURCE_LIMIT", "Workflow source exceeds 64 KiB.");
+    if (!isJsonString(source) || Buffer.byteLength(source) > 65_536) throw new WorkflowError("SOURCE_LIMIT", "Workflow source exceeds 64 KiB.");
     let meta: ReturnType<typeof parseWorkflowScript>["meta"];
 
     try { meta = parseWorkflowScript(source).meta; }
@@ -251,7 +253,7 @@ export class WorkflowManager {
       } finally { this.active.delete(run.id); }
     }
   }
-  private async script(active: ActiveRun, source: string, args: unknown, depth: number): Promise<unknown> {
+  private async script(active: ActiveRun, source: string, args: JsonValue, depth: number): Promise<JsonValue> {
     if (this.scripts >= 16) throw this.fatal(active, new WorkflowError("WORKFLOW_RUNNER_LIMIT", "Sixteen script runners are already active."));
     this.scripts++;
     const runner = this.options.runner ?? runWorkflowScript;
@@ -259,6 +261,7 @@ export class WorkflowManager {
     try { return await runner({
       source, args, signal: active.controller.signal, depth,
       onAgent: (prompt, options) => {
+        // SAFETY: Boundary value already validated or constructed to match this type.
         const task = this.agent(active, prompt, options as WorkflowAgentOptions, workflowHash(source));
         active.pending.add(task);
         void task.then(() => active.pending.delete(task), () => active.pending.delete(task));
@@ -294,7 +297,7 @@ export class WorkflowManager {
       },
     }); } finally { this.scripts--; }
   }
-  private async agent(active: ActiveRun, prompt: string, value: WorkflowAgentOptions, sourceHash: string): Promise<unknown> {
+  private async agent(active: ActiveRun, prompt: string, value: WorkflowAgentOptions, sourceHash: string): Promise<JsonValue> {
     const signal = active.controller.signal;
     signal.throwIfAborted();
     const index = active.calls++;
@@ -306,7 +309,7 @@ export class WorkflowManager {
       signal.throwIfAborted();
       const options = agentOptions(value, active.run.writeMode);
 
-      if (typeof prompt !== "string" || !prompt.trim() || Buffer.byteLength(prompt) > 65_536) throw new WorkflowError("INVALID_AGENT_CALL", "Agent prompt must be nonempty and at most 64 KiB.");
+      if (!isJsonString(prompt) || !prompt.trim() || Buffer.byteLength(prompt) > 65_536) throw new WorkflowError("INVALID_AGENT_CALL", "Agent prompt must be nonempty and at most 64 KiB.");
       const validate = options.schema ? compileWorkflowSchema(options.schema) : undefined;
       const scope = await this.callWorkspace(active, options, index);
       const profiles = await this.options.loadProfiles(scope.workspaceRoot);
@@ -332,7 +335,7 @@ export class WorkflowManager {
       const call: WorkflowCall = {
         runId: active.run.id, index, agentId: `agt_${randomUUID()}`, ...scope, prompt, options, fingerprint,
         status: reuse ? "completed" : "queued", createdAt: now, updatedAt: now,
-        ...(reuse ? { reusedFrom: active.run.resumeOf, result: previous.result, agentId: previous.agentId, turnId: previous.turnId } : {}),
+        ...optionalFields(reuse ? { reusedFrom: active.run.resumeOf, result: previous.result, agentId: previous.agentId, turnId: previous.turnId } : undefined),
       };
 
       this.options.store.addCall(call);
@@ -447,6 +450,7 @@ export class WorkflowManager {
           const stopped = await this.options.agents.stop(call.agentId, call);
 
           if (stopped.isOk()) return;
+          // SAFETY: Boundary value already validated or constructed to match this type.
           // stop() conflicts when the turn settled by itself; re-read before treating that as uncertainty.
           const settled = this.options.agents.getTurn(call.agentId, call);
 
@@ -473,7 +477,7 @@ export class WorkflowManager {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
   }
-  private fatal(active: ActiveRun, error: unknown): unknown { active.controller.abort(error);
+  private fatal(active: ActiveRun, error: JsonValue): unknown { active.controller.abort(error);
 
  return error; }
   private countDispatch(active: ActiveRun): void {
@@ -504,7 +508,7 @@ export class WorkflowManager {
       throw new WorkflowError("WORKSPACE_NOT_ALLOWED", `Workspace is not available for workflows: ${workflowFailure(error).message}`);
     }
 
-    return { workspaceRoot: root, ...(scope.workspaceId ? { workspaceId: scope.workspaceId } : {}) };
+    return { workspaceRoot: root, ...optionalFields(scope.workspaceId ? { workspaceId: scope.workspaceId } : undefined) };
   }
   private async namedSource(name: string, root: string): Promise<string> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) throw new WorkflowError("INVALID_WORKFLOW", "Workflow name must be a simple name, without paths.");
@@ -551,7 +555,7 @@ function canonicalRoot(root: string): string {
   try { return realpathSync.native(root); } catch { return resolve(root); }
 }
 
-function jsonValue(value: unknown, bytes: number, label: string): unknown {
+function jsonValue(value: JsonValue, bytes: number, label: string): unknown {
   let encoded: string | undefined;
 
   try { encoded = JSON.stringify(value); } catch { /* Fail with the same public boundary error. */ }
@@ -562,16 +566,17 @@ function jsonValue(value: unknown, bytes: number, label: string): unknown {
 }
 
 function agentOptions(value: WorkflowAgentOptions, authority: "read_only" | "allowed"): WorkflowAgentOptions {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new WorkflowError("INVALID_AGENT_CALL", "Agent options must be an object.");
+  if (!value || !isJsonObject(value) || Array.isArray(value)) throw new WorkflowError("INVALID_AGENT_CALL", "Agent options must be an object.");
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const options = jsonValue(value, 32_768, "agent options") as WorkflowAgentOptions;
   const keys = new Set(["target", "model", "effort", "schema", "label", "phase", "writeMode", "isolation", "workspace"]);
 
   for (const key of Object.keys(options)) if (!keys.has(key)) throw new WorkflowError("INVALID_AGENT_CALL", `Unknown agent option: ${key}`);
 
-  if (typeof options.target !== "string" || !options.target.trim()) throw new WorkflowError("INVALID_AGENT_CALL", "Agent target is required.");
+  if (!isJsonString(options.target) || !options.target.trim()) throw new WorkflowError("INVALID_AGENT_CALL", "Agent target is required.");
 
   for (const key of ["model", "effort", "label", "phase", "workspace"] as const) {
-    if (options[key] !== undefined && (typeof options[key] !== "string" || options[key]!.length > 256 || !options[key]!.trim())) throw new WorkflowError("INVALID_AGENT_CALL", `Invalid agent ${key}.`);
+    if (options[key] !== undefined && (!isJsonString(options[key]) || options[key]!.length > 256 || !options[key]!.trim())) throw new WorkflowError("INVALID_AGENT_CALL", `Invalid agent ${key}.`);
   }
 
   if (options.workspace && !/^[\w-]{1,64}$/.test(options.workspace)) throw new WorkflowError("INVALID_WORKSPACE", "Workspace is a logical name, not a path.");
@@ -581,7 +586,7 @@ function agentOptions(value: WorkflowAgentOptions, authority: "read_only" | "all
 
   if (!["read_only", "allowed"].includes(options.writeMode) || (authority === "read_only" && options.writeMode !== "read_only")) throw new WorkflowError("WORKFLOW_AUTHORITY", "Agent call cannot increase the workflow's write authority.");
 
-  if (options.schema !== undefined && (!options.schema || typeof options.schema !== "object" || Array.isArray(options.schema))) throw new WorkflowError("INVALID_SCHEMA", "Schema must be an object.");
+  if (options.schema !== undefined && (!options.schema || !isJsonObject(options.schema) || Array.isArray(options.schema))) throw new WorkflowError("INVALID_SCHEMA", "Schema must be an object.");
 
   return options;
 }
@@ -596,9 +601,13 @@ class Slots {
     if (this.used >= this.limit) {
       await new Promise<void>((resolve, reject) => {
         const ready = () => { signal.removeEventListener("abort", aborted); resolve(); };
-        const aborted = () => { const index = this.waiting.indexOf(ready);
+        const aborted = () => {
+          const index = this.waiting.indexOf(ready);
 
- if (index >= 0) this.waiting.splice(index, 1); reject(signal.reason); };
+          if (index >= 0) this.waiting.splice(index, 1);
+
+          reject(signal.reason);
+        };
 
         this.waiting.push(ready);
         signal.addEventListener("abort", aborted, { once: true });

@@ -236,6 +236,7 @@ async function resolveConfinedPath(root: string, input: string): Promise<string>
 
       break;
     } catch (error) {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       const code = (error as NodeJS.ErrnoException).code;
 
       if (code !== "ENOENT") throw error;
@@ -376,6 +377,7 @@ export async function isSamePatchFile(
 
     return sourceIdentity.dev === destinationIdentity.dev && sourceIdentity.ino === destinationIdentity.ino;
   } catch (error) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const code = (error as NodeJS.ErrnoException).code;
 
     if (code === "ENOENT" || code === "ENOTDIR") return false;

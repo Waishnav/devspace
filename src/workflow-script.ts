@@ -1,3 +1,4 @@
+import { isJsonString } from "./json-value.js";
 export interface WorkflowScriptMeta {
   name: string;
   description?: string;
@@ -30,14 +31,15 @@ export function parseWorkflowScript(source: string): ParsedWorkflowScript {
   const description = fields.description;
   const concurrency = fields.concurrency ?? DEFAULT_META.concurrency;
 
-  if (typeof name !== "string" || name.trim().length === 0 || name.length > 128) {
+  if (!isJsonString(name) || name.trim().length === 0 || name.length > 128) {
     throw new Error("Workflow meta.name must be a non-empty string of at most 128 characters.");
   }
 
-  if (description !== undefined && (typeof description !== "string" || description.length > 2_048)) {
+  if (description !== undefined && (!isJsonString(description) || description.length > 2_048)) {
     throw new Error("Workflow meta.description must be a string of at most 2048 characters.");
   }
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   if (!Number.isInteger(concurrency) || (concurrency as number) < 1 || (concurrency as number) > 16) {
     throw new Error("Workflow meta.concurrency must be an integer between 1 and 16.");
   }
@@ -46,6 +48,7 @@ export function parseWorkflowScript(source: string): ParsedWorkflowScript {
     meta: {
       name: name.trim(),
       ...(description === undefined ? {} : { description }),
+      // SAFETY: Boundary value already validated or constructed to match this type.
       concurrency: concurrency as number,
     },
     body: source.slice(parser.position),

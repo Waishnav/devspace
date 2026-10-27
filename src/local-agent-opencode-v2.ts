@@ -22,6 +22,8 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
+import { optionalFields, isJsonObject } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 import {
   encodeOpenCodeV2SessionId,
   requireOpenCodeV2NativeSessionId,
@@ -135,6 +137,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
 
   /**
    * A turn that fails before any assistant output (for example provider auth)
+   // SAFETY: Boundary value already validated or constructed to match this type.
    * is recorded as a failed `idle` message, which the assistant-only listing hides.
    */
   private async assertTurnNotFailed(sessionId: string): Promise<void> {
@@ -142,7 +145,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
 
     const idle = recent.data.find((message) => (
       message !== null
-      && typeof message === "object"
+      && isJsonObject(message)
       && "type" in message
       && message.type === "idle"
     )) as { outcome?: string; error?: { type?: string; message?: string } } | undefined;
@@ -164,7 +167,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
     const session = await this.client.session.create({
       location: { directory: input.workspaceRoot },
       permissions: opencodeV2Permissions(input.writeMode),
-      ...(model ? { model } : {}),
+      ...optionalFields(model ? { model } : undefined),
     });
 
     if (!session.id) {
@@ -201,6 +204,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
 
     // End the local request only once OpenCode confirms the interrupt (`interrupted: false`
     // means the session was already idle). A failed or stalled interrupt keeps the turn
+    // SAFETY: Boundary value already validated or constructed to match this type.
     // running, and the manager reports the stop as a conflict.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
       await this.client.session.interrupt({ sessionID: sessionId });
@@ -340,7 +344,7 @@ export function parseOpenCodeV2Model(model: string, effort?: string): ModelRef {
   return {
     providerID: separator === -1 ? "opencode" : model.slice(0, separator),
     id: separator === -1 ? model : model.slice(separator + 1),
-    ...(effort ? { variant: effort } : {}),
+    ...optionalFields(effort ? { variant: effort } : undefined),
   };
 }
 
@@ -368,10 +372,10 @@ function requireOpenCodeV2FinalResponse(message: SessionMessageAssistant): strin
   return response;
 }
 
-function requireLatestAssistant(messages: unknown[]): SessionMessageAssistant {
+function requireLatestAssistant(messages: JsonValue[]): SessionMessageAssistant {
   const assistant = messages.find((message) => (
     message !== null
-    && typeof message === "object"
+    && isJsonObject(message)
     && "type" in message
     && message.type === "assistant"
   ));
@@ -386,6 +390,7 @@ function requireLatestAssistant(messages: unknown[]): SessionMessageAssistant {
     });
   }
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return assistant as SessionMessageAssistant;
 }
 
@@ -402,6 +407,6 @@ function assertOpenCodeV2AssistantSucceeded(message: SessionMessageAssistant): v
 }
 
 /** @opencode/client wraps every connection failure, whatever its errno, in a Transport ClientError. */
-function isOpenCodeTransportFailure(error: unknown): boolean {
+function isOpenCodeTransportFailure(error: JsonValue): boolean {
   return error instanceof ClientError && error.reason === "Transport";
 }

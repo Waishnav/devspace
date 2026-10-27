@@ -14,6 +14,7 @@ import {
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
 import type { WorkflowRun } from "./workflow-types.js";
+import type { JsonObject } from "./json-value.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,7 +37,7 @@ const paths = localAgentDaemonPaths(stateDir);
 
 ensureLocalAgentDaemonSecret(paths);
 
-const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+const requests: Array<{ method: string; params: JsonObject }> = [];
 
 const run: WorkflowRun = {
   id: "wfl_test",
@@ -63,7 +64,7 @@ const daemon = createServer((socket) => {
     const request = JSON.parse(buffer.slice(0, newline)) as {
       requestId: string;
       method: string;
-      params: Record<string, unknown>;
+      params: JsonObject;
     };
 
     requests.push(request);

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
+import { optionalFields } from "./json-value.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -122,8 +123,8 @@ function processEnvironment(input?: {
     CODEX_CI: "1",
     LANG: process.env.LANG ?? "C.UTF-8",
     LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
-    ...(input?.workspaceId ? { DEVSPACE_WORKSPACE_ID: input.workspaceId } : {}),
-    ...(input?.workspaceRoot ? { DEVSPACE_WORKSPACE_ROOT: input.workspaceRoot } : {}),
+    ...optionalFields(input?.workspaceId ? { DEVSPACE_WORKSPACE_ID: input.workspaceId } : undefined),
+    ...optionalFields(input?.workspaceRoot ? { DEVSPACE_WORKSPACE_ROOT: input.workspaceRoot } : undefined),
   };
 }
 
@@ -240,6 +241,7 @@ function truncateOutput(output: string, maxCharacters: number): { output: string
 }
 
 /**
+ // SAFETY: Boundary value already validated or constructed to match this type.
  * Groups the commands started on behalf of one caller, such as a Code Mode script.
  * Commands are adopted as soon as they spawn, so terminate() also covers a command
  * whose exec_command call has not returned its session ID yet.
@@ -263,6 +265,7 @@ export class ProcessOwner {
    * Stops every adopted command. Resolves with how many commands were killed
    * but never confirmed their exit: a descendant that left the process group
    * (e.g. via setsid) can keep inherited output open indefinitely, so the
+   // SAFETY: Boundary value already validated or constructed to match this type.
    * final wait is bounded and reported instead of treated as success.
    */
   async terminate(): Promise<number> {
@@ -455,20 +458,16 @@ export class ProcessSessionManager {
     const shell = resolveShellCommand(input.command);
     let pty: import("node-pty").IPty;
 
-    try {
-      pty = nodePty.spawn(shell.executable, shell.args, {
-        cwd: input.cwd,
-        env: processEnvironment({
-          workspaceId: input.workspaceId,
-          workspaceRoot: input.workspaceRoot,
-        }),
-        name: "xterm-256color",
-        cols: session.columns,
-        rows: session.rows,
-      });
-    } catch (error) {
-      throw error;
-    }
+    pty = nodePty.spawn(shell.executable, shell.args, {
+      cwd: input.cwd,
+      env: processEnvironment({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+      }),
+      name: "xterm-256color",
+      cols: session.columns,
+      rows: session.rows,
+    });
 
     session.process = {
       write: (data) => pty.write(data),

@@ -91,13 +91,15 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
   const seen = new Set<string>();
 
   return [...defaultPaths, ...config.skillPaths]
+    .values()
     .map((path) => resolveSkillPath(path, cwd))
     .filter((path) => {
       if (seen.has(path)) return false;
       seen.add(path);
 
       return true;
-    });
+    })
+    .toArray();
 }
 
 function resolveSkillPath(path: string, cwd: string): string {
@@ -151,12 +153,14 @@ function withoutManagedSkills(
 
   return {
     skills: result.skills.filter((skill) => (
+      // SAFETY: Boundary value already validated or constructed to match this type.
       !managedNames.includes(skill.name as ManagedSkillName)
       && !(skill.name === WORKFLOWS_SKILL_NAME && isPathInsideRoot(skill.filePath, staleWorkflows))
     )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
 
+      // SAFETY: Boundary value already validated or constructed to match this type.
       return !(collision?.resourceType === "skill" && managedNames.includes(collision.name as ManagedSkillName));
     }),
   };

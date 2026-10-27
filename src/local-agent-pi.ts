@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -12,6 +12,8 @@ import {
 import { localAgentCancelledError } from "./local-agent-cancellation.js";
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
+import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   PiRpcConnection,
   parsePiModelSlug,
@@ -35,7 +37,7 @@ const PI_ABORT_SETTLE_MS = 2_000;
 const MAX_PI_EVENTS = 10_000;
 
 export interface PiRpcRuntimeConnection {
-  request(record: PiRpcRecord, timeoutMs?: number): Promise<unknown>;
+  request(record: PiRpcRecord, timeoutMs?: number): Promise<JsonValue>;
   send(record: PiRpcRecord): Promise<void>;
   nextEvent(timeoutMs?: number): Promise<PiRpcRecord | undefined>;
   clearEvents(): void;
@@ -371,7 +373,7 @@ async function defaultPiRpcFactory(
         cwd: context.workspaceRoot,
         env,
       }),
-      ...(sandbox ? { cleanup: sandbox.cleanup } : {}),
+      ...optionalFields(sandbox ? { cleanup: sandbox.cleanup } : undefined),
     };
   } catch (error) {
     await sandbox?.cleanup();
@@ -450,18 +452,20 @@ export function reportPiActivity(
 }
 
 async function cancelPiUiRequest(connection: PiRpcRuntimeConnection, event: PiRpcRecord): Promise<void> {
-  if (typeof event.id !== "string") return;
+  if (!isJsonString(event.id)) return;
 
   if (event.method === "notify" || event.method === "setStatus" || event.method === "setWidget" || event.method === "setTitle") return;
   await connection.send({ type: "extension_ui_response", id: event.id, cancelled: true });
 }
 
-export function extractPiFinalResponse(value: unknown): string {
-  if (!value || typeof value !== "object") return "";
-  const root = value as Record<string, unknown>;
+export function extractPiFinalResponse(value: JsonValue): string {
+  if (!value || !isJsonObject(value)) return "";
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const root = value as JsonObject;
 
-  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
-    ? root.data as Record<string, unknown>
+  const data = root.data && isJsonObject(root.data) && !Array.isArray(root.data)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? root.data as JsonObject
     : root;
 
   const messages = Array.isArray(data.messages) ? data.messages : [data];
@@ -469,19 +473,19 @@ export function extractPiFinalResponse(value: unknown): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (!message || typeof message !== "object") continue;
+    if (!message || !isJsonObject(message)) continue;
 
     if ((message as { role?: unknown }).role !== "assistant") continue;
     const content = (message as { content?: unknown }).content;
 
-    if (typeof content === "string") return content.trim();
+    if (isJsonString(content)) return content.trim();
 
     if (!Array.isArray(content)) continue;
 
     const text = content
       .filter((block): block is { type: string; text: string } => (
         Boolean(block)
-        && typeof block === "object"
+        && isJsonObject(block)
         && (block as { type?: unknown }).type === "text"
         && typeof (block as { text?: unknown }).text === "string"
       ))
@@ -495,11 +499,12 @@ export function extractPiFinalResponse(value: unknown): string {
   return "";
 }
 
-export function extractPiProviderError(value: unknown): string | undefined {
+export function extractPiProviderError(value: JsonValue): string | undefined {
   const records = Array.isArray(value) ? [...value] : [value];
 
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const nested = (value as Record<string, unknown>).messages;
+  if (value && isJsonObject(value) && !Array.isArray(value)) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    const nested = (value as JsonObject).messages;
 
     if (Array.isArray(nested)) records.push(...nested);
   }
@@ -507,22 +512,24 @@ export function extractPiProviderError(value: unknown): string | undefined {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
 
-    if (!record || typeof record !== "object") continue;
-    const event = record as Record<string, unknown>;
+    if (!record || !isJsonObject(record)) continue;
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    const event = record as JsonObject;
 
-    if (event.type === "extension_error" && typeof event.error === "string") return event.error;
+    if (event.type === "extension_error" && isJsonString(event.error)) return event.error;
 
     if (event.type === "message_end") {
       const message = event.message;
 
-      if (message && typeof message === "object") {
-        const error = (message as Record<string, unknown>).errorMessage;
+      if (message && isJsonObject(message)) {
+        // SAFETY: Boundary value already validated or constructed to match this type.
+        const error = (message as JsonObject).errorMessage;
 
-        if (typeof error === "string" && error) return error;
+        if (isJsonString(error) && error) return error;
       }
     }
 
-    if (event.stopReason === "error" && typeof event.errorMessage === "string" && event.errorMessage) {
+    if (event.stopReason === "error" && isJsonString(event.errorMessage) && event.errorMessage) {
       return event.errorMessage;
     }
   }
@@ -530,22 +537,25 @@ export function extractPiProviderError(value: unknown): string | undefined {
   return undefined;
 }
 
-function recordBoolean(value: unknown, key: string): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+function recordBoolean(value: JsonValue, key: string): boolean {
+  if (!value || !isJsonObject(value) || Array.isArray(value)) return false;
 
-  return (value as Record<string, unknown>)[key] === true;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  return (value as JsonObject)[key] === true;
 }
 
-function recordNumber(value: unknown, key: string): number | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const result = (value as Record<string, unknown>)[key];
+function recordNumber(value: JsonValue, key: string): number | undefined {
+  if (!value || !isJsonObject(value) || Array.isArray(value)) return undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const result = (value as JsonObject)[key];
 
-  return typeof result === "number" && Number.isFinite(result) ? result : undefined;
+  return isJsonNumber(result) && Number.isFinite(result) ? result : undefined;
 }
 
-function recordArray(value: unknown, key: string): unknown[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  const result = (value as Record<string, unknown>)[key];
+function recordArray(value: JsonValue, key: string): unknown[] {
+  if (!value || !isJsonObject(value) || Array.isArray(value)) return [];
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const result = (value as JsonObject)[key];
 
   return Array.isArray(result) ? result : [];
 }

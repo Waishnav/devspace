@@ -4,6 +4,8 @@ import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { AgentConfig } from "./config.js";
 import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
+import { isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export interface LocalAgentProfile {
   name: string;
@@ -25,7 +27,7 @@ export interface LocalAgentProfileSummary {
 }
 
 interface ParsedFrontmatter {
-  frontmatter: Record<string, unknown>;
+  frontmatter: JsonObject;
   body: string;
 }
 
@@ -110,7 +112,7 @@ function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter 
   };
 }
 
-function parseProfileYaml(source: string, filePath: string): Record<string, unknown> {
+function parseProfileYaml(source: string, filePath: string): JsonObject {
   let parsed: unknown;
 
   try {
@@ -119,15 +121,16 @@ function parseProfileYaml(source: string, filePath: string): Record<string, unkn
     throw new Error(`Unable to parse subagent profile frontmatter: ${filePath}: ${errorMessage(error)}`);
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!parsed || !isJsonObject(parsed) || Array.isArray(parsed)) {
     throw new Error(`Subagent profile frontmatter must be a mapping: ${filePath}`);
   }
 
-  return parsed as Record<string, unknown>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  return parsed as JsonObject;
 }
 
 function profileFromFrontmatter(
-  frontmatter: Record<string, unknown>,
+  frontmatter: JsonObject,
   body: string,
   filePath: string,
 ): LocalAgentProfile {
@@ -151,7 +154,7 @@ function profileFromFrontmatter(
   };
 }
 
-function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProviderInstanceId {
+function readProvider(frontmatter: JsonObject, filePath: string): LocalAgentProviderInstanceId {
   const provider = readString(frontmatter, "provider");
 
   if (!provider) {
@@ -161,15 +164,15 @@ function readProvider(frontmatter: Record<string, unknown>, filePath: string): L
   return provider;
 }
 
-function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {
+function readString(frontmatter: JsonObject, key: string): string | undefined {
   const value = frontmatter[key];
 
-  if (typeof value !== "string") return undefined;
+  if (!isJsonString(value)) return undefined;
   const trimmed = value.trim();
 
   return trimmed || undefined;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }

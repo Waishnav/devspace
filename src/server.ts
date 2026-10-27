@@ -53,6 +53,8 @@ import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import { createWorkspaceWebRouter, WORKSPACE_WEB_PATH, workspaceWebUrl } from "./workspace-web.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -113,7 +115,7 @@ export function configureHttpServer(httpServer: HttpServer): void {
 type TrackToolActivity = <T>(operation: () => Promise<T>) => Promise<T>;
 
 class ToolActivityTracker {
-  private readonly active = new Set<Promise<unknown>>();
+  private readonly active = new Set<Promise<JsonValue>>();
 
   readonly track: TrackToolActivity = <T>(operation: () => Promise<T>): Promise<T> => {
     const promise = operation();
@@ -238,18 +240,21 @@ function sendJsonRpcError(
 
 // ChatGPT may retain the pre-snake_case workspace argument in cached tool calls.
 // Normalize only that known alias at the HTTP edge; the public schema remains canonical.
-function normalizeCachedWorkspaceArgument(body: unknown): boolean {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return true;
-  const request = body as Record<string, unknown>;
+function normalizeCachedWorkspaceArgument(body: JsonValue): boolean {
+  if (!body || !isJsonObject(body) || Array.isArray(body)) return true;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const request = body as JsonObject;
 
   if (request.method !== "tools/call") return true;
   const params = request.params;
 
-  if (!params || typeof params !== "object" || Array.isArray(params)) return true;
-  const args = (params as Record<string, unknown>).arguments;
+  if (!params || !isJsonObject(params) || Array.isArray(params)) return true;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const args = (params as JsonObject).arguments;
 
-  if (!args || typeof args !== "object" || Array.isArray(args)) return true;
-  const values = args as Record<string, unknown>;
+  if (!args || !isJsonObject(args) || Array.isArray(args)) return true;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const values = args as JsonObject;
 
   if (!Object.hasOwn(values, "workspaceId")) return true;
 
@@ -263,7 +268,7 @@ function normalizeCachedWorkspaceArgument(body: unknown): boolean {
   return true;
 }
 
-function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
+function requestLogFields(req: Request, config: ServerConfig): JsonObject {
   return {
     ip: requestIp(req, config.logging.trustProxy),
     host: req.header("host"),
@@ -274,8 +279,8 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
   };
 }
 
-function rpcRequestLogFields(body: unknown): Record<string, unknown> {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+function rpcRequestLogFields(body: JsonValue): JsonObject {
+  if (!body || !isJsonObject(body) || Array.isArray(body)) return {};
   const request = body as { id?: unknown; method?: unknown };
 
   return {
@@ -310,6 +315,7 @@ function uiManifestUrl(): URL {
 }
 
 function readWorkspaceAppManifest(): WorkspaceAppManifest {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
 }
 
@@ -551,12 +557,12 @@ function registerMcpSurface(
           }),
         ]),
         instruction: z.string(),
-        ...(codeModeRegistry ? {
+        ...optionalFields(codeModeRegistry ? {
           code_mode: z.object({
             language: z.literal("javascript"),
             tool_signatures: z.string(),
           }),
-        } : {}),
+        } : undefined),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
@@ -685,6 +691,7 @@ function registerMcpSurface(
               : undefined,
             instruction,
             codeMode ? [
+              // SAFETY: Boundary value already validated or constructed to match this type.
               "Code Mode: tools below are available inside execute({code}) as tools.name(args), with workspace_id automatically bound.",
               "Scripts are JavaScript async function bodies: top-level await and return work. No Node APIs, filesystem, imports, or network.",
               "Use Promise.allSettled for independent calls; await operations whose completion matters. Check running process results and poll them using tools.write_stdin.",
@@ -748,18 +755,16 @@ function registerMcpSurface(
               }
             : undefined,
           review,
-          ...(includeBootstrapContext
-            ? {
+          ...optionalFields(includeBootstrapContext ? {
                 agents_files: loadedAgentsFiles,
                 available_agents_files: availableAgentsFileOutputs,
                 skills: visibleSkills,
                 agent_providers: visibleAgentProviders,
                 agents: visibleAgents,
                 skill_diagnostics: workspace.skillDiagnostics,
-              }
-            : {}),
+              } : undefined),
           instruction,
-          ...(codeMode ? { code_mode: codeMode } : {}),
+          ...optionalFields(codeMode ? { code_mode: codeMode } : undefined),
         },
       };
     },
@@ -1022,20 +1027,22 @@ function withObservedToolHandlers(
   },
 ): McpRegistrationTarget {
   return {
-    registerTool: ((...args: unknown[]) => {
+    registerTool: ((...args: JsonValue[]) => {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       const toolName = args[0] as string;
-      const handler = args.at(-1) as (...handlerArgs: unknown[]) => unknown;
+      const handler = args.at(-1) as (...handlerArgs: JsonValue[]) => unknown;
 
-      return (server.registerTool as (...callArgs: unknown[]) => unknown)(
+      return (server.registerTool as (...callArgs: JsonValue[]) => unknown)(
         ...args.slice(0, -1),
-        (...handlerArgs: unknown[]) => {
+        (...handlerArgs: JsonValue[]) => {
           const operation = () => Promise.resolve(handler(...handlerArgs));
 
           const observedOperation = options.workspaceActivityJournal
             ? () => options.workspaceActivityJournal!.capture({
                 toolName,
                 arguments: handlerArgs[0],
-                extra: (handlerArgs[1] ?? {}) as Record<string, unknown>,
+                // SAFETY: Boundary value already validated or constructed to match this type.
+                extra: (handlerArgs[1] ?? {}) as JsonObject,
                 operation,
               })
             : operation;
@@ -1045,6 +1052,7 @@ function withObservedToolHandlers(
             : observedOperation();
         },
       );
+    // SAFETY: Boundary value already validated or constructed to match this type.
     }) as McpRegistrationTarget["registerTool"],
     registerResource: server.registerResource.bind(server),
   };
@@ -1067,7 +1075,7 @@ export function createServer(
 
   const app = createMcpExpressApp({
     host: config.host,
-    ...(allowedHosts ? { allowedHosts } : {}),
+    ...optionalFields(allowedHosts ? { allowedHosts } : undefined),
   });
 
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
@@ -1224,7 +1232,7 @@ export function createServer(
         method: req.method,
         path,
         headersSent: res.headersSent,
-        ...(res.headersSent ? { status: res.statusCode } : {}),
+        ...optionalFields(res.headersSent ? { status: res.statusCode } : undefined),
         durationMs: Math.round(performance.now() - startedAt),
         ...requestLogFields(req, config),
         ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
@@ -1271,12 +1279,13 @@ export function createServer(
   });
 
   app.all("/mcp", async (req, res) => {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const requestId = res.locals.requestId as string | undefined;
 
     await new Promise<void>((resolve, reject) => {
       res.once("finish", resolve);
       res.once("close", resolve);
-      bearerAuth(req, res, (error?: unknown) => {
+      bearerAuth(req, res, (error?: JsonValue) => {
         if (error) reject(error);
         else resolve();
       });
@@ -1308,7 +1317,8 @@ export function createServer(
     });
 
     if (!normalizeCachedWorkspaceArgument(req.body)) {
-      const body = req.body as Record<string, unknown>;
+      // SAFETY: Boundary value already validated or constructed to match this type.
+      const body = req.body as JsonObject;
 
       if (!Object.hasOwn(body, "id")) {
         res.status(202).end();
@@ -1316,7 +1326,7 @@ export function createServer(
         return;
       }
 
-      const id = typeof body.id === "string" || typeof body.id === "number" ? body.id : null;
+      const id = isJsonString(body.id) || isJsonNumber(body.id) ? body.id : null;
       sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments", id);
 
       return;

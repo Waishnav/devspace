@@ -5,6 +5,8 @@ import {
 } from "@modelcontextprotocol/server";
 import type { McpServer as LegacyMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Implementation as LegacyImplementation } from "@modelcontextprotocol/sdk/types.js";
+import { type JsonObject, type JsonValue } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
 
 export type McpRegistrationTarget = Pick<
   LegacyMcpServer,
@@ -20,37 +22,37 @@ type RegistrationReplay = (target: McpRegistrationTarget) => void;
 
 type ModernRegisterTool = (
   name: string,
-  definition: Record<string, unknown>,
-  handler: (input: unknown, context: ServerContext) => unknown,
-) => unknown;
+  definition: JsonObject,
+  handler: (input: JsonValue, context: ServerContext) => JsonValue | Promise<JsonValue>,
+) => JsonValue;
 
-type ModernRegisterResource = (...args: unknown[]) => unknown;
+type ModernRegisterResource = (...args: JsonValue[]) => JsonValue;
 
 export function createModernMcpServerAdapter(
   serverInfo: LegacyImplementation,
   options?: ServerOptions,
 ): ModernMcpServerAdapter {
   const server = new McpServer(serverInfo, options);
-  const registerModernTool = server.registerTool.bind(server) as unknown as ModernRegisterTool;
-  const registerModernResource = server.registerResource.bind(server) as unknown as ModernRegisterResource;
+  const registerModernTool = unsafeNarrow<ModernRegisterTool>(server.registerTool.bind(server));
+  const registerModernResource = unsafeNarrow<ModernRegisterResource>(server.registerResource.bind(server));
 
   const registrationTarget: McpRegistrationTarget = {
-    registerTool: ((
+    registerTool: unsafeNarrow<LegacyMcpServer["registerTool"]>((
       name: string,
-      definition: Record<string, unknown>,
-      handler: (input: unknown, extra: Record<string, unknown>) => unknown,
+      definition: JsonObject,
+      handler: (input: JsonValue, extra: JsonObject) => JsonValue,
     ) => registerModernTool(
       name,
       definition,
       async (input, context) => handler(input, legacyToolHandlerExtra(context)),
-    )) as LegacyMcpServer["registerTool"],
-    registerResource: ((...args: unknown[]) => {
-      const callback = args.at(-1) as (...callbackArgs: unknown[]) => unknown;
+    )),
+    registerResource: unsafeNarrow<LegacyMcpServer["registerResource"]>((...args: JsonValue[]) => {
+      const callback = unsafeNarrow<(...callbackArgs: JsonValue[]) => JsonValue>(args.at(-1));
 
       return registerModernResource(
         ...args.slice(0, -1),
-        (...callbackArgs: unknown[]) => {
-          const context = callbackArgs.at(-1) as ServerContext;
+        (...callbackArgs: JsonValue[]) => {
+          const context = unsafeNarrow<ServerContext>(callbackArgs.at(-1));
 
           return callback(
             ...callbackArgs.slice(0, -1),
@@ -58,7 +60,7 @@ export function createModernMcpServerAdapter(
           );
         },
       );
-    }) as unknown as LegacyMcpServer["registerResource"],
+    }),
   };
 
   return {
@@ -73,16 +75,16 @@ export function compileMcpRegistrationSurface(
   const registrations: RegistrationReplay[] = [];
 
   const recordingTarget: McpRegistrationTarget = {
-    registerTool: ((...args: unknown[]) => {
+    registerTool: unsafeNarrow<McpRegistrationTarget["registerTool"]>((...args: JsonValue[]) => {
       registrations.push((target) => {
-        (target.registerTool as (...callArgs: unknown[]) => unknown)(...args);
+        unsafeNarrow<(...callArgs: JsonValue[]) => JsonValue>(target.registerTool)(...args);
       });
-    }) as unknown as McpRegistrationTarget["registerTool"],
-    registerResource: ((...args: unknown[]) => {
+    }),
+    registerResource: unsafeNarrow<McpRegistrationTarget["registerResource"]>((...args: JsonValue[]) => {
       registrations.push((target) => {
-        (target.registerResource as (...callArgs: unknown[]) => unknown)(...args);
+        unsafeNarrow<(...callArgs: JsonValue[]) => JsonValue>(target.registerResource)(...args);
       });
-    }) as unknown as McpRegistrationTarget["registerResource"],
+    }),
   };
 
   registerSurface(recordingTarget);
@@ -93,22 +95,30 @@ export function compileMcpRegistrationSurface(
   };
 }
 
-export function modernMcpAdapterErrorLogFields(error: Error): Record<string, unknown> {
-  const cause = error.cause;
-
-  return {
-    error: error.message,
-    errorName: error.name,
-    ...(cause === undefined ? {} : {
-      cause: cause instanceof Error
-        ? { name: cause.name, message: cause.message }
-        : { name: typeof cause, message: String(cause) },
-    }),
-  };
+interface AdapterErrorLogFields {
+  error: string;
+  errorName: string;
+  cause?: { name: string; message: string };
 }
 
-function legacyToolHandlerExtra(context: ServerContext): Record<string, unknown> {
-  return {
+export function modernMcpAdapterErrorLogFields(error: Error): AdapterErrorLogFields {
+  const cause = error.cause;
+  const fields: AdapterErrorLogFields = {
+    error: error.message,
+    errorName: error.name,
+  };
+
+  if (cause !== undefined) {
+    fields.cause = cause instanceof Error
+      ? { name: cause.name, message: cause.message }
+      : { name: "Error", message: String(cause) };
+  }
+
+  return fields;
+}
+
+function legacyToolHandlerExtra(context: ServerContext): JsonObject {
+  return unsafeNarrow<JsonObject>({
     signal: context.mcpReq.signal,
     authInfo: context.http?.authInfo,
     sessionId: context.sessionId,
@@ -117,5 +127,5 @@ function legacyToolHandlerExtra(context: ServerContext): Record<string, unknown>
     requestInfo: context.http?.req,
     sendNotification: context.mcpReq.notify,
     sendRequest: context.mcpReq.send,
-  };
+  });
 }

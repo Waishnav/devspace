@@ -13,7 +13,6 @@ import {
   type ToolRegistrationContext,
 } from "./types.js";
 import {
-  contentText,
   resultOutputSchema,
   runLoggedToolOperation,
   textBlock,

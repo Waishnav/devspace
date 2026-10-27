@@ -5,6 +5,8 @@ import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import type { AgentConfig } from "./config.js";
+import { optionalFields, isJsonObject } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 import {
   assertAllowedPath,
   isPathInsideRoot,
@@ -145,7 +147,7 @@ export async function createManagedWorktree(input: {
     dirtySource,
     detached: !input.branch,
     managed: true,
-    ...(input.branch ? { branch: input.branch } : {}),
+    ...optionalFields(input.branch ? { branch: input.branch } : undefined),
   };
 }
 
@@ -422,7 +424,7 @@ function worktreeError(
   code: ManagedWorktreeErrorCode,
   operation: string,
   message: string,
-  cause?: unknown,
+  cause?: JsonValue,
 ): ManagedWorktreeError {
   return new ManagedWorktreeError({ workspaceId, code, operation, message, cause });
 }
@@ -448,7 +450,7 @@ async function captureManagedWorktreeResult<T>(
   }
 }
 
-function isProgrammerDefect(error: unknown): boolean {
+function isProgrammerDefect(error: JsonValue): boolean {
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError
@@ -541,7 +543,7 @@ async function assertGitRootAllowed(gitRoot: string, allowedRoots: string[]): Pr
 async function resolveBaseCommit(sourceRoot: string, baseRef: string): Promise<string> {
   try {
     return (await git(["rev-parse", "--verify", `${baseRef}^{commit}`], sourceRoot)).trim();
-  } catch (error) {
+  } catch {
     if (baseRef === "HEAD") {
       throw new GitWorktreeError(
         "GIT_REPOSITORY_HAS_NO_COMMITS",
@@ -574,7 +576,7 @@ async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    if (isJsonObject(error) && error && "code" in error && error.code === "ENOENT") {
       return false;
     }
 
@@ -593,11 +595,11 @@ async function git(args: string[], cwd: string): Promise<string> {
   } catch (error) {
     if (isGitUnavailable(error)) throw error;
 
-    const stderr = typeof error === "object" && error && "stderr" in error
+    const stderr = isJsonObject(error) && error && "stderr" in error
       ? String((error as { stderr?: unknown }).stderr ?? "").trim()
       : "";
 
-    const stdout = typeof error === "object" && error && "stdout" in error
+    const stdout = isJsonObject(error) && error && "stdout" in error
       ? String((error as { stdout?: unknown }).stdout ?? "").trim()
       : "";
 
@@ -606,9 +608,9 @@ async function git(args: string[], cwd: string): Promise<string> {
   }
 }
 
-function isGitUnavailable(error: unknown): boolean {
+function isGitUnavailable(error: JsonValue): boolean {
   return Boolean(
-    typeof error === "object" &&
+    isJsonObject(error) &&
       error &&
       "code" in error &&
       (error as { code?: unknown }).code === "ENOENT",

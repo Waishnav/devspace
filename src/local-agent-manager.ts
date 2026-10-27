@@ -48,6 +48,8 @@ import {
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { assertAllowedPath } from "./roots.js";
 import { createAgentWorktree, missingWorktreeError, type AgentWorktree } from "./local-agent-worktree.js";
+import { optionalFields, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   isSubagentProviderEnabled,
   subagentProviderConfig,
@@ -74,9 +76,10 @@ export interface RunOverrides {
 }
 
 export interface LocalAgentManagerLogger {
-  (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void;
+  (level: "info" | "warn" | "error", event: string, fields: JsonObject): void;
 }
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 // Kept below the client's default request deadline so a slow stop is reported as a conflict, not a daemon timeout.
 const DEFAULT_STOP_TIMEOUT_MS = 20_000;
 
@@ -192,6 +195,7 @@ export class LocalAgentManager {
   }
 
   async start(input: StartLocalAgentInput): Promise<BetterResult<LocalAgentRecord, AgentStartError>> {
+    // oxlint-disable-next-line typescript/no-this-alias -- Result.gen callbacks cannot use `this`.
     const manager = this;
 
     return Result.gen(async function* () {
@@ -314,6 +318,7 @@ export class LocalAgentManager {
     overrides: RunOverrides = {},
     scope: LocalAgentWorkspaceScope,
   ): Promise<BetterResult<LocalAgentRecord, AgentContinueError>> {
+    // oxlint-disable-next-line typescript/no-this-alias -- Result.gen callbacks cannot use `this`.
     const manager = this;
 
     return Result.gen(async function* () {
@@ -1079,7 +1084,7 @@ export class LocalAgentManager {
   private log(
     level: "info" | "warn" | "error",
     event: string,
-    fields: Record<string, unknown>,
+    fields: JsonObject,
   ): void {
     this.logger?.(level, event, fields);
   }
@@ -1102,7 +1107,7 @@ class TurnEventLog {
   constructor(
     private readonly store: LocalAgentStore,
     private readonly turn: LocalAgentTurnRecord,
-    private readonly warn: (fields: Record<string, unknown>) => void,
+    private readonly warn: (fields: JsonObject) => void,
   ) {}
 
   recordActivity(event: Parameters<NonNullable<LocalAgentRunCallbacks["onEvent"]>>[0]): void {
@@ -1137,14 +1142,14 @@ class TurnEventLog {
   }
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 function safeCauseType(cause: unknown): string | undefined {
   if (cause instanceof Error) return cause.name;
 
-  if (cause && typeof cause === "object" && "error" in cause) {
+  if (cause && isJsonObject(cause) && "error" in cause) {
     const nested = (cause as { error?: unknown }).error;
 
     if (nested instanceof Error) return nested.name;
@@ -1196,6 +1201,7 @@ function dispatchSignature(
     model ?? null,
     effort ?? null,
     input.writeMode ?? "allowed",
+    // SAFETY: Boundary value already validated or constructed to match this type.
     // Appended only when set, so signatures of ordinary dispatches stay as they were.
     ...(input.worktree ? [{ worktree: input.worktree.branch ?? null }] : []),
   ])).digest("hex");
@@ -1250,7 +1256,7 @@ function waitResultFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): Loca
 function waitBodyFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): LocalAgentWaitResult {
   switch (turn.status) {
     case "running":
-      return { id: turn.agentId, status: "running", ...(timedOut ? { wait: "timeout" } : {}) };
+      return { id: turn.agentId, status: "running", ...optionalFields(timedOut ? { wait: "timeout" } : undefined) };
     case "completed":
       return {
         id: turn.agentId,
@@ -1263,7 +1269,7 @@ function waitBodyFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): LocalA
       return {
         id: turn.agentId,
         status: "stopped",
-        ...(hasTurnFailure(turn) ? { error: turnFailure(turn) } : {}),
+        ...optionalFields(hasTurnFailure(turn) ? { error: turnFailure(turn) } : undefined),
       };
   }
 }
@@ -1278,7 +1284,7 @@ function waitBodyFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalAge
   switch (agent.status) {
     case "starting":
     case "running":
-      return { id: agent.id, status: "running", ...(timedOut ? { wait: "timeout" } : {}) };
+      return { id: agent.id, status: "running", ...optionalFields(timedOut ? { wait: "timeout" } : undefined) };
     case "idle":
       return {
         id: agent.id,
@@ -1293,20 +1299,18 @@ function waitBodyFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalAge
           code: agent.errorCode ?? "AGENT_FAILED",
           message: agent.error ?? "Subagent failed without an error message.",
           retryable: agent.errorRetryable ?? false,
-          ...(agent.errorDetail ? { detail: agent.errorDetail } : {}),
+          ...optionalFields(agent.errorDetail ? { detail: agent.errorDetail } : undefined),
         },
       };
     case "stopped":
       return {
         id: agent.id,
         status: "stopped",
-        ...(agent.error || agent.errorCode || agent.errorRetryable !== undefined
-          ? { error: {
+        ...optionalFields(agent.error || agent.errorCode || agent.errorRetryable !== undefined ? { error: {
               code: agent.errorCode ?? "AGENT_STOPPED",
               message: agent.error ?? "Subagent stopped.",
               retryable: agent.errorRetryable ?? false,
-            } }
-          : {}),
+            } } : undefined),
       };
   }
 }
@@ -1320,6 +1324,6 @@ function turnFailure(turn: LocalAgentTurnRecord): LocalAgentFailure {
     code: turn.errorCode ?? "AGENT_FAILED",
     message: turn.error ?? "Subagent failed without an error message.",
     retryable: turn.errorRetryable ?? false,
-    ...(turn.errorDetail ? { detail: turn.errorDetail } : {}),
+    ...optionalFields(turn.errorDetail ? { detail: turn.errorDetail } : undefined),
   };
 }

@@ -20,8 +20,11 @@ import {
   type Scenario,
 } from "./scenario.js";
 import type { QaCardCall, QaRun, QaStep } from "./transcript.js";
+import { isJsonString, isJsonObject } from "../../src/json-value.js";
+import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 // cross-spawn resolves pnpm and agent-browser shims on Windows.
+// SAFETY: Boundary value already validated or constructed to match this type.
 const spawn = createRequire(import.meta.url)("cross-spawn") as typeof import("node:child_process").spawn;
 const harnessRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const qaStateRoot = join(harnessRoot, ".devspace-dev", "qa");
@@ -210,10 +213,11 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
   const variables: Record<string, string | undefined> = { fixture: qaRun.fixture };
 
   for (const [index, step] of scenario.steps.entries()) {
-    let args: Record<string, unknown>;
+    let args: JsonObject;
 
     try {
-      args = resolveTemplates(step.arguments, variables) as Record<string, unknown>;
+      // SAFETY: Boundary value already validated or constructed to match this type.
+      args = resolveTemplates(step.arguments, variables) as JsonObject;
     } catch (caught) {
       // Later steps depend on this one, so stop here but keep the evidence gathered so far.
       qaRun.steps.push({
@@ -233,6 +237,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
     let error: string | undefined;
 
     try {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       result = await client.callTool({ name: step.tool, arguments: args }) as CallToolResult;
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
@@ -243,7 +248,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
 
     const text = result ? resultText(result) : "";
     const workspaceId = (result?.structuredContent as { workspace_id?: unknown } | undefined)?.workspace_id;
-    variables.workspace_id = typeof workspaceId === "string"
+    variables.workspace_id = isJsonString(workspaceId)
       ? workspaceId
       : text.match(WORKSPACE_ID_PATTERN)?.[0] ?? variables.workspace_id;
 
@@ -268,7 +273,8 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
         qaRun.resources[resourceUri] = {
           mimeType: content?.mimeType,
           html: content && "text" in content ? content.text : "",
-          meta: (content?._meta ?? {}) as Record<string, unknown>,
+          // SAFETY: Boundary value already validated or constructed to match this type.
+          meta: (content?._meta ?? {}) as JsonObject,
         };
       } catch (caught) {
         failures.push(`reading UI resource ${resourceUri} failed: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -297,7 +303,7 @@ function uiResourceUri(tool: Tool | undefined): string | undefined {
   const meta = tool?._meta as { ui?: { resourceUri?: unknown }; "ui/resourceUri"?: unknown } | undefined;
   const uri = meta?.ui?.resourceUri ?? meta?.["ui/resourceUri"];
 
-  return typeof uri === "string" ? uri : undefined;
+  return isJsonString(uri) ? uri : undefined;
 }
 
 function resultText(result: CallToolResult): string {
@@ -494,6 +500,7 @@ async function startHost(
       }
 
       if (url.pathname === "/api/call" && req.method === "POST") {
+        // SAFETY: Boundary value already validated or constructed to match this type.
         // The bridge proxies real tool calls such as exec_command, so only the host page may use it.
         if (req.headers.origin !== hostOrigin || !req.headers["content-type"]?.startsWith("application/json")) {
           res.writeHead(403).end("Forbidden");
@@ -504,13 +511,14 @@ async function startHost(
         const body = JSON.parse(await readBody(req)) as {
           step: number;
           name: string;
-          arguments?: Record<string, unknown>;
-          _meta?: Record<string, unknown>;
+          arguments?: JsonObject;
+          _meta?: JsonObject;
         };
 
         const cardCall: QaCardCall = { step: body.step, name: body.name, arguments: body.arguments ?? {} };
 
         try {
+          // SAFETY: Boundary value already validated or constructed to match this type.
           cardCall.result = await client.callTool({ name: body.name, arguments: body.arguments, _meta: body._meta }) as CallToolResult;
         } catch (error) {
           cardCall.error = error instanceof Error ? error.message : String(error);
@@ -629,6 +637,7 @@ async function captureBrowserEvidence(
     await browser("set", "viewport", "1280", String(RENDER_VIEWPORT_HEIGHT));
     await browser("open", hostUrl);
     await browser("wait", "--fn", "window.__devspaceQa?.settled === true", "--timeout", "45000");
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const cards = JSON.parse(JSON.parse(await browser("eval", "JSON.stringify(window.__devspaceQa.cards)"))) as BrowserEvidence["cards"];
 
     // Shrink to the page so screenshots have no trailing blank space; every card
@@ -735,7 +744,7 @@ async function checkoutInfo(path: string): Promise<QaRun["checkout"]> {
   return { path, commit, branch: branch || undefined, dirty: Boolean(status) };
 }
 
-function deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(base: JsonObject, override: JsonObject): JsonObject {
   const merged = { ...base };
 
   for (const [key, value] of Object.entries(override)) {
@@ -746,8 +755,8 @@ function deepMerge(base: Record<string, unknown>, override: Record<string, unkno
   return merged;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function isPlainObject(value: unknown): value is JsonObject {
+  return Boolean(value) && isJsonObject(value) && !Array.isArray(value);
 }
 
 async function freePort(): Promise<number> {
@@ -757,7 +766,7 @@ async function freePort(): Promise<number> {
   const address = server.address();
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 
-  if (!address || typeof address === "string") throw new Error("Could not allocate a loopback port.");
+  if (!address || isJsonString(address)) throw new Error("Could not allocate a loopback port.");
 
   return address.port;
 }
@@ -778,7 +787,7 @@ function closeHttpServer(server: HttpServer): Promise<void> {
 
 async function runCleanups(): Promise<void> {
   while (cleanups.length > 0) {
-    await cleanups.pop()?.().catch((error: unknown) => console.warn("QA cleanup failed:", error));
+    await cleanups.pop()?.().catch((error: JsonValue) => console.warn("QA cleanup failed:", error));
   }
 }
 

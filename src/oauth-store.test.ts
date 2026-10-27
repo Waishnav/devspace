@@ -117,11 +117,13 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
     const accessHashes = database.sqlite
       .prepare("select token_hash from oauth_access_tokens")
       .pluck()
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .all() as string[];
 
     const refreshHashes = database.sqlite
       .prepare("select token_hash from oauth_refresh_tokens")
       .pluck()
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .all() as string[];
 
     assert.deepEqual(accessHashes, [hashToken(accessToken)]);

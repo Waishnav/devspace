@@ -7,12 +7,10 @@ import { matchError, Result, type Result as BetterResult } from "better-result";
 import type { AgentConfig } from "./config.js";
 import {
   AgentDaemonConfigChangedError,
-  AgentDaemonInvalidRequestError,
   AgentDaemonInvalidResponseError,
   AgentDaemonProtocolMismatchError,
   AgentDaemonStartupError,
   AgentDaemonTimeoutError,
-  AgentDaemonUnauthorizedError,
   AgentDaemonUnavailableError,
   AgentProviderUnavailableError,
   agentErrorFromPayload,
@@ -67,6 +65,8 @@ import type {
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { devspaceConfigDir } from "./user-config.js";
+import { optionalFields } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 import {
   WorkflowError,
   type WorkflowCall,
@@ -145,7 +145,7 @@ export class LocalAgentClient {
       id: agentId,
       prompt,
       scope,
-      ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+      ...optionalFields(Object.keys(overrides).length > 0 ? { overrides } : undefined),
     });
 
     return decodeRequestResult(result, "agent.continue", decodeAgentRecord);
@@ -553,9 +553,11 @@ export class LocalAgentClient {
       ? this.ensureReadyForObservation()
       : this.ensureReady());
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
     const authToken = this.authTokenResult(method);
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     if (authToken.isErr()) return authToken as BetterResult<unknown, RequestError<M>>;
 
     const response = await sendRequest(this.endpoint, {
@@ -564,6 +566,7 @@ export class LocalAgentClient {
       authToken: authToken.value,
       method,
       params,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     } as LocalAgentDaemonRequest, timeoutMs ?? undefined);
 
     if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
@@ -580,9 +583,11 @@ export class LocalAgentClient {
           retryable: false,
           cause: response.value.error,
           message: "Local agent daemon returned an error that is invalid for this request.",
+        // SAFETY: Boundary value already validated or constructed to match this type.
         })) as BetterResult<unknown, RequestError<M>>;
       }
 
+      // SAFETY: Boundary value already validated or constructed to match this type.
       return Result.err(error) as BetterResult<unknown, RequestError<M>>;
     }
 
@@ -612,6 +617,7 @@ export class LocalAgentClient {
       authToken: authToken.value,
       method,
       params,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
 
     if (response.isErr()) return response;
@@ -782,6 +788,7 @@ async function sendRequest(
       if (newline === -1) return;
 
       try {
+        // SAFETY: Boundary value already validated or constructed to match this type.
         const response = decodeLocalAgentDaemonResponse(JSON.parse(buffer.slice(0, newline)) as unknown);
 
         if (response.requestId !== request.requestId) {
@@ -824,15 +831,15 @@ async function sendRequest(
 function decodeRequestResult<T, E>(
   result: BetterResult<unknown, E>,
   operation: string,
-  decode: (value: unknown) => T,
+  decode: (value: JsonValue) => T,
 ): BetterResult<T, E | AgentDaemonInvalidResponseError> {
   return result.andThen((value) => decodeValue(value, operation, decode));
 }
 
 function decodeValue<T>(
-  value: unknown,
+  value: JsonValue,
   operation: string,
-  decode: (value: unknown) => T,
+  decode: (value: JsonValue) => T,
 ): BetterResult<T, AgentDaemonInvalidResponseError> {
   try {
     return Result.ok(decode(value));

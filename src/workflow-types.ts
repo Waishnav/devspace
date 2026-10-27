@@ -1,4 +1,6 @@
 import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import { isJsonString } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export type WorkflowStatus = "starting" | "running" | "stopping" | "completed" | "failed" | "cancelled" | "interrupted";
 
@@ -45,7 +47,7 @@ export interface WorkflowAgentOptions {
   target: string;
   model?: string;
   effort?: string;
-  schema?: Record<string, unknown>;
+  schema?: JsonObject;
   label?: string;
   phase?: string;
   writeMode?: WorkflowWriteMode;
@@ -74,12 +76,12 @@ export interface WorkflowCall {
 
 export interface WorkflowEvent { sequence: number; runId: string; type: string; data: unknown; createdAt: string }
 
-export function workflowFailure(error: unknown): WorkflowFailure {
+export function workflowFailure(error: JsonValue): WorkflowFailure {
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return {
-    code: typeof value?.code === "string" ? value.code : "WORKFLOW_FAILED",
-    message: typeof value?.message === "string" ? value.message : String(error),
+    code: isJsonString(value?.code) ? value.code : "WORKFLOW_FAILED",
+    message: isJsonString(value?.message) ? value.message : String(error),
     retryable: value?.retryable === true,
   };
 }

@@ -13,12 +13,14 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
+import { optionalFields } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 60_000;
 
 export interface LocalAgentRuntimePoolLogger {
-  (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void;
+  (level: "info" | "warn" | "error", event: string, fields: JsonObject): void;
 }
 
 interface RuntimeEntry {
@@ -143,7 +145,7 @@ export class LocalAgentRuntimePool {
         if (reservationError) throw reservationError;
         await inputCallbacks?.onSessionId?.(providerSessionId);
       },
-      ...(inputCallbacks?.onEvent ? { onEvent: inputCallbacks.onEvent } : {}),
+      ...optionalFields(inputCallbacks?.onEvent ? { onEvent: inputCallbacks.onEvent } : undefined),
     };
 
     const startedAt = this.now();
@@ -563,7 +565,7 @@ export class LocalAgentRuntimePool {
   private log(
     level: "info" | "warn" | "error",
     event: string,
-    fields: Record<string, unknown>,
+    fields: JsonObject,
   ): void {
     this.logger?.(level, event, fields);
   }
@@ -620,6 +622,6 @@ function hashRuntimeKey(key: string): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }

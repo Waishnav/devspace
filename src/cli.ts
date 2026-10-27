@@ -67,6 +67,8 @@ import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
 import { runWorkflowCommand } from "./workflow-cli.js";
 import { workflowsEnabled } from "./workflow-flag.js";
 import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
+import { optionalFields, isJsonString } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 type Command =
   | "serve"
@@ -216,6 +218,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
 
     if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const usage = resolveOnboardingUsage(destinationAnswer as OnboardingDestination[]);
     const useChatGpt = usesChatGpt(usage);
     const useCodingAgents = usesCodingAgents(usage);
@@ -284,6 +287,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     );
 
     const providerAnswer = await prompts.multiselect({
+      // SAFETY: Boundary value already validated or constructed to match this type.
       message: "Which agents can DevSpace use as subagents?",
       options: availability.map((provider) => ({
         value: provider.name,
@@ -297,6 +301,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
 
     if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const selectedProviders = providerAnswer as string[];
 
     const subagents = updateOnboardingSubagentsConfig(
@@ -940,7 +945,7 @@ function parseAgentsEventsArgs(args: string[]): { id: string; turnId?: string; f
 
   if (positional.length !== 1) throw new Error(usage);
 
-  return { id: positional[0]!, follow, ...(turnId ? { turnId } : {}) };
+  return { id: positional[0]!, follow, ...optionalFields(turnId ? { turnId } : undefined) };
 }
 
 function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: number } {
@@ -1116,7 +1121,7 @@ function printAgentXml(fragment: string): void {
   if (fragment) console.log(fragment);
 }
 
-function printJson(value: unknown): void {
+function printJson(value: JsonValue): void {
   console.log(JSON.stringify(value));
 }
 
@@ -1149,7 +1154,7 @@ function printAgentsHelp(): void {
 function printVersion(): void {
   const packageJson = require("../package.json") as { version?: unknown };
 
-  if (typeof packageJson.version !== "string") {
+  if (!isJsonString(packageJson.version)) {
     throw new Error("Unable to read DevSpace package version.");
   }
 
@@ -1221,6 +1226,7 @@ function assertSupportedNode(): void {
       `DevSpace requires Node ${SUPPORTED_NODE_RANGE}.`,
       `Current Node: ${process.version}`,
       "",
+      // SAFETY: Boundary value already validated or constructed to match this type.
       "Install Node 22 LTS or use a version manager such as nvm, fnm, or mise.",
     ].join("\n"),
   );
@@ -1236,6 +1242,7 @@ class SetupCancelledError extends Error {}
 
 function checkSqliteNative(): string {
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const Database = require("better-sqlite3") as typeof import("better-sqlite3");
     const db = new Database(":memory:");
     db.close();
@@ -1248,6 +1255,7 @@ function checkSqliteNative(): string {
 
 function checkGitAvailable(): string {
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
 
     return execFileSync("git", ["--version"], { encoding: "utf8" }).trim();

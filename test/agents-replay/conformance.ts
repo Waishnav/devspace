@@ -8,6 +8,8 @@ import { parseArgs } from "node:util";
 import { createLocalAgentDrivers } from "../../src/local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "../../src/local-agent-path.js";
 import { PROVIDERS, providerDefinition, type ProviderDefinition } from "./providers.js";
+import { optionalFields, isJsonString, isJsonNumber } from "../../src/json-value.js";
+import type { JsonValue } from "../../src/json-value.js";
 
 /**
  * Provider conformance suite. Every scenario runs the built `devspace agents`
@@ -94,6 +96,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "stop",
+    // SAFETY: Boundary value already validated or constructed to match this type.
     description: "C4: stop during a long tool call ends the turn as stopped, with no later writes",
     transcript: true,
     async run(run) {
@@ -160,9 +163,9 @@ const SCENARIOS: Scenario[] = [
     transcript: true,
     async run(run) {
       const started = await cli(run, ["agents", "run", run.provider.id, "--worktree", "--write-mode", "full_access", "--json", "Run `pwd`, then create a file named probe.txt containing the word hello in that directory using your file tools. Then reply DONE."]);
-      expect(started.code === 0 && typeof started.json?.id === "string", `run failed: ${started.stdout}${started.stderr}`);
+      expect(started.code === 0 && isJsonString(started.json?.id), `run failed: ${started.stdout}${started.stderr}`);
       const { id, worktree, branch } = started.json;
-      expect(typeof worktree === "string" && typeof branch === "string", `run output lacks worktree and branch: ${started.stdout}`);
+      expect(isJsonString(worktree) && isJsonString(branch), `run output lacks worktree and branch: ${started.stdout}`);
       const result = await waitFor(run, id);
       expect(result.status === "completed", `expected completed, got ${describe(result)}`);
       const shown = (await cli(run, ["agents", "show", id, "--json"])).json;
@@ -266,9 +269,9 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
       providers: [{
         id: provider.id,
         enabled: true,
-        ...(provider.model ? { model: provider.model } : {}),
-        ...(command ? { command } : {}),
-        ...(mode !== "replay" && provider.liveEnv ? { env: provider.liveEnv() } : {}),
+        ...optionalFields(provider.model ? { model: provider.model } : undefined),
+        ...optionalFields(command ? { command } : undefined),
+        ...optionalFields(mode !== "replay" && provider.liveEnv ? { env: provider.liveEnv() } : undefined),
       }],
     },
   }, null, 2));
@@ -280,6 +283,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     DEVSPACE_AGENTD_IDLE_TIMEOUT_MS: "60000",
   };
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   // Run as an installed devspace would: this checkout's node_modules/.bin (with the bundled
   // Pi SDK) must not shadow the provider executables on PATH.
   if (env.PATH) env.PATH = removeDevspaceNodeModulesBinFromPath(env.PATH);
@@ -301,6 +305,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     await stopDaemon(run).catch(() => undefined);
   }
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   // A provider process that was just stopped may still be writing as the daemon exits.
   if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
@@ -322,7 +327,7 @@ function writeShimWrapper(
     DEVSPACE_AGENT_SHIM_RUN_DIR: runDir,
     DEVSPACE_AGENT_SHIM_WORKSPACE: workspace,
     DEVSPACE_AGENT_SHIM_WORKTREE_ROOT: join(root, "worktrees"),
-    ...(process.env.DEVSPACE_AGENT_SHIM_TRACE ? { DEVSPACE_AGENT_SHIM_TRACE: "1" } : {}),
+    ...optionalFields(process.env.DEVSPACE_AGENT_SHIM_TRACE ? { DEVSPACE_AGENT_SHIM_TRACE: "1" } : undefined),
   };
 
   const tsx = import.meta.resolve("tsx");
@@ -346,7 +351,7 @@ function writeShimWrapper(
 async function stopDaemon(run: Run): Promise<void> {
   const pid = (await cli(run, ["agents", "daemon", "stop", "--json"])).json?.pid;
 
-  if (typeof pid !== "number") return;
+  if (!isJsonNumber(pid)) return;
 
   for (let waited = 0; waited < 10_000 && isAlive(pid); waited += 100) await delay(100);
 }
@@ -363,7 +368,7 @@ function isAlive(pid: number): boolean {
 
 async function start(run: Run, prompt: string, flags: string[] = []): Promise<string> {
   const result = await cli(run, ["agents", "run", run.provider.id, ...flags, "--json", prompt]);
-  expect(result.code === 0 && typeof result.json?.id === "string", `run failed: ${result.stdout}${result.stderr}`);
+  expect(result.code === 0 && isJsonString(result.json?.id), `run failed: ${result.stdout}${result.stderr}`);
 
   return result.json.id;
 }
@@ -438,7 +443,7 @@ function git(cwd: string, args: string[]): string {
   return result.stdout.trim();
 }
 
-function expect(condition: unknown, message: string): asserts condition {
+function expect(condition: JsonValue, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 

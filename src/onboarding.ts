@@ -2,7 +2,6 @@ import type { SubagentsConfig } from "./local-agent-config.js";
 import {
   defaultDriverForProviderId,
   LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
-  isLocalAgentDriverKind,
   type LocalAgentProviderInstanceId,
 } from "./local-agent-provider.js";
 

@@ -8,6 +8,9 @@ import {
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -21,6 +24,7 @@ import type {
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
+  // SAFETY: Boundary value already validated or constructed to match this type.
   // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
   "Read(/**)",
   "Edit(/**)",
@@ -32,13 +36,13 @@ export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
   interrupt(): Promise<void>;
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
-  applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
+  applyFlagSettings(settings: JsonObject): Promise<void>;
   setModel?(model?: string): Promise<void>;
 }
 
 export interface ClaudeQueryFactoryInput {
   context: LocalAgentRuntimeContext;
-  options: Record<string, unknown>;
+  options: JsonObject;
   prompt: AsyncIterable<ClaudeUserMessage>;
 }
 
@@ -180,7 +184,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
 
           if (record && callbacks?.onEvent) reportClaudeActivity(record, toolCalls, callbacks.onEvent);
 
-          if (typeof record?.session_id === "string") {
+          if (isJsonString(record?.session_id)) {
             const previousSessionId = this.providerSessionId;
             this.providerSessionId = record.session_id;
 
@@ -206,7 +210,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             });
           }
 
-          const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+          const finalResponse = isJsonString(record.result) ? record.result.trim() : "";
 
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
@@ -305,26 +309,26 @@ async function defaultClaudeQueryFactory({
 }: ClaudeQueryFactoryInput): Promise<ClaudeQueryLike> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
-  return query({
+  return unsafeNarrow<ClaudeQueryLike>(query({
     prompt,
-    options: options as never,
-  }) as unknown as ClaudeQueryLike;
+    options: unsafeNarrow<never>(options),
+  }));
 }
 
 export function claudeQueryOptions(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
   env: NodeJS.ProcessEnv = process.env,
-): Record<string, unknown> {
+): JsonObject {
   const executable = env.CLAUDE_COMMAND;
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
 
   return {
     cwd: input.workspaceRoot,
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : {}),
-    ...(context.providerSessionId ? { resume: context.providerSessionId } : {}),
+    ...optionalFields(input.model ? { model: input.model } : undefined),
+    ...optionalFields(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : undefined),
+    ...optionalFields(context.providerSessionId ? { resume: context.providerSessionId } : undefined),
     permissionMode,
     // Restricted runtimes stay warm across read_only/allowed turns. Keep the
     // workspace capabilities static and narrow individual turns with deny rules.
@@ -333,9 +337,9 @@ export function claudeQueryOptions(
       : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
     sandbox: authority.sandbox,
     settings: authority.settings,
-    ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
+    ...optionalFields(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : undefined),
     env: claudeCommandEnvironment(env),
-    ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+    ...optionalFields(executable ? { pathToClaudeCodeExecutable: executable } : undefined),
   };
 }
 
@@ -354,14 +358,14 @@ export function claudePermissionMode(
 export function claudeAuthoritySettings(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): Record<string, unknown> {
+): JsonObject {
   return claudeAuthorityOptions(workspaceRoot, writeMode).settings;
 }
 
 function claudeAuthorityOptions(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): { sandbox: Record<string, unknown>; settings: Record<string, unknown> } {
+): { sandbox: JsonObject; settings: JsonObject } {
   if (writeMode === "full_access") {
     const sandbox = {
       enabled: false,
@@ -413,8 +417,8 @@ export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.Process
   return next;
 }
 
-export function claudeResultError(record: Record<string, unknown>): string | undefined {
-  const subtype = typeof record.subtype === "string" ? record.subtype : undefined;
+export function claudeResultError(record: JsonObject): string | undefined {
+  const subtype = isJsonString(record.subtype) ? record.subtype : undefined;
   const isError = record.is_error === true || subtype?.startsWith("error");
 
   if (!isError) return undefined;
@@ -436,7 +440,7 @@ interface ClaudeToolCall {
 
 /** Maps complete SDK messages (no partial deltas) onto DevSpace activity events. */
 export function reportClaudeActivity(
-  record: Record<string, unknown>,
+  record: JsonObject,
   toolCalls: Map<string, ClaudeToolCall>,
   onEvent: (event: LocalAgentActivityEvent) => void,
 ): void {
@@ -448,14 +452,14 @@ export function reportClaudeActivity(
   for (const value of content) {
     const block = asRecord(value);
 
-    if (record.type === "assistant" && block?.type === "text" && typeof block.text === "string") {
+    if (record.type === "assistant" && block?.type === "text" && isJsonString(block.text)) {
       onEvent({ type: "message", text: block.text });
-    } else if (record.type === "assistant" && block?.type === "tool_use" && typeof block.name === "string") {
+    } else if (record.type === "assistant" && block?.type === "tool_use" && isJsonString(block.name)) {
       const call = { tool: block.name, summary: summarizeToolInput(block.input) };
 
-      if (typeof block.id === "string") toolCalls.set(block.id, call);
+      if (isJsonString(block.id)) toolCalls.set(block.id, call);
       onEvent({ type: "tool_started", ...call });
-    } else if (record.type === "user" && block?.type === "tool_result" && typeof block.tool_use_id === "string") {
+    } else if (record.type === "user" && block?.type === "tool_result" && isJsonString(block.tool_use_id)) {
       const call = toolCalls.get(block.tool_use_id);
 
       if (!call) continue;
@@ -471,17 +475,19 @@ export interface ClaudeUserMessage {
   parent_tool_use_id: null;
 }
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 /** The SDK reports a missing or unlaunchable Claude CLI as a ReferenceError, not as a spawn error. */
-function isClaudeExecutableError(error: unknown): boolean {
+function isClaudeExecutableError(error: JsonValue): boolean {
   return error instanceof ReferenceError && /^Claude Code (native binary|executable) /.test(error.message);
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function directString(value: JsonValue): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }

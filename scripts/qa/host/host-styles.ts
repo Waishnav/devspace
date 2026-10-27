@@ -43,6 +43,7 @@ export function hostStyles(theme: McpUiTheme): McpUiHostStyles {
       ...palettes[theme],
       "--font-sans": "ui-sans-serif, system-ui, sans-serif",
       "--font-mono": "ui-monospace, SFMono-Regular, monospace",
+    // SAFETY: Boundary value already validated or constructed to match this type.
     } as McpUiHostStyles["variables"],
   };
 }

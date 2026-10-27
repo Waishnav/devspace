@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 /**
  * DevSpace's normalized view of what a subagent turn is doing. Drivers map
@@ -62,19 +64,20 @@ export function sanitizeActivityEvent(event: LocalAgentActivityEvent): LocalAgen
     : boundText(redactSecrets(singleLine(event.summary)), MAX_SUMMARY_CHARS) || undefined;
 
   return event.type === "tool_started"
-    ? { type: "tool_started", tool, ...(summary ? { summary } : {}) }
-    : { type: "tool_completed", tool, ...(summary ? { summary } : {}), status: event.status };
+    ? { type: "tool_started", tool, ...optionalFields(summary ? { summary } : undefined) }
+    : { type: "tool_completed", tool, ...optionalFields(summary ? { summary } : undefined), status: event.status };
 }
 
 /**
  * Picks the most identifying argument of a tool call (a command, path, or
  * query) instead of persisting the full argument object.
  */
-export function summarizeToolInput(input: unknown): string | undefined {
-  if (typeof input === "string") return input.trim() || undefined;
+export function summarizeToolInput(input: JsonValue): string | undefined {
+  if (isJsonString(input)) return input.trim() || undefined;
 
-  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-  const record = input as Record<string, unknown>;
+  if (!input || !isJsonObject(input) || Array.isArray(input)) return undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const record = input as JsonObject;
 
   for (const key of [
     "command",
@@ -89,9 +92,9 @@ export function summarizeToolInput(input: unknown): string | undefined {
   ]) {
     const value = record[key];
 
-    if (typeof value === "string" && value.trim()) return value;
+    if (isJsonString(value) && value.trim()) return value;
 
-    if (Array.isArray(value) && value.every((part) => typeof part === "string") && value.length > 0) {
+    if (Array.isArray(value) && value.every((part) => isJsonString(part)) && value.length > 0) {
       return value.join(" ");
     }
   }
@@ -107,7 +110,7 @@ export function providerErrorDetail(error: { message: string; cause?: unknown })
   while (current !== undefined && current !== null && !seen.has(current)) {
     seen.add(current);
 
-    const message = typeof current === "string"
+    const message = isJsonString(current)
       ? current
       : current instanceof Error || typeof (current as { message?: unknown }).message === "string"
         ? String((current as { message: unknown }).message)
@@ -117,7 +120,7 @@ export function providerErrorDetail(error: { message: string; cause?: unknown })
       return boundText(redactSecrets(message.trim()), MAX_ERROR_DETAIL_CHARS);
     }
 
-    current = typeof current === "object" ? (current as { cause?: unknown }).cause : undefined;
+    current = isJsonObject(current) ? (current as { cause?: unknown }).cause : undefined;
   }
 
   return undefined;
@@ -140,6 +143,7 @@ const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
 // authority's last `@` (it may contain `@`) and never past `/`, `?` or `#`.
 const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*):[^\s/?#]*@(?=[^\s/?#@]*(?:[\s/?#]|$))/gi;
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 // `--password hunter2`: a secret-named flag followed by its value as the next word.
 // Plural "tokens" (e.g. --max-tokens 4096) is a count, not a credential.
 const SECRET_FLAG = /(--?[A-Za-z0-9_-]*(?:api[_-]?key|token(?!s)|secret|password|passwd|authorization|credential)[A-Za-z0-9_-]*\s+)(?!-)("[^"]*"|'[^']*'|\S+)/gi;

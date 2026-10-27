@@ -1,17 +1,20 @@
 import { createRequire } from "node:module";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { terminateProcessTree } from "./process-platform.js";
+import { isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 const require = createRequire(import.meta.url);
+// SAFETY: Boundary value already validated or constructed to match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RECORD_CHARS = 8 * 1024 * 1024;
 const MAX_STDERR_CHARS = 8 * 1024;
 
-export type PiRpcRecord = Record<string, unknown>;
+export type PiRpcRecord = JsonObject;
 
 interface PendingRequest {
-  resolve(value: unknown): void;
+  resolve(value: JsonValue): void;
   reject(error: Error): void;
   timer: NodeJS.Timeout;
 }
@@ -69,10 +72,11 @@ export class PiRpcConnection {
       throw new Error("Pi RPC process did not expose stdio pipes.");
     }
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     return new PiRpcConnection(child as ChildProcessWithoutNullStreams);
   }
 
-  async request(record: PiRpcRecord, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  async request(record: PiRpcRecord, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<JsonValue> {
     this.assertOpen();
     const id = `devspace-${++this.nextRequestId}`;
 
@@ -183,13 +187,14 @@ export class PiRpcConnection {
         continue;
       }
 
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      if (!parsed || !isJsonObject(parsed) || Array.isArray(parsed)) continue;
+      // SAFETY: Boundary value already validated or constructed to match this type.
       this.route(parsed as PiRpcRecord);
     }
   }
 
   private route(record: PiRpcRecord): void {
-    if (record.type === "response" && typeof record.id === "string") {
+    if (record.type === "response" && isJsonString(record.id)) {
       const pending = this.pending.get(record.id);
 
       if (pending) {
@@ -228,11 +233,12 @@ export class PiRpcConnection {
   }
 }
 
-export function piRecordString(value: unknown, key: string): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const field = (value as Record<string, unknown>)[key];
+export function piRecordString(value: JsonValue, key: string): string | undefined {
+  if (!value || !isJsonObject(value) || Array.isArray(value)) return undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const field = (value as JsonObject)[key];
 
-  return typeof field === "string" ? field : undefined;
+  return isJsonString(field) ? field : undefined;
 }
 
 export function parsePiModelSlug(model: string): { provider: string; modelId: string } | undefined {

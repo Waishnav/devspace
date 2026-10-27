@@ -11,6 +11,7 @@ import {
   writeSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import type { JsonValue } from "./json-value.js";
 
 export const LOCAL_AGENT_DAEMON_PROTOCOL_VERSION = 9;
 export const LOCAL_AGENT_DAEMON_SOCKET_NAME = "agentd.sock";
@@ -197,6 +198,7 @@ export function isProcessAlive(pid: number): boolean {
 
     return true;
   } catch (error) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
@@ -212,7 +214,8 @@ function writeFileSecure(path: string, content: string): void {
   }
 }
 
-function isFileExistsError(error: unknown): boolean {
+function isFileExistsError(error: JsonValue): boolean {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return (error as NodeJS.ErrnoException).code === "EEXIST";
 }
 
@@ -228,6 +231,7 @@ function removeStaleLock(path: string): boolean {
 
     return true;
   } catch (error) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }

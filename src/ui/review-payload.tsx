@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { HostContext, ToolResultCard } from "./card-types.js";
+import { isJsonNumber } from "../json-value.js";
 import {
   parseReviewFiles,
   ReviewDiffFile,
@@ -48,7 +49,7 @@ function ReviewPayload({
   const themeType: ReviewThemeType = hostContext?.theme === "light" ? "light" : "dark";
   const files = useMemo(() => parseReviewFiles(patch), [patch]);
 
-  const visibleFiles = typeof visibleFileCount === "number"
+  const visibleFiles = isJsonNumber(visibleFileCount)
     ? files.slice(0, visibleFileCount)
     : files;
 

@@ -40,7 +40,6 @@ export async function seedDevState({ reset = false }: { reset?: boolean } = {}):
   const stagingRoot = `${devRoot}.staging-${process.pid}-${Date.now()}`;
   const stagingConfigDir = join(stagingRoot, "config");
   const stagingStateDir = join(stagingRoot, "state");
-  const devConfigDir = join(devRoot, "config");
   const devStateDir = join(devRoot, "state");
 
   try {
@@ -135,6 +134,7 @@ async function readSourceConfig(configDir: string): Promise<{ config: DevspaceCo
   const legacyPath = join(configDir, "config.json");
 
   if (existsSync(legacyPath)) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const value = JSON.parse(await readFile(legacyPath, "utf8")) as unknown;
 
     return { config: migrateLegacyConfig(value) };

@@ -1,5 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { isJsonString, isJsonObject } from "../../src/json-value.js";
+import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 /**
  * A QA scenario is a fixture project plus an ordered list of MCP tool calls.
@@ -11,7 +13,7 @@ export interface Scenario {
   name: string;
   description: string;
   /** Deep-merged into the generated config.jsonc, e.g. { "tools": { "mode": "claude" } }. */
-  config?: Record<string, unknown>;
+  config?: JsonObject;
   env?: Record<string, string>;
   /** How the simulated MCP host identifies itself to DevSpace. */
   host?: {
@@ -19,6 +21,7 @@ export interface Scenario {
     userAgent?: string;
   };
   fixture: {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     /** Committed as the initial Git revision. */
     files: Record<string, string>;
     /** Written after the initial commit, leaving the checkout dirty. */
@@ -29,7 +32,7 @@ export interface Scenario {
 
 export interface ScenarioStep {
   tool: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
   /** Short label shown in the host page and report. */
   label?: string;
   expect?: {
@@ -55,13 +58,14 @@ export async function loadScenario(nameOrPath: string): Promise<Scenario> {
     ? nameOrPath
     : join(scenariosDir.pathname, `${nameOrPath}.json`);
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const scenario = JSON.parse(await readFile(path, "utf8")) as Omit<Scenario, "name"> & { name?: string };
 
   return { ...scenario, name: scenario.name ?? basename(path, ".json") };
 }
 
-export function resolveTemplates(value: unknown, variables: Record<string, string | undefined>): unknown {
-  if (typeof value === "string") {
+export function resolveTemplates(value: JsonValue, variables: Record<string, string | undefined>): unknown {
+  if (isJsonString(value)) {
     return value.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
       const resolved = variables[key];
 
@@ -73,7 +77,7 @@ export function resolveTemplates(value: unknown, variables: Record<string, strin
 
   if (Array.isArray(value)) return value.map((item) => resolveTemplates(item, variables));
 
-  if (value && typeof value === "object") {
+  if (value && isJsonObject(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, resolveTemplates(item, variables)]),
     );

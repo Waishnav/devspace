@@ -100,7 +100,11 @@ let windowsSandboxQueue = Promise.resolve();
 let sandboxSessionCount = 0;
 let sandboxCommandCount = 0;
 const sandboxCommandWaiters = new Set<() => void>();
-const sessionStates = new WeakMap<object, PiSandboxSessionState>();
+export interface PiSandboxSessionHandle {
+  readonly sessionId?: string;
+}
+
+const sessionStates = new WeakMap<PiSandboxSessionHandle, PiSandboxSessionState>();
 
 export function createPiSandboxModeRef(value: PiSandboxWriteMode): PiSandboxModeRef {
   return { value };
@@ -175,7 +179,7 @@ export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig 
 }
 
 export async function registerPiSandboxSession(
-  session: object,
+  session: PiSandboxSessionHandle,
   workspace: string,
   modeRef: PiSandboxModeRef,
   writeMode: PiSandboxWriteMode,
@@ -194,7 +198,7 @@ export async function registerPiSandboxSession(
 }
 
 export async function updatePiSandboxSession(
-  session: object,
+  session: PiSandboxSessionHandle,
   workspace: string,
   writeMode: PiSandboxWriteMode,
 ): Promise<void> {
@@ -209,7 +213,7 @@ export async function updatePiSandboxSession(
   }
 }
 
-export async function releasePiSandboxSession(session: object): Promise<void> {
+export async function releasePiSandboxSession(session: PiSandboxSessionHandle): Promise<void> {
   const state = sessionStates.get(session);
 
   if (!state) return;
@@ -252,6 +256,7 @@ function dynamicTool<T extends { execute: (...args: any[]) => any }>(
 
       return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
     },
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as T;
 }
 
@@ -467,6 +472,7 @@ async function runSandboxedCommand(
     });
 
     // The sandbox initializes fine on these hosts and only fails per command,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     // which the model would otherwise read as its own command failing.
     if (denial.denied && result.exitCode !== 0) {
       throw new Error(

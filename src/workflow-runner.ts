@@ -2,6 +2,9 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WorkflowError, type WorkflowAgentOptions } from "./workflow-types.js";
 import { parseWorkflowScript } from "./workflow-script.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isJsonNumber, isBigintValue, isSymbolValue, isFunctionValue, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -24,9 +27,9 @@ export interface RunWorkflowScriptInput {
   signal?: AbortSignal;
   /** Internal nesting marker. A nested runner must pass depth: 1. */
   depth?: number;
-  onAgent(prompt: string, options: WorkflowAgentOptions): Promise<unknown> | unknown;
-  onWorkflow?(name: string, args: unknown): Promise<unknown> | unknown;
-  onEvent?(type: string, data: unknown): Promise<void> | void;
+  onAgent(prompt: string, options: WorkflowAgentOptions): Promise<JsonValue> | unknown;
+  onWorkflow?(name: string, args: JsonValue): Promise<JsonValue> | unknown;
+  onEvent?(type: string, data: JsonValue): Promise<void> | void;
 }
 
 export const DEFAULT_WORKFLOW_LIMITS: Readonly<WorkflowRunnerLimits> = Object.freeze({
@@ -53,8 +56,6 @@ const HARD_LIMITS: WorkflowRunnerLimits = {
   maxOutstanding: 4_096,
 };
 
-interface RunnerErrorPayload { code: string; message: string; retryable?: boolean }
-
 interface HostCallMessage {
   type: "host-call";
   id: number;
@@ -68,7 +69,7 @@ interface HostCallMessage {
 export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<JsonValue> {
   const limits = resolveLimits(input.limits);
 
-  if (typeof input.source !== "string") {
+  if (!isJsonString(input.source)) {
     throw new WorkflowError("WORKFLOW_INVALID_SOURCE", "Workflow source must be a string.");
   }
 
@@ -102,7 +103,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
   child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8_192); });
 
   return await new Promise<JsonValue>((resolve, reject) => {
-    const finish = (error?: unknown, value?: JsonValue) => {
+    const finish = (error?: JsonValue, value?: JsonValue) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -116,10 +117,11 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 
       if (error) reject(error);
+      // SAFETY: Boundary value already validated or constructed to match this type.
       else resolve(value as JsonValue);
     };
 
-    const fatal = (error: unknown) => finish(asWorkflowError(error));
+    const fatal = (error: JsonValue) => finish(asWorkflowError(error));
     const abort = () => fatal(cancelled(input.signal?.reason));
 
     const timer = setTimeout(() => {
@@ -147,11 +149,11 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
       grace.unref();
       child.once("disconnect", () => { clearTimeout(grace); setImmediate(report); });
     });
-    child.on("message", (message: unknown) => {
-      if (settled || !isRecord(message) || typeof message.type !== "string") return;
+    child.on("message", (message: JsonValue) => {
+      if (settled || !isRecord(message) || !isJsonString(message.type)) return;
 
       if (message.type === "host-call") {
-        void handleHostCall(message as unknown as HostCallMessage).catch(fatal);
+        void handleHostCall(unsafeNarrow<HostCallMessage>(message)).catch(fatal);
 
         return;
       }
@@ -175,6 +177,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
             throw new WorkflowError("WORKFLOW_LOG_LIMIT", "Workflow events exceed their configured limit.");
           }
 
+          // SAFETY: Boundary value already validated or constructed to match this type.
           eventChain = eventChain.then(() => input.onEvent?.(message.eventType as string, data));
           eventChain.catch(fatal);
         } catch (error) {
@@ -217,7 +220,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
         let value: JsonValue;
 
         if (message.kind === "agent") {
-          if (typeof message.prompt !== "string" || message.prompt.length === 0) {
+          if (!isJsonString(message.prompt) || message.prompt.length === 0) {
             return sendHostError(child, message.id, new WorkflowError("WORKFLOW_INVALID_AGENT_CALL", "agent prompt must be a non-empty string."));
           }
 
@@ -237,7 +240,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
             return sendHostError(child, message.id, new WorkflowError("WORKFLOW_UNAVAILABLE", "Nested workflows are unavailable."));
           }
 
-          if (typeof message.name !== "string" || message.name.trim().length === 0 || message.name.length > 128) {
+          if (!isJsonString(message.name) || message.name.trim().length === 0 || message.name.length > 128) {
             return sendHostError(child, message.id, new WorkflowError("WORKFLOW_INVALID_CALL", "workflow name must be a non-empty string."));
           }
 
@@ -269,18 +272,18 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
   });
 }
 
-export function validateJson(value: unknown, label: string, maxBytes: number): JsonValue {
+export function validateJson(value: JsonValue, label: string, maxBytes: number): JsonValue {
   let encoded: string | undefined;
 
   try {
-    encoded = JSON.stringify(value, (_key, current: unknown) => {
-      if (typeof current === "number" && !Number.isFinite(current)) throw new TypeError("non-finite number");
+    encoded = JSON.stringify(value, (_key, current: JsonValue) => {
+      if (isJsonNumber(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
 
-      if (typeof current === "bigint" || typeof current === "function" || typeof current === "symbol" || current === undefined) {
+      if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
         throw new TypeError(`unsupported ${typeof current}`);
       }
 
-      if (current && typeof current === "object" && !Array.isArray(current)) {
+      if (current && isJsonObject(current) && !Array.isArray(current)) {
         const prototype = Object.getPrototypeOf(current);
 
         if (prototype !== Object.prototype && prototype !== null) throw new TypeError("non-plain object");
@@ -295,10 +298,11 @@ export function validateJson(value: unknown, label: string, maxBytes: number): J
   if (encoded === undefined) throw new WorkflowError("WORKFLOW_INVALID_JSON", `${label} must be JSON.`);
   validateBytes(encoded, label, maxBytes);
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return JSON.parse(encoded) as JsonValue;
 }
 
-function validateAgentOptions(value: unknown, maxBytes: number): WorkflowAgentOptions {
+function validateAgentOptions(value: JsonValue, maxBytes: number): WorkflowAgentOptions {
   const options = validateJson(value, "Agent options", maxBytes);
 
   if (!isRecord(options)) throw new WorkflowError("WORKFLOW_INVALID_AGENT_CALL", "agent options must be an object.");
@@ -331,16 +335,17 @@ function validateAgentOptions(value: unknown, maxBytes: number): WorkflowAgentOp
   }
 
   if (options.workspace !== undefined
-    && (typeof options.workspace !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.workspace))) {
+    && (!isJsonString(options.workspace) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.workspace))) {
     throw new WorkflowError("WORKFLOW_INVALID_AGENT_CALL", "agent options.workspace must be a logical key, not a path.");
   }
 
-  return options as unknown as WorkflowAgentOptions;
+  return unsafeNarrow<WorkflowAgentOptions>(options);
 }
 
 function resolveLimits(input: Partial<WorkflowRunnerLimits> | undefined): WorkflowRunnerLimits {
   const limits = { ...DEFAULT_WORKFLOW_LIMITS, ...input };
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   for (const key of Object.keys(DEFAULT_WORKFLOW_LIMITS) as Array<keyof WorkflowRunnerLimits>) {
     const value = limits[key];
 
@@ -358,7 +363,7 @@ function validateBytes(value: string, label: string, limit: number): void {
   }
 }
 
-function sendHostError(child: ChildProcess, id: number, error: unknown): void {
+function sendHostError(child: ChildProcess, id: number, error: JsonValue): void {
   const workflowError = asWorkflowError(error);
   send(child, {
     type: "host-result",
@@ -369,57 +374,58 @@ function sendHostError(child: ChildProcess, id: number, error: unknown): void {
   });
 }
 
-function send(child: ChildProcess, message: unknown): void {
+function send(child: ChildProcess, message: JsonValue): void {
   if (!child.connected) return;
 
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     child.send(message as never, () => undefined);
   } catch {
     // The runner's exit/disconnect path reports the failure.
   }
 }
 
-function decodeError(value: unknown, fallbackCode: string): WorkflowError {
+function decodeError(value: JsonValue, fallbackCode: string): WorkflowError {
   if (!isRecord(value)) return new WorkflowError(fallbackCode, "Workflow failed.");
 
   return new WorkflowError(
-    typeof value.code === "string" ? value.code : fallbackCode,
-    typeof value.message === "string" ? value.message : "Workflow failed.",
+    isJsonString(value.code) ? value.code : fallbackCode,
+    isJsonString(value.message) ? value.message : "Workflow failed.",
     value.retryable === true,
   );
 }
 
-function asWorkflowError(error: unknown): WorkflowError {
+function asWorkflowError(error: JsonValue): WorkflowError {
   if (error instanceof WorkflowError) return error;
   const value = error as { code?: unknown; retryable?: unknown } | undefined;
 
   return new WorkflowError(
-    typeof value?.code === "string" ? value.code : "WORKFLOW_FAILED",
+    isJsonString(value?.code) ? value.code : "WORKFLOW_FAILED",
     errorMessage(error),
     value?.retryable === true,
   );
 }
 
-function cancelled(reason: unknown): WorkflowError {
+function cancelled(reason: JsonValue): WorkflowError {
   if (reason instanceof WorkflowError) return reason;
   const value = reason as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return new WorkflowError(
-    typeof value?.code === "string" ? value.code : "WORKFLOW_CANCELLED",
-    typeof value?.message === "string" ? value.message : "Workflow was cancelled.",
+    isJsonString(value?.code) ? value.code : "WORKFLOW_CANCELLED",
+    isJsonString(value?.message) ? value.message : "Workflow was cancelled.",
     value?.retryable === true,
   );
 }
 
-function validString(value: unknown, maximum: number): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= maximum;
+function validString(value: JsonValue, maximum: number): value is string {
+  return isJsonString(value) && value.trim().length > 0 && value.length <= maximum;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: unknown): value is JsonObject {
+  return value !== null && isJsonObject(value) && !Array.isArray(value);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 

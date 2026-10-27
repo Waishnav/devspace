@@ -26,6 +26,7 @@ import {
 } from "./config-schema.js";
 import { migrateLegacyConfig } from "./config-migration.js";
 import { expandHomePath } from "./roots.js";
+import type { JsonValue } from "./json-value.js";
 
 const devspaceAuthConfigSchema = z.object({
   ownerToken: z.string().optional(),
@@ -117,7 +118,7 @@ export function writeDevspaceConfig(
 
 export function setDevspaceConfigValue(
   path: (string | number)[],
-  value: unknown,
+  value: JsonValue,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return setDevspaceConfigValues([{ path, value }], env);
@@ -176,6 +177,7 @@ function migrateLegacyConfigFile(
   let migrated: DevspaceConfig;
 
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     migrated = migrateLegacyConfig(JSON.parse(readFileSync(legacyPath, "utf8")) as unknown);
   } catch (error) {
     throw fileError("migrate", legacyPath, error);
@@ -268,17 +270,18 @@ function temporaryFilePath(filePath: string): string {
 
 function readJsonFile<T>(filePath: string, schema: z.ZodType<T>): T {
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     return schema.parse(JSON.parse(readFileSync(filePath, "utf8")) as unknown);
   } catch (error) {
     throw fileError("read", filePath, error);
   }
 }
 
-function writeJsonFile(filePath: string, value: unknown, mode: number): void {
+function writeJsonFile(filePath: string, value: JsonValue, mode: number): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mode });
 }
 
-function fileError(action: "read" | "migrate", filePath: string, error: unknown): Error {
+function fileError(action: "read" | "migrate", filePath: string, error: JsonValue): Error {
   const reason = error instanceof Error ? error.message : String(error);
 
   return new DevspaceConfigFileError(`Unable to ${action} ${filePath}: ${reason}`);

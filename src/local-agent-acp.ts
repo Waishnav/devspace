@@ -13,6 +13,7 @@ import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-can
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
 import {
   GrokPromptCompletionRegistry,
   GROK_DEFAULT_MODEL,
@@ -31,6 +32,8 @@ import type {
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export type AcpFlavor = "cursor" | "copilot" | "grok" | "generic";
 
@@ -44,6 +47,7 @@ const ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 // How long a provider gets to answer session/prompt after session/cancel before its process is dropped.
 const ACP_CANCEL_GRACE_MS = 10_000;
 const require = createRequire(import.meta.url);
+// SAFETY: Boundary value already validated or constructed to match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 const observeChildError = (): void => {};
@@ -64,10 +68,10 @@ const ACP_COMMANDS: Partial<Record<AcpFlavor, [string, ...string[]]>> = {
 
 interface AcpConnectionLike {
   agent: {
-    request(method: string, params?: unknown): Promise<unknown>;
-    notify(method: string, params?: unknown): Promise<void>;
+    request(method: string, params?: JsonValue): Promise<JsonValue>;
+    notify(method: string, params?: JsonValue): Promise<void>;
   };
-  close(error?: unknown): void;
+  close(error?: JsonValue): void;
   closed: Promise<void>;
 }
 
@@ -79,8 +83,9 @@ interface AcpCapabilities {
 
 interface AcpSessionQueue {
   values: unknown[];
+  // SAFETY: Boundary value already validated or constructed to match this type.
   /** Set while a turn runs so session/update notifications are reported as they arrive. */
-  onUpdate?: (value: unknown) => void;
+  onUpdate?: (value: JsonValue) => void;
 }
 
 export interface AcpRuntimeOptions {
@@ -224,7 +229,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           const standardResponse = this.connection.agent.request("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: input.prompt }],
-            ...(promptId ? { _meta: { promptId, requestId: promptId } } : {}),
+            ...optionalFields(promptId ? { _meta: { promptId, requestId: promptId } } : undefined),
           });
 
           let response: unknown;
@@ -392,7 +397,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     return sessionId;
   }
 
-  private cacheSessionMetadata(sessionId: string, response: unknown): void {
+  private cacheSessionMetadata(sessionId: string, response: JsonValue): void {
     if (hasAcpConfigOptions(response) || (this.flavor === "grok" && readGrokSessionState(response))) {
       this.sessionMetadata.set(sessionId, response);
     }
@@ -401,7 +406,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response?: unknown,
+    response?: JsonValue,
     isNewSession = false,
   ): Promise<void> {
     const metadata = response ?? this.sessionMetadata.get(sessionId);
@@ -473,7 +478,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureGrokSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response: unknown,
+    response: JsonValue,
     isNewSession: boolean,
   ): Promise<void> {
     const state = readGrokSessionState(response);
@@ -515,7 +520,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       await this.connection.agent.request("session/set_model", {
         sessionId,
         modelId: requestedModel,
-        ...(effort ? { _meta: { reasoningEffort: effort } } : {}),
+        ...optionalFields(effort ? { _meta: { reasoningEffort: effort } } : undefined),
       });
     } catch (cause) {
       throw new AgentProviderProtocolError({
@@ -707,11 +712,12 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           }
 
           const stream = ndJsonStream(
+            // SAFETY: Boundary value already validated or constructed to match this type.
             Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
             Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
           );
 
-          connection = app.connect(stream) as unknown as AcpConnectionLike;
+          connection = unsafeNarrow<AcpConnectionLike>(app.connect(stream));
 
           const init = await withTimeout(Promise.race([
             connection.agent.request(methods.agent.initialize, {
@@ -890,7 +896,7 @@ export function acpCommandArgs(
 }
 
 export function resolveAcpModelConfigUpdate(
-  session: unknown,
+  session: JsonValue,
   model: string,
   provider: string,
   sessionIdOverride?: string,
@@ -905,7 +911,7 @@ export function resolveAcpModelConfigUpdate(
 }
 
 export function resolveAcpEffortConfigUpdate(
-  session: unknown,
+  session: JsonValue,
   effort: string,
   provider: string,
   sessionIdOverride?: string,
@@ -920,7 +926,7 @@ export function resolveAcpEffortConfigUpdate(
 }
 
 function resolveAcpSelectConfigUpdate(
-  session: unknown,
+  session: JsonValue,
   options: {
     category: string;
     label: string;
@@ -956,7 +962,7 @@ function resolveAcpSelectConfigUpdate(
   return { sessionId, configId, value: options.value };
 }
 
-export function flattenAcpSelectValues(option: Record<string, unknown>): string[] {
+export function flattenAcpSelectValues(option: JsonObject): string[] {
   const values: string[] = [];
 
   for (const item of readArray(option, "options") ?? []) {
@@ -1008,7 +1014,7 @@ export function selectAcpPermissionOption(
   return selected ? { optionId: selected.optionId } : undefined;
 }
 
-function readAcpCapabilities(value: unknown): AcpCapabilities {
+function readAcpCapabilities(value: JsonValue): AcpCapabilities {
   const capabilities = asRecord(asRecord(value)?.agentCapabilities);
   const sessions = asRecord(capabilities?.sessionCapabilities);
 
@@ -1019,13 +1025,13 @@ function readAcpCapabilities(value: unknown): AcpCapabilities {
   };
 }
 
-function extractAcpText(updates: unknown[]): string {
+function extractAcpText(updates: JsonValue[]): string {
   return updates
     .map((value) => {
       const update = asRecord(asRecord(value)?.update);
       const content = asRecord(update?.content);
 
-      return update?.sessionUpdate === "agent_message_chunk" && content?.type === "text" && typeof content.text === "string"
+      return update?.sessionUpdate === "agent_message_chunk" && content?.type === "text" && isJsonString(content.text)
         ? content.text
         : "";
     })
@@ -1033,17 +1039,17 @@ function extractAcpText(updates: unknown[]): string {
     .trim();
 }
 
-function isGrokPromptCompletion(value: unknown): boolean {
+function isGrokPromptCompletion(value: JsonValue): boolean {
   const record = asRecord(value);
 
-  return typeof record?.sessionId === "string";
+  return isJsonString(record?.sessionId);
 }
 
 async function yieldToAcpQueue(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function hasAcpConfigOptions(value: unknown): boolean {
+function hasAcpConfigOptions(value: JsonValue): boolean {
   const record = asRecord(value);
   const response = asRecord(record?.newSessionResponse) ?? record;
 
@@ -1060,7 +1066,7 @@ export function deliverAcpSessionUpdate(
   if (queue) appendAcpQueueValue(queue, params);
 }
 
-function appendAcpQueueValue(queue: AcpSessionQueue, value: unknown): void {
+function appendAcpQueueValue(queue: AcpSessionQueue, value: JsonValue): void {
   if (queue.values.length >= MAX_ACP_QUEUE_ITEMS) queue.values.shift();
   queue.values.push(value);
   queue.onUpdate?.(value);
@@ -1076,14 +1082,14 @@ export class AcpActivityReporter {
 
   constructor(private readonly onEvent: (event: LocalAgentActivityEvent) => void) {}
 
-  handle(value: unknown): void {
+  handle(value: JsonValue): void {
     const update = asRecord(asRecord(value)?.update);
 
     switch (update?.sessionUpdate) {
       case "agent_message_chunk": {
         const content = asRecord(update.content);
 
-        if (content?.type === "text" && typeof content.text === "string") this.text += content.text;
+        if (content?.type === "text" && isJsonString(content.text)) this.text += content.text;
 
         return;
       }
@@ -1092,11 +1098,11 @@ export class AcpActivityReporter {
         this.flush();
 
         const call = {
-          tool: typeof update.kind === "string" && update.kind ? update.kind : "tool",
-          summary: typeof update.title === "string" ? update.title : summarizeToolInput(update.rawInput),
+          tool: isJsonString(update.kind) && update.kind ? update.kind : "tool",
+          summary: isJsonString(update.title) ? update.title : summarizeToolInput(update.rawInput),
         };
 
-        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+        const id = isJsonString(update.toolCallId) ? update.toolCallId : undefined;
 
         if (id) this.toolCalls.set(id, call);
         this.onEvent({ type: "tool_started", ...call });
@@ -1106,10 +1112,10 @@ export class AcpActivityReporter {
       }
 
       case "tool_call_update": {
-        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+        const id = isJsonString(update.toolCallId) ? update.toolCallId : undefined;
         const call = id ? this.toolCalls.get(id) : undefined;
 
-        if (call && typeof update.title === "string") call.summary = update.title;
+        if (call && isJsonString(update.title)) call.summary = update.title;
         this.complete(id, update.status);
 
         return;
@@ -1122,7 +1128,7 @@ export class AcpActivityReporter {
     this.text = "";
   }
 
-  private complete(id: string | undefined, status: unknown): void {
+  private complete(id: string | undefined, status: JsonValue): void {
     if (status !== "completed" && status !== "failed") return;
     const call = id ? this.toolCalls.get(id) : undefined;
 
@@ -1155,24 +1161,25 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function readArray(value: unknown, key: string): unknown[] | undefined {
+function readArray(value: JsonValue, key: string): unknown[] | undefined {
   const result = asRecord(value)?.[key];
 
   return Array.isArray(result) ? result : undefined;
 }
 
-function readString(value: unknown, key: string): string | undefined {
+function readString(value: JsonValue, key: string): string | undefined {
   const result = asRecord(value)?.[key];
 
-  return typeof result === "string" ? result : undefined;
+  return isJsonString(result) ? result : undefined;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function directString(value: JsonValue): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { CodemodeResult } from "@earendil-works/pi-codemode";
 import { ProcessOwner, type ProcessSessionManager } from "./process-sessions.js";
 import type { CodeModeRegistry } from "./code-mode-registry.js";
+import { optionalFields } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 export const MAX_CODE_MODE_YIELD_MS = 12_000;
 const DEFAULT_YIELD_MS = 10_000;
@@ -125,8 +127,10 @@ export class CodeModeExecutions {
     }
 
     await Promise.allSettled(executions
+      .values()
       .filter((execution) => execution.status === "running")
-      .map((execution) => this.stop(execution, "DevSpace shutting down.")));
+      .map((execution) => this.stop(execution, "DevSpace shutting down."))
+      .toArray());
     this.executions.clear();
   }
 
@@ -154,12 +158,12 @@ export class CodeModeExecutions {
       execution_id: execution.id,
       running: execution.status === "running",
       status: execution.status,
-      ...(result?.ok ? { result: result.value } : {}),
-      ...(result ? {
+      ...optionalFields(result?.ok ? { result: result.value } : undefined),
+      ...optionalFields(result ? {
         output: result.output.filter((item) => item.type === "text").map((item) => item.text),
         calls: result.calls,
-      } : {}),
-      ...(execution.error ? { error: execution.error } : {}),
+      } : undefined),
+      ...optionalFields(execution.error ? { error: execution.error } : undefined),
     };
   }
 
@@ -186,7 +190,7 @@ export class CodeModeExecutions {
       const tools = this.registry.tools(execution.workspaceId)
         .map((tool) => ({
           ...tool,
-          execute: async (args: unknown, context: Parameters<typeof tool.execute>[1]) => {
+          execute: async (args: JsonValue, context: Parameters<typeof tool.execute>[1]) => {
             if (++calls > MAX_CALLS) throw new Error(`Code Mode limit exceeded: ${MAX_CALLS} tool calls.`);
 
             return limit(async () => {

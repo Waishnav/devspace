@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isJsonObject } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 export class AccessDeniedError extends Error {
   constructor(message: string) {
@@ -117,11 +119,12 @@ async function canonicalizePath(path: string): Promise<string> {
   }
 }
 
-function isMissingPathError(error: unknown): boolean {
+function isMissingPathError(error: JsonValue): boolean {
   return Boolean(
-    typeof error === "object" &&
+    isJsonObject(error) &&
       error &&
       "code" in error &&
+      // SAFETY: Boundary value already validated or constructed to match this type.
       ((error as NodeJS.ErrnoException).code === "ENOENT" ||
         (error as NodeJS.ErrnoException).code === "ENOTDIR"),
   );

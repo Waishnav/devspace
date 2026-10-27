@@ -3,6 +3,7 @@ import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
 import type { SubagentProviderConfig } from "./local-agent-config.js";
 import { validateAgentId } from "./local-agent-id.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
+import { optionalFields } from "./json-value.js";
 
 export interface ParsedLocalAgentContinueArgs {
   agentId: string;
@@ -132,7 +133,7 @@ function parseAgentPromptArgs(
     effort: values["--effort"],
     writeMode: parseWriteMode(values["--write-mode"]),
     requestId: values["--request-id"] === undefined ? undefined : validateAgentId(values["--request-id"], "Request id"),
-    ...(worktree ? { worktree: { branch: values["--branch"] } } : {}),
+    ...optionalFields(worktree ? { worktree: { branch: values["--branch"] } } : undefined),
     wait,
     timeoutMs: values["--timeout"] === undefined ? undefined : parseAgentWaitTimeout(values["--timeout"]),
   };

@@ -1,3 +1,4 @@
+import type { JsonValue } from "./json-value.js";
 import {
   createBashTool,
   createEditTool,
@@ -37,7 +38,7 @@ function toMcpContent(result: AgentToolResult<unknown>): McpContent[] {
   });
 }
 
-function formatToolError(error: unknown): McpContent[] {
+function formatToolError(error: JsonValue): McpContent[] {
   const message = error instanceof Error ? error.message : String(error);
 
   return [{ type: "text", text: message }];
@@ -46,7 +47,7 @@ function formatToolError(error: unknown): McpContent[] {
 async function runTool<TInput, TDetails = unknown>(
   execute: (input: TInput) => Promise<AgentToolResult<TDetails>>,
   input: TInput,
-  context: ToolContext,
+  _context: ToolContext,
 ): Promise<ToolResponse<TDetails>> {
   try {
     const result = await execute(input);

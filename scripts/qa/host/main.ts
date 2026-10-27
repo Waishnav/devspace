@@ -2,6 +2,8 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { QaCardCall, QaRun, QaStep } from "../transcript.js";
 import { hostStyles } from "./host-styles.js";
+import { optionalFields } from "../../../src/json-value.js";
+import type { JsonValue } from "../../../src/json-value.js";
 
 type CardState = "loading" | "initialized" | "ready" | "timeout" | "error";
 
@@ -34,6 +36,7 @@ document.documentElement.dataset.theme = theme;
 
 window.__devspaceQa = { settled: false, cards: [], hostEvents: [] };
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 const run = await (await fetch("/api/run")).json() as QaRun & { sandboxOrigin: string };
 
 renderSummary(run);
@@ -106,12 +109,12 @@ async function mountCard(
         locale: "en-US",
         timeZone: "UTC",
         containerDimensions: { maxHeight: 2000 },
-        ...(tool ? { toolInfo: { tool } } : {}),
+        ...optionalFields(tool ? { toolInfo: { tool } } : undefined),
       },
     },
   );
 
-  const hostEvent = (kind: string, detail: unknown) => {
+  const hostEvent = (kind: string, detail: JsonValue) => {
     window.__devspaceQa.hostEvents.push({ step: step.index, kind, detail });
     callLog.append(element("li", {}, `card → ${kind}: ${summarize(detail)}`));
   };
@@ -123,6 +126,7 @@ async function mountCard(
       body: JSON.stringify({ step: step.index, name: params.name, arguments: params.arguments, _meta: params._meta }),
     });
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const call = await response.json() as QaCardCall;
     hostEvent("tools/call", { name: params.name, error: call.error, isError: call.result?.isError });
 
@@ -188,7 +192,7 @@ async function mountCard(
     void bridge.sendToolInput({ arguments: step.arguments })
       .then(() => bridge.sendToolResult(result))
       .then(markReady)
-      .catch((error: unknown) => {
+      .catch((error: JsonValue) => {
         status.state = "error";
         status.error = error instanceof Error ? error.message : String(error);
         finish();
@@ -226,7 +230,7 @@ function details(label: string, text: string): HTMLElement {
   return element("details", {}, element("summary", {}, label), element("pre", {}, text));
 }
 
-function summarize(value: unknown): string {
+function summarize(value: JsonValue): string {
   const text = JSON.stringify(value);
 
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;

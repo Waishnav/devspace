@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { openDatabase } from "./db/client.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { isJsonObject } from "./json-value.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
@@ -92,7 +93,7 @@ async function pathExists(path: string): Promise<boolean> {
 
     return true;
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    if (isJsonObject(error) && error && "code" in error && error.code === "ENOENT") {
       return false;
     }
 

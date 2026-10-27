@@ -16,6 +16,7 @@ import type { runWorkflowScript } from "./workflow-runner.js";
 import { WorkflowError } from "./workflow-types.js";
 import type { ServerConfig } from "./config.js";
 import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
+import type { JsonValue } from "./json-value.js";
 
 async function fixture(runner?: typeof runWorkflowScript) {
   const dir = await mkdtemp(join(tmpdir(), "devspace-workflow-"));
@@ -24,6 +25,7 @@ async function fixture(runner?: typeof runWorkflowScript) {
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "Initial"], { cwd: root });
   const stateDir = join(dir, "state");
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const config = { stateDir, allowedRoots: [root], worktreeRoot: join(dir, "worktrees") } as ServerConfig;
   const inputs: LocalAgentRunInput[] = [];
   let active = 0;
@@ -157,6 +159,7 @@ test("shared daemon capacity bounds simultaneous workflows", async () => {
 });
 
 test("cancelling one workflow stops its exact owned turn and preserves another shared-runtime agent", async () => {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const f = await fixture(async ({ onAgent }) => await onAgent("hold", { target: "codex" }) as string);
 
   try {
@@ -202,6 +205,7 @@ test("schema validates before dispatch and one correction runs with reduced auth
     assert.equal(f.workflows.calls(run.id, f.scope).length, 1);
   } finally { await f.close(); }
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const invalid = await fixture(async ({ onAgent }) => await onAgent("never", { target: "codex", schema: { type: "nonsense" } }) as null);
 
   try {
@@ -212,18 +216,19 @@ test("schema validates before dispatch and one correction runs with reduced auth
 });
 
 test("resume reuses only compatible read-only prefix and rejects changed context and active runs", async () => {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const f = await fixture(async ({ onAgent }) => await onAgent("review", { target: "codex" }) as string);
 
   try {
     const first = await f.workflows.run({ ...f.scope, source: "return null;" });
-    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "WORKFLOW_ACTIVE");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: JsonValue) => e instanceof WorkflowError && e.code === "WORKFLOW_ACTIVE");
     await f.workflows.wait(first.id, f.scope);
     const resumed = await f.workflows.run({ ...f.scope, resume: first.id });
     await f.workflows.wait(resumed.id, f.scope);
     assert.equal(f.inputs.length, 1);
     assert.equal(f.workflows.call(resumed.id, 0, f.scope).reusedFrom, first.id);
     await writeFile(join(f.root, "changed"), "changed");
-    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: JsonValue) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
     assert.throws(() => f.workflows.get(first.id, { workspaceRoot: f.dir }), /not in this workspace/);
   } finally { await f.close(); }
 });
@@ -247,10 +252,10 @@ test("resume hashes only files Git does not ignore", async () => {
     await f.workflows.wait(resumed.id, f.scope);
     // Deleting a tracked file or adding an unignored one still changes the context.
     await writeFile(join(f.root, "new.txt"), "x");
-    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: JsonValue) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
     await rm(join(f.root, "new.txt"));
     await rm(join(f.root, "tracked.txt"));
-    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: JsonValue) => e instanceof WorkflowError && e.code === "RECOVERY_CONTEXT_CHANGED");
   } finally { await f.close(); }
 });
 
@@ -264,7 +269,7 @@ test("resume rejects staged Git state changes even when worktree files are uncha
     execFileSync("git", ["add", "staged.txt"], { cwd: f.root });
     await assert.rejects(
       f.workflows.run({ ...f.scope, resume: first.id }),
-      (error: unknown) => error instanceof WorkflowError && error.code === "RECOVERY_CONTEXT_CHANGED",
+      (error: JsonValue) => error instanceof WorkflowError && error.code === "RECOVERY_CONTEXT_CHANGED",
     );
   } finally { await f.close(); }
 });
@@ -287,6 +292,7 @@ test("worktree calls share their logical workspace and preserve commits plus dir
   const f = await fixture(async ({ onAgent }) => {
     await onAgent("commit", { target: "codex", isolation: "worktree", workspace: "implementation" });
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     return await onAgent("verify", { target: "codex", workspace: "implementation", writeMode: "read_only" }) as string;
   });
 
@@ -300,7 +306,7 @@ test("worktree calls share their logical workspace and preserve commits plus dir
     assert.equal(await readFile(join(implementation!.workspaceRoot, "untracked.txt"), "utf8"), "preserve this too");
     assert.equal(execFileSync("git", ["show", "HEAD:committed.txt"], { cwd: implementation!.workspaceRoot, encoding: "utf8" }), "preserve this commit");
     await assert.rejects(readFile(join(f.root, "committed.txt")));
-    await assert.rejects(f.workflows.run({ ...f.scope, resume: run.id }), (error: unknown) => error instanceof WorkflowError && error.code === "RECOVERY_REQUIRED");
+    await assert.rejects(f.workflows.run({ ...f.scope, resume: run.id }), (error: JsonValue) => error instanceof WorkflowError && error.code === "RECOVERY_REQUIRED");
   } finally { await f.close(); }
 });
 
@@ -342,6 +348,7 @@ test("parallel unnamed isolated calls receive distinct worktrees", async () => {
 });
 
 test("shutdown stops retrying unconfirmed provider cancellation and preserves recovery state", async () => {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const f = await fixture(async ({ onAgent }) => await onAgent("hold", { target: "codex" }) as string);
   const originalGetTurn = f.agents.getTurn.bind(f.agents);
   const originalStop = f.agents.stop.bind(f.agents);

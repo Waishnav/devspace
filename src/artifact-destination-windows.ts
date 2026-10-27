@@ -7,6 +7,8 @@ import {
   type ArtifactDestinationDirectory,
 } from "./artifact-destination.js";
 import { ArtifactError } from "./artifact-error.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonValue } from "./json-value.js";
 
 export async function prepareWindowsArtifactDestinationDirectory(
   workspaceRoot: string,
@@ -68,12 +70,12 @@ interface WindowsApi {
     templateFile: null,
   ): unknown;
   GetFileInformationByHandleEx(
-    handle: unknown,
+    handle: JsonValue,
     infoClass: number,
     info: WindowsAttributeInfo,
     size: number,
   ): number;
-  CloseHandle(handle: unknown): number;
+  CloseHandle(handle: JsonValue): number;
   HANDLE: ReturnType<typeof koffi.pointer>;
   FILE_ATTRIBUTE_TAG_INFO: ReturnType<typeof koffi.struct>;
 }
@@ -101,15 +103,15 @@ function createWindowsApi(): WindowsApi {
   });
 
   return {
-    CreateFileW: kernel32.func(
+    CreateFileW: unsafeNarrow<WindowsApi["CreateFileW"]>(kernel32.func(
       "DevSpaceArtifactWindowsHandle __stdcall CreateFileW(const char16_t *path, uint32_t access, uint32_t share, void *security, uint32_t disposition, uint32_t flags, void *templateFile)",
-    ) as unknown as WindowsApi["CreateFileW"],
-    GetFileInformationByHandleEx: kernel32.func(
+    )),
+    GetFileInformationByHandleEx: unsafeNarrow<WindowsApi["GetFileInformationByHandleEx"]>(kernel32.func(
       "int __stdcall GetFileInformationByHandleEx(DevSpaceArtifactWindowsHandle handle, int infoClass, _Out_ DevSpaceArtifactFileAttributeTagInfo *info, uint32_t size)",
-    ) as unknown as WindowsApi["GetFileInformationByHandleEx"],
-    CloseHandle: kernel32.func(
+    )),
+    CloseHandle: unsafeNarrow<WindowsApi["CloseHandle"]>(kernel32.func(
       "int __stdcall CloseHandle(DevSpaceArtifactWindowsHandle handle)",
-    ) as unknown as WindowsApi["CloseHandle"],
+    )),
     HANDLE,
     FILE_ATTRIBUTE_TAG_INFO,
   };
@@ -174,7 +176,7 @@ function pinWindowsDirectory(path: string, code: string): unknown {
   return handle;
 }
 
-function closeWindowsHandles(handles: unknown[]): void {
+function closeWindowsHandles(handles: JsonValue[]): void {
   if (handles.length === 0) return;
   const api = windowsApi();
 

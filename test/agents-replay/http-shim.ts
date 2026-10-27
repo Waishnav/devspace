@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { parseFrame } from "./transcript.js";
+import { isJsonString, isJsonObject } from "../../src/json-value.js";
+import type { JsonValue } from "../../src/json-value.js";
 
 /**
  * HTTP transport for providers that run `<command> serve --hostname=H --port=P`
@@ -24,7 +26,7 @@ export interface HttpRequestFrame {
   body?: unknown;
 }
 
-type Append = (dir: "in" | "out", frame: unknown) => void;
+type Append = (dir: "in" | "out", frame: JsonValue) => void;
 
 export function serveArgs(args: string[]): { hostname: string; port: number } | undefined {
   if (args[0] !== "serve") return undefined;
@@ -125,7 +127,7 @@ export async function recordHttp(options: {
 export function replayHttp(options: {
   args: string[];
   receive(frame: HttpRequestFrame): void;
-}): { respond(frame: unknown): void } {
+}): { respond(frame: JsonValue): void } {
   const { hostname, port } = serveArgs(options.args)!;
   const open = new Map<number, ServerResponse>();
   let nextId = 0;
@@ -152,7 +154,7 @@ export function replayHttp(options: {
         res.writeHead(record.status, record.type ? { "content-type": record.type } : {});
 
         if (!record.stream) {
-          res.end(record.body === undefined ? undefined : typeof record.body === "string" ? record.body : JSON.stringify(record.body));
+          res.end(record.body === undefined ? undefined : isJsonString(record.body) ? record.body : JSON.stringify(record.body));
         }
       } else if (record.event !== undefined) {
         res.write(`data: ${JSON.stringify(record.event)}\n\n`);
@@ -171,9 +173,10 @@ function bodyField(text: string): { body?: unknown } {
   if (!text) return {};
   const parsed = parseFrame(text);
 
-  return { body: parsed !== null && typeof parsed === "object" && "raw" in parsed ? text : parsed };
+  return { body: parsed !== null && isJsonObject(parsed) && "raw" in parsed ? text : parsed };
 }
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 /** The data of one SSE event, parsed as JSON when it is. */
 function sseData(block: string): unknown {
   const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
@@ -196,7 +199,7 @@ function freePort(hostname: string): Promise<number> {
     server.once("error", reject);
     server.listen(0, hostname, () => {
       const address = server.address();
-      server.close(() => typeof address === "object" && address ? resolve(address.port) : reject(new Error("no port")));
+      server.close(() => isJsonObject(address) && address ? resolve(address.port) : reject(new Error("no port")));
     });
   });
 }

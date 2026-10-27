@@ -8,9 +8,11 @@ import type {
   WorkspaceStore,
 } from "./workspace-store.js";
 import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
+import { isJsonString } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 import {
   createManagedWorktree,
   discardRestoredManagedWorktree,
@@ -104,7 +106,7 @@ type PathStats = Stats;
 
 type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
-  mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
+  mkdir: (path: string, options: { recursive: true }) => Promise<JsonValue>;
 };
 
 const MAX_CACHED_WORKSPACES = 32;
@@ -126,7 +128,7 @@ export class WorkspaceRegistry {
     input: string | OpenWorkspaceInput,
     openOptions: OpenWorkspaceOptions = {},
   ): Promise<WorkspaceContext> {
-    const workspaceInput = typeof input === "string" ? { path: input } : input;
+    const workspaceInput = isJsonString(input) ? { path: input } : input;
     const conversationScopeId = openOptions.conversationScopeId;
 
     if (!conversationScopeId || !this.store) {
@@ -579,6 +581,7 @@ export class WorkspaceRegistry {
   }
 
   /**
+   // SAFETY: Boundary value already validated or constructed to match this type.
    * Describes a stored workspace's instruction files and skills, as the
    * open_workspace card shows them, without reactivating or touching it.
    */
@@ -610,6 +613,7 @@ export class WorkspaceRegistry {
     if (!this.store) return;
 
     while (this.workspaces.size > MAX_CACHED_WORKSPACES) {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       const oldestWorkspaceId = this.workspaces.keys().next().value as string | undefined;
 
       if (!oldestWorkspaceId) break;

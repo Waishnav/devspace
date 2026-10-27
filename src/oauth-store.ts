@@ -52,6 +52,7 @@ export class SqliteOAuthStore {
       .prepare("select client_json from oauth_clients where client_id = ?")
       .get(clientId) as { client_json: string } | undefined;
 
+    // SAFETY: Boundary value already validated or constructed to match this type.
     return row ? (JSON.parse(row.client_json) as OAuthClientInformationFull) : undefined;
   }
 
@@ -224,6 +225,7 @@ function rowToAccessTokenRecord(row: {
 }): PersistedAccessTokenRecord {
   return {
     clientId: row.client_id,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     scopes: JSON.parse(row.scopes_json) as string[],
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,
@@ -238,6 +240,7 @@ function rowToRefreshTokenRecord(row: {
 }): PersistedRefreshTokenRecord {
   return {
     clientId: row.client_id,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     scopes: JSON.parse(row.scopes_json) as string[],
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,

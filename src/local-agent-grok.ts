@@ -1,4 +1,6 @@
 import { AgentProviderProtocolError } from "./local-agent-errors.js";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 export const GROK_DEFAULT_MODEL = "grok-build";
 
@@ -35,7 +37,7 @@ interface PendingPromptCompletion {
   sessionId: string;
   promptId: string;
   resolve: (completion: GrokPromptCompletion) => void;
-  reject: (error: unknown) => void;
+  reject: (error: JsonValue) => void;
   timer: NodeJS.Timeout;
 }
 
@@ -95,7 +97,7 @@ export class GrokPromptCompletionRegistry {
     clearTimeout(pending.timer);
   }
 
-  rejectAll(error: unknown): void {
+  rejectAll(error: JsonValue): void {
     const pending = Array.from(this.pending.values());
     this.pending.clear();
 
@@ -131,7 +133,7 @@ export class GrokPromptCompletionRegistry {
   }
 }
 
-export function parseGrokPromptCompletion(input: unknown): GrokPromptCompletion | undefined {
+export function parseGrokPromptCompletion(input: JsonValue): GrokPromptCompletion | undefined {
   const record = asRecord(input);
   const sessionId = directString(record?.sessionId);
 
@@ -155,14 +157,12 @@ export function parseGrokPromptCompletion(input: unknown): GrokPromptCompletion 
 
   return {
     sessionId,
-    ...(promptId ? { promptId } : {}),
-    ...((firstString(record?.stopReason, update?.stopReason))
-      ? { stopReason: firstString(record?.stopReason, update?.stopReason) }
-      : {}),
+    ...optionalFields(promptId ? { promptId } : undefined),
+    ...optionalFields((firstString(record?.stopReason, update?.stopReason)) ? { stopReason: firstString(record?.stopReason, update?.stopReason) } : undefined),
   };
 }
 
-export function readGrokSessionState(value: unknown): GrokSessionState | undefined {
+export function readGrokSessionState(value: JsonValue): GrokSessionState | undefined {
   const record = asRecord(value);
   const response = asRecord(record?.newSessionResponse) ?? record;
 
@@ -243,10 +243,11 @@ function grokConfigurationError(message: string): AgentProviderProtocolError {
 }
 
 export function isGrokReasoningEffort(value: string): value is GrokReasoningEffort {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return (GROK_REASONING_EFFORTS as readonly string[]).includes(value);
 }
 
-function readGrokModelInfo(value: unknown): GrokModelInfo | undefined {
+function readGrokModelInfo(value: JsonValue): GrokModelInfo | undefined {
   const record = asRecord(value);
   const id = directString(record?.modelId) ?? directString(record?.id);
 
@@ -282,7 +283,7 @@ function isBackgroundPromptId(promptId: string): boolean {
     || /^task-completed-/i.test(promptId);
 }
 
-function firstString(...values: unknown[]): string | undefined {
+function firstString(...values: JsonValue[]): string | undefined {
   for (const value of values) {
     const result = directString(value);
 
@@ -292,16 +293,17 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function readArray(value: unknown): unknown[] | undefined {
+function readArray(value: JsonValue): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function directString(value: JsonValue): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }

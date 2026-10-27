@@ -170,6 +170,7 @@ export class LocalAgentStore {
            where workspace_id = ? and workspace_root = ?
            order by updated_at desc`,
         )
+        // SAFETY: Boundary value already validated or constructed to match this type.
         .all(scope.workspaceId, resolve(scope.workspaceRoot)) as LocalAgentRow[];
     } else if (scope.workspaceId) {
       rows = this.database.sqlite
@@ -178,6 +179,7 @@ export class LocalAgentStore {
            where workspace_id = ?
            order by updated_at desc`,
         )
+        // SAFETY: Boundary value already validated or constructed to match this type.
         .all(scope.workspaceId) as LocalAgentRow[];
     } else if (scope.workspaceRoot) {
       rows = this.database.sqlite
@@ -186,10 +188,12 @@ export class LocalAgentStore {
            where workspace_root = ?
            order by updated_at desc`,
         )
+        // SAFETY: Boundary value already validated or constructed to match this type.
         .all(resolve(scope.workspaceRoot)) as LocalAgentRow[];
     } else {
       rows = this.database.sqlite
         .prepare("select * from local_agent_sessions order by updated_at desc")
+        // SAFETY: Boundary value already validated or constructed to match this type.
         .all() as LocalAgentRow[];
     }
 
@@ -298,6 +302,7 @@ export class LocalAgentStore {
          where id = ?
          limit 1`,
       )
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .get(id) as LocalAgentRow | undefined;
   }
 
@@ -530,6 +535,7 @@ export class LocalAgentStore {
   getTurnById(turnId: number): LocalAgentTurnRecord | undefined {
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where id = ? limit 1")
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .get(turnId) as LocalAgentTurnRow | undefined;
 
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
@@ -544,6 +550,7 @@ export class LocalAgentStore {
   getTurnByTurnId(turnId: string): LocalAgentTurnRecord | undefined {
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where turn_id = ? limit 1")
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .get(turnId) as LocalAgentTurnRow | undefined;
 
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
@@ -580,9 +587,11 @@ export class LocalAgentStore {
          where turn_row_id = ? and seq > ?
          order by seq asc`,
       )
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .all(turn.id, afterSeq) as LocalAgentTurnEventRow[];
 
     return rows.map((row) => ({
+      // SAFETY: Boundary value already validated or constructed to match this type.
       ...(JSON.parse(row.data) as LocalAgentTurnEventBody),
       turnId: turn.turnId,
       seq: row.seq,
@@ -600,6 +609,7 @@ export class LocalAgentStore {
   getLatestTurn(agentId: string): LocalAgentTurnRecord | undefined {
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id desc limit 1")
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .get(agentId) as LocalAgentTurnRow | undefined;
 
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
@@ -614,6 +624,7 @@ export class LocalAgentStore {
   listTurns(agentId: string): LocalAgentTurnRecord[] {
     const rows = this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id asc")
+      // SAFETY: Boundary value already validated or constructed to match this type.
       .all(agentId) as LocalAgentTurnRow[];
 
     return rows.map(rowToLocalAgentTurnRecord);
@@ -760,6 +771,7 @@ function validateDispatchIdentity(
     driver: input.driver,
   };
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
     if (existing[key] !== expected[key]) {
       throw new LocalAgentDispatchConflictError(

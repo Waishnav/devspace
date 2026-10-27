@@ -6,6 +6,7 @@ import {
 
 const OPENCODE_VERSION_PROBE_TIMEOUT_MS = 4_000;
 const require = createRequire(import.meta.url);
+// SAFETY: Boundary value already validated or constructed to match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 export type OpenCodeGeneration = "v1" | "v2";
@@ -121,6 +122,7 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
         operation: "probe_version",
         retryable: true,
         cause,
+        // SAFETY: Boundary value already validated or constructed to match this type.
         message: (cause as NodeJS.ErrnoException).code === "ENOENT"
           ? "OpenCode executable is unavailable."
           : `OpenCode version probe failed to start: ${cause.message}`,

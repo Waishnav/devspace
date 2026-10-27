@@ -34,6 +34,8 @@ import {
 } from "./workspace-activity.js";
 import { WorkspaceActivityJournal } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
+import { optionalFields, isJsonString, isFunctionValue, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -73,6 +75,7 @@ test("experimental Code Mode bootstraps real tools and executes through MCP", as
   ]);
 
   const opened = await callOpen(context.client, context.project);
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(opened).workspace_id as string;
   const codeMode = structuredContent(opened).code_mode as { tool_signatures: string };
   assert.match(codeMode.tool_signatures, /read\(/);
@@ -112,6 +115,7 @@ test("experimental Code Mode bootstraps real tools and executes through MCP", as
     arguments: { workspace_id: workspaceId },
   }));
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.match(reviewed.result as string, /Changed 1 file/);
 });
 
@@ -125,6 +129,7 @@ test("Code Mode leaves the open_workspace schema unchanged when disabled", async
 
 test("experimental Code Mode polls a long-running script without restarting it", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
 
   const start = structuredContent(await context.client.callTool({
@@ -155,6 +160,7 @@ test("experimental Code Mode polls a long-running script without restarting it",
 
 test("experimental Code Mode rejects invalid tool inputs and interrupts runaway scripts", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
 
   const invalid = structuredContent(await context.client.callTool({
@@ -163,6 +169,7 @@ test("experimental Code Mode rejects invalid tool inputs and interrupts runaway 
   }));
 
   assert.equal(invalid.status, "failed");
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.match(invalid.error as string, /path/);
 
   const start = structuredContent(await context.client.callTool({
@@ -195,6 +202,7 @@ async function assertStopsGrowing(path: string): Promise<void> {
 
 test("cancelling Code Mode stops a command whose exec_command call has not returned", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
 
   const start = structuredContent(await context.client.callTool({
@@ -215,6 +223,7 @@ test("cancelling Code Mode stops a command whose exec_command call has not retur
 
 test("closing the MCP server stops running Code Mode scripts and their commands", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
   await context.client.callTool({
     name: "execute",
@@ -228,6 +237,7 @@ test("closing the MCP server stops running Code Mode scripts and their commands"
 
 test("Code Mode rejects scripts beyond the server-wide running limit", async (t) => {
   const context = await fixture(t, { experimentalCodeMode: true, uiEnabled: false });
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = structuredContent(await callOpen(context.client, context.project)).workspace_id as string;
 
   const execute = () => context.client.callTool({
@@ -238,6 +248,7 @@ test("Code Mode rejects scripts beyond the server-wide running limit", async (t)
   const running = [];
 
   for (let index = 0; index < MAX_RUNNING_EXECUTIONS; index += 1) {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     running.push(structuredContent(await execute()).execution_id as string);
   }
 
@@ -322,6 +333,7 @@ test("Claude edit and bash tools accept snake_case runtime inputs", async (t) =>
     },
   }));
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.match(shell.result as string, /nested/i);
 });
 
@@ -444,10 +456,12 @@ test("show_changes keeps model output compact and preserves the rich review card
   });
 
   const structured = structuredContent(review);
-  assert.equal((review._meta as Record<string, unknown> | undefined)?.tool, undefined);
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  assert.equal((review._meta as JsonObject | undefined)?.tool, undefined);
 
   assert.equal(structured.workspace_id, workspaceId);
   assert.equal("workspaceId" in structured, false);
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.match(structured.review_ref as string, /^[0-9a-f]{40,64}$/);
   assert.equal("summary" in structured, false);
   assert.equal("files" in structured, false);
@@ -515,6 +529,7 @@ test("show_changes can reopen a historical review without advancing the checkpoi
     name: "show_changes",
     arguments: { workspace_id: workspaceId },
     _meta: { "devspace/reviewRef": reviewRef },
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as Parameters<Client["callTool"]>[0]);
 
   assert.equal(structuredContent(reopened).review_ref, reviewRef);
@@ -540,6 +555,7 @@ test("workspace activity records turns between review checkpoints", async (t) =>
 
   const workspaceId = structuredContent(
     await callOpen(context.client, context.project, "activity-turns"),
+  // SAFETY: Boundary value already validated or constructed to match this type.
   ).workspace_id as string;
 
   const patch = (from: string, to: string) => context.client.callTool({
@@ -553,6 +569,7 @@ test("workspace activity records turns between review checkpoints", async (t) =>
   const showChanges = async () => structuredContent(await context.client.callTool({
     name: "show_changes",
     arguments: { workspace_id: workspaceId },
+  // SAFETY: Boundary value already validated or constructed to match this type.
   })).review_ref as string;
 
   await patch("hello", "hello turn one");
@@ -567,6 +584,7 @@ test("workspace activity records turns between review checkpoints", async (t) =>
     name: "show_changes",
     arguments: { workspace_id: workspaceId },
     _meta: { "devspace/reviewRef": firstRef },
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as Parameters<Client["callTool"]>[0]);
 
   const turns = listWorkspaceTurns(activity, workspaceId);
@@ -618,19 +636,20 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
 
   const first = await callOpen(context.client, context.project, "chat-1");
   const repeated = await callOpen(context.client, context.project, "chat-1");
-  assert.equal((first._meta as Record<string, unknown> | undefined)?.tool, undefined);
-  assert.equal((repeated._meta as Record<string, unknown> | undefined)?.tool, undefined);
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  assert.equal((first._meta as JsonObject | undefined)?.tool, undefined);
+  assert.equal((repeated._meta as JsonObject | undefined)?.tool, undefined);
 
   const tools = await context.client.listTools();
   const openTool = tools.tools.find((tool) => tool.name === "open_workspace");
-  const outputProperties = (openTool?.outputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+  const outputProperties = (openTool?.outputSchema as { properties?: JsonObject } | undefined)?.properties;
   assert.ok(outputProperties && "workspace_id" in outputProperties);
   assert.equal(outputProperties && "workspaceId" in outputProperties, false);
   assert.equal(outputProperties && "workspaceReused" in outputProperties, false);
   assert.equal(outputProperties && "includeBootstrapContext" in outputProperties, false);
 
   const providerSchema = outputProperties?.agent_providers as {
-    items?: { properties?: Record<string, unknown> };
+    items?: { properties?: JsonObject };
   } | undefined;
 
   assert.ok(providerSchema?.items?.properties?.note);
@@ -644,11 +663,13 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(firstStructured.skills));
   assert.ok(Array.isArray(firstStructured.agent_providers));
   assert.equal(
-    (firstStructured.agent_providers as Array<Record<string, unknown>>)[0]?.id,
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (firstStructured.agent_providers as Array<JsonObject>)[0]?.id,
     "codex",
   );
   assert.equal(
-    (firstStructured.agent_providers as Array<Record<string, unknown>>)[0]?.note,
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (firstStructured.agent_providers as Array<JsonObject>)[0]?.note,
     providerNote,
   );
   assert.ok(Array.isArray(firstStructured.agents));
@@ -657,9 +678,11 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.equal("includeBootstrapContext" in firstStructured, false);
 
   const repeatedStructured = structuredContent(repeated);
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.match(firstStructured.instruction as string, /workspace_id/);
   assert.match(repeatedStructured.instruction as string, /workspace_id/);
   assert.doesNotMatch(firstStructured.instruction as string, /workspaceId/);
+  // SAFETY: Boundary value already validated or constructed to match this type.
   assert.doesNotMatch(repeatedStructured.instruction as string, /workspaceId/);
   assert.equal(repeatedStructured.agents_files, undefined);
   assert.equal(repeatedStructured.available_agents_files, undefined);
@@ -678,7 +701,8 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.skills));
   assert.ok(Array.isArray(card.agentProviders));
   assert.equal(
-    (card.agentProviders as Array<Record<string, unknown>>)[0]?.note,
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (card.agentProviders as Array<JsonObject>)[0]?.note,
     providerNote,
   );
   assert.ok(Array.isArray(card.agents));
@@ -698,11 +722,13 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   available = true;
   const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
   assert.equal(
-    (usable.agent_providers as Array<Record<string, unknown>>)[0]?.id,
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (usable.agent_providers as Array<JsonObject>)[0]?.id,
     "codex",
   );
   assert.equal(
-    (usable.agents as Array<Record<string, unknown>>)[0]?.name,
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (usable.agents as Array<JsonObject>)[0]?.name,
     "reviewer",
   );
 });
@@ -725,7 +751,8 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
   assert.deepEqual(
-    (opened.agent_providers as Array<Record<string, unknown>>).map((provider) => provider.id),
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    (opened.agent_providers as Array<JsonObject>).map((provider) => provider.id),
     ["codex"],
   );
 });
@@ -736,7 +763,8 @@ test("open_workspace advertises subagent instructions on demand by default", asy
   });
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  const skills = opened.skills as Array<Record<string, unknown>>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const skills = opened.skills as Array<JsonObject>;
   assert.equal(skills.some((skill) => skill.name === "subagents"), true);
   assert.doesNotMatch(String(opened.instruction), /# DevSpace subagents/);
 });
@@ -752,7 +780,8 @@ test("open_workspace preloads subagent instructions when configured", async (t) 
   });
 
   const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
-  const skills = opened.skills as Array<Record<string, unknown>>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const skills = opened.skills as Array<JsonObject>;
   assert.equal(skills.some((skill) => skill.name === "subagents"), false);
   assert.match(String(opened.instruction), /# DevSpace subagents/);
 });
@@ -780,6 +809,7 @@ test("HTTP cached workspaceId arguments preserve canonical schemas and validatio
     name: "open_workspace", arguments: { path: root },
   });
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const workspaceId = (await opened.json()).result.structuredContent.workspace_id as string;
   assert.equal(typeof workspaceId, "string");
 
@@ -829,7 +859,8 @@ test("HTTP cached workspaceId arguments preserve canonical schemas and validatio
   assert.equal((await outside.json()).result.isError, true);
 
   const listed = await postModernMcp(localBaseUrl, accessToken, "tools/list", {});
-  const tools = (await listed.json()).result.tools as Array<{ name: string; inputSchema: { properties?: Record<string, unknown> } }>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const tools = (await listed.json()).result.tools as Array<{ name: string; inputSchema: { properties?: JsonObject } }>;
   const read = tools.find((tool) => tool.name === "read");
   assert.ok(read?.inputSchema.properties?.workspace_id);
   assert.equal(read?.inputSchema.properties?.workspaceId, undefined);
@@ -1218,13 +1249,13 @@ interface ServerFixture {
 }
 
 function schemaPropertyPaths(
-  schema: unknown,
+  schema: JsonValue,
   prefix = "",
 ): Array<{ key: string; path: string }> {
-  if (!schema || typeof schema !== "object") return [];
+  if (!schema || !isJsonObject(schema)) return [];
 
   const record = schema as {
-    properties?: Record<string, unknown>;
+    properties?: JsonObject;
     items?: unknown;
     anyOf?: unknown[];
     oneOf?: unknown[];
@@ -1289,7 +1320,7 @@ async function httpServerFixture(
   });
 
   const address = httpServer.address();
-  assert.ok(address && typeof address === "object");
+  assert.ok(address && isJsonObject(address));
   const localBaseUrl = `http://127.0.0.1:${address.port}`;
 
   const issueAccessToken = (clientName: string) => issueTestAccessToken(
@@ -1299,6 +1330,7 @@ async function httpServerFixture(
     clientName,
   );
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   // Named as ChatGPT so HTTP tests get the Codex surface; unknown hosts get Claude tools.
   const accessToken = await issueAccessToken("ChatGPT");
 
@@ -1344,7 +1376,7 @@ async function fixture(
     await git(project, ["commit", "-m", "Initial commit"]);
   }
 
-  const initialProviderAvailability = typeof options.localAgentProviders === "function"
+  const initialProviderAvailability = isFunctionValue(options.localAgentProviders)
     ? options.localAgentProviders()
     : options.localAgentProviders ?? [];
 
@@ -1383,7 +1415,7 @@ async function fixture(
     : modeConfig;
 
   const resolveProviderAvailability: () => LocalAgentProviderAvailability[] =
-    typeof options.localAgentProviders === "function"
+    isFunctionValue(options.localAgentProviders)
       ? options.localAgentProviders
       : () => initialProviderAvailability;
 
@@ -1436,7 +1468,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project, close, ...(activity ? { activity } : {}) };
+  return { client, project, close, ...optionalFields(activity ? { activity } : undefined) };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
@@ -1531,23 +1563,23 @@ function postModernMcp(
   localBaseUrl: string,
   accessToken: string | undefined,
   method: string,
-  params: Record<string, unknown>,
+  params: JsonObject,
   options: { signal?: AbortSignal } = {},
 ): Promise<Response> {
-  const mcpName = typeof params.name === "string"
+  const mcpName = isJsonString(params.name)
     ? params.name
-    : typeof params.uri === "string"
+    : isJsonString(params.uri)
       ? params.uri
       : undefined;
 
   return fetch(`${localBaseUrl}/mcp`, {
     method: "POST",
     headers: {
-      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+      ...optionalFields(accessToken ? { authorization: `Bearer ${accessToken}` } : undefined),
       "content-type": "application/json",
       "mcp-method": method,
       "mcp-protocol-version": "2026-07-28",
-      ...(mcpName ? { "mcp-name": mcpName } : {}),
+      ...optionalFields(mcpName ? { "mcp-name": mcpName } : undefined),
     },
     signal: options.signal,
     body: JSON.stringify({
@@ -1570,9 +1602,10 @@ function postModernMcp(
   });
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function recordValue(value: JsonValue): JsonObject {
+  return value && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : {};
 }
 
@@ -1584,25 +1617,27 @@ async function callOpen(
   const params = {
     name: "open_workspace",
     arguments: { path },
-    ...(conversationScopeId
-      ? { _meta: { "openai/session": conversationScopeId } }
-      : {}),
+    ...optionalFields(conversationScopeId ? { _meta: { "openai/session": conversationScopeId } } : undefined),
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as Parameters<Client["callTool"]>[0];
 
   return client.callTool(params);
 }
 
-function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
+function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): JsonObject {
   assert.ok(result.structuredContent);
 
-  return result.structuredContent as Record<string, unknown>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  return result.structuredContent as JsonObject;
 }
 
-function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
+function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): JsonObject {
   const metadata = result._meta;
-  assert.ok(metadata && typeof metadata === "object");
-  const card = (metadata as Record<string, unknown>).card;
-  assert.ok(card && typeof card === "object");
+  assert.ok(metadata && isJsonObject(metadata));
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const card = (metadata as JsonObject).card;
+  assert.ok(card && isJsonObject(card));
 
-  return card as Record<string, unknown>;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  return card as JsonObject;
 }

@@ -1,7 +1,10 @@
+import { optionalFields, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   matchError,
   Result,
   TaggedError,
+  // SAFETY: Boundary value already validated or constructed to match this type.
   type Result as BetterResult,
 } from "better-result";
 import {
@@ -52,7 +55,7 @@ export class AgentScopeError extends TaggedError("AgentScopeError")<{
   message: string;
 }>() {}
 
-interface AgentProviderErrorFields extends Record<string, unknown> {
+interface AgentProviderErrorFields extends JsonObject {
   provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
@@ -83,7 +86,7 @@ export type AgentProviderError =
   | AgentProviderProtocolError
   | AgentProviderExecutionError;
 
-interface AgentDaemonErrorFields extends Record<string, unknown> {
+interface AgentDaemonErrorFields extends JsonObject {
   operation: string;
   retryable: boolean;
   cause?: unknown;
@@ -446,7 +449,7 @@ export async function captureAgentProviderResult<T>(input: {
   }
 }
 
-export function isProgrammerDefect(error: unknown): boolean {
+export function isProgrammerDefect(error: JsonValue): boolean {
   if (unavailableCauseKind(error)) return false;
 
   return error instanceof TypeError
@@ -456,20 +459,20 @@ export function isProgrammerDefect(error: unknown): boolean {
     || (error instanceof Error && error.name === "AssertionError");
 }
 
-function isAbortError(error: unknown): boolean {
+function isAbortError(error: JsonValue): boolean {
   return Boolean(
     error
-      && typeof error === "object"
+      && isJsonObject(error)
       && "name" in error
       && String((error as { name?: unknown }).name) === "AbortError",
   );
 }
 
-function unavailableCauseKind(error: unknown): "permanent" | "transient" | undefined {
+function unavailableCauseKind(error: JsonValue): "permanent" | "transient" | undefined {
   const seen = new Set<object>();
   let current = error;
 
-  while (current && typeof current === "object" && !seen.has(current)) {
+  while (current && isJsonObject(current) && !seen.has(current)) {
     seen.add(current);
     const code = "code" in current ? String((current as { code?: unknown }).code) : "";
 
@@ -498,8 +501,8 @@ function targetErrorPayload(error: AgentTargetError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     target: error.target,
-    ...(error.provider ? { provider: error.provider } : {}),
-    ...(error.operation ? { operation: error.operation } : {}),
+    ...optionalFields(error.provider ? { provider: error.provider } : undefined),
+    ...optionalFields(error.operation ? { operation: error.operation } : undefined),
   };
 }
 
@@ -509,7 +512,7 @@ function conflictErrorPayload(error: AgentConflictError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
   };
 }
 
@@ -519,8 +522,8 @@ function scopeErrorPayload(error: AgentScopeError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
-    ...(error.workspaceId ? { workspaceId: error.workspaceId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
+    ...optionalFields(error.workspaceId ? { workspaceId: error.workspaceId } : undefined),
   };
 }
 
@@ -531,7 +534,7 @@ function providerErrorPayload(error: AgentProviderError): AgentErrorPayload {
     retryable: error.retryable,
     provider: error.provider,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
   };
 }
 

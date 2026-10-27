@@ -6,18 +6,22 @@ import * as z from "zod/v4";
 import type { McpRegistrationTarget } from "./mcp-modern-server.js";
 import { contentText } from "./tool-surfaces/shared.js";
 import type { ToolContent } from "./tool-surfaces/types.js";
+import { isJsonObject, optionalFields, type JsonObject } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
 
-type Handler = (input: Record<string, unknown>, extra: { signal: AbortSignal }) => Promise<{
+type ZodObjectFields = ConstructorParameters<typeof z.object>[0];
+
+type Handler = (input: JsonObject, extra: { signal: AbortSignal }) => Promise<{
   isError?: boolean;
   content?: ToolContent[];
-  structuredContent?: Record<string, unknown>;
+  structuredContent?: JsonObject;
 }>;
 
 interface Entry {
   name: string;
   description: string;
-  input: z.ZodObject<z.ZodRawShape>;
-  output: z.ZodObject<z.ZodRawShape>;
+  input: z.ZodObject<ZodObjectFields>;
+  output: z.ZodObject<ZodObjectFields>;
   handler: Handler;
 }
 
@@ -26,12 +30,12 @@ export class CodeModeRegistry {
   private readonly entries = new Map<string, Entry>();
 
   readonly registrationTarget: McpRegistrationTarget = {
-    registerTool: ((name: string, definition: Record<string, unknown>, handler: Handler) => {
-      const input = z.object(definition.inputSchema as z.ZodRawShape);
-      const output = z.object(definition.outputSchema as z.ZodRawShape);
+    registerTool: unsafeNarrow<McpRegistrationTarget["registerTool"]>((name: string, definition: JsonObject, handler: Handler) => {
+      const input = z.object(unsafeNarrow<ZodObjectFields>(definition.inputSchema));
+      const output = z.object(unsafeNarrow<ZodObjectFields>(definition.outputSchema));
       this.entries.set(name, {
         name,
-        description: definition.description as string,
+        description: unsafeNarrow<string>(definition.description),
         input,
         output,
         handler,
@@ -39,8 +43,8 @@ export class CodeModeRegistry {
 
       // This target collects internal registrations; nothing is registered with the MCP host.
       return undefined;
-    }) as unknown as McpRegistrationTarget["registerTool"],
-    registerResource: (() => undefined) as unknown as McpRegistrationTarget["registerResource"],
+    }),
+    registerResource: unsafeNarrow<McpRegistrationTarget["registerResource"]>(() => undefined),
   };
 
   signatures(): string {
@@ -59,9 +63,9 @@ export class CodeModeRegistry {
       description: entry.description,
       inputSchema: z.toJSONSchema(entry.input.omit({ workspace_id: true })),
       outputSchema: z.toJSONSchema(entry.output),
-      execute: async (value: unknown, { signal }) => {
+      execute: async (value: JsonObject | undefined, { signal }) => {
         if (signal.aborted) throw new Error("Code execution cancelled.");
-        const parsed = entry.input.safeParse({ ...(typeof value === "object" && value !== null ? value : {}), workspace_id: workspaceId });
+        const parsed = entry.input.safeParse({ ...optionalFields(isJsonObject(value) ? value : undefined), workspace_id: workspaceId });
 
         if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
         const response = await entry.handler(parsed.data, { signal });

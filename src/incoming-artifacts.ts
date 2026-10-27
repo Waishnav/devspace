@@ -2,6 +2,18 @@ import { basename, isAbsolute } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { ArtifactError } from "./artifact-error.js";
+import {
+  isBigintValue,
+  isFunctionValue,
+  isJsonBoolean,
+  isJsonNumber,
+  isJsonObject,
+  isJsonString,
+  isSymbolValue,
+  type JsonObject,
+  type JsonValue,
+} from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
 
 const ADAPTER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 
@@ -14,6 +26,7 @@ const OPENAI_FILE_HOSTS = new Set([
 const OPENAI_REGIONAL_BLOB_HOST_PATTERN = /^oaisdmntpr[a-z0-9]+\.blob\.core\.windows\.net$/u;
 const OPENAI_FILENAME_SAFE_FILE_ID_PATTERN = /^file[-_][A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 const OPENAI_FILE_ID_MAX_LENGTH = 512;
+// oxlint-disable-next-line eslint/no-control-regex -- OpenAI file IDs must not contain control characters.
 const OPENAI_FILE_ID_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/u;
 
 const OPENAI_FILE_KEYS = new Set([
@@ -35,10 +48,12 @@ export interface IncomingArtifactSource {
   stream: Readable;
 }
 
+export type IncomingArtifactOpenInput = JsonValue | Uint8Array;
+
 export interface IncomingArtifactAdapter {
   readonly id: string;
-  canHandle(value: unknown): boolean;
-  open(value: unknown): Promise<IncomingArtifactSource>;
+  canHandle(value: IncomingArtifactOpenInput): boolean;
+  open(value: IncomingArtifactOpenInput): Promise<IncomingArtifactSource>;
 }
 
 export interface OpenedIncomingArtifact extends IncomingArtifactSource {
@@ -72,7 +87,7 @@ export class IncomingArtifactAdapterRegistry {
     this.adapters = [...adapters];
   }
 
-  async open(value: unknown): Promise<OpenedIncomingArtifact> {
+  async open(value: IncomingArtifactOpenInput): Promise<OpenedIncomingArtifact> {
     const matching: IncomingArtifactAdapter[] = [];
 
     for (const adapter of this.adapters) {
@@ -157,7 +172,7 @@ export function createOpenAIIncomingArtifactAdapter(
   return {
     id: "openai-file",
     canHandle: isOpenAIFileReferenceCandidate,
-    async open(value: unknown): Promise<IncomingArtifactSource> {
+    async open(value: IncomingArtifactOpenInput): Promise<IncomingArtifactSource> {
       const reference = normalizeOpenAIFileReference(value);
 
       let downloadUrl = validateOpenAIFileUrl(reference.download_url);
@@ -218,52 +233,54 @@ export function createOpenAIIncomingArtifactAdapter(
         name: normalizeOpenAIFileName(reference.file_name, reference.file_id, mimeType),
         mimeType,
         size: responseSize ?? reference.size,
-        stream: Readable.fromWeb(response.body as unknown as NodeReadableStream),
+        stream: Readable.fromWeb(unsafeNarrow<NodeReadableStream>(response.body)),
       };
     },
   };
 }
 
-export type IncomingArtifactValueShape =
+export type IncomingArtifactValue =
   | { type: "null" }
   | { type: "undefined" }
   | { type: "boolean" }
   | { type: "number"; finite: boolean }
   | { type: "bigint" }
   | { type: "string"; kind: "absolute-path" | "url" | "data-url" | "text"; length: number }
-  | { type: "array"; length: number; items: IncomingArtifactValueShape[]; truncated: boolean }
+  | { type: "array"; length: number; items: IncomingArtifactValue[]; truncated: boolean }
   | {
       type: "object";
       constructor?: string;
-      entries: Record<string, IncomingArtifactValueShape>;
+      entries: { readonly [key: string]: IncomingArtifactValue };
       truncated: boolean;
     }
   | { type: "function" | "symbol" }
   | { type: "cycle" };
 
+type ConstructorHost = { readonly constructor?: { readonly name?: string } };
+
 export function describeIncomingArtifactValue(
-  value: unknown,
+  value: JsonValue | undefined,
   maxDepth = 4,
   maxEntries = 20,
-): IncomingArtifactValueShape {
+): IncomingArtifactValue {
   const seen = new WeakSet<object>();
 
-  const describe = (current: unknown, depth: number): IncomingArtifactValueShape => {
+  const describe = (current: JsonValue | undefined, depth: number): IncomingArtifactValue => {
     if (current === null) return { type: "null" };
 
     if (current === undefined) return { type: "undefined" };
 
-    if (typeof current === "boolean") return { type: "boolean" };
+    if (isJsonBoolean(current)) return { type: "boolean" };
 
-    if (typeof current === "number") return { type: "number", finite: Number.isFinite(current) };
+    if (isJsonNumber(current)) return { type: "number", finite: Number.isFinite(current) };
 
-    if (typeof current === "bigint") return { type: "bigint" };
+    if (isBigintValue(current)) return { type: "bigint" };
 
-    if (typeof current === "function") return { type: "function" };
+    if (isFunctionValue(current)) return { type: "function" };
 
-    if (typeof current === "symbol") return { type: "symbol" };
+    if (isSymbolValue(current)) return { type: "symbol" };
 
-    if (typeof current === "string") {
+    if (isJsonString(current)) {
       return {
         type: "string",
         kind: classifyValueString(current),
@@ -300,18 +317,10 @@ export function describeIncomingArtifactValue(
       };
     }
 
-    const entries: Record<string, IncomingArtifactValueShape> = {};
+    const entries: { [key: string]: IncomingArtifactValue } = {};
 
     for (const [index, key] of keys.slice(0, maxEntries).entries()) {
-      let entryValue: unknown;
-
-      try {
-        entryValue = (current as Record<string, unknown>)[key];
-      } catch {
-        entryValue = undefined;
-      }
-
-      entries[safeValueEntryKey(key, index)] = describe(entryValue, depth + 1);
+      entries[safeValueEntryKey(key, index)] = describe(current[key], depth + 1);
     }
 
     return {
@@ -326,21 +335,21 @@ export function describeIncomingArtifactValue(
 }
 
 function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
-  if (!source || typeof source !== "object") {
+  if (!source) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter returned an invalid source.",
     );
   }
 
-  if (typeof source.name !== "string" || source.name.length === 0) {
+  if (!isJsonString(source.name) || source.name.length === 0) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter must provide a filename.",
     );
   }
 
-  if (source.mimeType !== undefined && typeof source.mimeType !== "string") {
+  if (source.mimeType !== undefined && !isJsonString(source.mimeType)) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter returned an invalid MIME hint.",
@@ -357,9 +366,9 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
     );
   }
 
-  const stream = source.stream as Partial<Readable> | undefined;
+  const stream = source.stream;
 
-  if (!stream || typeof stream[Symbol.asyncIterator] !== "function") {
+  if (!stream || !isFunctionValue(stream[Symbol.asyncIterator])) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter must provide an async-readable stream.",
@@ -367,8 +376,8 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
   }
 }
 
-function isOpenAIFileReferenceCandidate(value: unknown): value is Record<string, unknown> {
-  if (!isRecord(value)) return false;
+function isOpenAIFileReferenceCandidate(value: IncomingArtifactOpenInput): value is JsonObject {
+  if (!isJsonObject(value)) return false;
   const keys = Object.keys(value);
 
   return keys.length >= 2
@@ -377,7 +386,7 @@ function isOpenAIFileReferenceCandidate(value: unknown): value is Record<string,
     && Object.hasOwn(value, "file_id");
 }
 
-function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
+function normalizeOpenAIFileReference(value: IncomingArtifactOpenInput): OpenAIFileReference {
   if (!isOpenAIFileReferenceCandidate(value)) {
     throw new ArtifactError(
       "invalid_openai_file_reference",
@@ -389,8 +398,8 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
   const fileId = value.file_id;
 
   if (
-    typeof downloadUrl !== "string"
-    || typeof fileId !== "string"
+    !isJsonString(downloadUrl)
+    || !isJsonString(fileId)
     || !isValidOpenAIFileId(fileId)
   ) {
     throw new ArtifactError(
@@ -428,7 +437,7 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
   const rawSize = value.size;
 
   if (rawSize !== undefined && rawSize !== null) {
-    if (typeof rawSize !== "number" || !Number.isSafeInteger(rawSize) || rawSize < 0) {
+    if (!isJsonNumber(rawSize) || !Number.isSafeInteger(rawSize) || rawSize < 0) {
       throw new ArtifactError(
         "invalid_openai_file_reference",
         "ChatGPT file reference is malformed.",
@@ -447,10 +456,10 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
   };
 }
 
-function nullableString(value: unknown): string | undefined | null {
+function nullableString(value: JsonValue | undefined): string | undefined | null {
   if (value === undefined || value === null) return undefined;
 
-  return typeof value === "string" ? value : null;
+  return isJsonString(value) ? value : null;
 }
 
 function normalizeOpenAIFileName(
@@ -555,10 +564,6 @@ function responseContentLength(response: Response): number | undefined {
   return Number.isSafeInteger(size) ? size : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function classifyValueString(
   value: string,
 ): "absolute-path" | "url" | "data-url" | "text" {
@@ -583,11 +588,11 @@ function safeValueEntryKey(value: string, index: number): string {
     : `<redacted-key-${index + 1}>`;
 }
 
-function safeConstructorName(value: object): string | undefined {
+function safeConstructorName(value: ConstructorHost): string | undefined {
   try {
     const name = value.constructor?.name;
 
-    return typeof name === "string" && name.length <= 80 ? name : undefined;
+    return isJsonString(name) && name.length <= 80 ? name : undefined;
   } catch {
     return undefined;
   }

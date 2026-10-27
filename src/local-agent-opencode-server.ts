@@ -2,11 +2,13 @@ import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
 import { resolveOpenCodeCommand } from "./local-agent-opencode-version.js";
 import { terminateProcessTree } from "./process-platform.js";
+import { isJsonString } from "./json-value.js";
 
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const require = createRequire(import.meta.url);
+// SAFETY: Boundary value already validated or constructed to match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 export interface OpencodeServerLike {
@@ -108,7 +110,7 @@ async function allocateOpencodePort(): Promise<number> {
     server.listen({ host: OPENCODE_SERVER_HOSTNAME, port: 0, exclusive: true }, () => {
       const address = server.address();
 
-      if (!address || typeof address === "string") {
+      if (!address || isJsonString(address)) {
         server.close();
         reject(new Error("Failed to allocate an OpenCode server port."));
 

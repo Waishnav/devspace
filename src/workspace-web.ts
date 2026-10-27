@@ -13,6 +13,8 @@ import {
 } from "./workspace-activity.js";
 import type { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
+import { isJsonString } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 
 /**
  * Read-only workspace observability pages: workspaces, their turns, and each
@@ -278,10 +280,10 @@ function isHttpsRequest(req: Request): boolean {
   return req.secure || req.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
 }
 
-function safeNextPath(value: unknown): string {
+function safeNextPath(value: JsonValue): string {
   const fallback = `${WORKSPACE_WEB_PATH}/`;
 
-  if (typeof value !== "string") return fallback;
+  if (!isJsonString(value)) return fallback;
 
   if (!value.startsWith(`${WORKSPACE_WEB_PATH}/`) || value.startsWith("//") || value.includes("\\")) {
     return fallback;

@@ -16,6 +16,7 @@ async function observedIps(trustProxy: TrustProxyMode): Promise<{ reqIp: string;
   await new Promise<void>((resolve) => server.once("listening", resolve));
 
   try {
+    // SAFETY: Boundary value already validated or constructed to match this type.
     const { port } = server.address() as AddressInfo;
 
     // The client supplies the leftmost hop and a CF header; the local proxy appends the real peer.

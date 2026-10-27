@@ -25,6 +25,8 @@ import {
 } from "./incoming-artifacts.js";
 import { logEvent } from "./logger.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
+import { isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 const ARTIFACT_WRITE_ANNOTATIONS = {
   readOnlyHint: false,
@@ -273,11 +275,11 @@ export async function downloadIncomingArtifact({
 }
 
 export function artifactToolLogFields(
-  input: Record<string, unknown>,
-): Record<string, unknown> {
+  input: JsonObject,
+): JsonObject {
   return {
     fileProvided: input.file !== undefined,
-    fileReferenceShape: describeIncomingArtifactValue(input.file),
+    "fileReferenceShape": describeIncomingArtifactValue(input.file),
     downloadUrlHostname: incomingFileDownloadHostname(input.file),
     workspaceId: input.workspace_id,
     path: input.path,
@@ -286,7 +288,7 @@ export function artifactToolLogFields(
 
 async function executeArtifactTool(
   config: ServerConfig,
-  input: Record<string, unknown>,
+  input: JsonObject,
   operation: () => Promise<{
     publicResult: { path: string };
     logResult: DownloadIncomingArtifactResult;
@@ -589,14 +591,15 @@ async function cleanupStalePartials(
   }
 }
 
-function incomingFileDownloadHostname(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function incomingFileDownloadHostname(value: JsonValue): string | undefined {
+  if (!isJsonObject(value) || value === null || Array.isArray(value)) {
     return undefined;
   }
 
-  const rawUrl = (value as Record<string, unknown>).download_url;
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const rawUrl = (value as JsonObject).download_url;
 
-  if (typeof rawUrl !== "string") return undefined;
+  if (!isJsonString(rawUrl)) return undefined;
 
   try {
     const hostname = new URL(rawUrl).hostname.toLowerCase();
@@ -607,10 +610,10 @@ function incomingFileDownloadHostname(value: unknown): string | undefined {
   }
 }
 
-function incomingStreamChunk(value: unknown): Buffer {
+function incomingStreamChunk(value: JsonValue): Buffer {
   if (Buffer.isBuffer(value)) return value;
 
-  if (typeof value === "string") return Buffer.from(value);
+  if (isJsonString(value)) return Buffer.from(value);
 
   if (value instanceof Uint8Array) {
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength);

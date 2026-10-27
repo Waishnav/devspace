@@ -1,11 +1,13 @@
 import type { ReplayProtocol } from "./providers.js";
 import { restore, scrub, type ScrubContext, type Transcript, type TranscriptFrame } from "./transcript.js";
+import { isJsonObject } from "../../src/json-value.js";
+import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 export interface ReplayerOptions {
   transcript: Transcript;
   protocol: ReplayProtocol;
   context: ScrubContext;
-  emit(frame: unknown): void;
+  emit(frame: JsonValue): void;
   fail(report: string): void;
   /** Upper bound for a recorded gap between provider frames. */
   maxGapMs?: number;
@@ -36,7 +38,7 @@ export class Replayer {
     this.queueProviderFrames();
   }
 
-  receive(live: unknown): void {
+  receive(live: JsonValue): void {
     if (this.failed) return;
     const { protocol } = this.options;
     const actual = scrub(live, this.options.context);
@@ -134,7 +136,7 @@ export class Replayer {
     this.emit(entry.frame);
   }
 
-  private emit(frame: unknown, extra?: Map<string, unknown>): void {
+  private emit(frame: JsonValue, extra?: Map<string, unknown>): void {
     const { volatileKeys } = this.options.protocol;
 
     const bound = rewriteVolatile(frame, volatileKeys, (value) => {
@@ -149,7 +151,7 @@ export class Replayer {
   }
 
   /** Answers a timing-dependent request with the closest recorded response of the same kind. */
-  private answerElastic(kind: string, actual: unknown): void {
+  private answerElastic(kind: string, actual: JsonValue): void {
     const { frames } = this.options.transcript;
     const { protocol } = this.options;
 
@@ -176,7 +178,7 @@ export class Replayer {
     this.reportFailure(`Driver sent ${kind} but the recording has no response to replay for it:`, [], undefined, actual);
   }
 
-  private bind(recorded: unknown, actual: unknown): void {
+  private bind(recorded: JsonValue, actual: JsonValue): void {
     const { volatileKeys } = this.options.protocol;
     walkPairs(recorded, actual, (key, left, right) => {
       if (volatileKeys.has(key) && left !== right && isPrimitive(left)) {
@@ -185,7 +187,7 @@ export class Replayer {
     });
   }
 
-  private reportFailure(headline: string, differences: string[], expected: unknown, actual: unknown): void {
+  private reportFailure(headline: string, differences: string[], expected: JsonValue, actual: JsonValue): void {
     this.failed = true;
     this.flush();
 
@@ -200,12 +202,12 @@ export class Replayer {
   }
 }
 
-function frameKind(protocol: ReplayProtocol, frame: unknown): string {
+function frameKind(protocol: ReplayProtocol, frame: JsonValue): string {
   return protocol.kind(asRecord(frame));
 }
 
 /** Readable structural differences; volatile keys only need matching types. */
-export function diff(expected: unknown, actual: unknown, volatileKeys: ReadonlySet<string>, path = "$"): string[] {
+export function diff(expected: JsonValue, actual: JsonValue, volatileKeys: ReadonlySet<string>, path = "$"): string[] {
   const key = path.slice(path.lastIndexOf(".") + 1);
 
   if (volatileKeys.has(key)) {
@@ -243,7 +245,7 @@ export function diff(expected: unknown, actual: unknown, volatileKeys: ReadonlyS
     : [`${path}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`];
 }
 
-function walkPairs(left: unknown, right: unknown, visit: (key: string, left: unknown, right: unknown) => void): void {
+function walkPairs(left: JsonValue, right: JsonValue, visit: (key: string, left: JsonValue, right: JsonValue) => void): void {
   if (Array.isArray(left) && Array.isArray(right)) {
     left.forEach((entry, index) => walkPairs(entry, right[index], visit));
   } else if (isObject(left) && isObject(right)) {
@@ -254,7 +256,7 @@ function walkPairs(left: unknown, right: unknown, visit: (key: string, left: unk
   }
 }
 
-function rewriteVolatile(value: unknown, keys: ReadonlySet<string>, rewrite: (value: unknown) => unknown): unknown {
+function rewriteVolatile(value: JsonValue, keys: ReadonlySet<string>, rewrite: (value: JsonValue) => unknown): unknown {
   if (Array.isArray(value)) return value.map((entry) => rewriteVolatile(entry, keys, rewrite));
 
   if (!isObject(value)) return value;
@@ -265,18 +267,18 @@ function rewriteVolatile(value: unknown, keys: ReadonlySet<string>, rewrite: (va
   ]));
 }
 
-function typeOf(value: unknown): string {
+function typeOf(value: JsonValue): string {
   return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 }
 
-function isPrimitive(value: unknown): boolean {
+function isPrimitive(value: JsonValue): boolean {
   return value === null || ["string", "number", "boolean"].includes(typeof value);
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isObject(value: unknown): value is JsonObject {
+  return value !== null && isJsonObject(value) && !Array.isArray(value);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+function asRecord(value: JsonValue): JsonObject {
   return isObject(value) ? value : {};
 }

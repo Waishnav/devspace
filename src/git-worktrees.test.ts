@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Result, type Result as BetterResult } from "better-result";
+import { isJsonObject } from "./json-value.js";
 import {
   cleanupManagedWorktrees,
   ManagedWorktreeError,
@@ -403,7 +404,7 @@ async function pathExists(path: string): Promise<boolean> {
 
     return true;
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    if (isJsonObject(error) && error && "code" in error && error.code === "ENOENT") {
       return false;
     }
 

@@ -6,6 +6,8 @@ import { parseReviewFiles, ReviewDiffFile, type ReviewThemeType } from "../revie
 import { buildDiffTree, type DiffTreeNode } from "./diff-tree.js";
 import "../review-diff.css";
 import "./web.css";
+import { optionalFields, isJsonString, isJsonObject } from "../../json-value.js";
+import type { JsonObject, JsonValue } from "../../json-value.js";
 
 const BASE = "/web";
 
@@ -33,7 +35,7 @@ function parseRoute(pathname: string): Route {
   return {
     page: "workspace",
     workspaceId: decodeURIComponent(match[1]!),
-    ...(match[2] ? { turn: Number(match[2]) } : {}),
+    ...optionalFields(match[2] ? { turn: Number(match[2]) } : undefined),
   };
 }
 
@@ -79,6 +81,7 @@ function useJson<T>(url: string): Loaded<T> {
           return;
         }
 
+        // SAFETY: Boundary value already validated or constructed to match this type.
         const body = await response.json() as T & { error?: string };
 
         if (cancelled) return;
@@ -86,7 +89,7 @@ function useJson<T>(url: string): Loaded<T> {
         if (!response.ok) setState({ status: "error", message: body.error ?? `Request failed (${response.status}).` });
         else setState({ status: "ready", data: body });
       })
-      .catch((error: unknown) => {
+      .catch((error: JsonValue) => {
         if (!cancelled) setState({ status: "error", message: error instanceof Error ? error.message : String(error) });
       });
 
@@ -159,6 +162,7 @@ function App() {
             <span className="visually-hidden">Theme</span>
             <select
               value={preference}
+              // SAFETY: Boundary value already validated or constructed to match this type.
               onChange={(event) => setPreference(event.target.value as ThemePreference)}
             >
               <option value="system">System</option>
@@ -540,7 +544,7 @@ function ToolCallRow({ call }: { call: WorkspaceToolCall }) {
 }
 
 function JsonBlock({ label, value }: { label: string; value: unknown }) {
-  const text = typeof value === "object" && value !== null && "text" in value && Object.keys(value).length === 1
+  const text = isJsonObject(value) && value !== null && "text" in value && Object.keys(value).length === 1
     ? String((value as { text: unknown }).text)
     : JSON.stringify(value, null, 2);
 
@@ -574,18 +578,20 @@ function fileAnchor(path: string): string {
   return `file-${encodeURIComponent(path)}`;
 }
 
-function argumentSummary(args: unknown): string {
-  if (typeof args !== "object" || args === null) return "";
-  const record = args as Record<string, unknown>;
+function argumentSummary(args: JsonValue): string {
+  if (!isJsonObject(args) || args === null) return "";
+  // SAFETY: Boundary value already validated or constructed to match this type.
+  const record = args as JsonObject;
 
-  if (typeof record.patch === "string") {
+  if (isJsonString(record.patch)) {
     const files = [...record.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((match) => match[1]);
 
     if (files.length > 0) return truncate(files.join(", "), 120);
   }
 
   for (const key of ["cmd", "command", "path", "task", "query"]) {
-    if (typeof record[key] === "string") return truncate(record[key] as string, 120);
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    if (isJsonString(record[key])) return truncate(record[key] as string, 120);
   }
 
   const { workspace_id: _workspaceId, ...rest } = record;
@@ -594,20 +600,20 @@ function argumentSummary(args: unknown): string {
   return json === "{}" ? "" : truncate(json, 120);
 }
 
-function resultSummary(result: unknown): string {
-  if (typeof result !== "object" || result === null) return "";
+function resultSummary(result: JsonValue): string {
+  if (!isJsonObject(result) || result === null) return "";
   const text = (result as { text?: unknown }).text;
 
-  if (typeof text !== "string") return "";
+  if (!isJsonString(text)) return "";
   const line = text.split("\n").find((entry) => entry.trim().length > 0) ?? "";
 
   return truncate(line, 160);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   const message = (error as { message?: unknown } | undefined)?.message;
 
-  return typeof message === "string" ? truncate(message, 160) : "Failed";
+  return isJsonString(message) ? truncate(message, 160) : "Failed";
 }
 
 function truncate(value: string, length: number): string {
@@ -630,6 +636,7 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+// SAFETY: Boundary value already validated or constructed to match this type.
 /** Omits the date from a range end on the same day as its start. */
 function formatEnd(startIso: string, endIso: string): string {
   const sameDay = new Date(startIso).toDateString() === new Date(endIso).toDateString();

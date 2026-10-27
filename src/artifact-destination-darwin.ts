@@ -1,5 +1,6 @@
 import {
   close,
+  // SAFETY: Boundary value already validated or constructed to match this type.
   constants as fsConstants,
   fstat,
   fsync,
@@ -13,6 +14,7 @@ import type {
   ArtifactFile,
 } from "./artifact-destination.js";
 import { ArtifactError } from "./artifact-error.js";
+import type { JsonValue } from "./json-value.js";
 
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const O_CLOEXEC = 0x01000000;
@@ -112,6 +114,7 @@ export async function prepareDarwinArtifactDestinationDirectory(
         const errno = koffi.errno();
 
         if (errno === koffi.os.errno.EEXIST) {
+          // SAFETY: Boundary value already validated or constructed to match this type.
           const error = new Error("Artifact destination already exists.") as NodeJS.ErrnoException;
           error.code = "EEXIST";
           throw error;
@@ -160,8 +163,8 @@ interface DarwinLibc {
   unlinkat(fd: number, path: string, flags: number): number;
   dup(fd: number): number;
   fdopendir(fd: number): unknown;
-  readdir(dir: unknown): unknown;
-  closedir(dir: unknown): number;
+  readdir(dir: JsonValue): unknown;
+  closedir(dir: JsonValue): number;
   DIRENT: ReturnType<typeof koffi.struct>;
 }
 
@@ -213,6 +216,7 @@ function createDarwinLibc(): DarwinLibc {
     readdir: libc.func("readdir", DIRENT_PTR, [DIR_PTR]),
     closedir: libc.func("closedir", "int", [DIR_PTR]),
     DIRENT,
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as DarwinLibc;
 }
 

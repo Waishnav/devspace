@@ -6,6 +6,8 @@ import test, { type TestContext } from "node:test";
 import { WorkspaceActivityJournal, journalJson } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { isFunctionValue } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 
 const REVIEW_REF = "a".repeat(40);
 
@@ -109,6 +111,7 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
 });
 
 test("journal redacts credentials in commands and outputs", () => {
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const redacted = (value: string): string => JSON.parse(journalJson(value)) as string;
 
   const secrets = [
@@ -179,7 +182,7 @@ test("journal failures never replace the tool result", async (t) => {
 async function journalFixture(
   t: TestContext,
   workspaceIds: string[],
-  onError?: (error: unknown) => void,
+  onError?: (error: JsonValue) => void,
   maxTurns?: number,
 ) {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-activity-journal-test-"));
@@ -205,9 +208,9 @@ async function journalFixture(
 function call(
   journal: WorkspaceActivityJournal,
   toolName: string,
-  args: Record<string, unknown>,
-  options: { meta?: Record<string, unknown>; result?: unknown; error?: Error } = {},
-): Promise<unknown> {
+  args: JsonObject,
+  options: { meta?: JsonObject; result?: unknown; error?: Error } = {},
+): Promise<JsonValue> {
   return journal.capture({
     toolName,
     arguments: args,
@@ -215,7 +218,7 @@ function call(
     operation: async () => {
       if (options.error) throw options.error;
 
-      return typeof options.result === "function" ? (options.result as () => unknown)() : options.result ?? {};
+      return isFunctionValue(options.result) ? (options.result as () => unknown)() : options.result ?? {};
     },
   });
 }

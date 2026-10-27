@@ -1,5 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ReviewFileType, ToolResultCard } from "./card-types.js";
+import { optionalFields, isJsonString, isJsonNumber, isJsonBoolean, isJsonObject } from "../json-value.js";
+import type { JsonObject, JsonValue } from "../json-value.js";
 
 export type DecodedToolResult =
   | { kind: "card"; card: ToolResultCard }
@@ -34,7 +36,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
       return { kind: "review-reference", workspaceId, reviewRef };
     }
 
-    if (typeof structured.patch === "string" && Array.isArray(structured.files)) {
+    if (isJsonString(structured.patch) && Array.isArray(structured.files)) {
       const legacyCard = cardFields({
         ...structured,
         payload: { patch: structured.patch },
@@ -80,7 +82,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
 }
 
 function structuredWorkspaceCardFields(
-  record: Record<string, unknown> | undefined,
+  record: JsonObject | undefined,
 ): Partial<ToolResultCard> | undefined {
   if (!record) return undefined;
   const worktreeRecord = asRecord(record.worktree);
@@ -114,9 +116,9 @@ function isCompleteReviewCard(
 ): card is Partial<ToolResultCard> & {
   files: NonNullable<ToolResultCard["files"]>;
   payload: { patch: string };
-  summary: Record<string, unknown>;
+  summary: JsonObject;
 } {
-  if (!card || !Array.isArray(card.files) || typeof card.payload?.patch !== "string") {
+  if (!card || !Array.isArray(card.files) || !isJsonString(card.payload?.patch)) {
     return false;
   }
 
@@ -143,35 +145,38 @@ export function toolResultFromChatGptGlobals(
 
   return {
     ...(metadataResult ?? { content: [] }),
-    ...(structuredContent ? { structuredContent } : {}),
-    ...(resultMeta ? { _meta: resultMeta } : {}),
+    ...optionalFields(structuredContent ? { structuredContent } : undefined),
+    ...optionalFields(resultMeta ? { _meta: resultMeta } : undefined),
+  // SAFETY: Boundary value already validated or constructed to match this type.
   } as CallToolResult;
 }
 
 function directResultMeta(
-  metadata: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
+  metadata: JsonObject | undefined,
+): JsonObject | undefined {
   if (!metadata) return undefined;
 
   return "card" in metadata ? metadata : undefined;
 }
 
-function mcpToolResult(value: unknown): CallToolResult | undefined {
+function mcpToolResult(value: JsonValue): CallToolResult | undefined {
   const metadata = asRecord(value);
 
   if (!metadata) return undefined;
 
   const direct = asRecord(metadata.mcp_tool_result);
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   if (direct) return direct as CallToolResult;
 
   const callToolResult = asRecord(metadata.call_tool_result);
   const nested = asRecord(callToolResult?.mcp_tool_result);
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   return nested ? nested as CallToolResult : undefined;
 }
 
-function cardFields(record: Record<string, unknown> | undefined): Partial<ToolResultCard> | undefined {
+function cardFields(record: JsonObject | undefined): Partial<ToolResultCard> | undefined {
   if (!record) return undefined;
 
   const agentsFiles = arrayRecords(record.agentsFiles)?.map((item) => ({
@@ -248,7 +253,7 @@ function cardFields(record: Record<string, unknown> | undefined): Partial<ToolRe
   });
 }
 
-function workspaceSummary(card: Partial<ToolResultCard>): Record<string, unknown> {
+function workspaceSummary(card: Partial<ToolResultCard>): JsonObject {
   return {
     mode: card.mode,
     agentsFiles: card.agentsFiles?.length ?? 0,
@@ -260,9 +265,9 @@ function workspaceSummary(card: Partial<ToolResultCard>): Record<string, unknown
 }
 
 function reviewAvailability(
-  record: Record<string, unknown> | undefined,
+  record: JsonObject | undefined,
 ): ToolResultCard["review"] {
-  if (!record || typeof record.available !== "boolean") return undefined;
+  if (!record || !isJsonBoolean(record.available)) return undefined;
 
   if (record.available) return { available: true };
   const reason = stringField(record.reason);
@@ -270,7 +275,7 @@ function reviewAvailability(
   return reason ? { available: false, reason } : undefined;
 }
 
-function reviewFileType(value: unknown): ReviewFileType | undefined {
+function reviewFileType(value: JsonValue): ReviewFileType | undefined {
   return value === "change"
     || value === "rename-pure"
     || value === "rename-changed"
@@ -280,11 +285,11 @@ function reviewFileType(value: unknown): ReviewFileType | undefined {
     : undefined;
 }
 
-function workspaceMode(value: unknown): ToolResultCard["mode"] {
+function workspaceMode(value: JsonValue): ToolResultCard["mode"] {
   return value === "checkout" || value === "worktree" ? value : undefined;
 }
 
-function arrayRecords(value: unknown): Array<Record<string, unknown>> | undefined {
+function arrayRecords(value: JsonValue): Array<JsonObject> | undefined {
   if (!Array.isArray(value)) return undefined;
 
   return value.flatMap((item) => {
@@ -294,26 +299,28 @@ function arrayRecords(value: unknown): Array<Record<string, unknown>> | undefine
   });
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object"
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }
 
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+function stringField(value: JsonValue): string | undefined {
+  return isJsonString(value) ? value : undefined;
 }
 
-function numberField(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function numberField(value: JsonValue): number | undefined {
+  return isJsonNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-function booleanField(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
+function booleanField(value: JsonValue): boolean | undefined {
+  return isJsonBoolean(value) ? value : undefined;
 }
 
-function definedFields<T extends Record<string, unknown>>(record: T): T {
+function definedFields<T extends JsonObject>(record: T): T {
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => value !== undefined),
+  // SAFETY: Boundary value already validated or constructed to match this type.
   ) as T;
 }

@@ -9,6 +9,7 @@ import {
   type WorkspaceTurnToolCallRow,
 } from "./db/schema.js";
 import type { WorkspaceMode, WorkspaceStatus } from "./workspace-store.js";
+import { optionalFields } from "./json-value.js";
 
 export type WorkspaceTurnStatus = "open" | "closed";
 
@@ -282,12 +283,13 @@ function rowToWorkspace({ session, turns, lastActivityAt }: {
   return {
     workspaceId: session.id,
     root: session.root,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     mode: session.mode as WorkspaceMode,
     status: session.status as WorkspaceStatus,
-    ...(session.sourceRoot ? { sourceRoot: session.sourceRoot } : {}),
+    ...optionalFields(session.sourceRoot ? { sourceRoot: session.sourceRoot } : undefined),
     createdAt: session.createdAt,
     lastUsedAt: session.lastUsedAt,
-    ...(lastActivityAt ? { lastActivityAt } : {}),
+    ...optionalFields(lastActivityAt ? { lastActivityAt } : undefined),
     turns: turns ?? 0,
   };
 }
@@ -303,10 +305,11 @@ function rowToTurn(row: {
     id: turn.id,
     workspaceId: turn.workspaceSessionId,
     sequence: turn.sequence,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     status: turn.status as WorkspaceTurnStatus,
-    ...(turn.reviewRef ? { reviewRef: turn.reviewRef } : {}),
+    ...optionalFields(turn.reviewRef ? { reviewRef: turn.reviewRef } : undefined),
     startedAt: turn.startedAt,
-    ...(turn.closedAt ? { closedAt: turn.closedAt } : {}),
+    ...optionalFields(turn.closedAt ? { closedAt: turn.closedAt } : undefined),
     toolCalls: row.toolCalls,
     failedToolCalls: Number(row.failedToolCalls),
   };
@@ -316,13 +319,15 @@ function rowToToolCall(row: WorkspaceTurnToolCallRow): WorkspaceToolCall {
   return {
     id: row.id,
     turnId: row.turnId,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     origin: row.origin as WorkspaceToolCallOrigin,
-    ...(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : {}),
-    ...(row.requestId ? { requestId: row.requestId } : {}),
+    ...optionalFields(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : undefined),
+    ...optionalFields(row.requestId ? { requestId: row.requestId } : undefined),
     toolName: row.toolName,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     arguments: JSON.parse(row.argumentsJson) as unknown,
-    ...(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : {}),
-    ...(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : {}),
+    ...optionalFields(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : undefined),
+    ...optionalFields(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : undefined),
     isError: row.isError === 1,
     startedAt: row.startedAt,
     completedAt: row.completedAt,

@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { isJsonString } from "./json-value.js";
 
 const OWNER_TOKEN = "test-owner-token-that-is-long-enough";
 
@@ -101,7 +102,7 @@ async function startServer(t: TestContext): Promise<{ baseUrl: string; root: str
   });
   await once(listener, "listening");
   const address = listener.address();
-  assert.ok(address && typeof address !== "string");
+  assert.ok(address && !isJsonString(address));
 
   return { baseUrl: `http://127.0.0.1:${address.port}`, root };
 }

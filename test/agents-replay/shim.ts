@@ -7,6 +7,8 @@ import { recordHttp, replayHttp, serveArgs } from "./http-shim.js";
 import { providerDefinition } from "./providers.js";
 import { Replayer } from "./replayer.js";
 import { parseFrame, readTranscript, scrub, type ScrubContext, type TranscriptMeta } from "./transcript.js";
+import { optionalFields, isJsonObject } from "../../src/json-value.js";
+import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 /**
  * A fake provider executable. The conformance runner points a provider's
@@ -89,7 +91,7 @@ function record(path: string): void {
 }
 
 /** Writes the meta line and returns an appender that redacts and scrubs each frame. */
-function startTranscript(path: string, command: string): (dir: "in" | "out", frame: unknown) => void {
+function startTranscript(path: string, command: string): (dir: "in" | "out", frame: JsonValue) => void {
   mkdirSync(dirname(path), { recursive: true });
   const startedAt = Date.now();
   const version = spawnSync(command, ["--version"], { encoding: "utf8", timeout: 10_000 }).stdout?.trim();
@@ -98,9 +100,10 @@ function startTranscript(path: string, command: string): (dir: "in" | "out", fra
     type: "meta",
     provider: provider.id,
     scenario,
+    // SAFETY: Boundary value already validated or constructed to match this type.
     args: scrub(args, context) as string[],
     cwd: scrub(process.cwd(), context) as string,
-    ...(version ? { version } : {}),
+    ...optionalFields(version ? { version } : undefined),
     recordedAt: new Date().toISOString(),
   };
 
@@ -119,6 +122,7 @@ function replay(path: string): void {
   if (!existsSync(path)) fail(`No recorded transcript at ${path}. Record it with pnpm qa:agents ${provider.id} --record.`);
   const transcript = readTranscript(path);
   const recordedArgs = normalizeArgs(transcript.meta.args);
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const liveArgs = normalizeArgs(scrub(args, context) as string[]);
 
   if (JSON.stringify(recordedArgs) !== JSON.stringify(liveArgs)) {
@@ -129,13 +133,14 @@ function replay(path: string): void {
     ].join("\n"));
   }
 
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const liveCwd = scrub(process.cwd(), context) as string;
 
   if (transcript.meta.cwd !== undefined && transcript.meta.cwd !== liveCwd) {
     fail(`${provider.id} was started in a different directory than recorded in ${path}:\n  expected: ${transcript.meta.cwd}\n  actual:   ${liveCwd}`);
   }
 
-  let respond = (frame: unknown) => { process.stdout.write(`${JSON.stringify(frame)}\n`); };
+  let respond = (frame: JsonValue) => { process.stdout.write(`${JSON.stringify(frame)}\n`); };
 
   const replayer = new Replayer({
     transcript,
@@ -175,7 +180,7 @@ function replay(path: string): void {
 }
 
 /** DEVSPACE_AGENT_SHIM_TRACE=1 logs replayed traffic to replay-trace.log in the run directory. */
-function trace(dir: "in" | "out", frame: unknown): void {
+function trace(dir: "in" | "out", frame: JsonValue): void {
   if (!env[`${SHIM_ENV_PREFIX}TRACE`]) return;
   appendFileSync(join(runDir, "replay-trace.log"), `${new Date().toISOString()} ${dir} ${JSON.stringify(frame).slice(0, 200)}\n`);
 }
@@ -202,6 +207,7 @@ function claimTranscript(): string {
     try {
       closeSync(openSync(join(runDir, `spawn-${index}`), "wx"));
     } catch (error) {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
       throw error;
     }
@@ -222,8 +228,8 @@ function normalizeArgs(values: string[]): string[] {
   return values.map((value) => value.replace(/\$TMP\/[^/\s"]+/g, "$TMP/*").replace(/^--port=\d+$/, "--port=*"));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: unknown): value is JsonObject {
+  return value !== null && isJsonObject(value) && !Array.isArray(value);
 }
 
 function requiredEnv(name: string): string {

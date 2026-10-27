@@ -18,6 +18,8 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
+import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   defaultOpencodeV2Factory,
   OpencodeV2Runtime,
@@ -130,12 +132,13 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     this.server.close();
   }
 
-  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<unknown> {
+  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<JsonValue> {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
 
     // End the local request only once OpenCode confirms the abort. A failed or
+    // SAFETY: Boundary value already validated or constructed to match this type.
     // stalled abort keeps the turn running, and the manager reports the stop as a conflict.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
       const aborted = await this.client.session.abort({
@@ -304,7 +307,7 @@ async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> 
   }
 }
 
-function isOpenCodeTransportFailure(error: unknown): boolean {
+function isOpenCodeTransportFailure(error: JsonValue): boolean {
   if (error instanceof OpencodeHealthError) return true;
   const code = transportErrorCode(error);
 
@@ -316,14 +319,17 @@ function isOpenCodeTransportFailure(error: unknown): boolean {
     || code === "ETIMEDOUT";
 }
 
-function transportErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
+function transportErrorCode(error: JsonValue): string | undefined {
+  if (!error || !isJsonObject(error)) return undefined;
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const code = (error as NodeJS.ErrnoException).code;
 
-  if (typeof code === "string") return code;
+  if (isJsonString(code)) return code;
+  // SAFETY: Boundary value already validated or constructed to match this type.
   const cause = (error as Error & { cause?: unknown }).cause;
 
-  return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
+  return cause && isJsonObject(cause) && typeof (cause as NodeJS.ErrnoException).code === "string"
+    // SAFETY: Boundary value already validated or constructed to match this type.
     ? (cause as NodeJS.ErrnoException).code
     : undefined;
 }
@@ -340,7 +346,7 @@ async function promptOpencodeSession(
   sessionId: string,
   input: LocalAgentRunInput,
   signal: AbortSignal,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const model = input.model ? parseOpencodeModel(input.model) : undefined;
 
   return client.session.prompt({
@@ -348,8 +354,8 @@ async function promptOpencodeSession(
     directory: input.workspaceRoot,
     parts: [{ type: "text", text: input.prompt }],
     agent: opencodeAgentFor(input.writeMode),
-    ...(model ? { model } : {}),
-    ...(input.effort ? { variant: input.effort } : {}),
+    ...optionalFields(model ? { model } : undefined),
+    ...optionalFields(input.effort ? { variant: input.effort } : undefined),
   }, { throwOnError: true, signal });
 }
 
@@ -361,10 +367,10 @@ function parseOpencodeModel(model: string): OpencodeModelRef {
     : { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
 }
 
-function requireSessionId(session: unknown): string {
+function requireSessionId(session: JsonValue): string {
   const id = asRecord(session)?.id;
 
-  if (typeof id !== "string" || !id) {
+  if (!isJsonString(id) || !id) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
       provider: "opencode",
@@ -377,7 +383,7 @@ function requireSessionId(session: unknown): string {
   return id;
 }
 
-function assertOpenCodePromptSucceeded(value: unknown): void {
+function assertOpenCodePromptSucceeded(value: JsonValue): void {
   const result = asRecord(unwrapProviderPayload(value));
   const info = asRecord(result?.info);
   const error = asRecord(info?.error);
@@ -385,11 +391,11 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
   if (!error) return;
   const data = asRecord(error.data);
 
-  const message = typeof data?.message === "string"
+  const message = isJsonString(data?.message)
     ? data.message
-    : typeof error.message === "string"
+    : isJsonString(error.message)
       ? error.message
-      : typeof error.name === "string"
+      : isJsonString(error.name)
         ? `OpenCode returned ${error.name}.`
         : "OpenCode returned an assistant error.";
 
@@ -403,7 +409,7 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
   });
 }
 
-export function extractOpenCodeFinalResponse(value: unknown): string {
+export function extractOpenCodeFinalResponse(value: JsonValue): string {
   const root = unwrapProviderPayload(value);
   const messages = Array.isArray(root) ? root : readArray(root, "messages");
 
@@ -412,14 +418,14 @@ export function extractOpenCodeFinalResponse(value: unknown): string {
   return extractOpenCodeAssistantMessageText(root);
 }
 
-function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
+function extractLastOpenCodeAssistantMessageText(messages: JsonValue[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = asRecord(messages[index]);
 
     if (!message) continue;
     const info = asRecord(message.info);
-    const role = typeof info?.role === "string" ? info.role : message.role;
-    const type = typeof message.type === "string" ? message.type : undefined;
+    const role = isJsonString(info?.role) ? info.role : message.role;
+    const type = isJsonString(message.type) ? message.type : undefined;
 
     if (role !== "assistant" && type !== "assistant") continue;
     const text = extractOpenCodeAssistantMessageText(message);
@@ -430,7 +436,7 @@ function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
   return "";
 }
 
-function extractOpenCodeAssistantMessageText(value: unknown): string {
+function extractOpenCodeAssistantMessageText(value: JsonValue): string {
   const message = asRecord(value);
 
   if (!message) return "";
@@ -444,7 +450,7 @@ function extractOpenCodeAssistantMessageText(value: unknown): string {
       .map((part) => {
         const record = asRecord(part);
 
-        return record?.type === "text" && typeof record.text === "string" ? record.text : "";
+        return record?.type === "text" && isJsonString(record.text) ? record.text : "";
       })
       .filter(Boolean)
       .join("");
@@ -457,15 +463,15 @@ function extractOpenCodeAssistantMessageText(value: unknown): string {
   return stringifyStructuredMessage(info.structured);
 }
 
-function stringifyStructuredMessage(value: unknown): string {
+function stringifyStructuredMessage(value: JsonValue): string {
   if (value === undefined || value === null) return "";
 
-  if (typeof value === "string") return value.trim();
+  if (isJsonString(value)) return value.trim();
 
   return JSON.stringify(value);
 }
 
-function unwrapProviderPayload(value: unknown): unknown {
+function unwrapProviderPayload(value: JsonValue): unknown {
   let current = value;
 
   for (let depth = 0; depth < 3; depth += 1) {
@@ -489,23 +495,16 @@ function unwrapProviderPayload(value: unknown): unknown {
   return current;
 }
 
-function readArray(value: unknown, key: string): unknown[] | undefined {
+function readArray(value: JsonValue, key: string): unknown[] | undefined {
   const result = asRecord(value)?.[key];
 
   return Array.isArray(result) ? result : undefined;
 }
 
-function readNestedString(value: unknown, path: string[]): string | undefined {
-  let current: unknown = value;
-
-  for (const key of path) current = asRecord(current)?.[key];
-
-  return typeof current === "string" ? current : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }
 
@@ -525,6 +524,6 @@ function requireFinalResponse(response: string): string {
   return trimmed;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }

@@ -1,6 +1,5 @@
-import { homedir } from "node:os";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
   AgentProviderExecutionError,
@@ -13,6 +12,8 @@ import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
+import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
+import type { JsonObject, JsonValue } from "./json-value.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -374,7 +375,7 @@ interface CodexTurnAccumulator {
 
 class CodexAppServerRpc {
   private readonly pending = new Map<string, {
-    resolve: (value: unknown) => void;
+    resolve: (value: JsonValue) => void;
     reject: (error: Error) => void;
   }>();
   private readonly turns = new Map<string, CodexTurnAccumulator>();
@@ -394,7 +395,7 @@ class CodexAppServerRpc {
     });
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: JsonValue): Promise<JsonValue> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     const id = String(this.nextId++);
 
@@ -404,13 +405,13 @@ class CodexAppServerRpc {
     });
   }
 
-  notify(method: string, params?: unknown): void {
+  notify(method: string, params?: JsonValue): void {
     this.write({ method, ...(params === undefined ? {} : { params }) });
   }
 
   async runTurn(
     threadId: string,
-    params: unknown,
+    params: JsonValue,
     signal?: AbortSignal,
     onEvent?: (event: LocalAgentActivityEvent) => void,
   ): Promise<CodexTurnResult> {
@@ -445,6 +446,7 @@ class CodexAppServerRpc {
       turn.turnId = readString(asRecord(response)?.turn, "id");
 
       if (signal?.aborted && turn.turnId) {
+        // SAFETY: Boundary value already validated or constructed to match this type.
         // A failed interrupt must not report the turn as stopped: keep waiting for the
         // provider's terminal event; the manager bounds how long stop waits for it.
         await this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
@@ -471,7 +473,7 @@ class CodexAppServerRpc {
     this.turns.clear();
   }
 
-  private write(message: Record<string, unknown>): void {
+  private write(message: JsonObject): void {
     if (this.fatalError) throw this.fatalError;
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
@@ -482,18 +484,19 @@ class CodexAppServerRpc {
     this.buffer = "";
 
     if (!trimmed) return;
-    let message: Record<string, unknown>;
+    let message: JsonObject;
 
     try {
-      message = JSON.parse(trimmed) as Record<string, unknown>;
+      // SAFETY: Boundary value already validated or constructed to match this type.
+      message = JSON.parse(trimmed) as JsonObject;
     } catch {
       this.fail(new Error("codex app-server emitted malformed JSON."));
 
       return;
     }
 
-    const id = typeof message.id === "string" || typeof message.id === "number" ? String(message.id) : undefined;
-    const method = typeof message.method === "string" ? message.method : undefined;
+    const id = isJsonString(message.id) || isJsonNumber(message.id) ? String(message.id) : undefined;
+    const method = isJsonString(message.method) ? message.method : undefined;
 
     if (id && !method) {
       const pending = this.pending.get(id);
@@ -535,9 +538,9 @@ class CodexAppServerRpc {
 
   private findTurn(event: CodexEvent): CodexTurnAccumulator | undefined {
     const params = asRecord(event.params);
-    const threadId = typeof params?.threadId === "string" ? params.threadId : undefined;
+    const threadId = isJsonString(params?.threadId) ? params.threadId : undefined;
 
-    const turnId = typeof params?.turnId === "string"
+    const turnId = isJsonString(params?.turnId)
       ? params.turnId
       : readString(asRecord(params?.turn), "id");
 
@@ -551,7 +554,7 @@ class CodexAppServerRpc {
 
 export function reportCodexActivity(
   method: string,
-  item: unknown,
+  item: JsonValue,
   onEvent: (event: LocalAgentActivityEvent) => void,
 ): void {
   if (method !== "item/started" && method !== "item/completed") return;
@@ -560,7 +563,7 @@ export function reportCodexActivity(
   if (!record) return;
 
   if (record.type === "agentMessage" || record.type === "agent_message") {
-    if (method === "item/completed" && typeof record.text === "string") onEvent({ type: "message", text: record.text });
+    if (method === "item/completed" && isJsonString(record.text)) onEvent({ type: "message", text: record.text });
 
     return;
   }
@@ -579,7 +582,7 @@ export function reportCodexActivity(
   onEvent({ type: "tool_completed", ...tool, status: failed ? "failed" : "completed" });
 }
 
-function codexTool(item: Record<string, unknown>): { tool: string; summary?: string } | undefined {
+function codexTool(item: JsonObject): { tool: string; summary?: string } | undefined {
   switch (item.type) {
     case "commandExecution":
       return { tool: "shell", summary: summarizeToolInput(item) };
@@ -587,7 +590,7 @@ function codexTool(item: Record<string, unknown>): { tool: string; summary?: str
       const changes = Array.isArray(item.changes) ? item.changes : [];
       const paths = changes.map((change) => readString(change, "path")).filter(Boolean);
 
-      return { tool: "edit", ...(paths.length > 0 ? { summary: paths.join(", ") } : {}) };
+      return { tool: "edit", ...optionalFields(paths.length > 0 ? { summary: paths.join(", ") } : undefined) };
     }
 
     case "mcpToolCall": {
@@ -604,24 +607,24 @@ function codexTool(item: Record<string, unknown>): { tool: string; summary?: str
   }
 }
 
-function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
+function threadParams(input: LocalAgentRunInput): JsonObject {
   return {
-    ...(input.providerSessionId ? { threadId: input.providerSessionId } : {}),
+    ...optionalFields(input.providerSessionId ? { threadId: input.providerSessionId } : undefined),
     cwd: input.workspaceRoot,
     approvalPolicy: "never",
     sandbox: sandboxFor(input.writeMode),
-    ...(input.model ? { model: input.model } : {}),
+    ...optionalFields(input.model ? { model: input.model } : undefined),
   };
 }
 
-function turnParams(input: LocalAgentRunInput, threadId: string): Record<string, unknown> {
+function turnParams(input: LocalAgentRunInput, threadId: string): JsonObject {
   return {
     threadId,
     input: [{ type: "text", text: input.prompt }],
     approvalPolicy: "never",
     sandboxPolicy: sandboxPolicyFor(input.writeMode),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
+    ...optionalFields(input.model ? { model: input.model } : undefined),
+    ...optionalFields(input.effort ? { effort: input.effort } : undefined),
   };
 }
 
@@ -643,7 +646,7 @@ function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<st
   }
 }
 
-function parseCompletedTurn(params: unknown, items: unknown[]): {
+function parseCompletedTurn(params: JsonValue, items: JsonValue[]): {
   finalResponse: string;
   items: unknown[];
   failure?: string;
@@ -659,7 +662,7 @@ function parseCompletedTurn(params: unknown, items: unknown[]): {
     if (!record) continue;
     const type = record.type;
 
-    if ((type === "agentMessage" || type === "agent_message") && typeof record.text === "string") {
+    if ((type === "agentMessage" || type === "agent_message") && isJsonString(record.text)) {
       finalResponse = record.text;
     }
   }
@@ -703,9 +706,9 @@ function usesWindowsCommandShell(command: string): boolean {
 
 function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolean {
   const params = asRecord(event.params);
-  const eventThreadId = typeof params?.threadId === "string" ? params.threadId : undefined;
+  const eventThreadId = isJsonString(params?.threadId) ? params.threadId : undefined;
 
-  const eventTurnId = typeof params?.turnId === "string"
+  const eventTurnId = isJsonString(params?.turnId)
     ? params.turnId
     : readString(asRecord(params?.turn), "id");
 
@@ -716,23 +719,24 @@ function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolea
   return eventThreadId === turn.threadId || Boolean(turn.turnId && eventTurnId === turn.turnId);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: JsonValue): JsonObject | undefined {
+  return value !== null && isJsonObject(value) && !Array.isArray(value)
+    // SAFETY: Boundary value already validated or constructed to match this type.
+    ? value as JsonObject
     : undefined;
 }
 
-function readString(value: unknown, key: string): string | undefined {
+function readString(value: JsonValue, key: string): string | undefined {
   const result = asRecord(value)?.[key];
 
-  return typeof result === "string" ? result : undefined;
+  return isJsonString(result) ? result : undefined;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function directString(value: JsonValue): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function protocolErrorText(value: unknown): string {
+function protocolErrorText(value: JsonValue): string {
   const record = asRecord(value);
 
   if (!record) return String(value);
@@ -742,7 +746,7 @@ function protocolErrorText(value: unknown): string {
   return message ? `codex app-server${code === undefined ? "" : ` ${String(code)}`}: ${message}` : String(value);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: JsonValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 

@@ -1,6 +1,7 @@
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentRecord, LocalAgentStatus } from "./local-agent-store.js";
+import { optionalFields } from "./json-value.js";
 
 export type AgentCommandStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -89,16 +90,16 @@ export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTarg
         .map((provider): AgentTargetOutput => ({
           name: provider.id,
           kind: "provider",
-          ...(provider.model ? { model: provider.model } : {}),
-          ...(provider.effort ? { effort: provider.effort } : {}),
+          ...optionalFields(provider.model ? { model: provider.model } : undefined),
+          ...optionalFields(provider.effort ? { effort: provider.effort } : undefined),
         })),
       ...catalog.profiles.map((profile): AgentTargetOutput => ({
         name: profile.name,
         kind: "profile",
         provider: profile.provider,
         description: profile.description,
-        ...(profile.model ? { model: profile.model } : {}),
-        ...(profile.effort ? { effort: profile.effort } : {}),
+        ...optionalFields(profile.model ? { model: profile.model } : undefined),
+        ...optionalFields(profile.effort ? { effort: profile.effort } : undefined),
       })),
     ],
     unavailable: catalog.enabled
@@ -113,9 +114,9 @@ export function presentAgentReceipt(record: LocalAgentRecord): AgentReceiptOutpu
   return {
     id: record.id,
     status: presentAgentStatus(record.status),
-    ...(record.latestTurnId ? { turnId: record.latestTurnId } : {}),
-    ...(record.worktreePath ? { worktree: record.worktreePath } : {}),
-    ...(record.branch ? { branch: record.branch } : {}),
+    ...optionalFields(record.latestTurnId ? { turnId: record.latestTurnId } : undefined),
+    ...optionalFields(record.worktreePath ? { worktree: record.worktreePath } : undefined),
+    ...optionalFields(record.branch ? { branch: record.branch } : undefined),
   };
 }
 
@@ -139,7 +140,7 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
       return {
         ...receipt,
         status: "stopped",
-        ...(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : {}),
+        ...optionalFields(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : undefined),
       };
     case "running":
       return { ...receipt, status: "running" };
@@ -264,6 +265,7 @@ function escapeXmlText(value: string): string {
 
 function escapeXml(value: string): string {
   return value
+    // oxlint-disable-next-line eslint/no-control-regex -- Strip C0 controls that XML text cannot carry.
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -293,6 +295,6 @@ function presentAgentFailure(record: LocalAgentRecord): AgentFailureOutput {
     code: record.errorCode ?? "AGENT_FAILED",
     message: record.error ?? "Subagent failed without an error message.",
     retryable: record.errorRetryable ?? false,
-    ...(record.errorDetail ? { detail: record.errorDetail } : {}),
+    ...optionalFields(record.errorDetail ? { detail: record.errorDetail } : undefined),
   };
 }

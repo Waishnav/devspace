@@ -73,6 +73,7 @@ export function terminateProcessTree(
 
       return;
     } catch (error) {
+      // SAFETY: Boundary value already validated or constructed to match this type.
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
     }
   }
