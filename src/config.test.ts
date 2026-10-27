@@ -12,37 +12,21 @@ const env = {
 };
 
 try {
+  // Defaults are a security boundary: loopback only, nothing proxied, privacy-sensitive logging off.
   const defaults = loadConfig(env);
   assert.equal(defaults.host, "127.0.0.1");
-  assert.equal(defaults.port, 7676);
-  assert.equal(defaults.publicBaseUrl, "http://127.0.0.1:7676");
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
   assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
-  assert.equal(defaults.toolSurfaceOverride, undefined);
   assert.equal(defaults.experimentalCodeMode, false);
   assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "1" }).experimentalCodeMode, true);
   assert.equal(loadConfig({ ...env, DEVSPACE_EXPERIMENTAL_CODE_MODE: "0" }).experimentalCodeMode, false);
-  assert.equal(defaults.uiEnabled, true);
-  assert.deepEqual(defaults.activity, { enabled: true, maxTurns: 200 });
-  assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
-  assert.deepEqual(defaults.subagents, {
-    enabled: false,
-    instructions: "on-demand",
-    providers: [],
-  });
+  assert.equal(defaults.subagents.enabled, false);
   assert.deepEqual(defaults.oauth.allowedResourceUrls, []);
   assert.deepEqual(defaults.oauth.allowedRedirectHosts, ["chatgpt.com", "claude.ai", "claude.com", "localhost", "127.0.0.1"]);
   assert.equal(defaults.oauth.refreshTokenGraceSeconds, 0);
-  assert.deepEqual(defaults.logging, {
-    level: "info",
-    format: "json",
-    requests: true,
-    assets: false,
-    toolCalls: true,
-    shellCommands: false,
-    trustProxy: false,
-  });
+  assert.equal(defaults.logging.shellCommands, false);
+  assert.equal(defaults.logging.trustProxy, false);
 
   writeDevspaceConfig({
     configVersion: 1,

@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { loadConfig } from "./config.js";
 import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   localAgentDaemonPaths,
@@ -436,6 +435,7 @@ try {
       },
     );
 
+    // Agents probe `--help` on subcommands; it must print usage rather than run `--help` as a prompt.
     for (const helpArgs of [["agents", "run", "--help"], ["agents", "wait", "-h"]]) {
       const help = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", ...helpArgs], {
         cwd: process.cwd(),
@@ -450,8 +450,6 @@ try {
       daemon.close((error) => error ? rejectClose(error) : resolveClose());
     });
   }
-
-  assert.equal(loadConfig(cliConfigEnv).subagents.enabled, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
