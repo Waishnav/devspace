@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { type TestContext } from "node:test";
 import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { databasePath, openDatabase } from "./db/client.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
 const oauthConfig = {
   ownerToken: "test-owner-token-that-is-long-enough",
   accessTokenTtlSeconds: 3600,
@@ -21,15 +21,34 @@ const mcpUrl = new URL("https://agent.example.com/mcp");
 const tunnelUrl = new URL(oauthConfig.allowedResourceUrls[0]!);
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
 
-try {
-  await testDatabaseConfiguration(join(root, "database-configuration"));
-  testPersistenceAndTokenHashing(join(root, "persistence"));
-  testExpiredTokenCleanup(join(root, "expiration"));
-  testTransactionalTokenRotation(join(root, "rotation"));
-  await testProviderRestartRotationAndRevocation(join(root, "provider"));
-  await testRefreshResourcePolicy(join(root, "refresh-policy"));
-} finally {
-  await rm(root, { recursive: true, force: true });
+test("the database opens in WAL mode with every migration applied and private permissions", async (t) => {
+  await testDatabaseConfiguration(await stateDirFixture(t, "database-configuration"));
+});
+
+test("clients and tokens persist across restarts with only token hashes stored", async (t) => {
+  testPersistenceAndTokenHashing(await stateDirFixture(t, "persistence"));
+});
+
+test("expired tokens are not returned after reopening the store", async (t) => {
+  testExpiredTokenCleanup(await stateDirFixture(t, "expiration"));
+});
+
+test("refresh token rotation succeeds once and a losing rotation stores nothing", async (t) => {
+  testTransactionalTokenRotation(await stateDirFixture(t, "rotation"));
+});
+
+test("provider tokens survive restarts, honor the resource policy, rotate, and revoke", async (t) => {
+  await testProviderRestartRotationAndRevocation(await stateDirFixture(t, "provider"));
+});
+
+test("refresh tokens without a resource are rejected when no alias is configured", async (t) => {
+  await testRefreshResourcePolicy(await stateDirFixture(t, "refresh-policy"));
+});
+
+async function stateDirFixture(t: TestContext, name: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return join(root, name);
 }
 
 async function testDatabaseConfiguration(stateDir: string): Promise<void> {
