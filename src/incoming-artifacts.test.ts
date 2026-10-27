@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
+import test from "node:test";
 import { ArtifactError } from "./artifact-error.js";
 import {
   IncomingArtifactAdapterRegistry,
@@ -8,9 +9,9 @@ import {
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
 
-await testRegistryFailsClosed();
-await testOpenAIFileAdapter();
-testLogShapeRedaction();
+test("the incoming artifact registry rejects unclaimed, ambiguous, and invalid adapters", testRegistryFailsClosed);
+test("the OpenAI file adapter downloads only safe OpenAI file references", testOpenAIFileAdapter);
+test("incoming artifact log shapes redact values", testLogShapeRedaction);
 
 async function testRegistryFailsClosed(): Promise<void> {
   const registry = new IncomingArtifactAdapterRegistry();
