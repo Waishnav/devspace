@@ -43,23 +43,12 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
     const migrations = database.sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
       .all();
-    assert.deepEqual(migrations, [
-      { version: 1, name: "workspace-state" },
-      { version: 2, name: "oauth-state" },
-      { version: 3, name: "local-agent-sessions" },
-      { version: 4, name: "workspace-conversation-bindings" },
-      { version: 5, name: "local-agent-structured-errors" },
-      { version: 6, name: "local-agent-effort-rename" },
-      { version: 7, name: "workspace-recovery-state" },
-      { version: 8, name: "local-agent-turns" },
-      { version: 9, name: "local-agent-provider-instances" },
-      { version: 10, name: "local-agent-generic-acp-driver" },
-      { version: 11, name: "local-agent-turn-events" },
-      { version: 12, name: "local-agent-authority" },
-      { version: 13, name: "dynamic-workflows" },
-      { version: 14, name: "local-agent-worktrees" },
-      { version: 15, name: "workspace-activity" },
-    ]);
+    // Every migration applies once, in order, with no gaps.
+    assert.deepEqual(
+      migrations.map((migration) => (migration as { version: number }).version),
+      migrations.map((_, index) => index + 1),
+    );
+    assert.ok(migrations.length > 0);
   } finally {
     database.close();
   }

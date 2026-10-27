@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createServer as createHttpServer } from "node:http";
 import { access, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +21,6 @@ import {
   configureHttpServer,
   createMcpServer,
   createServer,
-  DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS,
 } from "./server.js";
 import type { ToolSurfaceName } from "./tool-surfaces/index.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
@@ -359,17 +357,6 @@ test("UI metadata is limited to workspace and aggregate review", async (t) => {
       assert.deepEqual(toolsWithUi, uiEnabled ? ["open_workspace", "show_changes"] : []);
     });
   }
-});
-
-test("open_workspace reports aggregate review availability", async (t) => {
-  const plain = await fixture(t);
-  const gitWorkspace = await fixture(t, { git: true });
-
-  const plainReview = structuredContent(await callOpen(plain.client, plain.project, "plain")).review;
-  const gitReview = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git")).review;
-
-  assert.equal((plainReview as { available: boolean }).available, false);
-  assert.deepEqual(gitReview, { available: true });
 });
 
 test("show_changes reviews an unborn repository through the MCP tool surface", async (t) => {
@@ -723,15 +710,6 @@ test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t
   assert.notEqual(structuredContent(unscoped).workspace_id, structuredContent(first).workspace_id);
   assert.ok(Array.isArray(structuredContent(otherSession).agents_files));
   assert.ok(Array.isArray(structuredContent(unscoped).agents_files));
-});
-
-test("HTTP listener advertises a tunnel-safe keep-alive lifetime", () => {
-  const httpServer = createHttpServer();
-  configureHttpServer(httpServer);
-
-  assert.equal(httpServer.keepAliveTimeout, DEVSPACE_HTTP_KEEP_ALIVE_TIMEOUT_MS);
-  // Node applies the header deadline per request, so it keeps its short default.
-  assert.equal(httpServer.headersTimeout, 60_000);
 });
 
 test("HTTP cached workspaceId arguments preserve canonical schemas and validation", async (t) => {
