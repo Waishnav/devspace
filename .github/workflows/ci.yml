@@ -73,7 +73,7 @@ jobs:
         shell: bash
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
-          if git diff --name-only FETCH_HEAD HEAD | grep -qE '^(package\.json|pnpm-lock\.yaml|bin/|scripts/|tsconfig\.build\.json|test/package-install-smoke\.test\.ts|\.github/workflows/)'; then
+          if git diff --name-only FETCH_HEAD HEAD | grep -qE '^(package\.json|pnpm-lock\.yaml|bin/|scripts/|skills/|schema/|examples/|tsconfig(\.build)?\.json|test/package-install-smoke\.test\.ts|\.github/workflows/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
