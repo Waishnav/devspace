@@ -11,7 +11,7 @@ import {
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 import type { WorkflowRun } from "./workflow-types.js";
 
 const execFileAsync = promisify(execFile);

@@ -27,7 +27,7 @@ import {
 import type { ToolSurfaceName } from "./tool-surfaces/index.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 import {
   listActivityWorkspaces,
   listTurnToolCalls,

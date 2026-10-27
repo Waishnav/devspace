@@ -471,7 +471,8 @@ try {
   );
   const lockBefore = readFileSync(ownerDaemon.paths.lockPath, "utf8");
   const pidBefore = readFileSync(ownerDaemon.paths.pidPath, "utf8");
-  assert.notEqual(ownerDaemon.paths.endpoint, "");
+  // Closing the losing daemon must not release or rewrite the winner's lock.
+  await competingDaemon.close();
   assert.equal(readFileSync(ownerDaemon.paths.lockPath, "utf8"), lockBefore);
   assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
   const ownerClient = new LocalAgentClient({

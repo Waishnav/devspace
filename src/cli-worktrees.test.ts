@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 import { openDatabase } from "./db/client.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 
 const execFileAsync = promisify(execFile);

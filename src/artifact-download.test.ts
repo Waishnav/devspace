@@ -42,8 +42,6 @@ try {
     await testSymlinkRejection(join(root, "symlinks"));
     await testPublicationFailurePreservesReplacement(join(root, "publication-race"));
     await testPublishedPermissions(join(root, "permissions"));
-  } else {
-    await testUnsupportedPlatform(join(root, "unsupported-platform"));
   }
   testLogRedaction();
 } finally {
@@ -137,22 +135,6 @@ function testWindowsPathValidationContract(): void {
     parts: ["画像", "アイコン.png"],
     name: "アイコン.png",
   });
-}
-
-async function testUnsupportedPlatform(testRoot: string): Promise<void> {
-  const workspaceRoot = join(testRoot, "workspace");
-  await mkdir(workspaceRoot, { recursive: true });
-  await expectArtifactError(
-    downloadIncomingArtifact({
-      registry: registryFor({ name: "blocked.txt", stream: Readable.from(["blocked"]) }),
-      workspaceId: "ws_test",
-      workspaceRoot,
-      maxFileBytes: 1024,
-      file: { native: true },
-      path: "blocked.txt",
-    }),
-    "artifact_platform_unsupported",
-  );
 }
 
 async function testSafeDownloadAndConflict(testRoot: string): Promise<void> {

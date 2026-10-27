@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadDevspaceFiles } from "./user-config.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 test("config set tells users to restart the running server", () => {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-cli-config-test-"));

@@ -8,7 +8,7 @@ import test from "node:test";
 import { loadConfig } from "./config.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
 import { createServer } from "./server.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 test("HTTP MCP enforces canonical and exact alias bearer resources", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "devspace-http-oauth-"));
