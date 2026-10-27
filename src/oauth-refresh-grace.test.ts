@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { type TestContext } from "node:test";
 import { AccessDeniedError, InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-oauth-grace-test-"));
 const baseConfig: OAuthConfig = {
   ownerToken: "test-owner-token-that-is-long-enough",
   accessTokenTtlSeconds: 3600,
@@ -23,17 +23,32 @@ const otherResource = new URL("https://other.example.com/mcp");
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
 const realDateNow = Date.now;
 
-try {
-  await testDefaultAndZeroGrace();
-  await testConcurrentReuseAndRestartPersistence();
-  await testGraceExpiryAndOriginalTtl();
-  await testGraceDoesNotRelaxRefreshPolicy();
-} finally {
-  Date.now = realDateNow;
-  await rm(root, { recursive: true, force: true });
+test("without a grace period a rotated refresh token cannot be reused", async (t) => {
+  await testDefaultAndZeroGrace(await fixture(t));
+});
+
+test("a rotated refresh token is reusable concurrently and across restarts until its grace expires", async (t) => {
+  await testConcurrentReuseAndRestartPersistence(await fixture(t));
+});
+
+test("grace expiry is fixed at first rotation and never outlives the original TTL", async (t) => {
+  await testGraceExpiryAndOriginalTtl(await fixture(t));
+});
+
+test("grace reuse keeps the client, scope, and resource checks", async (t) => {
+  await testGraceDoesNotRelaxRefreshPolicy(await fixture(t));
+});
+
+async function fixture(t: TestContext): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "devspace-oauth-grace-test-"));
+  t.after(async () => {
+    Date.now = realDateNow;
+    await rm(root, { recursive: true, force: true });
+  });
+  return root;
 }
 
-async function testDefaultAndZeroGrace(): Promise<void> {
+async function testDefaultAndZeroGrace(root: string): Promise<void> {
   const defaultDir = join(root, "default");
   const zeroDir = join(root, "zero");
   for (const [stateDir, config] of [[defaultDir, baseConfig], [zeroDir, { ...baseConfig, refreshTokenGraceSeconds: 0 }]] as const) {
@@ -49,7 +64,7 @@ async function testDefaultAndZeroGrace(): Promise<void> {
   }
 }
 
-async function testConcurrentReuseAndRestartPersistence(): Promise<void> {
+async function testConcurrentReuseAndRestartPersistence(root: string): Promise<void> {
   const stateDir = join(root, "concurrent-restart");
   const config = { ...baseConfig, refreshTokenGraceSeconds: 600 };
   const baseSeconds = 2_000_000_500;
@@ -97,7 +112,7 @@ async function testConcurrentReuseAndRestartPersistence(): Promise<void> {
   }
 }
 
-async function testGraceExpiryAndOriginalTtl(): Promise<void> {
+async function testGraceExpiryAndOriginalTtl(root: string): Promise<void> {
   const stateDir = join(root, "expiry");
   const config = { ...baseConfig, refreshTokenGraceSeconds: 10, refreshTokenTtlSeconds: 30 };
   const baseSeconds = 2_000_000_000;
@@ -157,7 +172,7 @@ async function testGraceExpiryAndOriginalTtl(): Promise<void> {
   }
 }
 
-async function testGraceDoesNotRelaxRefreshPolicy(): Promise<void> {
+async function testGraceDoesNotRelaxRefreshPolicy(root: string): Promise<void> {
   const stateDir = join(root, "policy");
   const config = { ...baseConfig, refreshTokenGraceSeconds: 600 };
   const provider = new SingleUserOAuthProvider(config, serverUrl, stateDir);
