@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Result } from "better-result";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createConnection, createServer as createNetServer } from "node:net";
+import { createConnection, createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -631,59 +631,25 @@ ensureLocalAgentDaemonSecret(upgradePaths);
 const legacyLock = new LocalAgentDaemonLock(upgradePaths);
 legacyLock.acquire();
 const legacyMethods: string[] = [];
-const legacyServer = createNetServer((socket) => {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk: string | Buffer) => {
-    buffer += chunk.toString();
-    const newline = buffer.indexOf("\n");
-    if (newline === -1) return;
-    const request = JSON.parse(buffer.slice(0, newline)) as {
-      requestId: string;
-      protocolVersion: number;
-      method: string;
-    };
-    legacyMethods.push(`${request.method}:${request.protocolVersion}`);
-    if (request.protocolVersion !== 1) {
-      socket.end(encodeLocalAgentDaemonResponse({
-        requestId: request.requestId,
-        protocolVersion: 1,
-        ok: false,
-        error: {
-          code: "DAEMON_PROTOCOL_MISMATCH",
-          message: `Unsupported daemon protocol version ${LOCAL_AGENT_DAEMON_PROTOCOL_VERSION}; expected 1.`,
-          retryable: false,
-        },
-      }));
-      return;
+const legacyServer = await listenFakeDaemon(upgradePaths.endpoint, (request, socket) => {
+  legacyMethods.push(`${request.method}:${request.protocolVersion}`);
+  if (request.protocolVersion !== 1) {
+    socket.end(protocolMismatch(request, 1));
+    return;
+  }
+  const stopping = request.method === "daemon.stop";
+  socket.end(encodeLocalAgentDaemonResponse({
+    requestId: request.requestId,
+    protocolVersion: 1,
+    ok: true,
+    result: fakeDaemonStatus(upgradePaths.endpoint, 1, stopping ? "stopping" : "ready"),
+  }), () => {
+    if (stopping) {
+      legacyServer.close(() => {
+        setTimeout(() => legacyLock.release(), 50);
+      });
     }
-    const stopping = request.method === "daemon.stop";
-    socket.end(encodeLocalAgentDaemonResponse({
-      requestId: request.requestId,
-      protocolVersion: 1,
-      ok: true,
-      result: {
-        state: stopping ? "stopping" : "ready",
-        protocolVersion: 1,
-        pid: process.pid,
-        endpoint: upgradePaths.endpoint,
-        startedAt: "now",
-        activeTurns: 0,
-        runtimeCount: 0,
-        clientConnections: 1,
-      },
-    }), () => {
-      if (stopping) {
-        legacyServer.close(() => {
-          setTimeout(() => legacyLock.release(), 50);
-        });
-      }
-    });
   });
-});
-await new Promise<void>((resolveListen, rejectListen) => {
-  legacyServer.once("error", rejectListen);
-  legacyServer.listen(upgradePaths.endpoint, resolveListen);
 });
 const replacementManager = new FakeManager();
 replacementManager.activeTurnCount = 0;
@@ -728,59 +694,29 @@ await mkdir(replacementRaceStateDir, { recursive: true });
 const replacementRacePaths = localAgentDaemonPaths(replacementRaceStateDir);
 ensureLocalAgentDaemonSecret(replacementRacePaths);
 let replacementRaceProtocol = 1;
-const replacementRaceServer = createNetServer((socket) => {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk: string | Buffer) => {
-    buffer += chunk.toString();
-    const newline = buffer.indexOf("\n");
-    if (newline === -1) return;
-    const request = JSON.parse(buffer.slice(0, newline)) as {
-      requestId: string;
-      protocolVersion: number;
-      method: string;
-    };
-    if (request.protocolVersion !== replacementRaceProtocol) {
-      socket.end(encodeLocalAgentDaemonResponse({
-        requestId: request.requestId,
-        protocolVersion: replacementRaceProtocol,
-        ok: false,
-        error: {
-          code: "DAEMON_PROTOCOL_MISMATCH",
-          message: `Unsupported daemon protocol version ${request.protocolVersion}.`,
-          retryable: false,
-        },
-      }));
-      return;
+const replacementRaceServer = await listenFakeDaemon(replacementRacePaths.endpoint, (request, socket) => {
+  if (request.protocolVersion !== replacementRaceProtocol) {
+    socket.end(protocolMismatch(request, replacementRaceProtocol));
+    return;
+  }
+  const status = fakeDaemonStatus(
+    replacementRacePaths.endpoint,
+    replacementRaceProtocol,
+    request.method === "daemon.stop" ? "stopping" : "ready",
+  );
+  socket.end(encodeLocalAgentDaemonResponse({
+    requestId: request.requestId,
+    protocolVersion: replacementRaceProtocol,
+    ok: true,
+    result: request.method === "hello"
+      && replacementRaceProtocol === LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
+      ? { status, configMatches: true }
+      : status,
+  }), () => {
+    if (request.method === "daemon.stop") {
+      replacementRaceProtocol = LOCAL_AGENT_DAEMON_PROTOCOL_VERSION;
     }
-    const status = {
-      state: request.method === "daemon.stop" ? "stopping" as const : "ready" as const,
-      protocolVersion: replacementRaceProtocol,
-      pid: process.pid,
-      endpoint: replacementRacePaths.endpoint,
-      startedAt: "now",
-      activeTurns: 0,
-      runtimeCount: 0,
-      clientConnections: 1,
-    };
-    socket.end(encodeLocalAgentDaemonResponse({
-      requestId: request.requestId,
-      protocolVersion: replacementRaceProtocol,
-      ok: true,
-      result: request.method === "hello"
-        && replacementRaceProtocol === LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
-        ? { status, configMatches: true }
-        : status,
-    }), () => {
-      if (request.method === "daemon.stop") {
-        replacementRaceProtocol = LOCAL_AGENT_DAEMON_PROTOCOL_VERSION;
-      }
-    });
   });
-});
-await new Promise<void>((resolveListen, rejectListen) => {
-  replacementRaceServer.once("error", rejectListen);
-  replacementRaceServer.listen(replacementRacePaths.endpoint, resolveListen);
 });
 const replacementRaceClient = new LocalAgentClient({
   stateDir: replacementRaceStateDir,
@@ -804,35 +740,14 @@ const timeoutStateDir = join(root, "request-timeout-state");
 await mkdir(timeoutStateDir, { recursive: true });
 const timeoutPaths = localAgentDaemonPaths(timeoutStateDir);
 ensureLocalAgentDaemonSecret(timeoutPaths);
-const timeoutServer = createNetServer((socket) => {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk: string | Buffer) => {
-    buffer += chunk.toString();
-    const newline = buffer.indexOf("\n");
-    if (newline === -1) return;
-    const request = JSON.parse(buffer.slice(0, newline)) as { requestId: string; method: string };
-    if (request.method !== "hello") return;
-    socket.end(encodeLocalAgentDaemonResponse({
-      requestId: request.requestId,
-      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-      ok: true,
-      result: {
-        state: "ready",
-        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-        pid: process.pid,
-        endpoint: timeoutPaths.endpoint,
-        startedAt: "now",
-        activeTurns: 0,
-        runtimeCount: 0,
-        clientConnections: 1,
-      },
-    }));
-  });
-});
-await new Promise<void>((resolveListen, rejectListen) => {
-  timeoutServer.once("error", rejectListen);
-  timeoutServer.listen(timeoutPaths.endpoint, resolveListen);
+const timeoutServer = await listenFakeDaemon(timeoutPaths.endpoint, (request, socket) => {
+  if (request.method !== "hello") return;
+  socket.end(encodeLocalAgentDaemonResponse({
+    requestId: request.requestId,
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    ok: true,
+    result: fakeDaemonStatus(timeoutPaths.endpoint, LOCAL_AGENT_DAEMON_PROTOCOL_VERSION),
+  }));
 });
 try {
   const timeoutClient = new LocalAgentClient({
@@ -854,23 +769,13 @@ try {
 const invalidStateDir = join(root, "invalid-response-state");
 await mkdir(invalidStateDir, { recursive: true });
 const invalidPaths = localAgentDaemonPaths(invalidStateDir);
-const invalidServer = createNetServer((socket) => {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk: string | Buffer) => {
-    buffer += chunk.toString();
-    if (!buffer.includes("\n")) return;
-    socket.end(encodeLocalAgentDaemonResponse({
-      requestId: "wrong_request_id",
-      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-      ok: true,
-      result: {},
-    }));
-  });
-});
-await new Promise<void>((resolveListen, rejectListen) => {
-  invalidServer.once("error", rejectListen);
-  invalidServer.listen(invalidPaths.endpoint, resolveListen);
+const invalidServer = await listenFakeDaemon(invalidPaths.endpoint, (_request, socket) => {
+  socket.end(encodeLocalAgentDaemonResponse({
+    requestId: "wrong_request_id",
+    protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+    ok: true,
+    result: {},
+  }));
 });
 try {
   const invalidClient = new LocalAgentClient({
@@ -886,6 +791,56 @@ try {
 } finally {
   await new Promise<void>((resolveClose, rejectClose) => {
     invalidServer.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+}
+
+type RawDaemonRequest = { requestId: string; protocolVersion: number; method: string };
+
+// A hand-rolled daemon endpoint for protocol edge cases the real daemon never produces.
+async function listenFakeDaemon(
+  endpoint: string,
+  respond: (request: RawDaemonRequest, socket: Socket) => void,
+): Promise<NetServer> {
+  const server = createNetServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string | Buffer) => {
+      buffer += chunk.toString();
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) return;
+      respond(JSON.parse(buffer.slice(0, newline)) as RawDaemonRequest, socket);
+    });
+  });
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(endpoint, resolveListen);
+  });
+  return server;
+}
+
+function fakeDaemonStatus(endpoint: string, protocolVersion: number, state: "ready" | "stopping" = "ready") {
+  return {
+    state,
+    protocolVersion,
+    pid: process.pid,
+    endpoint,
+    startedAt: "now",
+    activeTurns: 0,
+    runtimeCount: 0,
+    clientConnections: 1,
+  };
+}
+
+function protocolMismatch(request: RawDaemonRequest, protocolVersion: number): string {
+  return encodeLocalAgentDaemonResponse({
+    requestId: request.requestId,
+    protocolVersion,
+    ok: false,
+    error: {
+      code: "DAEMON_PROTOCOL_MISMATCH",
+      message: `Unsupported daemon protocol version ${request.protocolVersion}.`,
+      retryable: false,
+    },
   });
 }
 
