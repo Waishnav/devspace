@@ -65,8 +65,25 @@ jobs:
           DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: pnpm test
 
+      # npm install of the packed tarball takes about 7 minutes on Windows and caught no Windows-specific
+      # break across two months of PRs, so Windows runs it only when packaging inputs change.
+      - name: Detect packaging changes
+        id: packaging
+        if: matrix.os == 'windows-latest' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git diff --name-only FETCH_HEAD HEAD | grep -qE '^(package\.json|pnpm-lock\.yaml|bin/|scripts/|skills/|schema/|examples/|tsconfig(\.build)?\.json|test/package-install-smoke\.test\.ts|\.github/workflows/)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Package install smoke test
+        if: matrix.os != 'windows-latest' || steps.packaging.outputs.changed == 'true'
         run: pnpm test:package-install
+
+      - name: Build
+        if: matrix.os == 'windows-latest' && steps.packaging.outputs.changed != 'true'
+        run: pnpm build
 
       - name: Doctor
         run: node dist/cli.js doctor
