@@ -82,7 +82,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.90.0",
+    "@oxlint/plugins": "1.89.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
@@ -90,7 +90,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",
     "@vitejs/plugin-react": "^6.0.2",
-    "oxlint": "1.90.0",
+    "oxlint": "1.89.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.14"
