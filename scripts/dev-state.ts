@@ -134,7 +134,7 @@ async function readSourceConfig(configDir: string): Promise<{ config: DevspaceCo
   const legacyPath = join(configDir, "config.json");
 
   if (existsSync(legacyPath)) {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     const value = JSON.parse(await readFile(legacyPath, "utf8")) as unknown;
 
     return { config: migrateLegacyConfig(value) };

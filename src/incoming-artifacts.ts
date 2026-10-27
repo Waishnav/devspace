@@ -1,19 +1,10 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonBoolean, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isJsonString, isObjectValue } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { basename, isAbsolute } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { ArtifactError } from "./artifact-error.js";
-import {
-  isBigintValue,
-  isFunctionValue,
-  isJsonBoolean,
-  isJsonNumber,
-  isJsonObject,
-  isJsonString,
-  isSymbolValue,
-  type JsonObject,
-  type JsonValue,
-} from "./json-value.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
 
 const ADAPTER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 
@@ -26,8 +17,16 @@ const OPENAI_FILE_HOSTS = new Set([
 const OPENAI_REGIONAL_BLOB_HOST_PATTERN = /^oaisdmntpr[a-z0-9]+\.blob\.core\.windows\.net$/u;
 const OPENAI_FILENAME_SAFE_FILE_ID_PATTERN = /^file[-_][A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 const OPENAI_FILE_ID_MAX_LENGTH = 512;
-// oxlint-disable-next-line eslint/no-control-regex -- OpenAI file IDs must not contain control characters.
-const OPENAI_FILE_ID_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/u;
+
+function hasAsciiControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+
+  return false;
+}
 
 const OPENAI_FILE_KEYS = new Set([
   "download_url",
@@ -48,12 +47,10 @@ export interface IncomingArtifactSource {
   stream: Readable;
 }
 
-export type IncomingArtifactOpenInput = JsonValue | Uint8Array;
-
 export interface IncomingArtifactAdapter {
   readonly id: string;
-  canHandle(value: IncomingArtifactOpenInput): boolean;
-  open(value: IncomingArtifactOpenInput): Promise<IncomingArtifactSource>;
+  canHandle(value: WireInput): boolean;
+  open(value: WireInput): Promise<IncomingArtifactSource>;
 }
 
 export interface OpenedIncomingArtifact extends IncomingArtifactSource {
@@ -87,7 +84,7 @@ export class IncomingArtifactAdapterRegistry {
     this.adapters = [...adapters];
   }
 
-  async open(value: IncomingArtifactOpenInput): Promise<OpenedIncomingArtifact> {
+  async open(value: WireInput): Promise<OpenedIncomingArtifact> {
     const matching: IncomingArtifactAdapter[] = [];
 
     for (const adapter of this.adapters) {
@@ -172,7 +169,7 @@ export function createOpenAIIncomingArtifactAdapter(
   return {
     id: "openai-file",
     canHandle: isOpenAIFileReferenceCandidate,
-    async open(value: IncomingArtifactOpenInput): Promise<IncomingArtifactSource> {
+    async open(value: WireInput): Promise<IncomingArtifactSource> {
       const reference = normalizeOpenAIFileReference(value);
 
       let downloadUrl = validateOpenAIFileUrl(reference.download_url);
@@ -239,33 +236,31 @@ export function createOpenAIIncomingArtifactAdapter(
   };
 }
 
-export type IncomingArtifactValue =
+export type IncomingArtifactValueView =
   | { type: "null" }
   | { type: "undefined" }
   | { type: "boolean" }
   | { type: "number"; finite: boolean }
   | { type: "bigint" }
   | { type: "string"; kind: "absolute-path" | "url" | "data-url" | "text"; length: number }
-  | { type: "array"; length: number; items: IncomingArtifactValue[]; truncated: boolean }
+  | { type: "array"; length: number; items: IncomingArtifactValueView[]; truncated: boolean }
   | {
       type: "object";
       constructor?: string;
-      entries: { readonly [key: string]: IncomingArtifactValue };
+      entries: Record<string, IncomingArtifactValueView>;
       truncated: boolean;
     }
   | { type: "function" | "symbol" }
   | { type: "cycle" };
 
-type ConstructorHost = { readonly constructor?: { readonly name?: string } };
-
 export function describeIncomingArtifactValue(
-  value: JsonValue | undefined,
+  value: WireInput,
   maxDepth = 4,
   maxEntries = 20,
-): IncomingArtifactValue {
+): IncomingArtifactValueView {
   const seen = new WeakSet<object>();
 
-  const describe = (current: JsonValue | undefined, depth: number): IncomingArtifactValue => {
+  const describe = (current: WireInput, depth: number): IncomingArtifactValueView => {
     if (current === null) return { type: "null" };
 
     if (current === undefined) return { type: "undefined" };
@@ -317,10 +312,19 @@ export function describeIncomingArtifactValue(
       };
     }
 
-    const entries: { [key: string]: IncomingArtifactValue } = {};
+    const entries: Record<string, IncomingArtifactValueView> = {};
 
     for (const [index, key] of keys.slice(0, maxEntries).entries()) {
-      entries[safeValueEntryKey(key, index)] = describe(current[key], depth + 1);
+      let entryValue: unknown;
+
+      try {
+        // SAFETY: The surrounding checks or construction already match this type.
+        entryValue = (current as JsonObject)[key];
+      } catch {
+        entryValue = undefined;
+      }
+
+      entries[safeValueEntryKey(key, index)] = describe(entryValue, depth + 1);
     }
 
     return {
@@ -335,7 +339,7 @@ export function describeIncomingArtifactValue(
 }
 
 function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
-  if (!source) {
+  if (!source || !isObjectValue(source)) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter returned an invalid source.",
@@ -366,7 +370,8 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
     );
   }
 
-  const stream = source.stream;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const stream = source.stream as Partial<Readable> | undefined;
 
   if (!stream || !isFunctionValue(stream[Symbol.asyncIterator])) {
     throw new ArtifactError(
@@ -376,8 +381,8 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
   }
 }
 
-function isOpenAIFileReferenceCandidate(value: IncomingArtifactOpenInput): value is JsonObject {
-  if (!isJsonObject(value)) return false;
+function isOpenAIFileReferenceCandidate(value: WireInput): value is JsonObject {
+  if (!isRecord(value)) return false;
   const keys = Object.keys(value);
 
   return keys.length >= 2
@@ -386,7 +391,7 @@ function isOpenAIFileReferenceCandidate(value: IncomingArtifactOpenInput): value
     && Object.hasOwn(value, "file_id");
 }
 
-function normalizeOpenAIFileReference(value: IncomingArtifactOpenInput): OpenAIFileReference {
+function normalizeOpenAIFileReference(value: WireInput): OpenAIFileReference {
   if (!isOpenAIFileReferenceCandidate(value)) {
     throw new ArtifactError(
       "invalid_openai_file_reference",
@@ -456,7 +461,7 @@ function normalizeOpenAIFileReference(value: IncomingArtifactOpenInput): OpenAIF
   };
 }
 
-function nullableString(value: JsonValue | undefined): string | undefined | null {
+function nullableString(value: WireInput): string | undefined | null {
   if (value === undefined || value === null) return undefined;
 
   return isJsonString(value) ? value : null;
@@ -479,7 +484,7 @@ function normalizeOpenAIFileName(
 function isValidOpenAIFileId(value: string): boolean {
   return value.length > 0
     && value.length <= OPENAI_FILE_ID_MAX_LENGTH
-    && !OPENAI_FILE_ID_CONTROL_PATTERN.test(value);
+    && !hasAsciiControlCharacters(value);
 }
 
 function normalizeSuppliedOpenAIFileName(value: string | undefined): string | undefined {
@@ -564,6 +569,10 @@ function responseContentLength(response: Response): number | undefined {
   return Number.isSafeInteger(size) ? size : undefined;
 }
 
+function isRecord(value: WireInput): value is JsonObject {
+  return isObjectValue(value) && value !== null && !Array.isArray(value);
+}
+
 function classifyValueString(
   value: string,
 ): "absolute-path" | "url" | "data-url" | "text" {
@@ -588,7 +597,7 @@ function safeValueEntryKey(value: string, index: number): string {
     : `<redacted-key-${index + 1}>`;
 }
 
-function safeConstructorName(value: ConstructorHost): string | undefined {
+function safeConstructorName(value: {}): string | undefined {
   try {
     const name = value.constructor?.name;
 

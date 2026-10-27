@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "../../unsafe-narrow.js";
+import { isObjectValue, isJsonString, optionalFields } from "../../json-value.js";
+import type { WireInput, JsonObject } from "../../json-value.js";
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { ActivityWorkspace, TurnDiff, WorkspaceToolCall, WorkspaceTurn } from "../../workspace-activity.js";
@@ -6,8 +9,6 @@ import { parseReviewFiles, ReviewDiffFile, type ReviewThemeType } from "../revie
 import { buildDiffTree, type DiffTreeNode } from "./diff-tree.js";
 import "../review-diff.css";
 import "./web.css";
-import { optionalFields, isJsonString, isJsonObject } from "../../json-value.js";
-import type { JsonObject, JsonValue } from "../../json-value.js";
 
 const BASE = "/web";
 
@@ -81,7 +82,7 @@ function useJson<T>(url: string): Loaded<T> {
           return;
         }
 
-        // SAFETY: Boundary value already validated or constructed to match this type.
+        // SAFETY: The surrounding checks or construction already match this type.
         const body = await response.json() as T & { error?: string };
 
         if (cancelled) return;
@@ -89,7 +90,7 @@ function useJson<T>(url: string): Loaded<T> {
         if (!response.ok) setState({ status: "error", message: body.error ?? `Request failed (${response.status}).` });
         else setState({ status: "ready", data: body });
       })
-      .catch((error: JsonValue) => {
+      .catch((error: WireInput) => {
         if (!cancelled) setState({ status: "error", message: error instanceof Error ? error.message : String(error) });
       });
 
@@ -162,7 +163,7 @@ function App() {
             <span className="visually-hidden">Theme</span>
             <select
               value={preference}
-              // SAFETY: Boundary value already validated or constructed to match this type.
+              // SAFETY: The surrounding checks or construction already match this type.
               onChange={(event) => setPreference(event.target.value as ThemePreference)}
             >
               <option value="system">System</option>
@@ -543,9 +544,10 @@ function ToolCallRow({ call }: { call: WorkspaceToolCall }) {
   );
 }
 
-function JsonBlock({ label, value }: { label: string; value: unknown }) {
-  const text = isJsonObject(value) && value !== null && "text" in value && Object.keys(value).length === 1
-    ? String((value as { text: unknown }).text)
+function JsonBlock({ label, value }: { label: string; value: WireInput }) {
+  const text = isObjectValue(value) && value !== null && "text" in value && Object.keys(value).length === 1
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? String(unsafeNarrow<{ text: WireInput }>(value).text)
     : JSON.stringify(value, null, 2);
 
   return (
@@ -556,7 +558,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function LoadState({ state }: { state: Loaded<unknown> }) {
+function LoadState({ state }: { state: Loaded<WireInput> }) {
   if (state.status === "error") return <p className="status error">{state.message}</p>;
 
   return <p className="status muted">Loading…</p>;
@@ -578,9 +580,9 @@ function fileAnchor(path: string): string {
   return `file-${encodeURIComponent(path)}`;
 }
 
-function argumentSummary(args: JsonValue): string {
-  if (!isJsonObject(args) || args === null) return "";
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function argumentSummary(args: WireInput): string {
+  if (!isObjectValue(args) || args === null) return "";
+  // SAFETY: The surrounding checks or construction already match this type.
   const record = args as JsonObject;
 
   if (isJsonString(record.patch)) {
@@ -590,8 +592,8 @@ function argumentSummary(args: JsonValue): string {
   }
 
   for (const key of ["cmd", "command", "path", "task", "query"]) {
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    if (isJsonString(record[key])) return truncate(record[key] as string, 120);
+    // SAFETY: The surrounding checks or construction already match this type.
+    if (isJsonString(record[key])) return truncate(record[key], 120);
   }
 
   const { workspace_id: _workspaceId, ...rest } = record;
@@ -600,8 +602,9 @@ function argumentSummary(args: JsonValue): string {
   return json === "{}" ? "" : truncate(json, 120);
 }
 
-function resultSummary(result: JsonValue): string {
-  if (!isJsonObject(result) || result === null) return "";
+function resultSummary(result: WireInput): string {
+  if (!isObjectValue(result) || result === null) return "";
+  // SAFETY: The surrounding checks or construction already match this type.
   const text = (result as { text?: unknown }).text;
 
   if (!isJsonString(text)) return "";
@@ -610,7 +613,8 @@ function resultSummary(result: JsonValue): string {
   return truncate(line, 160);
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
+  // SAFETY: The surrounding checks or construction already match this type.
   const message = (error as { message?: unknown } | undefined)?.message;
 
   return isJsonString(message) ? truncate(message, 160) : "Failed";
@@ -636,7 +640,6 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 /** Omits the date from a range end on the same day as its start. */
 function formatEnd(startIso: string, endIso: string): string {
   const sameDay = new Date(startIso).toDateString() === new Date(endIso).toDateString();

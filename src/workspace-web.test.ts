@@ -1,3 +1,4 @@
+import { isJsonString } from "./json-value.js";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { request, type IncomingMessage } from "node:http";
@@ -9,7 +10,6 @@ import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
-import { isJsonString } from "./json-value.js";
 
 const OWNER_TOKEN = "test-owner-token-that-is-long-enough";
 
@@ -48,6 +48,7 @@ test("workspace pages require an owner session", async (t) => {
   const listed = await fetch(`${baseUrl}/web/api/workspaces`, { headers: { Cookie: session } });
   assert.equal(listed.status, 200);
   assert.equal(listed.headers.get("cache-control"), "no-store");
+  // SAFETY: The surrounding checks or construction already match this type.
   const body = await listed.json() as { workspaces: Array<{ workspaceId: string; root: string }> };
   assert.deepEqual(body.workspaces.map((workspace) => workspace.workspaceId), ["ws_web"]);
   assert.equal(body.workspaces[0]?.root, root);

@@ -1,7 +1,7 @@
+import type { WireInput } from "./json-value.js";
 import { and, eq, lt } from "drizzle-orm";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import type { JsonValue } from "./json-value.js";
 import {
   workspaceConversationBindings,
   workspaceSessions,
@@ -383,7 +383,7 @@ function workspaceStoreResult<T>(
   }
 }
 
-function isProgrammerDefect(error: JsonValue): boolean {
+function isProgrammerDefect(error: WireInput): boolean {
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError

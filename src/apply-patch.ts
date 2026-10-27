@@ -236,7 +236,7 @@ async function resolveConfinedPath(root: string, input: string): Promise<string>
 
       break;
     } catch (error) {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       const code = (error as NodeJS.ErrnoException).code;
 
       if (code !== "ENOENT") throw error;
@@ -250,7 +250,7 @@ async function resolveConfinedPath(root: string, input: string): Promise<string>
   return target;
 }
 
-function splitFile(content: string): { lines: string[]; eol: string; finalNewline: boolean } {
+function splitFile(content: string) {
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
   const normalized = content.replace(/\r\n/g, "\n");
   const finalNewline = normalized.endsWith("\n");
@@ -377,7 +377,7 @@ export async function isSamePatchFile(
 
     return sourceIdentity.dev === destinationIdentity.dev && sourceIdentity.ino === destinationIdentity.ino;
   } catch (error) {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     const code = (error as NodeJS.ErrnoException).code;
 
     if (code === "ENOENT" || code === "ENOTDIR") return false;
@@ -536,7 +536,7 @@ function stripFinalNewline(value: string): string {
   return value;
 }
 
-function countPatchStats(patch: string): { additions: number; removals: number } {
+function countPatchStats(patch: string) {
   let additions = 0;
   let removals = 0;
 

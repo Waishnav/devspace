@@ -1,3 +1,5 @@
+import { isObjectValue, optionalFields, jsonKind } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
@@ -48,8 +50,6 @@ import {
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { assertAllowedPath } from "./roots.js";
 import { createAgentWorktree, missingWorktreeError, type AgentWorktree } from "./local-agent-worktree.js";
-import { optionalFields, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   isSubagentProviderEnabled,
   subagentProviderConfig,
@@ -79,7 +79,6 @@ export interface LocalAgentManagerLogger {
   (level: "info" | "warn" | "error", event: string, fields: JsonObject): void;
 }
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 // Kept below the client's default request deadline so a slow stop is reported as a conflict, not a daemon timeout.
 const DEFAULT_STOP_TIMEOUT_MS = 20_000;
 
@@ -195,26 +194,23 @@ export class LocalAgentManager {
   }
 
   async start(input: StartLocalAgentInput): Promise<BetterResult<LocalAgentRecord, AgentStartError>> {
-    // oxlint-disable-next-line typescript/no-this-alias -- Result.gen callbacks cannot use `this`.
-    const manager = this;
+    return Result.gen(async function* (this: LocalAgentManager) {
+      yield* this.acceptingResult("start");
 
-    return Result.gen(async function* () {
-      yield* manager.acceptingResult("start");
-
-      const workspaceRoot = yield* manager.authorizeWorkspace(
+      const workspaceRoot = yield* this.authorizeWorkspace(
         input.workspaceRoot,
         input.workspaceId,
         "start",
       );
 
-      const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
+      const profiles = yield* Result.await(this.loadProfilesResult(workspaceRoot, input.target));
 
       const target = resolveLocalAgentTarget(
         input.target,
         profiles,
         input.model,
         input.effort,
-        manager.subagents.providers,
+        this.subagents.providers,
       );
 
       if (!target) {
@@ -223,7 +219,7 @@ export class LocalAgentManager {
           target: input.target,
           retryable: false,
           message: `Unknown subagent profile or provider: ${input.target}.${
-            manager.subagents.enabled ? "" : " Subagents are disabled by subagents.enabled in config."
+            this.subagents.enabled ? "" : " Subagents are disabled by subagents.enabled in config."
           }`,
         }));
       }
@@ -238,11 +234,11 @@ export class LocalAgentManager {
         }));
       }
 
-      yield* manager.providerEnabledResult(target.provider, target.name, "start");
-      const driver = yield* manager.driverResult(target.provider, "start");
-      yield* manager.providerAvailableResult(target.provider, driver, "start");
+      yield* this.providerEnabledResult(target.provider, target.name, "start");
+      const driver = yield* this.driverResult(target.provider, "start");
+      yield* this.providerAvailableResult(target.provider, driver, "start");
 
-      const createdResult = manager.store.createResult({
+      const createdResult = this.store.createResult({
         id: input.agentId,
         workspaceId: input.workspaceId,
         workspaceRoot,
@@ -270,15 +266,15 @@ export class LocalAgentManager {
 
       if (input.worktree) {
         // Created only for a new record, so a retried request id never makes a second worktree.
-        const worktree = await manager.createWorktree(record, workspaceRoot, input.worktree.branch);
+        const worktree = await this.createWorktree(record, workspaceRoot, input.worktree.branch);
 
         if (worktree.isErr()) {
-          manager.store.deleteResult(record.id);
+          this.store.deleteResult(record.id);
 
           return Result.err(worktree.error);
         }
 
-        const updated = yield* manager.store.updateResult(record.id, {
+        const updated = yield* this.store.updateResult(record.id, {
           worktreePath: worktree.value.path,
           branch: worktree.value.branch,
         });
@@ -286,12 +282,12 @@ export class LocalAgentManager {
         record = updated;
       }
 
-      return manager.begin(record, input.prompt, {
+      return this.begin(record, input.prompt, {
         model: target.model,
         effort: target.effort,
         writeMode: input.writeMode,
       }, input.workspaceId);
-    });
+    }.bind(this));
   }
 
   private async createWorktree(
@@ -318,27 +314,24 @@ export class LocalAgentManager {
     overrides: RunOverrides = {},
     scope: LocalAgentWorkspaceScope,
   ): Promise<BetterResult<LocalAgentRecord, AgentContinueError>> {
-    // oxlint-disable-next-line typescript/no-this-alias -- Result.gen callbacks cannot use `this`.
-    const manager = this;
-
-    return Result.gen(async function* () {
-      yield* manager.acceptingResult("continue", agentId);
-      const record = yield* manager.store.getByIdResult(agentId);
+    return Result.gen(async function* (this: LocalAgentManager) {
+      yield* this.acceptingResult("continue", agentId);
+      const record = yield* this.store.getByIdResult(agentId);
 
       if (!record) return Result.err(agentNotFound(agentId));
-      yield* manager.agentWorkspaceResult(record, scope, "continue");
+      yield* this.agentWorkspaceResult(record, scope, "continue");
       const missingWorktree = missingWorktreeError(record, "continue");
 
       if (missingWorktree) return Result.err(missingWorktree);
-      yield* manager.writeModeResult(record, overrides.writeMode);
-      const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
-      yield* manager.profileForRecordResult(record, profiles);
-      yield* manager.providerEnabledResult(record.providerInstanceId, record.profileName, "continue");
-      const driver = yield* manager.driverResult(record.providerInstanceId, "continue", agentId, record.driver);
-      yield* manager.providerAvailableResult(record.providerInstanceId, driver, "continue", agentId);
+      yield* this.writeModeResult(record, overrides.writeMode);
+      const profiles = yield* Result.await(this.loadProfilesResult(record.workspaceRoot, record.profileName));
+      yield* this.profileForRecordResult(record, profiles);
+      yield* this.providerEnabledResult(record.providerInstanceId, record.profileName, "continue");
+      const driver = yield* this.driverResult(record.providerInstanceId, "continue", agentId, record.driver);
+      yield* this.providerAvailableResult(record.providerInstanceId, driver, "continue", agentId);
 
-      return manager.begin(record, prompt, overrides, scope.workspaceId);
-    });
+      return this.begin(record, prompt, overrides, scope.workspaceId);
+    }.bind(this));
   }
 
   get(
@@ -783,7 +776,7 @@ export class LocalAgentManager {
         providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
         durationMs: Math.max(0, Date.now() - startedAt),
         error: "Unexpected internal subagent failure.",
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: error instanceof Error ? error.name : jsonKind(error),
         persistenceFailed: persisted.isErr(),
       });
       throw error;
@@ -1142,20 +1135,21 @@ class TurnEventLog {
   }
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 function safeCauseType(cause: unknown): string | undefined {
   if (cause instanceof Error) return cause.name;
 
-  if (cause && isJsonObject(cause) && "error" in cause) {
+  if (cause && isObjectValue(cause) && Object.hasOwn(cause, "error")) {
+    // SAFETY: The surrounding checks or construction already match this type.
     const nested = (cause as { error?: unknown }).error;
 
     if (nested instanceof Error) return nested.name;
   }
 
-  return cause === undefined ? undefined : typeof cause;
+  return cause === undefined ? undefined : jsonKind(cause);
 }
 
 function agentNotFound(agentId: string): AgentTargetError {
@@ -1201,7 +1195,6 @@ function dispatchSignature(
     model ?? null,
     effort ?? null,
     input.writeMode ?? "allowed",
-    // SAFETY: Boundary value already validated or constructed to match this type.
     // Appended only when set, so signatures of ordinary dispatches stay as they were.
     ...(input.worktree ? [{ worktree: input.worktree.branch ?? null }] : []),
   ])).digest("hex");
@@ -1261,7 +1254,7 @@ function waitBodyFromTurn(turn: LocalAgentTurnRecord, timedOut: boolean): LocalA
       return {
         id: turn.agentId,
         status: "completed",
-        ...(turn.response === undefined ? {} : { response: turn.response }),
+        ...optionalFields(turn.response === undefined ? undefined : { response: turn.response }),
       };
     case "failed":
       return { id: turn.agentId, status: "failed", error: turnFailure(turn) };
@@ -1289,7 +1282,7 @@ function waitBodyFromAgent(agent: LocalAgentRecord, timedOut: boolean): LocalAge
       return {
         id: agent.id,
         status: "completed",
-        ...(agent.latestResponse === undefined ? {} : { response: agent.latestResponse }),
+        ...optionalFields(agent.latestResponse === undefined ? undefined : { response: agent.latestResponse }),
       };
     case "error":
       return {

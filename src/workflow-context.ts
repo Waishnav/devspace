@@ -1,13 +1,13 @@
+import type { WireInput } from "./json-value.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { JsonValue } from "./json-value.js";
 
 const exec = promisify(execFile);
 
-export function workflowHash(value: JsonValue): string {
+export function workflowHash(value: WireInput): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 

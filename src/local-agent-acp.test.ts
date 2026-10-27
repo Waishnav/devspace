@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonObject } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,14 +18,15 @@ import {
 import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 
 function fakeCursorConnection() {
-  const requests: Array<{ method: string; params?: unknown }> = [];
-  const queues = new Map<string, { values: unknown[] }>();
+  const requests: Array<{ method: string; params?: WireInput }> = [];
+  const queues = new Map<string, { values: WireInput[] }>();
 
   const connection = {
     agent: {
-      async notify(_method: string, _params?: unknown): Promise<void> {},
-      async request(method: string, params?: unknown): Promise<unknown> {
+      async notify(_method: string, _params?: WireInput): Promise<void> {},
+      async request(method: string, params?: WireInput): Promise<WireInput> {
         requests.push({ method, params });
+        // SAFETY: The surrounding checks or construction already match this type.
         const input = params as { sessionId?: string } | undefined;
 
         if (method === "session/new") {
@@ -45,7 +49,7 @@ function fakeCursorConnection() {
           return { sessionId };
         }
 
-        if (method === "session/prompt" && (params as { prompt: Array<{ text: string }> }).prompt[0]?.text === "use tools") {
+        if (method === "session/prompt" && unsafeNarrow<{ prompt: Array<{ text: string }> }>(params).prompt[0]?.text === "use tools") {
           const sessionId = input?.sessionId ?? "";
 
           for (const update of [
@@ -54,7 +58,10 @@ function fakeCursorConnection() {
             { sessionUpdate: "tool_call", toolCallId: "call_1", title: "Read README.md", kind: "read", status: "pending" },
             { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed" },
             { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
-          ]) deliverAcpSessionUpdate(queues, { sessionId, update } as never);
+          ]) {
+            const payload = { sessionId, update };
+            deliverAcpSessionUpdate(queues, payload);
+          }
 
           return { stopReason: "end_turn" };
         }
@@ -149,6 +156,7 @@ test("a warm turn reuses its session and configuration without resuming", async 
   assert.equal(requests.filter(({ method }) => method === "session/resume").length, 0);
   assert.equal(requests.filter(({ method }) => method === "session/set_config_option").length, 4);
   assert.equal(
+    // SAFETY: The surrounding checks or construction already match this type.
     Object.hasOwn(requests.find(({ method }) => method === "session/new")?.params as object, "additionalDirectories"),
     false,
   );
@@ -159,7 +167,7 @@ test("session updates stream as activity with message chunks joined between tool
   const fixture = fakeCursorConnection();
   const { runtime } = fixture;
   const { first } = await runFirstAndWarm(fixture);
-  const acpEvents: unknown[] = [];
+  const acpEvents: WireInput[] = [];
 
   const toolsResult = await runtime.run({
     prompt: "use tools",
@@ -256,6 +264,7 @@ test("session close support does not depend on resume support", async () => {
 
   await closeOnlyRuntime.releaseSession("close_only_session");
   assert.equal(
+    // SAFETY: The surrounding checks or construction already match this type.
     requests.filter(({ method, params }) => method === "session/close" && (params as { sessionId?: string })?.sessionId === "close_only_session").length,
     1,
     "session close support must not depend on resume support",
@@ -304,7 +313,7 @@ test("permission requests follow the write mode and fail closed when sandboxed o
 });
 
 test("a second turn on a session with an active turn is rejected", async () => {
-  const overlapQueues = new Map<string, { values: unknown[] }>();
+  const overlapQueues = new Map<string, { values: WireInput[] }>();
   let releaseOverlappingPrompt!: () => void;
   let markPromptEntered!: () => void;
   const overlappingPrompt = new Promise<void>((resolvePrompt) => { releaseOverlappingPrompt = resolvePrompt; });
@@ -312,8 +321,9 @@ test("a second turn on a session with an active turn is rejected", async () => {
 
   const overlapConnection = {
     agent: {
-      async notify(_method: string, _params?: unknown): Promise<void> {},
-      async request(method: string, params?: unknown): Promise<unknown> {
+      async notify(_method: string, _params?: WireInput): Promise<void> {},
+      async request(method: string, params?: WireInput): Promise<WireInput> {
+        // SAFETY: The surrounding checks or construction already match this type.
         const input = params as { sessionId?: string } | undefined;
 
         if (method === "session/new") {
@@ -474,6 +484,7 @@ test(
     assert.equal(shimStartup.isErr(), true);
 
     if (shimStartup.isErr()) assert.equal(shimStartup.error.code, "PROVIDER_PROTOCOL_ERROR");
+    // SAFETY: The surrounding checks or construction already match this type.
     const forwarded = JSON.parse(await readFile(marker, "utf8")) as string[];
     assert.equal(
       forwarded.filter((argument) => argument === resolve(workspaceRoot)).length,
@@ -502,8 +513,8 @@ for (const [flavor, modeId] of [
   ["copilot", "https://agentclientprotocol.com/protocol/session-modes#plan"],
 ] as const) {
   test(`${flavor} read_only turns select the restricted session mode and fail closed when refused`, async () => {
-    const modeRequests: Array<{ method: string; params?: unknown }> = [];
-    const modeQueues = new Map<string, { values: unknown[] }>();
+    const modeRequests: Array<{ method: string; params?: WireInput }> = [];
+    const modeQueues = new Map<string, { values: WireInput[] }>();
     let refuseMode = false;
 
     const modeRuntime = new AcpRuntime({
@@ -515,7 +526,7 @@ for (const [flavor, modeId] of [
     }, {
       agent: {
         async notify(): Promise<void> {},
-        async request(method: string, params?: unknown): Promise<unknown> {
+        async request(method: string, params?: WireInput): Promise<WireInput> {
           modeRequests.push({ method, params });
 
           if (method === "session/new") {
@@ -566,15 +577,16 @@ for (const [flavor, modeId] of [
 }
 
 function grokFixture() {
-  const grokRequests: Array<{ method: string; params?: unknown }> = [];
-  const grokQueues = new Map<string, { values: unknown[] }>();
+  const grokRequests: Array<{ method: string; params?: WireInput }> = [];
+  const grokQueues = new Map<string, { values: WireInput[] }>();
   const grokCompletionRegistry = new GrokPromptCompletionRegistry();
 
   const grokConnection = {
     agent: {
-      async notify(_method: string, _params?: unknown): Promise<void> {},
-      async request(method: string, params?: unknown): Promise<unknown> {
+      async notify(_method: string, _params?: WireInput): Promise<void> {},
+      async request(method: string, params?: WireInput): Promise<WireInput> {
         grokRequests.push({ method, params });
+        // SAFETY: The surrounding checks or construction already match this type.
         const input = params as { sessionId?: string; _meta?: { promptId?: string } } | undefined;
 
         if (method === "session/new") {
@@ -651,8 +663,9 @@ test("Grok selects its model and effort and completes the prompt from its comple
   );
   assert.equal(grokCompletionRegistry.size, 0);
   // A user's own always-approve setting must not bypass the permission requests that enforce the write mode.
+  const newSessionParams = grokRequests.find(({ method }) => method === "session/new")?.params;
   assert.deepEqual(
-    (grokRequests.find(({ method }) => method === "session/new")?.params as { _meta?: unknown })._meta,
+    isJsonObject(newSessionParams) ? newSessionParams._meta : undefined,
     { yoloMode: false },
   );
   await grokRuntime.close();
@@ -662,8 +675,9 @@ test("only full_access may skip Grok's permission requests", async () => {
   const { grokRequests, grokRuntime } = grokFixture();
   const grokResumed = await grokRuntime.run({ prompt: "resume", workspaceRoot: "/tmp/project", providerSessionId: "grok_session_other", writeMode: "full_access" });
   assert.equal(grokResumed.isOk(), true);
+  const resumeParams = grokRequests.find(({ method }) => method === "session/resume")?.params;
   assert.deepEqual(
-    (grokRequests.find(({ method }) => method === "session/resume")?.params as { _meta?: unknown })._meta,
+    isJsonObject(resumeParams) ? resumeParams._meta : undefined,
     { yoloMode: true },
     "only full_access may skip Grok's permission requests",
   );
@@ -673,8 +687,8 @@ test("only full_access may skip Grok's permission requests", async () => {
 test("Grok rejects unadvertised models and efforts and lists the available ones", async () => {
   const grokConfigurationConnection = {
     agent: {
-      async notify(_method: string, _params?: unknown): Promise<void> {},
-      async request(method: string): Promise<unknown> {
+      async notify(_method: string, _params?: WireInput): Promise<void> {},
+      async request(method: string): Promise<WireInput> {
         if (method === "session/new") {
           return {
             sessionId: "grok_configuration_session",
@@ -747,7 +761,7 @@ test("a provider that never answers after session/cancel is given up on", async 
   }, {
     agent: {
       async notify(method: string): Promise<void> { stuckNotifications.push(method); },
-      async request(method: string): Promise<unknown> {
+      async request(method: string): Promise<WireInput> {
         stuckRequests.push(method);
 
         if (method === "session/new") return { sessionId: "stuck_session" };
@@ -783,7 +797,7 @@ test("a stop requested before the prompt is sent starts no provider work", async
   }, {
     agent: {
       async notify(): Promise<void> {},
-      async request(method: string): Promise<unknown> {
+      async request(method: string): Promise<WireInput> {
         preAbortRequests.push(method);
 
         return method === "session/new" ? { sessionId: "pre_abort_session" } : { stopReason: "end_turn" };

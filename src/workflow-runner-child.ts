@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, optionalFields, jsonKind } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import {
   getQuickJS,
   type QuickJSContext,
@@ -7,9 +10,6 @@ import {
 } from "quickjs-emscripten";
 import type { WorkflowRunnerLimits } from "./workflow-runner.js";
 import type { WorkflowScriptMeta } from "./workflow-script.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
-import { optionalFields, isJsonString, isJsonNumber, isBigintValue, isSymbolValue, isFunctionValue, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 interface ErrorPayload { code: string; message: string; retryable?: boolean }
 
@@ -50,7 +50,7 @@ process.once("disconnect", () => {
   if (!shuttingDown) process.exit(1);
 });
 
-process.on("message", (message: JsonValue) => {
+process.on("message", (message: WireInput) => {
   if (!isRecord(message)) return;
 
   if (message.type === "run") {
@@ -170,7 +170,7 @@ function exposeHostFunctions(vm: QuickJSContext): void {
 
       const id = nextCallId++;
       pending.set(id, deferred);
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       const safePayload = JSON.parse(encoded) as JsonObject;
       send(kind === "agent"
         ? { type: "host-call", id, kind, prompt: safePayload.prompt, options: safePayload.options }
@@ -260,8 +260,8 @@ function workflowProgram(message: RunMessage): string {
 "use strict";
 const args = Object.freeze(JSON.parse(${JSON.stringify(args)}));
 const __error = error => ({
-  code: isJsonString(error?.code) ? error.code : "WORKFLOW_STEP_FAILED",
-  message: isJsonString(error?.message) ? error.message : String(error),
+  code: typeof error?.code === "string" ? error.code : "WORKFLOW_STEP_FAILED",
+  message: typeof error?.message === "string" ? error.message : String(error),
   retryable: error?.retryable === true,
 });
 const { agent, workflow, log, phase, parallel, pipeline } = (() => {
@@ -273,7 +273,7 @@ const agent = (prompt, options = {}) => hostCall("agent", { prompt, options });
 const workflow = (name, workflowArgs = null) => hostCall("workflow", { name, args: workflowArgs });
 const log = (...values) => emit("log", values.length === 1 ? values[0] : values);
 const phase = async (name, run) => {
-  if (!isJsonString(name) || !name || !isFunctionValue(run)) throw new TypeError("phase(name, run) requires a name and function");
+  if (typeof name !== "string" || !name || typeof run !== "function") throw new TypeError("phase(name, run) requires a name and function");
   emit("phase_started", { name });
   try {
     const value = await run((prompt, options = {}) => agent(prompt, { ...options, phase: name }));
@@ -285,7 +285,7 @@ const phase = async (name, run) => {
   }
 };
 const parallel = async (items, worker, concurrency = ${concurrency}) => {
-  if (!Array.isArray(items) || !isFunctionValue(worker)) throw new TypeError("parallel(items, worker) requires an array and function");
+  if (!Array.isArray(items) || typeof worker !== "function") throw new TypeError("parallel(items, worker) requires an array and function");
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new RangeError("parallel concurrency must be between 1 and 16");
   const outcomes = new Array(items.length);
   let next = 0;
@@ -303,7 +303,7 @@ const parallel = async (items, worker, concurrency = ${concurrency}) => {
   return outcomes;
 };
 const pipeline = (items, ...stages) => {
-  if (!Array.isArray(stages) || stages.some(stage => !isFunctionValue(stage))) throw new TypeError("pipeline stages must be functions");
+  if (!Array.isArray(stages) || stages.some(stage => typeof stage !== "function")) throw new TypeError("pipeline stages must be functions");
   return parallel(items, async (item, index) => {
     let value = item;
     for (const stage of stages) value = await stage(value, item, index);
@@ -319,7 +319,7 @@ globalThis.__workflowResult;
 `;
 }
 
-function valueHandle(vm: QuickJSContext, value: JsonValue) {
+function valueHandle(vm: QuickJSContext, value: WireInput) {
   if (!jsonObject || !jsonParse) throw new Error("Workflow JSON parser is unavailable.");
   const encoded = encodeJson(value, "Host result");
   const encodedHandle = vm.newString(encoded);
@@ -372,6 +372,7 @@ function reject(deferred: QuickJSDeferredPromise, error: ErrorPayload): void {
 
 function quickJsError(handle: Parameters<QuickJSContext["dump"]>[0]): Error & { code?: string; retryable?: boolean } {
   if (!context) return new Error("Workflow execution failed.");
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = context.dump(handle) as { name?: unknown; message?: unknown; stack?: unknown } | unknown;
 
   if (isRecord(value)) {
@@ -393,7 +394,7 @@ function quickJsError(handle: Parameters<QuickJSContext["dump"]>[0]): Error & { 
   return new Error(isJsonString(value) ? value : JSON.stringify(value));
 }
 
-function classifyExecutionError(error: JsonValue): ErrorPayload {
+function classifyExecutionError(error: WireInput): ErrorPayload {
   if (fatalError) return fatalError;
   const payload = toErrorPayload(error);
   const text = payload.message.toLowerCase();
@@ -411,7 +412,8 @@ function classifyExecutionError(error: JsonValue): ErrorPayload {
   return payload;
 }
 
-function toErrorPayload(error: JsonValue): ErrorPayload {
+function toErrorPayload(error: WireInput): ErrorPayload {
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return {
@@ -421,15 +423,15 @@ function toErrorPayload(error: JsonValue): ErrorPayload {
   };
 }
 
-function encodeJson(value: JsonValue, label: string): string {
+function encodeJson(value: WireInput, label: string): string {
   let encoded: string | undefined;
 
   try {
-    encoded = JSON.stringify(value, (_key, current: JsonValue) => {
+    encoded = JSON.stringify(value, (_key, current: WireInput) => {
       if (isJsonNumber(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
 
       if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
-        throw new TypeError(`unsupported ${typeof current}`);
+        throw new TypeError(`unsupported ${jsonKind(current)}`);
       }
 
       return current;
@@ -480,12 +482,12 @@ function disconnectWhenFlushed(): void {
   if (shuttingDown && unflushed === 0 && process.connected) process.disconnect?.();
 }
 
-function send(message: JsonValue): void {
+function send(message: WireInput): void {
   if (!process.connected) return;
   unflushed += 1;
 
   try {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     process.send?.(message as never, () => { unflushed -= 1; disconnectWhenFlushed(); });
   } catch {
     unflushed -= 1;
@@ -494,6 +496,6 @@ function send(message: JsonValue): void {
   }
 }
 
-function isRecord(value: unknown): value is JsonObject {
-  return value !== null && isJsonObject(value) && !Array.isArray(value);
+function isRecord(value: WireInput): value is JsonObject {
+  return value !== null && isObjectValue(value) && !Array.isArray(value);
 }

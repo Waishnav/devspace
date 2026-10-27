@@ -1,9 +1,9 @@
+import { optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { randomUUID } from "node:crypto";
 import type { CodemodeResult } from "@earendil-works/pi-codemode";
 import { ProcessOwner, type ProcessSessionManager } from "./process-sessions.js";
 import type { CodeModeRegistry } from "./code-mode-registry.js";
-import { optionalFields } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 
 export const MAX_CODE_MODE_YIELD_MS = 12_000;
 const DEFAULT_YIELD_MS = 10_000;
@@ -126,11 +126,9 @@ export class CodeModeExecutions {
       if (execution.cleanupTimer) clearTimeout(execution.cleanupTimer);
     }
 
-    await Promise.allSettled(executions
-      .values()
-      .filter((execution) => execution.status === "running")
-      .map((execution) => this.stop(execution, "DevSpace shutting down."))
-      .toArray());
+    await Promise.allSettled(executions.flatMap((execution) => (
+      execution.status === "running" ? [this.stop(execution, "DevSpace shutting down.")] : []
+    )));
     this.executions.clear();
   }
 
@@ -190,7 +188,7 @@ export class CodeModeExecutions {
       const tools = this.registry.tools(execution.workspaceId)
         .map((tool) => ({
           ...tool,
-          execute: async (args: JsonValue, context: Parameters<typeof tool.execute>[1]) => {
+          execute: async (args: WireInput, context: Parameters<typeof tool.execute>[1]) => {
             if (++calls > MAX_CALLS) throw new Error(`Code Mode limit exceeded: ${MAX_CALLS} tool calls.`);
 
             return limit(async () => {

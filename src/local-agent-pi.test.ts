@@ -1,3 +1,4 @@
+import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,14 +24,14 @@ function sessionFile(name = `session-${++sessionCount}`): string {
 }
 
 class FakePiRpcConnection implements PiRpcRuntimeConnection {
-  readonly requests: Array<Record<string, unknown>> = [];
-  readonly events: Array<Record<string, unknown>> = [];
+  readonly requests: Array<JsonObject> = [];
+  readonly events: Array<JsonObject> = [];
   sessionFile = sessionFile("one");
   lastPrompt = "";
   alive = true;
   cleanupCount = 0;
 
-  async request(record: Record<string, unknown>): Promise<unknown> {
+  async request(record: JsonObject): Promise<WireInput> {
     this.requests.push(record);
 
     switch (record.type) {
@@ -80,9 +81,9 @@ class FakePiRpcConnection implements PiRpcRuntimeConnection {
     }
   }
 
-  async send(_record: Record<string, unknown>): Promise<void> {}
+  async send(_record: JsonObject): Promise<void> {}
 
-  async nextEvent(timeoutMs = 0): Promise<Record<string, unknown> | undefined> {
+  async nextEvent(timeoutMs = 0): Promise<JsonObject | undefined> {
     const event = this.events.shift();
 
     if (event) return event;
@@ -108,6 +109,7 @@ class FakePiRpcConnection implements PiRpcRuntimeConnection {
 function piPoolFixture(t: TestContext) {
   const contexts: LocalAgentRuntimeContext[] = [];
   const connections: FakePiRpcConnection[] = [];
+  // SAFETY: The surrounding checks or construction already match this type.
   const state = { factoryEnv: undefined as NodeJS.ProcessEnv | undefined, cleanupCount: 0 };
 
   const factory: PiRpcFactory = async (context, env) => {
@@ -217,7 +219,7 @@ test("the runtime pool reuses, replaces, evicts, and cold-resumes Pi processes",
 
 test("a model Pi does not offer is a protocol error naming the model", async () => {
   const missingModel = new FakePiRpcConnection();
-  missingModel.request = async function(record: Record<string, unknown>): Promise<unknown> {
+  missingModel.request = async function(record: JsonObject): Promise<WireInput> {
     this.requests.push(record);
 
     if (record.type === "get_available_models") return { models: [] };
@@ -274,7 +276,7 @@ test("a bare pre-RPC session id fails instead of opening an empty session", asyn
 // An exact model id wins over provider/model parsing (gateway providers use ids containing "/").
 test("an exact model id wins over provider/model parsing", async () => {
   const gatewayConnection = new FakePiRpcConnection();
-  gatewayConnection.request = async function(record: Record<string, unknown>): Promise<unknown> {
+  gatewayConnection.request = async function(record: JsonObject): Promise<WireInput> {
     if (record.type === "get_available_models") {
       this.requests.push(record);
 
@@ -305,7 +307,7 @@ test("an exact model id wins over provider/model parsing", async () => {
 // Stop: Pi is aborted, a Pi that never settles is discarded, and stale events never reach the next turn.
 test("stopping aborts Pi and discards a Pi that does not settle", async () => {
   const stalledConnection = new FakePiRpcConnection();
-  stalledConnection.request = async function(record: Record<string, unknown>): Promise<unknown> {
+  stalledConnection.request = async function(record: JsonObject): Promise<WireInput> {
     if (record.type === "prompt") {
       this.requests.push(record);
       this.events.push({ type: "agent_start" });
@@ -374,7 +376,7 @@ test("Pi RPC tool and message frames map onto DevSpace activity events", async (
   const streamingRuntime = await streamingDriver.createRuntime(context);
 
   if (streamingRuntime.isErr()) throw streamingRuntime.error;
-  const piEvents: unknown[] = [];
+  const piEvents: WireInput[] = [];
 
   const streamed = await streamingRuntime.value.run({ prompt: "use tools", workspaceRoot: "/tmp/project" }, {
     onEvent: (event) => { piEvents.push(event); },

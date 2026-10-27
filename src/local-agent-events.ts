@@ -1,6 +1,7 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { randomUUID } from "node:crypto";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 /**
  * DevSpace's normalized view of what a subagent turn is doing. Drivers map
@@ -72,11 +73,11 @@ export function sanitizeActivityEvent(event: LocalAgentActivityEvent): LocalAgen
  * Picks the most identifying argument of a tool call (a command, path, or
  * query) instead of persisting the full argument object.
  */
-export function summarizeToolInput(input: JsonValue): string | undefined {
+export function summarizeToolInput(input: WireInput): string | undefined {
   if (isJsonString(input)) return input.trim() || undefined;
 
-  if (!input || !isJsonObject(input) || Array.isArray(input)) return undefined;
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  if (!input || !isObjectValue(input) || Array.isArray(input)) return undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
   const record = input as JsonObject;
 
   for (const key of [
@@ -103,7 +104,7 @@ export function summarizeToolInput(input: JsonValue): string | undefined {
 }
 
 /** The provider's own explanation of a failure, which the generic error message omits. */
-export function providerErrorDetail(error: { message: string; cause?: unknown }): string | undefined {
+export function providerErrorDetail(error: { message: string; cause?: WireInput }): string | undefined {
   const seen = new Set<unknown>();
   let current: unknown = error.cause;
 
@@ -112,15 +113,17 @@ export function providerErrorDetail(error: { message: string; cause?: unknown })
 
     const message = isJsonString(current)
       ? current
-      : current instanceof Error || typeof (current as { message?: unknown }).message === "string"
-        ? String((current as { message: unknown }).message)
+      // SAFETY: The surrounding checks or construction already match this type.
+      : current instanceof Error || isJsonString(unsafeNarrow<{ message?: WireInput }>(current).message)
+        ? String(unsafeNarrow<{ message: WireInput }>(current).message)
         : undefined;
 
     if (message?.trim() && message.trim() !== error.message) {
       return boundText(redactSecrets(message.trim()), MAX_ERROR_DETAIL_CHARS);
     }
 
-    current = isJsonObject(current) ? (current as { cause?: unknown }).cause : undefined;
+    // SAFETY: The surrounding checks or construction already match this type.
+    current = isObjectValue(current) ? (current as { cause?: unknown }).cause : undefined;
   }
 
   return undefined;
@@ -143,7 +146,6 @@ const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
 // authority's last `@` (it may contain `@`) and never past `/`, `?` or `#`.
 const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*):[^\s/?#]*@(?=[^\s/?#@]*(?:[\s/?#]|$))/gi;
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 // `--password hunter2`: a secret-named flag followed by its value as the next word.
 // Plural "tokens" (e.g. --max-tokens 4096) is a count, not a credential.
 const SECRET_FLAG = /(--?[A-Za-z0-9_-]*(?:api[_-]?key|token(?!s)|secret|password|passwd|authorization|credential)[A-Za-z0-9_-]*\s+)(?!-)("[^"]*"|'[^']*'|\S+)/gi;

@@ -1,3 +1,4 @@
+import { isJsonString, isJsonNumber, optionalFields } from "../../src/json-value.js";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -8,8 +9,6 @@ import { parseArgs } from "node:util";
 import { createLocalAgentDrivers } from "../../src/local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "../../src/local-agent-path.js";
 import { PROVIDERS, providerDefinition, type ProviderDefinition } from "./providers.js";
-import { optionalFields, isJsonString, isJsonNumber } from "../../src/json-value.js";
-import type { JsonValue } from "../../src/json-value.js";
 
 /**
  * Provider conformance suite. Every scenario runs the built `devspace agents`
@@ -96,7 +95,6 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "stop",
-    // SAFETY: Boundary value already validated or constructed to match this type.
     description: "C4: stop during a long tool call ends the turn as stopped, with no later writes",
     transcript: true,
     async run(run) {
@@ -283,7 +281,6 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     DEVSPACE_AGENTD_IDLE_TIMEOUT_MS: "60000",
   };
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
   // Run as an installed devspace would: this checkout's node_modules/.bin (with the bundled
   // Pi SDK) must not shadow the provider executables on PATH.
   if (env.PATH) env.PATH = removeDevspaceNodeModulesBinFromPath(env.PATH);
@@ -305,7 +302,6 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     await stopDaemon(run).catch(() => undefined);
   }
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
   // A provider process that was just stopped may still be writing as the daemon exits.
   if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
@@ -443,7 +439,7 @@ function git(cwd: string, args: string[]): string {
   return result.stdout.trim();
 }
 
-function expect(condition: JsonValue, message: string): asserts condition {
+function expect(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 

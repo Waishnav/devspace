@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -13,7 +16,6 @@ import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-can
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
 import {
   GrokPromptCompletionRegistry,
   GROK_DEFAULT_MODEL,
@@ -32,8 +34,6 @@ import type {
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 export type AcpFlavor = "cursor" | "copilot" | "grok" | "generic";
 
@@ -47,7 +47,8 @@ const ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 // How long a provider gets to answer session/prompt after session/cancel before its process is dropped.
 const ACP_CANCEL_GRACE_MS = 10_000;
 const require = createRequire(import.meta.url);
-// SAFETY: Boundary value already validated or constructed to match this type.
+
+// SAFETY: The surrounding checks or construction already match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 const observeChildError = (): void => {};
@@ -68,10 +69,10 @@ const ACP_COMMANDS: Partial<Record<AcpFlavor, [string, ...string[]]>> = {
 
 interface AcpConnectionLike {
   agent: {
-    request(method: string, params?: JsonValue): Promise<JsonValue>;
-    notify(method: string, params?: JsonValue): Promise<void>;
+    request(method: string, params?: WireInput): Promise<WireInput>;
+    notify(method: string, params?: WireInput): Promise<void>;
   };
-  close(error?: JsonValue): void;
+  close(error?: WireInput): void;
   closed: Promise<void>;
 }
 
@@ -83,9 +84,8 @@ interface AcpCapabilities {
 
 interface AcpSessionQueue {
   values: unknown[];
-  // SAFETY: Boundary value already validated or constructed to match this type.
   /** Set while a turn runs so session/update notifications are reported as they arrive. */
-  onUpdate?: (value: JsonValue) => void;
+  onUpdate?: (value: WireInput) => void;
 }
 
 export interface AcpRuntimeOptions {
@@ -397,7 +397,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     return sessionId;
   }
 
-  private cacheSessionMetadata(sessionId: string, response: JsonValue): void {
+  private cacheSessionMetadata(sessionId: string, response: WireInput): void {
     if (hasAcpConfigOptions(response) || (this.flavor === "grok" && readGrokSessionState(response))) {
       this.sessionMetadata.set(sessionId, response);
     }
@@ -406,7 +406,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response?: JsonValue,
+    response?: WireInput,
     isNewSession = false,
   ): Promise<void> {
     const metadata = response ?? this.sessionMetadata.get(sessionId);
@@ -478,7 +478,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureGrokSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response: JsonValue,
+    response: WireInput,
     isNewSession: boolean,
   ): Promise<void> {
     const state = readGrokSessionState(response);
@@ -542,7 +542,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     return this.flavor === "grok" ? { _meta: { yoloMode: input.writeMode === "full_access" } } : {};
   }
 
-  private additionalDirectoryParams(): { additionalDirectories?: string[] } {
+  private additionalDirectoryParams() {
     // DevSpace currently authorizes exactly one workspace root per agent turn.
     // Do not advertise an empty additional-directory scope to ACP providers.
     return {};
@@ -712,8 +712,9 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           }
 
           const stream = ndJsonStream(
-            // SAFETY: Boundary value already validated or constructed to match this type.
+            // SAFETY: The surrounding checks or construction already match this type.
             Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+            // SAFETY: The surrounding checks or construction already match this type.
             Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
           );
 
@@ -896,11 +897,11 @@ export function acpCommandArgs(
 }
 
 export function resolveAcpModelConfigUpdate(
-  session: JsonValue,
+  session: WireInput,
   model: string,
   provider: string,
   sessionIdOverride?: string,
-): { sessionId: string; configId: string; value: string } {
+) {
   return resolveAcpSelectConfigUpdate(session, {
     category: "model",
     label: "model",
@@ -911,7 +912,7 @@ export function resolveAcpModelConfigUpdate(
 }
 
 export function resolveAcpEffortConfigUpdate(
-  session: JsonValue,
+  session: WireInput,
   effort: string,
   provider: string,
   sessionIdOverride?: string,
@@ -926,7 +927,7 @@ export function resolveAcpEffortConfigUpdate(
 }
 
 function resolveAcpSelectConfigUpdate(
-  session: JsonValue,
+  session: WireInput,
   options: {
     category: string;
     label: string;
@@ -934,7 +935,7 @@ function resolveAcpSelectConfigUpdate(
     value: string;
     sessionIdOverride?: string;
   },
-): { sessionId: string; configId: string; value: string } {
+) {
   const record = asRecord(session);
 
   if (!record) throw new Error(`${options.provider} ACP session metadata is missing.`);
@@ -1014,7 +1015,7 @@ export function selectAcpPermissionOption(
   return selected ? { optionId: selected.optionId } : undefined;
 }
 
-function readAcpCapabilities(value: JsonValue): AcpCapabilities {
+function readAcpCapabilities(value: WireInput): AcpCapabilities {
   const capabilities = asRecord(asRecord(value)?.agentCapabilities);
   const sessions = asRecord(capabilities?.sessionCapabilities);
 
@@ -1025,7 +1026,7 @@ function readAcpCapabilities(value: JsonValue): AcpCapabilities {
   };
 }
 
-function extractAcpText(updates: JsonValue[]): string {
+function extractAcpText(updates: WireInput[]): string {
   return updates
     .map((value) => {
       const update = asRecord(asRecord(value)?.update);
@@ -1039,7 +1040,7 @@ function extractAcpText(updates: JsonValue[]): string {
     .trim();
 }
 
-function isGrokPromptCompletion(value: JsonValue): boolean {
+function isGrokPromptCompletion(value: WireInput): boolean {
   const record = asRecord(value);
 
   return isJsonString(record?.sessionId);
@@ -1049,7 +1050,7 @@ async function yieldToAcpQueue(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function hasAcpConfigOptions(value: JsonValue): boolean {
+function hasAcpConfigOptions(value: WireInput): boolean {
   const record = asRecord(value);
   const response = asRecord(record?.newSessionResponse) ?? record;
 
@@ -1066,7 +1067,7 @@ export function deliverAcpSessionUpdate(
   if (queue) appendAcpQueueValue(queue, params);
 }
 
-function appendAcpQueueValue(queue: AcpSessionQueue, value: JsonValue): void {
+function appendAcpQueueValue(queue: AcpSessionQueue, value: WireInput): void {
   if (queue.values.length >= MAX_ACP_QUEUE_ITEMS) queue.values.shift();
   queue.values.push(value);
   queue.onUpdate?.(value);
@@ -1082,7 +1083,7 @@ export class AcpActivityReporter {
 
   constructor(private readonly onEvent: (event: LocalAgentActivityEvent) => void) {}
 
-  handle(value: JsonValue): void {
+  handle(value: WireInput): void {
     const update = asRecord(asRecord(value)?.update);
 
     switch (update?.sessionUpdate) {
@@ -1128,7 +1129,7 @@ export class AcpActivityReporter {
     this.text = "";
   }
 
-  private complete(id: string | undefined, status: JsonValue): void {
+  private complete(id: string | undefined, status: WireInput): void {
     if (status !== "completed" && status !== "failed") return;
     const call = id ? this.toolCalls.get(id) : undefined;
 
@@ -1161,25 +1162,25 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function readArray(value: JsonValue, key: string): unknown[] | undefined {
+function readArray(value: WireInput, key: string): unknown[] | undefined {
   const result = asRecord(value)?.[key];
 
   return Array.isArray(result) ? result : undefined;
 }
 
-function readString(value: JsonValue, key: string): string | undefined {
+function readString(value: WireInput, key: string): string | undefined {
   const result = asRecord(value)?.[key];
 
   return isJsonString(result) ? result : undefined;
 }
 
-function directString(value: JsonValue): string | undefined {
+function directString(value: WireInput): string | undefined {
   return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }

@@ -1,7 +1,7 @@
+import { isJsonNumber } from "../json-value.js";
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { HostContext, ToolResultCard } from "./card-types.js";
-import { isJsonNumber } from "../json-value.js";
 import {
   parseReviewFiles,
   ReviewDiffFile,

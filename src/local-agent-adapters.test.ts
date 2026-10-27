@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { delimiter } from "node:path";
 import test from "node:test";
@@ -19,7 +20,7 @@ test("ACP model and effort config updates resolve flat and grouped options and f
     { resolve: resolveAcpModelConfigUpdate, category: "model", flavor: "cursor" as const, missing: /does not expose a model/ },
     { resolve: resolveAcpEffortConfigUpdate, category: "thought_level", flavor: "copilot" as const, missing: /does not expose a reasoning effort option/ },
   ]) {
-    const session = (options: unknown[]) => ({
+    const session = (options: WireInput[]) => ({
       sessionId: "session_1",
       newSessionResponse: { configOptions: [{ type: "select", id: "option_id", category, options }] },
     });

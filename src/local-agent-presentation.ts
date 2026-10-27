@@ -1,7 +1,7 @@
+import { optionalFields } from "./json-value.js";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentRecord, LocalAgentStatus } from "./local-agent-store.js";
-import { optionalFields } from "./json-value.js";
 
 export type AgentCommandStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -132,7 +132,7 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
       return {
         ...receipt,
         status: "completed",
-        ...(record.latestResponse === undefined ? {} : { response: record.latestResponse }),
+        ...optionalFields(record.latestResponse === undefined ? undefined : { response: record.latestResponse }),
       };
     case "failed":
       return { ...receipt, status: "failed", error: presentAgentFailure(record) };
@@ -264,12 +264,26 @@ function escapeXmlText(value: string): string {
 }
 
 function escapeXml(value: string): string {
-  return value
-    // oxlint-disable-next-line eslint/no-control-regex -- Strip C0 controls that XML text cannot carry.
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  let escaped = "";
+
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (
+      code <= 0x8
+      || code === 0xb
+      || code === 0xc
+      || (code >= 0xe && code <= 0x1f)
+      || code === 0xfffe
+      || code === 0xffff
+    ) {
+      escaped += "\uFFFD";
+    } else {
+      escaped += character;
+    }
+  }
+
+  return escaped.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function presentAgentStatus(status: LocalAgentStatus): AgentCommandStatus {

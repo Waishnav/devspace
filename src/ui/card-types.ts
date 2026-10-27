@@ -1,6 +1,6 @@
-import type { App } from "@modelcontextprotocol/ext-apps";
 import { isJsonNumber } from "../json-value.js";
 import type { JsonObject } from "../json-value.js";
+import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName = "open_workspace" | "show_changes";
 

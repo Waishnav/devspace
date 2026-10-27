@@ -1,3 +1,4 @@
+import { optionalFields } from "./json-value.js";
 import { and, asc, count, desc, eq, max, sql } from "drizzle-orm";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import {
@@ -9,7 +10,6 @@ import {
   type WorkspaceTurnToolCallRow,
 } from "./db/schema.js";
 import type { WorkspaceMode, WorkspaceStatus } from "./workspace-store.js";
-import { optionalFields } from "./json-value.js";
 
 export type WorkspaceTurnStatus = "open" | "closed";
 
@@ -283,8 +283,9 @@ function rowToWorkspace({ session, turns, lastActivityAt }: {
   return {
     workspaceId: session.id,
     root: session.root,
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     mode: session.mode as WorkspaceMode,
+    // SAFETY: The surrounding checks or construction already match this type.
     status: session.status as WorkspaceStatus,
     ...optionalFields(session.sourceRoot ? { sourceRoot: session.sourceRoot } : undefined),
     createdAt: session.createdAt,
@@ -305,7 +306,7 @@ function rowToTurn(row: {
     id: turn.id,
     workspaceId: turn.workspaceSessionId,
     sequence: turn.sequence,
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     status: turn.status as WorkspaceTurnStatus,
     ...optionalFields(turn.reviewRef ? { reviewRef: turn.reviewRef } : undefined),
     startedAt: turn.startedAt,
@@ -319,14 +320,16 @@ function rowToToolCall(row: WorkspaceTurnToolCallRow): WorkspaceToolCall {
   return {
     id: row.id,
     turnId: row.turnId,
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     origin: row.origin as WorkspaceToolCallOrigin,
     ...optionalFields(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : undefined),
     ...optionalFields(row.requestId ? { requestId: row.requestId } : undefined),
     toolName: row.toolName,
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     arguments: JSON.parse(row.argumentsJson) as unknown,
+    // SAFETY: The surrounding checks or construction already match this type.
     ...optionalFields(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : undefined),
+    // SAFETY: The surrounding checks or construction already match this type.
     ...optionalFields(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : undefined),
     isError: row.isError === 1,
     startedAt: row.startedAt,

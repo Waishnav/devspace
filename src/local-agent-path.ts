@@ -20,6 +20,7 @@ function isDevspaceNodeModulesBin(pathEntry: string): boolean {
   if (!existsSync(packageJson)) return false;
 
   try {
+    // SAFETY: The surrounding checks or construction already match this type.
     const packageInfo = JSON.parse(readFileSync(packageJson, "utf8")) as { name?: unknown };
 
     return packageInfo.name === "@waishnav/devspace";

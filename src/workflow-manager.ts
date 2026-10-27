@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields, jsonValueSchema } from "./json-value.js";
+import type { WireInput, JsonValue } from "./json-value.js";
 import { randomUUID } from "node:crypto";
 import { open, realpath } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -19,8 +22,6 @@ import {
   type WorkflowAgentOptions, type WorkflowCall, type WorkflowEvent, type WorkflowRun, type WorkflowRunInput, type WorkflowSnapshot,
 } from "./workflow-types.js";
 import { createWorkflowWorkspace, isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 
 interface WorkflowManagerOptions {
   store: WorkflowStore;
@@ -37,8 +38,8 @@ interface ActiveRun {
   run: WorkflowSnapshot;
   controller: AbortController;
   done: Promise<void>;
-  pending: Set<Promise<JsonValue>>;
-  preparing: Promise<JsonValue>;
+  pending: Set<Promise<unknown>>;
+  preparing: Promise<unknown>;
   calls: number;
   dispatches: number;
   nested: number;
@@ -222,8 +223,8 @@ export class WorkflowManager {
 
   private async execute(active: ActiveRun): Promise<void> {
     const { run, controller } = active;
-    let result: unknown;
-    let failure: unknown;
+    let result: JsonValue | undefined;
+    let failure: WireInput | undefined;
 
     try {
       this.options.store.update(run.id, { status: "running" });
@@ -244,16 +245,17 @@ export class WorkflowManager {
 
         await Promise.allSettled(active.pending);
 
-        if (active.unconfirmedStops) return;
-        const error = failure ? workflowFailure(failure) : undefined;
-        this.options.store.update(run.id, {
-          status: error ? (error.code === "WORKFLOW_CANCELLED" ? "cancelled" : "failed") : "completed",
-          result: error ? undefined : result, error,
-        });
+        if (!active.unconfirmedStops) {
+          const error = failure ? workflowFailure(failure) : undefined;
+          this.options.store.update(run.id, {
+            status: error ? (error.code === "WORKFLOW_CANCELLED" ? "cancelled" : "failed") : "completed",
+            result: error ? undefined : result, error,
+          });
+        }
       } finally { this.active.delete(run.id); }
     }
   }
-  private async script(active: ActiveRun, source: string, args: JsonValue, depth: number): Promise<JsonValue> {
+  private async script(active: ActiveRun, source: string, args: WireInput, depth: number): Promise<JsonValue> {
     if (this.scripts >= 16) throw this.fatal(active, new WorkflowError("WORKFLOW_RUNNER_LIMIT", "Sixteen script runners are already active."));
     this.scripts++;
     const runner = this.options.runner ?? runWorkflowScript;
@@ -261,7 +263,7 @@ export class WorkflowManager {
     try { return await runner({
       source, args, signal: active.controller.signal, depth,
       onAgent: (prompt, options) => {
-        // SAFETY: Boundary value already validated or constructed to match this type.
+        // SAFETY: The surrounding checks or construction already match this type.
         const task = this.agent(active, prompt, options as WorkflowAgentOptions, workflowHash(source));
         active.pending.add(task);
         void task.then(() => active.pending.delete(task), () => active.pending.delete(task));
@@ -346,7 +348,7 @@ export class WorkflowManager {
     active.preparing = prepared.catch(() => {});
     const { call, validate, reuse } = await prepared;
 
-    if (reuse) return call.result;
+    if (reuse) return call.result ?? null;
     let releaseRun: (() => void) | undefined;
     let releaseGlobal: (() => void) | undefined;
 
@@ -368,7 +370,7 @@ export class WorkflowManager {
       this.options.store.updateCall(call.runId, call.index, { status: "running", turnId: turn.value.turnId });
       this.options.store.event(call.runId, "agent_turn", { index, agentId: call.agentId, turnId: turn.value.turnId, repair: false });
       let response = await this.awaitTurn(active, call, turn.value.turnId);
-      let output: unknown = response;
+      let output: JsonValue = jsonValue(response, 262_144, "agent result");
 
       if (validate) {
         try { output = parseWorkflowOutput(response, validate); }
@@ -450,7 +452,6 @@ export class WorkflowManager {
           const stopped = await this.options.agents.stop(call.agentId, call);
 
           if (stopped.isOk()) return;
-          // SAFETY: Boundary value already validated or constructed to match this type.
           // stop() conflicts when the turn settled by itself; re-read before treating that as uncertainty.
           const settled = this.options.agents.getTurn(call.agentId, call);
 
@@ -477,7 +478,7 @@ export class WorkflowManager {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
   }
-  private fatal(active: ActiveRun, error: JsonValue): unknown { active.controller.abort(error);
+  private fatal(active: ActiveRun, error: WireInput): WireInput { active.controller.abort(error);
 
  return error; }
   private countDispatch(active: ActiveRun): void {
@@ -555,20 +556,20 @@ function canonicalRoot(root: string): string {
   try { return realpathSync.native(root); } catch { return resolve(root); }
 }
 
-function jsonValue(value: JsonValue, bytes: number, label: string): unknown {
+function jsonValue(value: WireInput, bytes: number, label: string): JsonValue {
   let encoded: string | undefined;
 
   try { encoded = JSON.stringify(value); } catch { /* Fail with the same public boundary error. */ }
 
   if (encoded === undefined || Buffer.byteLength(encoded) > bytes) throw new WorkflowError("WORKFLOW_VALUE_LIMIT", `Workflow ${label} must be JSON and at most ${bytes} bytes.`);
 
-  return JSON.parse(encoded);
+  return jsonValueSchema.parse(JSON.parse(encoded));
 }
 
 function agentOptions(value: WorkflowAgentOptions, authority: "read_only" | "allowed"): WorkflowAgentOptions {
-  if (!value || !isJsonObject(value) || Array.isArray(value)) throw new WorkflowError("INVALID_AGENT_CALL", "Agent options must be an object.");
-  // SAFETY: Boundary value already validated or constructed to match this type.
-  const options = jsonValue(value, 32_768, "agent options") as WorkflowAgentOptions;
+  if (!value || !isObjectValue(value) || Array.isArray(value)) throw new WorkflowError("INVALID_AGENT_CALL", "Agent options must be an object.");
+  // SAFETY: The surrounding checks or construction already match this type.
+  const options = unsafeNarrow<WorkflowAgentOptions>(jsonValue(value, 32_768, "agent options"));
   const keys = new Set(["target", "model", "effort", "schema", "label", "phase", "writeMode", "isolation", "workspace"]);
 
   for (const key of Object.keys(options)) if (!keys.has(key)) throw new WorkflowError("INVALID_AGENT_CALL", `Unknown agent option: ${key}`);
@@ -586,7 +587,7 @@ function agentOptions(value: WorkflowAgentOptions, authority: "read_only" | "all
 
   if (!["read_only", "allowed"].includes(options.writeMode) || (authority === "read_only" && options.writeMode !== "read_only")) throw new WorkflowError("WORKFLOW_AUTHORITY", "Agent call cannot increase the workflow's write authority.");
 
-  if (options.schema !== undefined && (!options.schema || !isJsonObject(options.schema) || Array.isArray(options.schema))) throw new WorkflowError("INVALID_SCHEMA", "Schema must be an object.");
+  if (options.schema !== undefined && (!options.schema || !isObjectValue(options.schema) || Array.isArray(options.schema))) throw new WorkflowError("INVALID_SCHEMA", "Schema must be an object.");
 
   return options;
 }
@@ -601,13 +602,10 @@ class Slots {
     if (this.used >= this.limit) {
       await new Promise<void>((resolve, reject) => {
         const ready = () => { signal.removeEventListener("abort", aborted); resolve(); };
-        const aborted = () => {
-          const index = this.waiting.indexOf(ready);
 
-          if (index >= 0) this.waiting.splice(index, 1);
+        const aborted = () => { const index = this.waiting.indexOf(ready);
 
-          reject(signal.reason);
-        };
+ if (index >= 0) this.waiting.splice(index, 1); reject(signal.reason); };
 
         this.waiting.push(ready);
         signal.addEventListener("abort", aborted, { once: true });

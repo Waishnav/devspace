@@ -1,3 +1,5 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput } from "./json-value.js";
 import { constants as fsConstants } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { join, toNamespacedPath } from "node:path";
@@ -7,14 +9,12 @@ import {
   type ArtifactDestinationDirectory,
 } from "./artifact-destination.js";
 import { ArtifactError } from "./artifact-error.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
-import type { JsonValue } from "./json-value.js";
 
 export async function prepareWindowsArtifactDestinationDirectory(
   workspaceRoot: string,
   parentParts: readonly string[],
 ): Promise<ArtifactDestinationDirectory> {
-  const pinnedHandles: unknown[] = [];
+  const pinnedHandles: WireInput[] = [];
   let directoryHandle: FileHandle | undefined;
   let parentPath = workspaceRoot;
 
@@ -68,14 +68,14 @@ interface WindowsApi {
     disposition: number,
     flags: number,
     templateFile: null,
-  ): unknown;
+  ): WireInput;
   GetFileInformationByHandleEx(
-    handle: JsonValue,
+    handle: WireInput,
     infoClass: number,
     info: WindowsAttributeInfo,
     size: number,
   ): number;
-  CloseHandle(handle: JsonValue): number;
+  CloseHandle(handle: WireInput): number;
   HANDLE: ReturnType<typeof koffi.pointer>;
   FILE_ATTRIBUTE_TAG_INFO: ReturnType<typeof koffi.struct>;
 }
@@ -117,7 +117,7 @@ function createWindowsApi(): WindowsApi {
   };
 }
 
-function pinWindowsDirectory(path: string, code: string): unknown {
+function pinWindowsDirectory(path: string, code: string): WireInput {
   const api = windowsApi();
   const FILE_LIST_DIRECTORY = 0x0001;
   const FILE_TRAVERSE = 0x0020;
@@ -176,7 +176,7 @@ function pinWindowsDirectory(path: string, code: string): unknown {
   return handle;
 }
 
-function closeWindowsHandles(handles: JsonValue[]): void {
+function closeWindowsHandles(handles: WireInput[]): void {
   if (handles.length === 0) return;
   const api = windowsApi();
 

@@ -1,3 +1,4 @@
+import type { JsonObject } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -14,7 +15,6 @@ import {
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
 import type { WorkflowRun } from "./workflow-types.js";
-import type { JsonObject } from "./json-value.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +61,7 @@ const daemon = createServer((socket) => {
 
     if (newline < 0) return;
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const request = JSON.parse(buffer.slice(0, newline)) as {
       requestId: string;
       method: string;

@@ -56,27 +56,24 @@ export function buildLocalAgentCatalog(
   const visibleProviders = providers.filter((provider) => provider.enabled);
 
   const usable = new Map(
-    visibleProviders.values().filter((provider) => provider.usable).map((provider) => [provider.id, provider]),
+    visibleProviders.flatMap((provider) => (provider.usable ? [[provider.id, provider] as const] : [])),
   );
 
   return {
     enabled: config.enabled,
     providers: visibleProviders,
-    profiles: profiles
-      .values()
-      .filter((profile) => !profile.disabled && usable.has(profile.provider))
-      .map((profile) => {
-        const provider = usable.get(profile.provider)!;
+    profiles: profiles.flatMap((profile) => {
+      if (profile.disabled || !usable.has(profile.provider)) return [];
+      const provider = usable.get(profile.provider)!;
 
-        return {
-          name: profile.name,
-          description: profile.description,
-          provider: profile.provider,
-          model: profile.model ?? provider.model,
-          effort: profile.effort ?? provider.effort,
-        };
-      })
-      .toArray(),
+      return [{
+        name: profile.name,
+        description: profile.description,
+        provider: profile.provider,
+        model: profile.model ?? provider.model,
+        effort: profile.effort ?? provider.effort,
+      }];
+    }),
   };
 }
 

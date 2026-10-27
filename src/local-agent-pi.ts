@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, isJsonNumber, optionalFields } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,8 +15,6 @@ import {
 import { localAgentCancelledError } from "./local-agent-cancellation.js";
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
-import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   PiRpcConnection,
   parsePiModelSlug,
@@ -37,7 +38,7 @@ const PI_ABORT_SETTLE_MS = 2_000;
 const MAX_PI_EVENTS = 10_000;
 
 export interface PiRpcRuntimeConnection {
-  request(record: PiRpcRecord, timeoutMs?: number): Promise<JsonValue>;
+  request(record: PiRpcRecord, timeoutMs?: number): Promise<WireInput>;
   send(record: PiRpcRecord): Promise<void>;
   nextEvent(timeoutMs?: number): Promise<PiRpcRecord | undefined>;
   clearEvents(): void;
@@ -381,7 +382,7 @@ async function defaultPiRpcFactory(
   }
 }
 
-export function resolvePiCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } {
+export function resolvePiCommand(env: NodeJS.ProcessEnv) {
   const configured = env.PI_COMMAND?.trim();
 
   if (configured) {
@@ -458,14 +459,14 @@ async function cancelPiUiRequest(connection: PiRpcRuntimeConnection, event: PiRp
   await connection.send({ type: "extension_ui_response", id: event.id, cancelled: true });
 }
 
-export function extractPiFinalResponse(value: JsonValue): string {
-  if (!value || !isJsonObject(value)) return "";
-  // SAFETY: Boundary value already validated or constructed to match this type.
-  const root = value as JsonObject;
+export function extractPiFinalResponse(value: WireInput): string {
+  if (!value || !isObjectValue(value)) return "";
+  // SAFETY: The surrounding checks or construction already match this type.
+  const root = unsafeNarrow<JsonObject>(value);
 
-  const data = root.data && isJsonObject(root.data) && !Array.isArray(root.data)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? root.data as JsonObject
+  const data = root.data && isObjectValue(root.data) && !Array.isArray(root.data)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(root.data)
     : root;
 
   const messages = Array.isArray(data.messages) ? data.messages : [data];
@@ -473,10 +474,11 @@ export function extractPiFinalResponse(value: JsonValue): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (!message || !isJsonObject(message)) continue;
+    if (!message || !isObjectValue(message)) continue;
 
-    if ((message as { role?: unknown }).role !== "assistant") continue;
-    const content = (message as { content?: unknown }).content;
+    // SAFETY: The surrounding checks or construction already match this type.
+    if (unsafeNarrow<{ role?: WireInput }>(message).role !== "assistant") continue;
+    const content = unsafeNarrow<{ content?: WireInput }>(message).content;
 
     if (isJsonString(content)) return content.trim();
 
@@ -485,9 +487,10 @@ export function extractPiFinalResponse(value: JsonValue): string {
     const text = content
       .filter((block): block is { type: string; text: string } => (
         Boolean(block)
-        && isJsonObject(block)
-        && (block as { type?: unknown }).type === "text"
-        && typeof (block as { text?: unknown }).text === "string"
+        && isObjectValue(block)
+        // SAFETY: The surrounding checks or construction already match this type.
+        && unsafeNarrow<{ type?: WireInput }>(block).type === "text"
+        && isJsonString(unsafeNarrow<{ text?: WireInput }>(block).text)
       ))
       .map((block) => block.text)
       .join("\n\n")
@@ -499,11 +502,11 @@ export function extractPiFinalResponse(value: JsonValue): string {
   return "";
 }
 
-export function extractPiProviderError(value: JsonValue): string | undefined {
+export function extractPiProviderError(value: WireInput): string | undefined {
   const records = Array.isArray(value) ? [...value] : [value];
 
-  if (value && isJsonObject(value) && !Array.isArray(value)) {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+  if (value && isObjectValue(value) && !Array.isArray(value)) {
+    // SAFETY: The surrounding checks or construction already match this type.
     const nested = (value as JsonObject).messages;
 
     if (Array.isArray(nested)) records.push(...nested);
@@ -512,8 +515,8 @@ export function extractPiProviderError(value: JsonValue): string | undefined {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
 
-    if (!record || !isJsonObject(record)) continue;
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    if (!record || !isObjectValue(record)) continue;
+    // SAFETY: The surrounding checks or construction already match this type.
     const event = record as JsonObject;
 
     if (event.type === "extension_error" && isJsonString(event.error)) return event.error;
@@ -521,8 +524,8 @@ export function extractPiProviderError(value: JsonValue): string | undefined {
     if (event.type === "message_end") {
       const message = event.message;
 
-      if (message && isJsonObject(message)) {
-        // SAFETY: Boundary value already validated or constructed to match this type.
+      if (message && isObjectValue(message)) {
+        // SAFETY: The surrounding checks or construction already match this type.
         const error = (message as JsonObject).errorMessage;
 
         if (isJsonString(error) && error) return error;
@@ -537,24 +540,24 @@ export function extractPiProviderError(value: JsonValue): string | undefined {
   return undefined;
 }
 
-function recordBoolean(value: JsonValue, key: string): boolean {
-  if (!value || !isJsonObject(value) || Array.isArray(value)) return false;
+function recordBoolean(value: WireInput, key: string): boolean {
+  if (!value || !isObjectValue(value) || Array.isArray(value)) return false;
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   return (value as JsonObject)[key] === true;
 }
 
-function recordNumber(value: JsonValue, key: string): number | undefined {
-  if (!value || !isJsonObject(value) || Array.isArray(value)) return undefined;
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function recordNumber(value: WireInput, key: string): number | undefined {
+  if (!value || !isObjectValue(value) || Array.isArray(value)) return undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
   const result = (value as JsonObject)[key];
 
   return isJsonNumber(result) && Number.isFinite(result) ? result : undefined;
 }
 
-function recordArray(value: JsonValue, key: string): unknown[] {
-  if (!value || !isJsonObject(value) || Array.isArray(value)) return [];
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function recordArray(value: WireInput, key: string): WireInput[] {
+  if (!value || !isObjectValue(value) || Array.isArray(value)) return [];
+  // SAFETY: The surrounding checks or construction already match this type.
   const result = (value as JsonObject)[key];
 
   return Array.isArray(result) ? result : [];

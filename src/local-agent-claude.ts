@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -8,9 +11,6 @@ import {
 import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -24,7 +24,6 @@ import type {
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
-  // SAFETY: Boundary value already validated or constructed to match this type.
   // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
   "Read(/**)",
   "Edit(/**)",
@@ -311,7 +310,8 @@ async function defaultClaudeQueryFactory({
 
   return unsafeNarrow<ClaudeQueryLike>(query({
     prompt,
-    options: unsafeNarrow<never>(options),
+    // SAFETY: The surrounding checks or construction already match this type.
+    options: options as never,
   }));
 }
 
@@ -332,9 +332,7 @@ export function claudeQueryOptions(
     permissionMode,
     // Restricted runtimes stay warm across read_only/allowed turns. Keep the
     // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
-      ? {}
-      : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
+    ...optionalFields(input.writeMode === "full_access" ? undefined : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
     sandbox: authority.sandbox,
     settings: authority.settings,
     ...optionalFields(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : undefined),
@@ -365,7 +363,7 @@ export function claudeAuthoritySettings(
 function claudeAuthorityOptions(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): { sandbox: JsonObject; settings: JsonObject } {
+) {
   if (writeMode === "full_access") {
     const sandbox = {
       enabled: false,
@@ -475,19 +473,18 @@ export interface ClaudeUserMessage {
   parent_tool_use_id: null;
 }
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 /** The SDK reports a missing or unlaunchable Claude CLI as a ReferenceError, not as a spawn error. */
-function isClaudeExecutableError(error: JsonValue): boolean {
+function isClaudeExecutableError(error: WireInput): boolean {
   return error instanceof ReferenceError && /^Claude Code (native binary|executable) /.test(error.message);
 }
 
-function directString(value: JsonValue): string | undefined {
+function directString(value: WireInput): string | undefined {
   return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }

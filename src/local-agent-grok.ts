@@ -1,6 +1,7 @@
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { AgentProviderProtocolError } from "./local-agent-errors.js";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 export const GROK_DEFAULT_MODEL = "grok-build";
 
@@ -37,7 +38,7 @@ interface PendingPromptCompletion {
   sessionId: string;
   promptId: string;
   resolve: (completion: GrokPromptCompletion) => void;
-  reject: (error: JsonValue) => void;
+  reject: (error: WireInput) => void;
   timer: NodeJS.Timeout;
 }
 
@@ -97,7 +98,7 @@ export class GrokPromptCompletionRegistry {
     clearTimeout(pending.timer);
   }
 
-  rejectAll(error: JsonValue): void {
+  rejectAll(error: WireInput): void {
     const pending = Array.from(this.pending.values());
     this.pending.clear();
 
@@ -133,7 +134,7 @@ export class GrokPromptCompletionRegistry {
   }
 }
 
-export function parseGrokPromptCompletion(input: JsonValue): GrokPromptCompletion | undefined {
+export function parseGrokPromptCompletion(input: WireInput): GrokPromptCompletion | undefined {
   const record = asRecord(input);
   const sessionId = directString(record?.sessionId);
 
@@ -162,7 +163,7 @@ export function parseGrokPromptCompletion(input: JsonValue): GrokPromptCompletio
   };
 }
 
-export function readGrokSessionState(value: JsonValue): GrokSessionState | undefined {
+export function readGrokSessionState(value: WireInput): GrokSessionState | undefined {
   const record = asRecord(value);
   const response = asRecord(record?.newSessionResponse) ?? record;
 
@@ -243,11 +244,11 @@ function grokConfigurationError(message: string): AgentProviderProtocolError {
 }
 
 export function isGrokReasoningEffort(value: string): value is GrokReasoningEffort {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   return (GROK_REASONING_EFFORTS as readonly string[]).includes(value);
 }
 
-function readGrokModelInfo(value: JsonValue): GrokModelInfo | undefined {
+function readGrokModelInfo(value: WireInput): GrokModelInfo | undefined {
   const record = asRecord(value);
   const id = directString(record?.modelId) ?? directString(record?.id);
 
@@ -283,7 +284,7 @@ function isBackgroundPromptId(promptId: string): boolean {
     || /^task-completed-/i.test(promptId);
 }
 
-function firstString(...values: JsonValue[]): string | undefined {
+function firstString(...values: WireInput[]): string | undefined {
   for (const value of values) {
     const result = directString(value);
 
@@ -293,17 +294,17 @@ function firstString(...values: JsonValue[]): string | undefined {
   return undefined;
 }
 
-function readArray(value: JsonValue): unknown[] | undefined {
+function readArray(value: WireInput): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
-function directString(value: JsonValue): string | undefined {
+function directString(value: WireInput): string | undefined {
   return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }

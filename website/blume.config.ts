@@ -3,7 +3,6 @@ import { defineConfig } from "blume";
 export default defineConfig({
   title: "DevSpace",
   description:
-    // SAFETY: Boundary value already validated or constructed to match this type.
     "The agent-agnostic orchestration layer for coding agents. Delegate to Codex, Claude Code, OpenCode, Cursor, and more as subagents, and program multi-agent loops as dynamic workflows.",
   logo: { text: "devspace", href: "/" },
   // Landing pages live at the site root; generated docs mount under /docs.

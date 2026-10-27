@@ -1,6 +1,6 @@
-import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { isJsonString } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
+import type { JsonObject, JsonValue, WireInput } from "./json-value.js";
+import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 export type WorkflowStatus = "starting" | "running" | "stopping" | "completed" | "failed" | "cancelled" | "interrupted";
 
@@ -30,7 +30,7 @@ export interface WorkflowRun extends LocalAgentWorkspaceScope {
   writeMode: WorkflowWriteMode;
   concurrency: number;
   resumeOf?: string;
-  result?: unknown;
+  result?: JsonValue;
   error?: WorkflowFailure;
   createdAt: string;
   updatedAt: string;
@@ -67,7 +67,7 @@ export interface WorkflowCall {
   fingerprint: string;
   workspaceRoot: string;
   workspaceId?: string;
-  result?: unknown;
+  result?: JsonValue;
   error?: WorkflowFailure;
   reusedFrom?: string;
   createdAt: string;
@@ -76,7 +76,8 @@ export interface WorkflowCall {
 
 export interface WorkflowEvent { sequence: number; runId: string; type: string; data: unknown; createdAt: string }
 
-export function workflowFailure(error: JsonValue): WorkflowFailure {
+export function workflowFailure(error: WireInput): WorkflowFailure {
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return {

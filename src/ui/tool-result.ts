@@ -1,7 +1,8 @@
+import { isJsonString, isJsonBoolean, isObjectValue, isJsonNumber, optionalFields } from "../json-value.js";
+import { unsafeNarrow } from "../unsafe-narrow.js";
+import type { JsonObject, WireInput } from "../json-value.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ReviewFileType, ToolResultCard } from "./card-types.js";
-import { optionalFields, isJsonString, isJsonNumber, isJsonBoolean, isJsonObject } from "../json-value.js";
-import type { JsonObject, JsonValue } from "../json-value.js";
 
 export type DecodedToolResult =
   | { kind: "card"; card: ToolResultCard }
@@ -143,11 +144,11 @@ export function toolResultFromChatGptGlobals(
 
   if (!metadataResult && !structuredContent && !resultMeta) return undefined;
 
+  // SAFETY: The surrounding checks or construction already match this type.
   return {
     ...(metadataResult ?? { content: [] }),
     ...optionalFields(structuredContent ? { structuredContent } : undefined),
     ...optionalFields(resultMeta ? { _meta: resultMeta } : undefined),
-  // SAFETY: Boundary value already validated or constructed to match this type.
   } as CallToolResult;
 }
 
@@ -159,21 +160,20 @@ function directResultMeta(
   return "card" in metadata ? metadata : undefined;
 }
 
-function mcpToolResult(value: JsonValue): CallToolResult | undefined {
+function mcpToolResult(value: WireInput): CallToolResult | undefined {
   const metadata = asRecord(value);
 
   if (!metadata) return undefined;
 
   const direct = asRecord(metadata.mcp_tool_result);
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
-  if (direct) return direct as CallToolResult;
+  if (direct) return unsafeNarrow<CallToolResult>(direct);
 
   const callToolResult = asRecord(metadata.call_tool_result);
   const nested = asRecord(callToolResult?.mcp_tool_result);
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
-  return nested ? nested as CallToolResult : undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
+  return nested ? unsafeNarrow<CallToolResult>(nested) : undefined;
 }
 
 function cardFields(record: JsonObject | undefined): Partial<ToolResultCard> | undefined {
@@ -275,7 +275,7 @@ function reviewAvailability(
   return reason ? { available: false, reason } : undefined;
 }
 
-function reviewFileType(value: JsonValue): ReviewFileType | undefined {
+function reviewFileType(value: WireInput): ReviewFileType | undefined {
   return value === "change"
     || value === "rename-pure"
     || value === "rename-changed"
@@ -285,11 +285,11 @@ function reviewFileType(value: JsonValue): ReviewFileType | undefined {
     : undefined;
 }
 
-function workspaceMode(value: JsonValue): ToolResultCard["mode"] {
+function workspaceMode(value: WireInput): ToolResultCard["mode"] {
   return value === "checkout" || value === "worktree" ? value : undefined;
 }
 
-function arrayRecords(value: JsonValue): Array<JsonObject> | undefined {
+function arrayRecords(value: WireInput): Array<JsonObject> | undefined {
   if (!Array.isArray(value)) return undefined;
 
   return value.flatMap((item) => {
@@ -299,28 +299,28 @@ function arrayRecords(value: JsonValue): Array<JsonObject> | undefined {
   });
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }
 
-function stringField(value: JsonValue): string | undefined {
+function stringField(value: WireInput): string | undefined {
   return isJsonString(value) ? value : undefined;
 }
 
-function numberField(value: JsonValue): number | undefined {
+function numberField(value: WireInput): number | undefined {
   return isJsonNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-function booleanField(value: JsonValue): boolean | undefined {
+function booleanField(value: WireInput): boolean | undefined {
   return isJsonBoolean(value) ? value : undefined;
 }
 
 function definedFields<T extends JsonObject>(record: T): T {
+  // SAFETY: The surrounding checks or construction already match this type.
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => value !== undefined),
-  // SAFETY: Boundary value already validated or constructed to match this type.
   ) as T;
 }

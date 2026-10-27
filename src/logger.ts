@@ -1,6 +1,6 @@
-import type { Request } from "express";
 import { isJsonString } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
+import type { Request } from "express";
 
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
 
@@ -101,7 +101,7 @@ function formatPretty(entry: LogFields): string {
   return rest ? `${ts} ${level} ${event} ${rest}` : `${ts} ${level} ${event}`;
 }
 
-function formatPrettyValue(value: JsonValue): string {
+function formatPrettyValue(value: WireInput): string {
   if (isJsonString(value)) return JSON.stringify(value);
 
   return JSON.stringify(value);

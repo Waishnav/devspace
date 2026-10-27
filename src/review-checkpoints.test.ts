@@ -339,7 +339,6 @@ test("an unborn repository is reviewable without creating a HEAD commit", async 
   assert.match(review.patch, /new file/);
 });
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 test("a broken HEAD is not treated as an unborn repository", async (t) => {
   const root = await committedRepository(t);
   const head = await gitOutput(root, ["rev-parse", "HEAD"]);

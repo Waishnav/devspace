@@ -1,5 +1,5 @@
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { JsonObject } from "../../src/json-value.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 /** Everything one scenario replay produced; written to transcript.json and served to the QA host. */
 export interface QaRun {

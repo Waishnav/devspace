@@ -1,3 +1,4 @@
+import type { WireInput, JsonObject } from "./json-value.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -14,7 +15,7 @@ import {
 } from "./local-agent-daemon-protocol.js";
 import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecycle.js";
 
-function request(method: string, params: unknown, extra: Record<string, unknown> = {}) {
+function request(method: string, params: WireInput, extra: JsonObject = {}) {
   return decodeLocalAgentDaemonRequest({
     requestId: "req",
     protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -93,7 +94,7 @@ test("requests keep every field the daemon acts on", () => {
 test("invalid requests are rejected", () => {
   assert.throws(
     () => request("agent.start", { target: "reviewer", prompt: "" }),
-    (error: unknown) => error instanceof LocalAgentDaemonProtocolError && error.code === "INVALID_PARAMS",
+    (error: WireInput) => error instanceof LocalAgentDaemonProtocolError && error.code === "INVALID_PARAMS",
   );
   assert.throws(
     () => request("workflow.run", { workspaceRoot: "/tmp/project", name: "review", resume: "wfl_old" }),

@@ -1,17 +1,17 @@
+import { isObjectValue, jsonValueSchema } from "./json-value.js";
+import type { JsonObject, JsonValue, WireInput } from "./json-value.js";
 import { Ajv, type ValidateFunction } from "ajv";
 import { WorkflowError } from "./workflow-types.js";
-import { isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 /** Schemas are model supplied: bound compilation and disallow executable/recursive regex paths. */
 export function compileWorkflowSchema(schema: JsonObject): ValidateFunction {
   if (Buffer.byteLength(JSON.stringify(schema)) > 16_384) throw new WorkflowError("INVALID_SCHEMA", "Schema exceeds 16 KiB.");
   let nodes = 0;
 
-  function visit(value: JsonValue, depth: number, position: "schema" | "schemas" | "data"): void {
+  function visit(value: WireInput, depth: number, position: "schema" | "schemas" | "data"): void {
     if (++nodes > 512 || depth > 16) throw new WorkflowError("INVALID_SCHEMA", "Schema is too complex.");
 
-    if (!value || !isJsonObject(value)) return;
+    if (!value || !isObjectValue(value)) return;
 
     for (const [key, child] of Object.entries(value)) {
       if (position === "schema" && ["$ref", "$dynamicRef", "$recursiveRef", "$async", "pattern", "patternProperties", "format"].includes(key)) {
@@ -37,10 +37,10 @@ export function compileWorkflowSchema(schema: JsonObject): ValidateFunction {
   }
 }
 
-export function parseWorkflowOutput(text: string, validate: ValidateFunction): unknown {
-  let value: unknown;
+export function parseWorkflowOutput(text: string, validate: ValidateFunction): JsonValue {
+  let value: JsonValue;
 
-  try { value = JSON.parse(text); }
+  try { value = jsonValueSchema.parse(JSON.parse(text)); }
   catch { throw new WorkflowError("INVALID_OUTPUT", "Agent output was not JSON."); }
 
   if (!validate(value)) {

@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +40,8 @@ function unwrap<T, E>(result: BetterResult<T, E>): T {
   return result.value;
 }
 
-function code(result: BetterResult<unknown, unknown>): string | undefined {
+function code(result: BetterResult<WireInput, WireInput>): string | undefined {
+  // SAFETY: The surrounding checks or construction already match this type.
   return result.isErr() ? (result.error as { code?: string }).code : undefined;
 }
 
@@ -106,6 +108,7 @@ test("a failed worktree creation leaves no record so the request id can be retri
 
   const taken = await start({ agentId: "job-3", worktree: { branch: "feature/probe" } });
   assert.equal(code(taken), "WORKTREE_CREATE_FAILED");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((taken as { error: Error }).error.message, /already exists/);
   assert.equal(store.getById("job-3"), undefined);
   assert.equal(unwrap(await start({ agentId: "job-3", worktree: { branch: "feature/other" } })).branch, "feature/other");
@@ -116,7 +119,9 @@ test("a worktree agent outside a git repository fails with a typed error", async
   const { store, notGit, start } = fixture(t);
   const outside = await start({ worktree: {}, workspaceRoot: notGit });
   assert.equal(code(outside), "WORKTREE_NOT_GIT_REPOSITORY");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.equal((outside as { error: { agentId?: string } }).error.agentId, undefined, "the rolled-back id is not reported");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((outside as { error: Error }).error.message, /needs a git repository/);
   assert.deepEqual(store.list({ workspaceRoot: notGit }), []);
 });
@@ -129,6 +134,7 @@ test("a removed worktree fails the follow-up clearly instead of running in the s
   git(source, "worktree", "remove", "--force", named.worktreePath!);
   const missing = await manager.continue("job-2", "again", {}, scope);
   assert.equal(code(missing), "WORKTREE_MISSING");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((missing as { error: Error }).error.message, /git worktree add/);
 });
 

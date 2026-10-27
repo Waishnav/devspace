@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -16,12 +17,13 @@ import {
   type PiSandboxModeRef,
 } from "./local-agent-pi-sandbox.js";
 
-type PiTool = { execute: (...args: any[]) => Promise<unknown> };
+type PiTool = { execute: (...args: any[]) => Promise<WireInput> };
 
 function registerTools(workspace: string, modeRef: PiSandboxModeRef, env?: NodeJS.ProcessEnv): Map<string, PiTool> {
   const tools = new Map<string, PiTool>();
+  // SAFETY: The surrounding checks or construction already match this type.
   createPiSandboxExtension(workspace, modeRef, env)({
-    registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<unknown> }) =>
+    registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<WireInput> }) =>
       tools.set(tool.name, tool),
   } as never);
 
@@ -80,6 +82,7 @@ test("full-access bash receives the provider env", async (t) => {
   const bash = tools.get("bash");
   assert.ok(bash);
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const result = await bash.execute("provider-env-test", { command: "printf %s \"$DEVSPACE_PI_ENV_TEST\"" }) as {
     content: Array<{ type: string; text?: string }>;
   };

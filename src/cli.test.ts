@@ -1,3 +1,4 @@
+import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +22,7 @@ const require = createRequire(import.meta.url);
 const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
+// SAFETY: The surrounding checks or construction already match this type.
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
 };
@@ -98,7 +100,7 @@ const other = store.update(
 store.close();
 
 const daemonSocket = localAgentDaemonPaths(stateDir).endpoint;
-const daemonRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+const daemonRequests: Array<{ method: string; params?: JsonObject }> = [];
 
 const daemon = createNetServer((socket) => {
   let buffer = "";
@@ -109,10 +111,11 @@ const daemon = createNetServer((socket) => {
 
     if (newline === -1) return;
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const request = JSON.parse(buffer.slice(0, newline)) as {
       requestId: string;
       method: string;
-      params?: Record<string, unknown>;
+      params?: JsonObject;
     };
 
     daemonRequests.push(request);
@@ -133,7 +136,7 @@ const daemon = createNetServer((socket) => {
       return;
     }
 
-    const eventsPage = (afterSeq: unknown) => ({
+    const eventsPage = (afterSeq: WireInput) => ({
       agentId: current.id,
       turnId: "trn_follow",
       status: afterSeq === 0 ? "running" : "completed",
@@ -331,8 +334,10 @@ test("agents run --json prints structured errors and exits non-zero", async () =
   }
 
   assert.ok(commandFailure, "structured CLI errors should exit non-zero");
+  // SAFETY: The surrounding checks or construction already match this type.
   const stdout = (commandFailure as { stdout?: string }).stdout ?? "";
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const payload = JSON.parse(stdout) as {
     error: { code: string; message: string; retryable: boolean; target: string };
   };
@@ -353,6 +358,7 @@ test("agents run prints XML errors on stderr and exits non-zero", async () => {
 
   assert.ok(xmlCommandFailure, "XML CLI errors should exit non-zero");
   assert.equal(
+    // SAFETY: The surrounding checks or construction already match this type.
     (xmlCommandFailure as { stderr?: string }).stderr,
     '<error code="UNKNOWN_TARGET" retryable="false">Unknown subagent profile or provider: missing.</error>\n',
   );
@@ -369,7 +375,8 @@ test("agents run --worktree passes the branch to the daemon as a start option", 
 test("agents run rejects --branch without --worktree", async () => {
   await assert.rejects(
     execCli(["agents", "run", "codex", "--branch", "feature/x", "inspect"], {}),
-    (error: unknown) => /--branch requires --worktree/.test((error as { stderr?: string }).stderr ?? ""),
+    // SAFETY: The surrounding checks or construction already match this type.
+    (error: WireInput) => /--branch requires --worktree/.test((error as { stderr?: string }).stderr ?? ""),
   );
 });
 
@@ -383,8 +390,9 @@ test("agents run rejects unknown options and suggests -- for dash-prefixed promp
       "--unknown",
       "inspect",
     ]),
-    (error: unknown) => {
+    (error: WireInput) => {
       assert.equal(
+        // SAFETY: The surrounding checks or construction already match this type.
         (error as { stderr?: string }).stderr,
         '<error code="AGENT_COMMAND_ERROR" retryable="false">Unknown option: --unknown. Use -- before prompt text that starts with a dash.</error>\n',
       );

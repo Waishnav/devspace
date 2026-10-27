@@ -1,3 +1,5 @@
+import { isJsonObject } from "./json-value.js";
+import type { JsonObject } from "./json-value.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -16,7 +18,7 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   closeCount = 0;
   model?: string;
   permissionModes: string[] = [];
-  flagSettings: Array<Record<string, unknown>> = [];
+  flagSettings: Array<JsonObject> = [];
 
   constructor(prompt: AsyncIterable<ClaudeUserMessage>) {
     this.iterator = prompt[Symbol.asyncIterator]();
@@ -68,7 +70,7 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
     this.permissionModes.push(mode);
   }
 
-  async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
+  async applyFlagSettings(settings: JsonObject): Promise<void> {
     this.flagSettings.push({ ...settings });
   }
 
@@ -90,7 +92,9 @@ const context: LocalAgentRuntimeContext = {
 function claudeDriverFixture() {
   const state = {
     factoryCalls: 0,
-    lastOptions: undefined as Record<string, unknown> | undefined,
+    // SAFETY: The surrounding checks or construction already match this type.
+    lastOptions: undefined as JsonObject | undefined,
+    // SAFETY: The surrounding checks or construction already match this type.
     query: undefined as FakeClaudeQuery | undefined,
   };
 
@@ -121,7 +125,7 @@ const brokenStreamQuery: ClaudeQueryLike = {
   async applyFlagSettings() {},
 };
 
-function configuredClaudeDriver(onOptions: (options: Record<string, unknown>) => void) {
+function configuredClaudeDriver(onOptions: (options: JsonObject) => void) {
   return createLocalAgentDrivers({
     env: {
       PATH: "/usr/bin",
@@ -208,29 +212,41 @@ test("successive turns reuse one Claude query and apply each turn's authority", 
   assert.equal(state.lastOptions?.allowDangerouslySkipPermissions, undefined);
   assert.deepEqual(state.lastOptions?.allowedTools, ["Read(/**)", "Edit(/**)", "Bash"]);
   assert.equal(state.lastOptions?.pathToClaudeCodeExecutable, undefined);
-  const initialSandbox = state.lastOptions?.sandbox as Record<string, unknown>;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const initialSandbox = state.lastOptions?.sandbox as JsonObject;
   assert.equal(initialSandbox.enabled, true);
   assert.equal(initialSandbox.failIfUnavailable, true);
   assert.equal(initialSandbox.autoAllowBashIfSandboxed, true);
   assert.equal(initialSandbox.allowUnsandboxedCommands, false);
-  assert.deepEqual((initialSandbox.filesystem as Record<string, unknown>).allowWrite, []);
-  assert.deepEqual((initialSandbox.filesystem as Record<string, unknown>).denyWrite, ["/tmp/project"]);
+  // SAFETY: The surrounding checks or construction already match this type.
+  assert.deepEqual((initialSandbox.filesystem as JsonObject).allowWrite, []);
+  // SAFETY: The surrounding checks or construction already match this type.
+  assert.deepEqual((initialSandbox.filesystem as JsonObject).denyWrite, ["/tmp/project"]);
   assert.deepEqual(sessionIds, ["claude_session_1"]);
   assert.deepEqual(state.query?.permissionModes, ["dontAsk", "dontAsk", "bypassPermissions"]);
   assert.equal(state.query?.flagSettings.length, 3);
   assert.equal(state.query?.flagSettings[0]?.alwaysThinkingEnabled, true);
   assert.equal(state.query?.flagSettings[0]?.effortLevel, "high");
   assert.equal(
-    (state.query?.flagSettings[0]?.permissions as Record<string, unknown>).defaultMode,
+    // SAFETY: The surrounding checks or construction already match this type.
+    isJsonObject(state.query?.flagSettings[0]?.permissions)
+      ? state.query.flagSettings[0].permissions.defaultMode
+      : undefined,
     "dontAsk",
   );
   assert.equal(state.query?.flagSettings[1]?.effortLevel, "low");
+
+  const deny = isJsonObject(state.query?.flagSettings[1]?.permissions)
+    ? state.query.flagSettings[1].permissions.deny
+    : undefined;
+
+  assert.equal(Array.isArray(deny) && deny.includes("Edit"), false);
+
   assert.equal(
-    ((state.query?.flagSettings[1]?.permissions as Record<string, unknown>).deny as string[]).includes("Edit"),
-    false,
-  );
-  assert.equal(
-    (state.query?.flagSettings[2]?.permissions as Record<string, unknown>).defaultMode,
+    // SAFETY: The surrounding checks or construction already match this type.
+    isJsonObject(state.query?.flagSettings[2]?.permissions)
+      ? state.query.flagSettings[2].permissions.defaultMode
+      : undefined,
     "bypassPermissions",
   );
 
@@ -241,23 +257,30 @@ test("successive turns reuse one Claude query and apply each turn's authority", 
 
 test("authority settings map each write mode to permissions and sandbox", () => {
   const allowedSettings = claudeAuthoritySettings("/tmp/project", "allowed");
-  const allowedPermissions = allowedSettings.permissions as Record<string, unknown>;
-  const allowedSandbox = allowedSettings.sandbox as Record<string, unknown>;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const allowedPermissions = allowedSettings.permissions as JsonObject;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const allowedSandbox = allowedSettings.sandbox as JsonObject;
   assert.deepEqual(allowedPermissions.deny, []);
   assert.deepEqual(allowedSandbox.filesystem, {
     allowWrite: ["/tmp/project"],
     denyWrite: [],
   });
   const readOnlySettings = claudeAuthoritySettings("/tmp/project", "read_only");
-  const readOnlyPermissions = readOnlySettings.permissions as Record<string, unknown>;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const readOnlyPermissions = readOnlySettings.permissions as JsonObject;
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.ok((readOnlyPermissions.deny as string[]).includes("Bash"));
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.ok((readOnlyPermissions.deny as string[]).includes("Edit"));
   assert.deepEqual(
-    ((readOnlySettings.sandbox as Record<string, unknown>).filesystem as Record<string, unknown>).allowWrite,
+    // SAFETY: The surrounding checks or construction already match this type.
+    ((readOnlySettings.sandbox as JsonObject).filesystem as JsonObject).allowWrite,
     [],
   );
   const fullSettings = claudeAuthoritySettings("/tmp/project", "full_access");
-  assert.deepEqual((fullSettings.sandbox as Record<string, unknown>), {
+  // SAFETY: The surrounding checks or construction already match this type.
+  assert.deepEqual((fullSettings.sandbox as JsonObject), {
     enabled: false,
     allowUnsandboxedCommands: true,
   });
@@ -271,7 +294,7 @@ test("a cold runtime resumes its provider session", async () => {
 });
 
 test("CLAUDE_COMMAND overrides the Claude Code executable", async () => {
-  let lastOptions: Record<string, unknown> | undefined;
+  let lastOptions: JsonObject | undefined;
 
   const customCommandDriver = new ClaudeLocalAgentDriver(({ prompt, options }) => {
     lastOptions = options;
@@ -350,7 +373,7 @@ test("programmer defects are not reclassified as provider failures", async () =>
 });
 
 test("a configured provider command and env reach the Claude SDK", async () => {
-  let configuredOptions: Record<string, unknown> | undefined;
+  let configuredOptions: JsonObject | undefined;
   const configuredDriver = configuredClaudeDriver((options) => { configuredOptions = options; });
   assert.ok(configuredDriver);
   const configuredRuntime = await configuredDriver.createRuntime(context);

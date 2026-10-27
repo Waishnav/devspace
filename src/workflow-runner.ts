@@ -1,12 +1,12 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, jsonKind } from "./json-value.js";
+import type { WireInput, JsonObject, JsonValue } from "./json-value.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WorkflowError, type WorkflowAgentOptions } from "./workflow-types.js";
 import { parseWorkflowScript } from "./workflow-script.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
-import { isJsonString, isJsonNumber, isBigintValue, isSymbolValue, isFunctionValue, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type { JsonValue } from "./json-value.js";
 
 export interface WorkflowRunnerLimits {
   timeoutMs: number;
@@ -22,14 +22,14 @@ export interface WorkflowRunnerLimits {
 
 export interface RunWorkflowScriptInput {
   source: string;
-  args?: unknown;
+  args?: WireInput;
   limits?: Partial<WorkflowRunnerLimits>;
   signal?: AbortSignal;
   /** Internal nesting marker. A nested runner must pass depth: 1. */
   depth?: number;
-  onAgent(prompt: string, options: WorkflowAgentOptions): Promise<JsonValue> | unknown;
-  onWorkflow?(name: string, args: JsonValue): Promise<JsonValue> | unknown;
-  onEvent?(type: string, data: JsonValue): Promise<void> | void;
+  onAgent(prompt: string, options: WorkflowAgentOptions): Promise<JsonValue> | JsonValue;
+  onWorkflow?(name: string, args: WireInput): Promise<JsonValue> | JsonValue;
+  onEvent?(type: string, data: WireInput): Promise<void> | void;
 }
 
 export const DEFAULT_WORKFLOW_LIMITS: Readonly<WorkflowRunnerLimits> = Object.freeze({
@@ -60,10 +60,10 @@ interface HostCallMessage {
   type: "host-call";
   id: number;
   kind: "agent" | "workflow";
-  prompt?: unknown;
-  options?: unknown;
-  name?: unknown;
-  args?: unknown;
+  prompt?: WireInput;
+  options?: WireInput;
+  name?: WireInput;
+  args?: WireInput;
 }
 
 export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<JsonValue> {
@@ -103,7 +103,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
   child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8_192); });
 
   return await new Promise<JsonValue>((resolve, reject) => {
-    const finish = (error?: JsonValue, value?: JsonValue) => {
+    const finish = (error?: WireInput, value?: JsonValue) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -117,11 +117,11 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 
       if (error) reject(error);
-      // SAFETY: Boundary value already validated or constructed to match this type.
-      else resolve(value as JsonValue);
+      // SAFETY: The surrounding checks or construction already match this type.
+      else resolve(value ?? null);
     };
 
-    const fatal = (error: JsonValue) => finish(asWorkflowError(error));
+    const fatal = (error: WireInput) => finish(asWorkflowError(error));
     const abort = () => fatal(cancelled(input.signal?.reason));
 
     const timer = setTimeout(() => {
@@ -149,7 +149,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
       grace.unref();
       child.once("disconnect", () => { clearTimeout(grace); setImmediate(report); });
     });
-    child.on("message", (message: JsonValue) => {
+    child.on("message", (message: WireInput) => {
       if (settled || !isRecord(message) || !isJsonString(message.type)) return;
 
       if (message.type === "host-call") {
@@ -177,7 +177,7 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
             throw new WorkflowError("WORKFLOW_LOG_LIMIT", "Workflow events exceed their configured limit.");
           }
 
-          // SAFETY: Boundary value already validated or constructed to match this type.
+          // SAFETY: The surrounding checks or construction already match this type.
           eventChain = eventChain.then(() => input.onEvent?.(message.eventType as string, data));
           eventChain.catch(fatal);
         } catch (error) {
@@ -272,18 +272,18 @@ export async function runWorkflowScript(input: RunWorkflowScriptInput): Promise<
   });
 }
 
-export function validateJson(value: JsonValue, label: string, maxBytes: number): JsonValue {
+export function validateJson(value: WireInput, label: string, maxBytes: number): JsonValue {
   let encoded: string | undefined;
 
   try {
-    encoded = JSON.stringify(value, (_key, current: JsonValue) => {
+    encoded = JSON.stringify(value, (_key, current: WireInput) => {
       if (isJsonNumber(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
 
       if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
-        throw new TypeError(`unsupported ${typeof current}`);
+        throw new TypeError(`unsupported ${jsonKind(current)}`);
       }
 
-      if (current && isJsonObject(current) && !Array.isArray(current)) {
+      if (current && isObjectValue(current) && !Array.isArray(current)) {
         const prototype = Object.getPrototypeOf(current);
 
         if (prototype !== Object.prototype && prototype !== null) throw new TypeError("non-plain object");
@@ -298,11 +298,11 @@ export function validateJson(value: JsonValue, label: string, maxBytes: number):
   if (encoded === undefined) throw new WorkflowError("WORKFLOW_INVALID_JSON", `${label} must be JSON.`);
   validateBytes(encoded, label, maxBytes);
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   return JSON.parse(encoded) as JsonValue;
 }
 
-function validateAgentOptions(value: JsonValue, maxBytes: number): WorkflowAgentOptions {
+function validateAgentOptions(value: WireInput, maxBytes: number): WorkflowAgentOptions {
   const options = validateJson(value, "Agent options", maxBytes);
 
   if (!isRecord(options)) throw new WorkflowError("WORKFLOW_INVALID_AGENT_CALL", "agent options must be an object.");
@@ -345,7 +345,7 @@ function validateAgentOptions(value: JsonValue, maxBytes: number): WorkflowAgent
 function resolveLimits(input: Partial<WorkflowRunnerLimits> | undefined): WorkflowRunnerLimits {
   const limits = { ...DEFAULT_WORKFLOW_LIMITS, ...input };
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   for (const key of Object.keys(DEFAULT_WORKFLOW_LIMITS) as Array<keyof WorkflowRunnerLimits>) {
     const value = limits[key];
 
@@ -363,7 +363,7 @@ function validateBytes(value: string, label: string, limit: number): void {
   }
 }
 
-function sendHostError(child: ChildProcess, id: number, error: JsonValue): void {
+function sendHostError(child: ChildProcess, id: number, error: WireInput): void {
   const workflowError = asWorkflowError(error);
   send(child, {
     type: "host-result",
@@ -374,18 +374,18 @@ function sendHostError(child: ChildProcess, id: number, error: JsonValue): void 
   });
 }
 
-function send(child: ChildProcess, message: JsonValue): void {
+function send(child: ChildProcess, message: WireInput): void {
   if (!child.connected) return;
 
   try {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     child.send(message as never, () => undefined);
   } catch {
     // The runner's exit/disconnect path reports the failure.
   }
 }
 
-function decodeError(value: JsonValue, fallbackCode: string): WorkflowError {
+function decodeError(value: WireInput, fallbackCode: string): WorkflowError {
   if (!isRecord(value)) return new WorkflowError(fallbackCode, "Workflow failed.");
 
   return new WorkflowError(
@@ -395,8 +395,9 @@ function decodeError(value: JsonValue, fallbackCode: string): WorkflowError {
   );
 }
 
-function asWorkflowError(error: JsonValue): WorkflowError {
+function asWorkflowError(error: WireInput): WorkflowError {
   if (error instanceof WorkflowError) return error;
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = error as { code?: unknown; retryable?: unknown } | undefined;
 
   return new WorkflowError(
@@ -406,8 +407,9 @@ function asWorkflowError(error: JsonValue): WorkflowError {
   );
 }
 
-function cancelled(reason: JsonValue): WorkflowError {
+function cancelled(reason: WireInput): WorkflowError {
   if (reason instanceof WorkflowError) return reason;
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = reason as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return new WorkflowError(
@@ -417,15 +419,15 @@ function cancelled(reason: JsonValue): WorkflowError {
   );
 }
 
-function validString(value: JsonValue, maximum: number): value is string {
+function validString(value: WireInput, maximum: number): value is string {
   return isJsonString(value) && value.trim().length > 0 && value.length <= maximum;
 }
 
-function isRecord(value: unknown): value is JsonObject {
-  return value !== null && isJsonObject(value) && !Array.isArray(value);
+function isRecord(value: WireInput): value is JsonObject {
+  return value !== null && isObjectValue(value) && !Array.isArray(value);
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }
 

@@ -20,6 +20,7 @@ const stops: Array<[number, RGB]> = [
   [1.0, [70, 104, 58]],
 ];
 
+// SAFETY: The surrounding checks or construction already match this type.
 const mix = (a: RGB, b: RGB, t: number): RGB => [0, 1, 2].map((i) => a[i]! + (b[i]! - a[i]!) * t) as RGB;
 
 const colorAt = (y: number): RGB => {

@@ -1,3 +1,5 @@
+import { isJsonString } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { randomBytes } from "node:crypto";
 import type { Stats } from "node:fs";
 import { Result, type Result as BetterResult } from "better-result";
@@ -11,8 +13,6 @@ import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
-import { isJsonString } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 import {
   createManagedWorktree,
   discardRestoredManagedWorktree,
@@ -106,7 +106,7 @@ type PathStats = Stats;
 
 type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
-  mkdir: (path: string, options: { recursive: true }) => Promise<JsonValue>;
+  mkdir: (path: string, options: { recursive: true }) => Promise<WireInput>;
 };
 
 const MAX_CACHED_WORKSPACES = 32;
@@ -581,7 +581,6 @@ export class WorkspaceRegistry {
   }
 
   /**
-   // SAFETY: Boundary value already validated or constructed to match this type.
    * Describes a stored workspace's instruction files and skills, as the
    * open_workspace card shows them, without reactivating or touching it.
    */
@@ -613,7 +612,7 @@ export class WorkspaceRegistry {
     if (!this.store) return;
 
     while (this.workspaces.size > MAX_CACHED_WORKSPACES) {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       const oldestWorkspaceId = this.workspaces.keys().next().value as string | undefined;
 
       if (!oldestWorkspaceId) break;

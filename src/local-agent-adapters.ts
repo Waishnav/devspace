@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import {
   subagentAcpFlavor,
   type SubagentProviderConfig,
@@ -31,7 +32,6 @@ import {
 } from "./local-agent-pi.js";
 import type { LocalAgentDriver } from "./local-agent-runtime.js";
 import { LocalAgentProviderRegistry } from "./local-agent-provider-registry.js";
-import type { JsonValue } from "./json-value.js";
 
 export type LocalAgentAdapter = LocalAgentDriver;
 
@@ -75,7 +75,7 @@ export function createLocalAgentProviderRegistry(
     }));
 }
 
-export function extractLocalAgentResponseText(value: JsonValue): string {
+export function extractLocalAgentResponseText(value: WireInput): string {
   return extractOpenCodeFinalResponse(value) || extractPiFinalResponse(value);
 }
 

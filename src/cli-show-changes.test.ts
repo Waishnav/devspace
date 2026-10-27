@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -16,6 +17,7 @@ const require = createRequire(import.meta.url);
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const repoRoot = dirname(packageJsonPath);
 
+// SAFETY: The surrounding checks or construction already match this type.
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
   bin: { devspace: string };
 };
@@ -78,6 +80,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     encoding: "utf8",
   });
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const parsed = JSON.parse(json.stdout) as {
     reviewRef: string;
     patch: string;
@@ -102,8 +105,9 @@ test("show-changes prints a Git-backed historical review", async (t) => {
       },
       encoding: "utf8",
     }),
-    (error: unknown) => {
+    (error: WireInput) => {
       assert.match(
+        // SAFETY: The surrounding checks or construction already match this type.
         (error as { stderr?: string }).stderr ?? "",
         /Unknown DevSpace review reference/,
       );

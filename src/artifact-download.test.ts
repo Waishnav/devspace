@@ -1,3 +1,5 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import {
   chmod,
@@ -24,7 +26,6 @@ import {
 } from "./artifact-tools.js";
 import { ArtifactError } from "./artifact-error.js";
 import { parseSafeWindowsArtifactRelativePath } from "./artifact-path-windows.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   IncomingArtifactAdapterRegistry,
   type IncomingArtifactAdapter,
@@ -76,13 +77,13 @@ async function fixture(t: TestContext, name: string): Promise<string> {
 }
 
 function testOneToolContract(): void {
-  const registered = new Map<string, { descriptor: JsonObject; callback: (input: never) => unknown }>();
+  const registered = new Map<string, { descriptor: JsonObject; callback: (input: never) => WireInput }>();
 
   const server = {
     registerTool(
       name: string,
       descriptor: JsonObject,
-      callback: (input: never) => unknown,
+      callback: (input: never) => WireInput,
     ) {
       registered.set(name, { descriptor, callback });
 
@@ -90,13 +91,14 @@ function testOneToolContract(): void {
     },
   };
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   registerArtifactTools(server as never, {
+    // SAFETY: The surrounding checks or construction already match this type.
     config: {
       artifactMaxFileBytes: 1024,
       logging: { toolCalls: false },
-    // SAFETY: Boundary value already validated or constructed to match this type.
     } as never,
+    // SAFETY: The surrounding checks or construction already match this type.
     workspaces: {} as never,
   });
 
@@ -104,13 +106,15 @@ function testOneToolContract(): void {
   const descriptor = registered.get("download_artifact")?.descriptor;
   assert.ok(descriptor);
   assert.deepEqual(descriptor._meta, { "openai/fileParams": ["file"] });
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.deepEqual(Object.keys(descriptor.inputSchema as object).sort(), ["file", "path", "workspace_id"]);
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.deepEqual(Object.keys(descriptor.outputSchema as object), ["path"]);
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.equal((descriptor.annotations as { destructiveHint?: boolean }).destructiveHint, false);
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
-  const fileSchema = (descriptor.inputSchema as z.ZodRawShape).file as z.ZodType;
+  assert.ok(descriptor.inputSchema);
+  const fileSchema = unsafeNarrow<{ file: z.ZodType }>(descriptor.inputSchema).file;
 
   const valid = {
     download_url: "https://files.oaiusercontent.com/file_123/download?sig=secret",
@@ -467,9 +471,9 @@ function registryFor(source: {
   return new IncomingArtifactAdapterRegistry([adapter]);
 }
 
-async function expectArtifactError(promise: Promise<JsonValue>, code: string): Promise<void> {
+async function expectArtifactError(promise: Promise<WireInput>, code: string): Promise<void> {
   await assert.rejects(
     promise,
-    (error: JsonValue) => error instanceof ArtifactError && error.code === code,
+    (error: WireInput) => error instanceof ArtifactError && error.code === code,
   );
 }

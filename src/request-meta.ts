@@ -1,18 +1,19 @@
-import { isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
+import { isObjectValue, isJsonString } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
+
 function metadataString(
-  meta: JsonValue,
+  meta: WireInput,
   key: string,
 ): string | undefined {
-  if (!isJsonObject(meta) || meta === null) return undefined;
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  if (!isObjectValue(meta) || meta === null) return undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = (meta as JsonObject)[key];
 
   return isJsonString(value) && value.length > 0 ? value : undefined;
 }
 
 export function conversationScopeIdFromRequestMeta(
-  meta: JsonValue,
+  meta: WireInput,
 ): string | undefined {
   return metadataString(meta, "openai/session");
 }

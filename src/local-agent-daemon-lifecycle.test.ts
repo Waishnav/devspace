@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,12 +21,12 @@ test("a live lock owner excludes other daemons even with a stale diagnostic PID"
   assert.equal(await readFile(paths.lockPath, "utf8"), `${process.pid}\n`);
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: WireInput) => error instanceof LocalAgentDaemonAlreadyRunningError,
   );
   await writeFile(paths.pidPath, "999999\n", { mode: 0o600 });
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: WireInput) => error instanceof LocalAgentDaemonAlreadyRunningError,
     "a stale diagnostic PID must not override the live lock owner",
   );
   assert.equal(ensureLocalAgentDaemonSecret(paths).length, 64);
@@ -49,7 +50,7 @@ test("an undecodable lock fails closed", async (t) => {
   await writeFile(paths.lockPath, "not-a-pid\n", { mode: 0o600 });
   assert.throws(
     () => new LocalAgentDaemonLock(paths).acquire(),
-    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    (error: WireInput) => error instanceof LocalAgentDaemonAlreadyRunningError,
     "an undecodable lock must fail closed instead of being deleted by age",
   );
   assert.equal(await readFile(paths.lockPath, "utf8"), "not-a-pid\n");

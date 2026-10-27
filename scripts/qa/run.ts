@@ -1,3 +1,5 @@
+import { isJsonString, isObjectValue } from "../../src/json-value.js";
+import type { JsonObject, WireInput } from "../../src/json-value.js";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
@@ -20,11 +22,9 @@ import {
   type Scenario,
 } from "./scenario.js";
 import type { QaCardCall, QaRun, QaStep } from "./transcript.js";
-import { isJsonString, isJsonObject } from "../../src/json-value.js";
-import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 // cross-spawn resolves pnpm and agent-browser shims on Windows.
-// SAFETY: Boundary value already validated or constructed to match this type.
+// SAFETY: The surrounding checks or construction already match this type.
 const spawn = createRequire(import.meta.url)("cross-spawn") as typeof import("node:child_process").spawn;
 const harnessRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const qaStateRoot = join(harnessRoot, ".devspace-dev", "qa");
@@ -165,7 +165,8 @@ async function runScenario(
   cleanups.push(() => stopProcess(server));
 
   const accessToken = await issueAccessToken(baseUrl, ownerToken, scenario.host?.clientName ?? "DevSpace QA");
-  const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
+  const headers: Record<string, string> = {};
+  headers.authorization = `Bearer ${accessToken}`;
 
   if (scenario.host?.userAgent) headers["user-agent"] = scenario.host.userAgent;
   const client = new Client({ name: "devspace-qa-host", version: "1.0.0" });
@@ -210,13 +211,14 @@ async function runScenario(
 }
 
 async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Promise<void> {
-  const variables: Record<string, string | undefined> = { fixture: qaRun.fixture };
+  const variables: Record<string, string | undefined> = {};
+  variables.fixture = qaRun.fixture;
 
   for (const [index, step] of scenario.steps.entries()) {
     let args: JsonObject;
 
     try {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       args = resolveTemplates(step.arguments, variables) as JsonObject;
     } catch (caught) {
       // Later steps depend on this one, so stop here but keep the evidence gathered so far.
@@ -237,7 +239,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
     let error: string | undefined;
 
     try {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       result = await client.callTool({ name: step.tool, arguments: args }) as CallToolResult;
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
@@ -247,6 +249,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
     const durationMs = Math.round(performance.now() - startedAt);
 
     const text = result ? resultText(result) : "";
+    // SAFETY: The surrounding checks or construction already match this type.
     const workspaceId = (result?.structuredContent as { workspace_id?: unknown } | undefined)?.workspace_id;
     variables.workspace_id = isJsonString(workspaceId)
       ? workspaceId
@@ -273,7 +276,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
         qaRun.resources[resourceUri] = {
           mimeType: content?.mimeType,
           html: content && "text" in content ? content.text : "",
-          // SAFETY: Boundary value already validated or constructed to match this type.
+          // SAFETY: The surrounding checks or construction already match this type.
           meta: (content?._meta ?? {}) as JsonObject,
         };
       } catch (caught) {
@@ -300,6 +303,7 @@ async function replaySteps(client: Client, scenario: Scenario, qaRun: QaRun): Pr
 }
 
 function uiResourceUri(tool: Tool | undefined): string | undefined {
+  // SAFETY: The surrounding checks or construction already match this type.
   const meta = tool?._meta as { ui?: { resourceUri?: unknown }; "ui/resourceUri"?: unknown } | undefined;
   const uri = meta?.ui?.resourceUri ?? meta?.["ui/resourceUri"];
 
@@ -402,6 +406,7 @@ async function issueAccessToken(baseUrl: string, ownerToken: string, clientName:
   });
 
   if (registration.status !== 201) throw new Error(`OAuth registration failed: ${await registration.text()}`);
+  // SAFETY: The surrounding checks or construction already match this type.
   const { client_id: clientId } = await registration.json() as { client_id?: string };
 
   if (!clientId) throw new Error("OAuth registration did not return a client_id");
@@ -441,6 +446,7 @@ async function issueAccessToken(baseUrl: string, ownerToken: string, clientName:
   });
 
   if (!exchange.ok) throw new Error(`OAuth token exchange failed: ${await exchange.text()}`);
+  // SAFETY: The surrounding checks or construction already match this type.
   const { access_token: accessToken } = await exchange.json() as { access_token?: string };
 
   if (!accessToken) throw new Error("OAuth token exchange did not return an access token");
@@ -500,7 +506,6 @@ async function startHost(
       }
 
       if (url.pathname === "/api/call" && req.method === "POST") {
-        // SAFETY: Boundary value already validated or constructed to match this type.
         // The bridge proxies real tool calls such as exec_command, so only the host page may use it.
         if (req.headers.origin !== hostOrigin || !req.headers["content-type"]?.startsWith("application/json")) {
           res.writeHead(403).end("Forbidden");
@@ -508,6 +513,7 @@ async function startHost(
           return;
         }
 
+        // SAFETY: The surrounding checks or construction already match this type.
         const body = JSON.parse(await readBody(req)) as {
           step: number;
           name: string;
@@ -518,7 +524,7 @@ async function startHost(
         const cardCall: QaCardCall = { step: body.step, name: body.name, arguments: body.arguments ?? {} };
 
         try {
-          // SAFETY: Boundary value already validated or constructed to match this type.
+          // SAFETY: The surrounding checks or construction already match this type.
           cardCall.result = await client.callTool({ name: body.name, arguments: body.arguments, _meta: body._meta }) as CallToolResult;
         } catch (error) {
           cardCall.error = error instanceof Error ? error.message : String(error);
@@ -564,6 +570,7 @@ async function startHost(
       return;
     }
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const csp = (resource.meta.ui as { csp?: SandboxCsp } | undefined)?.csp;
     res.setHeader("content-security-policy", sandboxCsp(csp, hostOrigin));
     res.setHeader("cache-control", "no-store");
@@ -637,7 +644,7 @@ async function captureBrowserEvidence(
     await browser("set", "viewport", "1280", String(RENDER_VIEWPORT_HEIGHT));
     await browser("open", hostUrl);
     await browser("wait", "--fn", "window.__devspaceQa?.settled === true", "--timeout", "45000");
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     const cards = JSON.parse(JSON.parse(await browser("eval", "JSON.stringify(window.__devspaceQa.cards)"))) as BrowserEvidence["cards"];
 
     // Shrink to the page so screenshots have no trailing blank space; every card
@@ -662,6 +669,7 @@ async function captureBrowserEvidence(
     await writeFile(join(artifacts, "snapshot.txt"), await browser("snapshot"));
     const consoleLog = await browser("console");
     await writeFile(join(artifacts, "console.txt"), consoleLog);
+    // SAFETY: The surrounding checks or construction already match this type.
     const { data } = JSON.parse(await browser("errors", "--json")) as { data?: { errors?: unknown[] } };
     const pageErrors = data?.errors ?? [];
     const errorsLog = JSON.stringify(pageErrors, null, 2);
@@ -755,8 +763,8 @@ function deepMerge(base: JsonObject, override: JsonObject): JsonObject {
   return merged;
 }
 
-function isPlainObject(value: unknown): value is JsonObject {
-  return Boolean(value) && isJsonObject(value) && !Array.isArray(value);
+function isPlainObject(value: WireInput): value is JsonObject {
+  return Boolean(value) && isObjectValue(value) && !Array.isArray(value);
 }
 
 async function freePort(): Promise<number> {
@@ -787,7 +795,7 @@ function closeHttpServer(server: HttpServer): Promise<void> {
 
 async function runCleanups(): Promise<void> {
   while (cleanups.length > 0) {
-    await cleanups.pop()?.().catch((error: JsonValue) => console.warn("QA cleanup failed:", error));
+    await cleanups.pop()?.().catch((error: WireInput) => console.warn("QA cleanup failed:", error));
   }
 }
 

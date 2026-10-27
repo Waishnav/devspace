@@ -38,6 +38,7 @@ test("seed copies source config and state, and reset reseeds only once source au
 
   const devRoot = join(checkoutRoot, ".devspace-dev");
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const localConfig = JSON.parse(
     await readFile(join(devRoot, "config", "config.jsonc"), "utf8"),
   ) as { storage: { stateDir: string } };

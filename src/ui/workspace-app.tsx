@@ -234,7 +234,7 @@ function chatGptRestoredResult(): CallToolResult | undefined {
 function handleChatGptGlobalsChanged(event: Event): void {
   if (!connected || card) return;
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const customEvent = event as CustomEvent<{ globals?: ChatGptToolGlobals }>;
 
   const restored = toolResultFromChatGptGlobals(customEvent.detail?.globals)
@@ -1075,7 +1075,7 @@ function element<K extends keyof HTMLElementTagNameMap>(
   if (options.ariaExpanded !== undefined) node.setAttribute("aria-expanded", options.ariaExpanded);
 
   if (options.disabled !== undefined && "disabled" in node) {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     (node as HTMLButtonElement).disabled = options.disabled;
   }
 

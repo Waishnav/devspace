@@ -1,4 +1,3 @@
-// SAFETY: Boundary value already validated or constructed to match this type.
 // Brand marks, inlined as raw SVG so `currentColor` marks follow the theme.
 // Sourced from the GitCMS marketing site; see README for provenance.
 const files = import.meta.glob<string>("./*.svg", { query: "?raw", import: "default", eager: true });
@@ -25,7 +24,6 @@ export const HOSTS: ReadonlyArray<{ name: string; logo: LogoId }> = [
   { name: "Hermes", logo: "hermes" },
 ];
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 /** Coding harnesses DevSpace can run as subagents. */
 export const PROVIDERS: ReadonlyArray<{ id: string; name: string; via: string; logo: LogoId }> = [
   { id: "codex", name: "Codex", via: "app-server", logo: "openai" },

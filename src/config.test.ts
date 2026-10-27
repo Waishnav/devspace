@@ -138,7 +138,7 @@ test("server.trustProxy accepts loopback and rejects unsupported presets", (t) =
   writeDevspaceConfig({ configVersion: 1, server: { trustProxy: "loopback" } }, env);
   assert.equal(loadConfig(env).logging.trustProxy, "loopback");
   assert.throws(
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     () => writeDevspaceConfig({ configVersion: 1, server: { trustProxy: "uniquelocal" as never } }, env),
     /trustProxy/,
   );

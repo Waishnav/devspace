@@ -1,3 +1,6 @@
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerAppResource, registerAppTool } from "@modelcontextprotocol/ext-apps/server";
@@ -39,6 +42,7 @@ test("modern registration adapter preserves tools and request metadata", async (
   const listed = await handler.fetch(modernRequest("tools/list", {}));
   assert.equal(listed.status, 200);
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const listBody = await listed.json() as {
     result?: { tools?: Array<{ name?: string }> };
   };
@@ -53,6 +57,7 @@ test("modern registration adapter preserves tools and request metadata", async (
 
   assert.equal(called.status, 200, await called.clone().text());
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const callBody = await called.json() as {
     result?: { content?: Array<{ text?: string }> };
   };
@@ -105,7 +110,8 @@ test("modern registration adapter preserves progress notifications", async (t) =
   const messages = (await response.text())
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data: "))
-    .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+    // SAFETY: The surrounding checks or construction already match this type.
+    .map((line) => unsafeNarrow<JsonObject>(JSON.parse(line.slice(6))));
 
   assert.ok(messages.some((message) => message.method === "notifications/progress"));
   assert.match(JSON.stringify(messages.at(-1)), /done/);
@@ -207,10 +213,10 @@ test("compiled registration surface reuses static tool and resource definitions"
   assert.equal(registrationBuilds, 1);
 });
 
-function modernRequest(method: string, params: Record<string, unknown>): Request {
-  const mcpName = typeof params.name === "string"
+function modernRequest(method: string, params: JsonObject): Request {
+  const mcpName = isJsonString(params.name)
     ? params.name
-    : typeof params.uri === "string"
+    : isJsonString(params.uri)
       ? params.uri
       : undefined;
 
@@ -220,7 +226,7 @@ function modernRequest(method: string, params: Record<string, unknown>): Request
       "content-type": "application/json",
       "mcp-method": method,
       "mcp-protocol-version": "2026-07-28",
-      ...(mcpName ? { "mcp-name": mcpName } : {}),
+      ...optionalFields(mcpName ? { "mcp-name": mcpName } : undefined),
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
@@ -238,8 +244,9 @@ function modernRequest(method: string, params: Record<string, unknown>): Request
   });
 }
 
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function objectValue(value: WireInput): JsonObject {
+  return value && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : {};
 }

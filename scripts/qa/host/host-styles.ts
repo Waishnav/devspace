@@ -39,11 +39,11 @@ const palettes: Record<McpUiTheme, Record<string, string>> = {
 
 export function hostStyles(theme: McpUiTheme): McpUiHostStyles {
   return {
+    // SAFETY: The surrounding checks or construction already match this type.
     variables: {
       ...palettes[theme],
       "--font-sans": "ui-sans-serif, system-ui, sans-serif",
       "--font-mono": "ui-monospace, SFMono-Regular, monospace",
-    // SAFETY: Boundary value already validated or constructed to match this type.
     } as McpUiHostStyles["variables"],
   };
 }

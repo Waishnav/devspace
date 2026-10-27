@@ -1,3 +1,5 @@
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -377,8 +379,8 @@ test("unexpected filesystem errors are propagated without replacing the binding"
   const restoredRegistry = new WorkspaceRegistry(context.config, restoredStore);
   await assert.rejects(
     () => restoredRegistry.openWorkspace(context.project, { conversationScopeId: "chat-1" }),
-    (error: unknown) =>
-      typeof error === "object" &&
+    (error: WireInput) =>
+      isObjectValue(error) &&
       error !== null &&
       "code" in error &&
       error.code === "ELOOP",

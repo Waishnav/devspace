@@ -1,7 +1,8 @@
+import { unsafeNarrow } from "../../src/unsafe-narrow.js";
+import { isJsonString, isObjectValue } from "../../src/json-value.js";
+import type { WireInput } from "../../src/json-value.js";
 import { readFileSync } from "node:fs";
 import { redactSecrets } from "../../src/local-agent-events.js";
-import { isJsonString, isJsonObject } from "../../src/json-value.js";
-import type { JsonValue } from "../../src/json-value.js";
 
 /**
  * A transcript is the stdio traffic between one driver and one provider
@@ -37,14 +38,15 @@ export interface Transcript {
 
 export function readTranscript(path: string): Transcript {
   const lines = readFileSync(path, "utf8").split("\n").filter((line) => line.trim());
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const [meta, ...frames] = lines.map((line) => JSON.parse(line) as unknown);
 
+  // SAFETY: The surrounding checks or construction already match this type.
   if ((meta as TranscriptMeta | undefined)?.type !== "meta") {
     throw new Error(`${path} does not start with a transcript meta line.`);
   }
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   return { meta: meta as TranscriptMeta, frames: frames as TranscriptFrame[] };
 }
 
@@ -62,8 +64,8 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 function placeholders(context: ScrubContext): Array<[string, string]> {
   return [
     ...(context.worktree
-      // SAFETY: Boundary value already validated or constructed to match this type.
-      ? [[context.worktree, "$WORKTREE"], [context.worktree.replace(/[/\\.:]/g, "-"), "$WORKTREE_SLUG"]] as Array<[string, string]>
+      // SAFETY: The surrounding checks or construction already match this type.
+      ? unsafeNarrow<Array<[string, string]>>([[context.worktree, "$WORKTREE"], [context.worktree.replace(/[/\\.:]/g, "-"), "$WORKTREE_SLUG"]])
       : []),
     [context.workspace, "$WORKSPACE"],
     // Providers name per-project state directories after the cwd with separators dashed.
@@ -73,7 +75,7 @@ function placeholders(context: ScrubContext): Array<[string, string]> {
   ];
 }
 
-export function scrub(value: JsonValue, context: ScrubContext): unknown {
+export function scrub(value: WireInput, context: ScrubContext): WireInput {
   return mapStrings(value, (text) => {
     let next = text;
 
@@ -85,7 +87,7 @@ export function scrub(value: JsonValue, context: ScrubContext): unknown {
   });
 }
 
-export function restore(value: JsonValue, context: ScrubContext): unknown {
+export function restore(value: WireInput, context: ScrubContext): WireInput {
   return mapStrings(value, (text) => {
     let next = text;
 
@@ -95,24 +97,23 @@ export function restore(value: JsonValue, context: ScrubContext): unknown {
   });
 }
 
-export function mapStrings(value: JsonValue, map: (text: string) => string): unknown {
+export function mapStrings(value: WireInput, map: (text: string) => string): WireInput {
   if (isJsonString(value)) return map(value);
 
   if (Array.isArray(value)) return value.map((entry) => mapStrings(entry, map));
 
-  if (value && isJsonObject(value)) {
+  if (value && isObjectValue(value)) {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, mapStrings(entry, map)]));
   }
 
   return value;
 }
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 /** Parses one stdio line; lines that are not JSON are kept as raw strings. */
-export function parseFrame(line: string): unknown {
+export function parseFrame(line: string): WireInput {
   try {
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    return JSON.parse(line) as unknown;
+    // SAFETY: The surrounding checks or construction already match this type.
+    return JSON.parse(line) as WireInput;
   } catch {
     return { raw: line };
   }

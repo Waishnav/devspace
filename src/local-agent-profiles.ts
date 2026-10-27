@@ -1,11 +1,11 @@
+import { isObjectValue, isJsonString } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { AgentConfig } from "./config.js";
 import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
-import { isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 export interface LocalAgentProfile {
   name: string;
@@ -121,11 +121,11 @@ function parseProfileYaml(source: string, filePath: string): JsonObject {
     throw new Error(`Unable to parse subagent profile frontmatter: ${filePath}: ${errorMessage(error)}`);
   }
 
-  if (!parsed || !isJsonObject(parsed) || Array.isArray(parsed)) {
+  if (!parsed || !isObjectValue(parsed) || Array.isArray(parsed)) {
     throw new Error(`Subagent profile frontmatter must be a mapping: ${filePath}`);
   }
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   return parsed as JsonObject;
 }
 
@@ -173,6 +173,6 @@ function readString(frontmatter: JsonObject, key: string): string | undefined {
   return trimmed || undefined;
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }

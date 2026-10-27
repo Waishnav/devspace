@@ -1,8 +1,8 @@
+import type { JsonObject } from "../json-value.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ProcessSessionManager } from "../process-sessions.js";
 import type { ServerConfig } from "../config.js";
 import type { WorkspaceRegistry } from "../workspaces.js";
-import type { JsonObject } from "../json-value.js";
 
 export const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
 
@@ -62,7 +62,7 @@ export interface DiffStats {
   removals: number;
 }
 
-export interface ToolDefinitionMeta extends JsonObject {
+export interface ToolDefinitionMeta extends Record<string, unknown> {
   ui: {
     resourceUri: string;
     visibility: ["model"];

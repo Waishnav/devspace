@@ -124,9 +124,9 @@ export function migrateDatabase(sqlite: Database.Database): void {
       );
     `);
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const appliedRows = sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
-      // SAFETY: Boundary value already validated or constructed to match this type.
       .all() as Array<{ version: number; name: string }>;
 
     const migrationsByVersion = new Map(migrations.map((migration) => [migration.version, migration]));
@@ -307,7 +307,7 @@ function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
 }
 
 function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
   }>;
@@ -370,7 +370,7 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
 }
 
 function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
   }>;
@@ -480,7 +480,7 @@ function addColumnIfMissing(
   column: string,
   definition: string,
 ): void {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
 
   if (columns.some((existingColumn) => existingColumn.name === column)) return;

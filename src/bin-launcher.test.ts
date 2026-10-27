@@ -46,6 +46,7 @@ function testLinkedCheckoutReadsCurrentConfig(): void {
       env: { ...process.env, ...env },
     });
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const config = JSON.parse(output) as { tools?: { mode?: string } };
     assert.equal(config.tools?.mode, "codex");
   } finally {

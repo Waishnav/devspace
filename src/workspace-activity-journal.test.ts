@@ -1,3 +1,5 @@
+import { isFunctionValue, isJsonObject } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,8 +8,6 @@ import test, { type TestContext } from "node:test";
 import { WorkspaceActivityJournal, journalJson } from "./workspace-activity-journal.js";
 import { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
-import { isFunctionValue } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 const REVIEW_REF = "a".repeat(40);
 
@@ -100,7 +100,11 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
   const serialized = JSON.stringify(exec);
   assert.doesNotMatch(serialized, /abcdefghijklmnop|ghp_should/);
   assert.match(serialized, /\[redacted\]/);
-  assert.deepEqual((exec?.arguments as { env: unknown }).env, { GITHUB_TOKEN: "[redacted]", max_output_tokens: 100 });
+  // SAFETY: The surrounding checks or construction already match this type.
+  assert.deepEqual(
+    isJsonObject(exec?.arguments) ? exec.arguments.env : undefined,
+    { GITHUB_TOKEN: "[redacted]", max_output_tokens: 100 },
+  );
   assert.ok(serialized.length < 10_000);
   assert.equal(serialized.includes("_meta"), false);
   assert.deepEqual(
@@ -111,7 +115,7 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
 });
 
 test("journal redacts credentials in commands and outputs", () => {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const redacted = (value: string): string => JSON.parse(journalJson(value)) as string;
 
   const secrets = [
@@ -182,7 +186,7 @@ test("journal failures never replace the tool result", async (t) => {
 async function journalFixture(
   t: TestContext,
   workspaceIds: string[],
-  onError?: (error: JsonValue) => void,
+  onError?: (error: WireInput) => void,
   maxTurns?: number,
 ) {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-activity-journal-test-"));
@@ -209,8 +213,8 @@ function call(
   journal: WorkspaceActivityJournal,
   toolName: string,
   args: JsonObject,
-  options: { meta?: JsonObject; result?: unknown; error?: Error } = {},
-): Promise<JsonValue> {
+  options: { meta?: JsonObject; result?: WireInput; error?: Error } = {},
+): Promise<WireInput> {
   return journal.capture({
     toolName,
     arguments: args,
@@ -218,7 +222,8 @@ function call(
     operation: async () => {
       if (options.error) throw options.error;
 
-      return isFunctionValue(options.result) ? (options.result as () => unknown)() : options.result ?? {};
+      // SAFETY: The surrounding checks or construction already match this type.
+      return isFunctionValue(options.result) ? options.result() : options.result ?? {};
     },
   });
 }

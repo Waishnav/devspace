@@ -29,7 +29,6 @@ export interface LocalAgentRunResult {
 
 export interface LocalAgentRunCallbacks {
   /**
-   // SAFETY: Boundary value already validated or constructed to match this type.
    * Called as soon as a provider creates or resolves a durable continuation
    * identity. The callback is awaited before the provider starts work that
    * could otherwise fail and lose that identity.

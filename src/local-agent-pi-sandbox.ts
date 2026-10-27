@@ -70,12 +70,12 @@ const USER_NAMESPACE_DENIED =
 const DENIAL_SCAN_CHARS = 512;
 
 /** Detects a denial message even when it is split across output chunks. */
-export function createUserNamespaceDenialDetector(): { push(chunk: string): void; readonly denied: boolean } {
+export function createUserNamespaceDenialDetector() {
   let tail = "";
   let denied = false;
 
   return {
-    push(chunk) {
+    push(chunk: string) {
       if (denied) return;
       tail = (tail + chunk).slice(-DENIAL_SCAN_CHARS);
       denied = isUserNamespaceDenied(tail);
@@ -100,11 +100,7 @@ let windowsSandboxQueue = Promise.resolve();
 let sandboxSessionCount = 0;
 let sandboxCommandCount = 0;
 const sandboxCommandWaiters = new Set<() => void>();
-export interface PiSandboxSessionHandle {
-  readonly sessionId?: string;
-}
-
-const sessionStates = new WeakMap<PiSandboxSessionHandle, PiSandboxSessionState>();
+const sessionStates = new WeakMap<object, PiSandboxSessionState>();
 
 export function createPiSandboxModeRef(value: PiSandboxWriteMode): PiSandboxModeRef {
   return { value };
@@ -179,7 +175,7 @@ export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig 
 }
 
 export async function registerPiSandboxSession(
-  session: PiSandboxSessionHandle,
+  session: {},
   workspace: string,
   modeRef: PiSandboxModeRef,
   writeMode: PiSandboxWriteMode,
@@ -198,7 +194,7 @@ export async function registerPiSandboxSession(
 }
 
 export async function updatePiSandboxSession(
-  session: PiSandboxSessionHandle,
+  session: {},
   workspace: string,
   writeMode: PiSandboxWriteMode,
 ): Promise<void> {
@@ -213,7 +209,7 @@ export async function updatePiSandboxSession(
   }
 }
 
-export async function releasePiSandboxSession(session: PiSandboxSessionHandle): Promise<void> {
+export async function releasePiSandboxSession(session: {}): Promise<void> {
   const state = sessionStates.get(session);
 
   if (!state) return;
@@ -247,6 +243,7 @@ function dynamicTool<T extends { execute: (...args: any[]) => any }>(
   modeRef: PiSandboxModeRef,
   writeCapable = false,
 ): T {
+  // SAFETY: The surrounding checks or construction already match this type.
   return {
     ...restricted,
     execute: (...args: Parameters<T["execute"]>) => {
@@ -256,7 +253,6 @@ function dynamicTool<T extends { execute: (...args: any[]) => any }>(
 
       return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
     },
-  // SAFETY: Boundary value already validated or constructed to match this type.
   } as T;
 }
 
@@ -472,7 +468,6 @@ async function runSandboxedCommand(
     });
 
     // The sandbox initializes fine on these hosts and only fails per command,
-    // SAFETY: Boundary value already validated or constructed to match this type.
     // which the model would otherwise read as its own command failing.
     if (denial.denied && result.exitCode !== 0) {
       throw new Error(

@@ -68,6 +68,7 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
 
     // Every migration applies once, in order, with no gaps.
     assert.deepEqual(
+      // SAFETY: The surrounding checks or construction already match this type.
       migrations.map((migration) => (migration as { version: number }).version),
       migrations.map((_, index) => index + 1),
     );
@@ -114,16 +115,16 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   const database = openDatabase(stateDir);
 
   try {
+    // SAFETY: The surrounding checks or construction already match this type.
     const accessHashes = database.sqlite
       .prepare("select token_hash from oauth_access_tokens")
       .pluck()
-      // SAFETY: Boundary value already validated or constructed to match this type.
       .all() as string[];
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const refreshHashes = database.sqlite
       .prepare("select token_hash from oauth_refresh_tokens")
       .pluck()
-      // SAFETY: Boundary value already validated or constructed to match this type.
       .all() as string[];
 
     assert.deepEqual(accessHashes, [hashToken(accessToken)]);

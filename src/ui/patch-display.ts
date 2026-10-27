@@ -27,7 +27,7 @@ const fileChangeLabels: Record<Exclude<FileChangeKind, "unknown">, string> = {
 export function getPatchDisplayParts(
   card: Pick<ToolResultCard, "files">,
   options: { emptyTitle?: string } = {},
-): { title: string } {
+) {
   const files = card.files ?? [];
   const fileCount = countChangedFiles(files);
 

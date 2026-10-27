@@ -1,3 +1,4 @@
+import { isJsonNumber } from "./json-value.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,7 +88,7 @@ test("a background session is only readable from its own workspace and reports c
 
   assert.equal(background.running, true);
   assert.ok(background.sessionId);
-  assert.equal(typeof background.sessionId, "number");
+  assert.equal(isJsonNumber(background.sessionId), true);
 
   await assert.rejects(
     manager.write({
@@ -121,7 +122,7 @@ test("input written to an interactive session reaches stdin", async (t) => {
 
   assert.equal(interactive.running, true);
   assert.ok(interactive.sessionId);
-  assert.equal(typeof interactive.sessionId, "number");
+  assert.equal(isJsonNumber(interactive.sessionId), true);
 
   const inputResult = await manager.write({
     workspaceId: "workspace-a",

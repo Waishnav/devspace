@@ -1,3 +1,6 @@
+import { isObjectValue, isJsonString, optionalFields } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import type {
   OpencodeClient,
   PermissionConfig,
@@ -18,8 +21,6 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
-import { optionalFields, isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import {
   defaultOpencodeV2Factory,
   OpencodeV2Runtime,
@@ -132,13 +133,12 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     this.server.close();
   }
 
-  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<JsonValue> {
+  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<WireInput> {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
 
     // End the local request only once OpenCode confirms the abort. A failed or
-    // SAFETY: Boundary value already validated or constructed to match this type.
     // stalled abort keeps the turn running, and the manager reports the stop as a conflict.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
       const aborted = await this.client.session.abort({
@@ -253,10 +253,7 @@ async function defaultOpencodeFactory(
   };
 }
 
-export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {
-  mode: "primary";
-  permission: PermissionConfig;
-} {
+export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]) {
   return {
     mode: "primary",
     permission: opencodePermissionFor(writeMode),
@@ -307,7 +304,7 @@ async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> 
   }
 }
 
-function isOpenCodeTransportFailure(error: JsonValue): boolean {
+function isOpenCodeTransportFailure(error: WireInput): boolean {
   if (error instanceof OpencodeHealthError) return true;
   const code = transportErrorCode(error);
 
@@ -319,17 +316,18 @@ function isOpenCodeTransportFailure(error: JsonValue): boolean {
     || code === "ETIMEDOUT";
 }
 
-function transportErrorCode(error: JsonValue): string | undefined {
-  if (!error || !isJsonObject(error)) return undefined;
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function transportErrorCode(error: WireInput): string | undefined {
+  if (!error || !isObjectValue(error)) return undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
   const code = (error as NodeJS.ErrnoException).code;
 
   if (isJsonString(code)) return code;
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const cause = (error as Error & { cause?: unknown }).cause;
 
-  return cause && isJsonObject(cause) && typeof (cause as NodeJS.ErrnoException).code === "string"
-    // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
+  return cause && isObjectValue(cause) && isJsonString((cause as NodeJS.ErrnoException).code)
+    // SAFETY: The surrounding checks or construction already match this type.
     ? (cause as NodeJS.ErrnoException).code
     : undefined;
 }
@@ -346,7 +344,7 @@ async function promptOpencodeSession(
   sessionId: string,
   input: LocalAgentRunInput,
   signal: AbortSignal,
-): Promise<JsonValue> {
+): Promise<WireInput> {
   const model = input.model ? parseOpencodeModel(input.model) : undefined;
 
   return client.session.prompt({
@@ -367,7 +365,7 @@ function parseOpencodeModel(model: string): OpencodeModelRef {
     : { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
 }
 
-function requireSessionId(session: JsonValue): string {
+function requireSessionId(session: WireInput): string {
   const id = asRecord(session)?.id;
 
   if (!isJsonString(id) || !id) {
@@ -383,7 +381,7 @@ function requireSessionId(session: JsonValue): string {
   return id;
 }
 
-function assertOpenCodePromptSucceeded(value: JsonValue): void {
+function assertOpenCodePromptSucceeded(value: WireInput): void {
   const result = asRecord(unwrapProviderPayload(value));
   const info = asRecord(result?.info);
   const error = asRecord(info?.error);
@@ -409,7 +407,7 @@ function assertOpenCodePromptSucceeded(value: JsonValue): void {
   });
 }
 
-export function extractOpenCodeFinalResponse(value: JsonValue): string {
+export function extractOpenCodeFinalResponse(value: WireInput): string {
   const root = unwrapProviderPayload(value);
   const messages = Array.isArray(root) ? root : readArray(root, "messages");
 
@@ -418,7 +416,7 @@ export function extractOpenCodeFinalResponse(value: JsonValue): string {
   return extractOpenCodeAssistantMessageText(root);
 }
 
-function extractLastOpenCodeAssistantMessageText(messages: JsonValue[]): string {
+function extractLastOpenCodeAssistantMessageText(messages: WireInput[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = asRecord(messages[index]);
 
@@ -436,7 +434,7 @@ function extractLastOpenCodeAssistantMessageText(messages: JsonValue[]): string 
   return "";
 }
 
-function extractOpenCodeAssistantMessageText(value: JsonValue): string {
+function extractOpenCodeAssistantMessageText(value: WireInput): string {
   const message = asRecord(value);
 
   if (!message) return "";
@@ -463,7 +461,7 @@ function extractOpenCodeAssistantMessageText(value: JsonValue): string {
   return stringifyStructuredMessage(info.structured);
 }
 
-function stringifyStructuredMessage(value: JsonValue): string {
+function stringifyStructuredMessage(value: WireInput): string {
   if (value === undefined || value === null) return "";
 
   if (isJsonString(value)) return value.trim();
@@ -471,7 +469,7 @@ function stringifyStructuredMessage(value: JsonValue): string {
   return JSON.stringify(value);
 }
 
-function unwrapProviderPayload(value: JsonValue): unknown {
+function unwrapProviderPayload(value: WireInput): WireInput {
   let current = value;
 
   for (let depth = 0; depth < 3; depth += 1) {
@@ -495,16 +493,16 @@ function unwrapProviderPayload(value: JsonValue): unknown {
   return current;
 }
 
-function readArray(value: JsonValue, key: string): unknown[] | undefined {
+function readArray(value: WireInput, key: string): WireInput[] | undefined {
   const result = asRecord(value)?.[key];
 
   return Array.isArray(result) ? result : undefined;
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }
 
@@ -524,6 +522,6 @@ function requireFinalResponse(response: string): string {
   return trimmed;
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }

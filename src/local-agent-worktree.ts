@@ -4,7 +4,6 @@ import { getGitEligibility } from "./git.js";
 import { createManagedWorktree, GitWorktreeError } from "./git-worktrees.js";
 import { AgentScopeError } from "./local-agent-errors.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
-import type { JsonValue } from "./json-value.js";
 
 export interface AgentWorktree {
   path: string;
@@ -24,7 +23,7 @@ export async function createAgentWorktree(input: {
   branch?: string;
 }): Promise<BetterResult<AgentWorktree, AgentScopeError>> {
   // No agentId: the caller drops the half-created record, so the id would name nothing.
-  const failure = (code: "WORKTREE_NOT_GIT_REPOSITORY" | "WORKTREE_CREATE_FAILED", message: string, cause?: JsonValue) =>
+  const failure = (code: "WORKTREE_NOT_GIT_REPOSITORY" | "WORKTREE_CREATE_FAILED", message: string, cause?: unknown) =>
     Result.err(new AgentScopeError({ code, operation: "start", retryable: false, cause, message }));
 
   const eligibility = await getGitEligibility(input.workspaceRoot).catch(() => undefined);

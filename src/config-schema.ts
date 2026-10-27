@@ -109,7 +109,7 @@ export function defaultDevspaceConfig(): DevspaceConfig {
   return devspaceConfigSchema.parse({ configVersion: DEVSPACE_CONFIG_VERSION });
 }
 
-export function devspaceConfigJsonSchema(): object {
+export function devspaceConfigJsonSchema() {
   return {
     $id: DEVSPACE_CONFIG_SCHEMA_URL,
     title: "DevSpace configuration",

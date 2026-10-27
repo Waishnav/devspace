@@ -1,6 +1,6 @@
+import type { WireInput } from "./json-value.js";
 import {
   close,
-  // SAFETY: Boundary value already validated or constructed to match this type.
   constants as fsConstants,
   fstat,
   fsync,
@@ -14,7 +14,6 @@ import type {
   ArtifactFile,
 } from "./artifact-destination.js";
 import { ArtifactError } from "./artifact-error.js";
-import type { JsonValue } from "./json-value.js";
 
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const O_CLOEXEC = 0x01000000;
@@ -114,7 +113,7 @@ export async function prepareDarwinArtifactDestinationDirectory(
         const errno = koffi.errno();
 
         if (errno === koffi.os.errno.EEXIST) {
-          // SAFETY: Boundary value already validated or constructed to match this type.
+          // SAFETY: The surrounding checks or construction already match this type.
           const error = new Error("Artifact destination already exists.") as NodeJS.ErrnoException;
           error.code = "EEXIST";
           throw error;
@@ -162,9 +161,9 @@ interface DarwinLibc {
   linkat(oldFd: number, oldPath: string, newFd: number, newPath: string, flags: number): number;
   unlinkat(fd: number, path: string, flags: number): number;
   dup(fd: number): number;
-  fdopendir(fd: number): unknown;
-  readdir(dir: JsonValue): unknown;
-  closedir(dir: JsonValue): number;
+  fdopendir(fd: number): WireInput;
+  readdir(dir: WireInput): WireInput;
+  closedir(dir: WireInput): number;
   DIRENT: ReturnType<typeof koffi.struct>;
 }
 
@@ -194,6 +193,7 @@ function createDarwinLibc(): DarwinLibc {
 
   const DIRENT_PTR = koffi.pointer(DIRENT);
 
+  // SAFETY: The surrounding checks or construction already match this type.
   return {
     open(path, flags, mode) {
       return mode === undefined ? open(path, flags) : open(path, flags, "int", mode);
@@ -216,7 +216,6 @@ function createDarwinLibc(): DarwinLibc {
     readdir: libc.func("readdir", DIRENT_PTR, [DIR_PTR]),
     closedir: libc.func("closedir", "int", [DIR_PTR]),
     DIRENT,
-  // SAFETY: Boundary value already validated or constructed to match this type.
   } as DarwinLibc;
 }
 
@@ -280,6 +279,7 @@ async function listDirectoryEntries(
         return entries;
       }
 
+      // SAFETY: The surrounding checks or construction already match this type.
       const entry = koffi.decode(pointer, libc.DIRENT) as { d_name?: string };
       const name = entry.d_name;
 

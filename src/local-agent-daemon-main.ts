@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import type { JsonObject } from "./json-value.js";
 import { loadAgentConfig } from "./config.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
 import { localAgentProviderAvailability } from "./local-agent-availability.js";
@@ -16,7 +17,6 @@ import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
 import { WorkflowManager } from "./workflow-manager.js";
 import { workflowsEnabled } from "./workflow-flag.js";
 import { WorkflowStore } from "./workflow-store.js";
-import type { JsonObject } from "./json-value.js";
 
 const config = loadAgentConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;

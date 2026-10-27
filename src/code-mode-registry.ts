@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue, optionalFields } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import {
   renderDeclarations,
   type CodemodeTool,
@@ -6,10 +9,6 @@ import * as z from "zod/v4";
 import type { McpRegistrationTarget } from "./mcp-modern-server.js";
 import { contentText } from "./tool-surfaces/shared.js";
 import type { ToolContent } from "./tool-surfaces/types.js";
-import { isJsonObject, optionalFields, type JsonObject } from "./json-value.js";
-import { unsafeNarrow } from "./unsafe-narrow.js";
-
-type ZodObjectFields = ConstructorParameters<typeof z.object>[0];
 
 type Handler = (input: JsonObject, extra: { signal: AbortSignal }) => Promise<{
   isError?: boolean;
@@ -17,11 +16,13 @@ type Handler = (input: JsonObject, extra: { signal: AbortSignal }) => Promise<{
   structuredContent?: JsonObject;
 }>;
 
+type ZodObjectSpec = NonNullable<Parameters<typeof z.object>[0]>;
+
 interface Entry {
   name: string;
   description: string;
-  input: z.ZodObject<ZodObjectFields>;
-  output: z.ZodObject<ZodObjectFields>;
+  input: z.ZodObject<ZodObjectSpec>;
+  output: z.ZodObject<ZodObjectSpec>;
   handler: Handler;
 }
 
@@ -30,12 +31,15 @@ export class CodeModeRegistry {
   private readonly entries = new Map<string, Entry>();
 
   readonly registrationTarget: McpRegistrationTarget = {
+    // SAFETY: The surrounding checks or construction already match this type.
     registerTool: unsafeNarrow<McpRegistrationTarget["registerTool"]>((name: string, definition: JsonObject, handler: Handler) => {
-      const input = z.object(unsafeNarrow<ZodObjectFields>(definition.inputSchema));
-      const output = z.object(unsafeNarrow<ZodObjectFields>(definition.outputSchema));
+      // SAFETY: The surrounding checks or construction already match this type.
+      const input = z.object(unsafeNarrow<Parameters<typeof z.object>[0]>(definition.inputSchema));
+      const output = z.object(unsafeNarrow<Parameters<typeof z.object>[0]>(definition.outputSchema));
       this.entries.set(name, {
         name,
-        description: unsafeNarrow<string>(definition.description),
+        // SAFETY: The surrounding checks or construction already match this type.
+        description: definition.description as string,
         input,
         output,
         handler,
@@ -44,7 +48,7 @@ export class CodeModeRegistry {
       // This target collects internal registrations; nothing is registered with the MCP host.
       return undefined;
     }),
-    registerResource: unsafeNarrow<McpRegistrationTarget["registerResource"]>(() => undefined),
+    registerResource: unsafeNarrow<McpRegistrationTarget["registerResource"]>((() => undefined)),
   };
 
   signatures(): string {
@@ -63,9 +67,9 @@ export class CodeModeRegistry {
       description: entry.description,
       inputSchema: z.toJSONSchema(entry.input.omit({ workspace_id: true })),
       outputSchema: z.toJSONSchema(entry.output),
-      execute: async (value: JsonObject | undefined, { signal }) => {
+      execute: async (value: WireInput, { signal }) => {
         if (signal.aborted) throw new Error("Code execution cancelled.");
-        const parsed = entry.input.safeParse({ ...optionalFields(isJsonObject(value) ? value : undefined), workspace_id: workspaceId });
+        const parsed = entry.input.safeParse({ ...optionalFields(isObjectValue(value) && value !== null ? value : undefined), workspace_id: workspaceId });
 
         if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
         const response = await entry.handler(parsed.data, { signal });

@@ -1,3 +1,4 @@
+import { isJsonString } from "./json-value.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -55,7 +56,7 @@ test("HTTP MCP enforces canonical and exact alias bearer resources", async (t) =
   });
   await once(listener, "listening");
   const address = listener.address();
-  assert.ok(address && typeof address !== "string");
+  assert.ok(address && !isJsonString(address));
 
   for (const { resource, accepted } of cases) {
     const response: Response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {

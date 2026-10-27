@@ -1,3 +1,5 @@
+import { optionalFields } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import { createHash } from "node:crypto";
 import { Result, type Result as BetterResult } from "better-result";
 import {
@@ -13,8 +15,6 @@ import type {
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
-import { optionalFields } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 60_000;
@@ -622,6 +622,6 @@ function hashRuntimeKey(key: string): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }

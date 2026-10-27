@@ -1,7 +1,7 @@
+import type { WireInput } from "./json-value.js";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { WorkflowError, type WorkflowCall, type WorkflowEvent, type WorkflowSnapshot } from "./workflow-types.js";
-import type { JsonValue } from "./json-value.js";
 
 /** Durable ownership is written before dispatch; a provider session is never an ownership key. */
 export class WorkflowStore {
@@ -60,12 +60,12 @@ export class WorkflowStore {
 
     return call;
   }
-  event(runId: string, type: string, data: JsonValue): void {
+  event(runId: string, type: string, data: WireInput): void {
     this.database.sqlite.prepare("insert into workflow_events (run_id, type, data_json, created_at) values (?, ?, ?, ?)")
       .run(runId, type, JSON.stringify(data), new Date().toISOString());
   }
   events(runId: string, after = 0): WorkflowEvent[] {
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     const rows = this.database.sqlite.prepare("select * from workflow_events where run_id = ? and sequence > ? order by sequence limit 100").all(runId, after) as Array<{
       sequence: number; run_id: string; type: string; data_json: string; created_at: string;
     }>;
@@ -74,7 +74,7 @@ export class WorkflowStore {
   }
 }
 
-function decode<T>(row: JsonValue): T | undefined {
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function decode<T>(row: WireInput): T | undefined {
+  // SAFETY: The surrounding checks or construction already match this type.
   return row ? JSON.parse((row as { record_json: string }).record_json) as T : undefined;
 }

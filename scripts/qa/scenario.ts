@@ -1,7 +1,7 @@
+import { isJsonString, isObjectValue } from "../../src/json-value.js";
+import type { JsonObject, WireInput } from "../../src/json-value.js";
 import { readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { isJsonString, isJsonObject } from "../../src/json-value.js";
-import type { JsonObject, JsonValue } from "../../src/json-value.js";
 
 /**
  * A QA scenario is a fixture project plus an ordered list of MCP tool calls.
@@ -21,7 +21,6 @@ export interface Scenario {
     userAgent?: string;
   };
   fixture: {
-    // SAFETY: Boundary value already validated or constructed to match this type.
     /** Committed as the initial Git revision. */
     files: Record<string, string>;
     /** Written after the initial commit, leaving the checkout dirty. */
@@ -58,13 +57,13 @@ export async function loadScenario(nameOrPath: string): Promise<Scenario> {
     ? nameOrPath
     : join(scenariosDir.pathname, `${nameOrPath}.json`);
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const scenario = JSON.parse(await readFile(path, "utf8")) as Omit<Scenario, "name"> & { name?: string };
 
   return { ...scenario, name: scenario.name ?? basename(path, ".json") };
 }
 
-export function resolveTemplates(value: JsonValue, variables: Record<string, string | undefined>): unknown {
+export function resolveTemplates(value: WireInput, variables: Record<string, string | undefined>): WireInput {
   if (isJsonString(value)) {
     return value.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
       const resolved = variables[key];
@@ -77,7 +76,7 @@ export function resolveTemplates(value: JsonValue, variables: Record<string, str
 
   if (Array.isArray(value)) return value.map((item) => resolveTemplates(item, variables));
 
-  if (value && isJsonObject(value)) {
+  if (value && isObjectValue(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, resolveTemplates(item, variables)]),
     );

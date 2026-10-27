@@ -1,8 +1,9 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { homedir } from "node:os";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { isJsonObject } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 
 export class AccessDeniedError extends Error {
   constructor(message: string) {
@@ -119,13 +120,13 @@ async function canonicalizePath(path: string): Promise<string> {
   }
 }
 
-function isMissingPathError(error: JsonValue): boolean {
+function isMissingPathError(error: WireInput): boolean {
   return Boolean(
-    isJsonObject(error) &&
+    isObjectValue(error) &&
       error &&
       "code" in error &&
-      // SAFETY: Boundary value already validated or constructed to match this type.
-      ((error as NodeJS.ErrnoException).code === "ENOENT" ||
-        (error as NodeJS.ErrnoException).code === "ENOTDIR"),
+      // SAFETY: The surrounding checks or construction already match this type.
+      (unsafeNarrow<NodeJS.ErrnoException>(error).code === "ENOENT" ||
+        unsafeNarrow<NodeJS.ErrnoException>(error).code === "ENOTDIR"),
   );
 }

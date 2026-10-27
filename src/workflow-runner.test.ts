@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonObject } from "./json-value.js";
+import type { JsonValue, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -36,6 +39,7 @@ test("the guest has no module loader for host imports", async () => {
 });
 
 test("a __proto__ key in args stays an own property and pollutes nothing", async () => {
+  // SAFETY: The surrounding checks or construction already match this type.
   const prototypeArgs = JSON.parse('{"__proto__":{"polluted":true}}') as unknown;
   assert.deepEqual(await runWorkflowScript({
     source: `return { own: Object.hasOwn(args, "__proto__"), polluted: ({}).polluted ?? null };`,
@@ -45,7 +49,8 @@ test("a __proto__ key in args stays an own property and pollutes nothing", async
 });
 
 test("a __proto__ key in an agent result stays an own property and pollutes nothing", async () => {
-  const prototypeResult = JSON.parse('{"__proto__":{"polluted":true}}') as unknown;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const prototypeResult = unsafeNarrow<JsonValue>(JSON.parse('{"__proto__":{"polluted":true}}'));
   assert.deepEqual(await runWorkflowScript({
     source: `
       const value = await agent("proto", { target: "worker" });
@@ -123,7 +128,7 @@ test("phase binds agent calls to the phase and emits phase and log events", asyn
       log("done", value);
       return value;
     `,
-    onAgent: (_prompt, options) => options.phase,
+    onAgent: (_prompt, options) => options.phase ?? null,
     onEvent: (type, data) => { events.push({ type, data }); },
   });
 
@@ -147,7 +152,7 @@ test("nested workflows run through onWorkflow", async () => {
   const nested = await runWorkflowScript({
     source: `return workflow("child", { n: 1 });`,
     onAgent: () => null,
-    onWorkflow: (name, args) => ({ name, args }),
+    onWorkflow: (name, args) => ({ name, args: isJsonObject(args) ? args : null }),
   });
 
   assert.deepEqual(nested, { name: "child", args: { n: 1 } });
@@ -161,7 +166,7 @@ test("nested workflows beyond the depth limit fail even when caught", async () =
       onAgent: () => null,
       onWorkflow: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_NESTING_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_NESTING_LIMIT",
   );
   await assert.rejects(
     runWorkflowScript({
@@ -170,7 +175,7 @@ test("nested workflows beyond the depth limit fail even when caught", async () =
       onAgent: () => null,
       onWorkflow: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_NESTING_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_NESTING_LIMIT",
   );
 });
 
@@ -189,7 +194,7 @@ test("provider errors keep their code and retryability", async () => {
       source: `return agent("fail", { target: "worker" });`,
       onAgent: () => { throw Object.assign(new Error("provider unavailable"), { code: "PROVIDER_DOWN", retryable: true }); },
     }),
-    (error: unknown) => error instanceof WorkflowError
+    (error: WireInput) => error instanceof WorkflowError
       && error.code === "PROVIDER_DOWN"
       && error.retryable === true,
   );
@@ -208,7 +213,7 @@ test("unawaited agent calls fail the run", async () => {
 
   await assert.rejects(
     detached,
-    (error: unknown) => error instanceof WorkflowError && error.code === "UNAWAITED_CALLS",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "UNAWAITED_CALLS",
   );
   finishDetached();
 });
@@ -234,7 +239,7 @@ test("logging past maxLogBytes fails even when caught", async () => {
       limits: { maxLogBytes: 32 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_LOG_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_LOG_LIMIT",
   );
 });
 
@@ -245,7 +250,7 @@ test("a busy loop fails at the timeout", async () => {
       limits: { timeoutMs: 2_000 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_TIMEOUT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_TIMEOUT",
   );
 });
 
@@ -256,7 +261,7 @@ test("unbounded recursion fails at the stack limit", async () => {
       limits: { stackBytes: 64 * 1024 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_STACK_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_STACK_LIMIT",
   );
 });
 
@@ -267,7 +272,7 @@ test("unbounded allocation fails at the memory limit", async () => {
       limits: { memoryBytes: 4 * 1024 * 1024, timeoutMs: 10_000 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_MEMORY_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_MEMORY_LIMIT",
   );
 });
 
@@ -279,9 +284,10 @@ test("aborting the signal cancels a pending agent call", async () => {
   const aborted = runWorkflowScript({
     source: `return agent("wait", { target: "worker" });`,
     signal: controller.signal,
-    onAgent: async () => {
+    onAgent: async (): Promise<JsonValue> => {
       agentStarted();
-      await new Promise(() => undefined);
+
+      return await new Promise<JsonValue>(() => undefined);
     },
   });
 
@@ -289,7 +295,7 @@ test("aborting the signal cancels a pending agent call", async () => {
   controller.abort();
   await assert.rejects(
     aborted,
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_CANCELLED",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_CANCELLED",
   );
 });
 
@@ -300,7 +306,7 @@ test("a result past maxResultBytes fails", async () => {
       limits: { maxResultBytes: 32 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_RESULT_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_RESULT_LIMIT",
   );
 });
 
@@ -310,7 +316,7 @@ test("results that are not JSON-serializable fail", async () => {
       source: `return () => "not JSON";`,
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
   );
 
   await assert.rejects(
@@ -318,7 +324,7 @@ test("results that are not JSON-serializable fail", async () => {
       source: `const value = {}; value.self = value; return value;`,
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
   );
 });
 
@@ -329,7 +335,7 @@ test("source and args past their size limits fail", async () => {
       limits: { maxSourceBytes: 32 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
   );
 
   await assert.rejects(
@@ -339,7 +345,7 @@ test("source and args past their size limits fail", async () => {
       limits: { maxArgsBytes: 32 },
       onAgent: () => null,
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_SIZE_LIMIT",
   );
 });
 
@@ -350,6 +356,6 @@ test("agent calls past maxOutstanding fail", async () => {
       limits: { maxOutstanding: 2 },
       onAgent: async () => await new Promise(() => undefined),
     }),
-    (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_OUTSTANDING_LIMIT",
+    (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_OUTSTANDING_LIMIT",
   );
 });

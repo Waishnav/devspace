@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { Panic, Result, type Result as BetterResult } from "better-result";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -173,7 +174,7 @@ test("a profile loader defect surfaces as a panic", async (t) => {
       workspaceId: scope.workspaceId,
       workspaceRoot: root,
     }),
-    (error: unknown) => Panic.is(error) && error.cause instanceof TypeError,
+    (error: WireInput) => Panic.is(error) && error.cause instanceof TypeError,
   );
   await defectManager.close();
 });

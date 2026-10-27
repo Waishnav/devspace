@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isErrorValue, isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -5,8 +8,6 @@ import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import type { AgentConfig } from "./config.js";
-import { optionalFields, isJsonObject } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 import {
   assertAllowedPath,
   isPathInsideRoot,
@@ -424,7 +425,7 @@ function worktreeError(
   code: ManagedWorktreeErrorCode,
   operation: string,
   message: string,
-  cause?: JsonValue,
+  cause?: unknown,
 ): ManagedWorktreeError {
   return new ManagedWorktreeError({ workspaceId, code, operation, message, cause });
 }
@@ -450,7 +451,7 @@ async function captureManagedWorktreeResult<T>(
   }
 }
 
-function isProgrammerDefect(error: JsonValue): boolean {
+function isProgrammerDefect(error: WireInput): boolean {
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError
@@ -543,7 +544,7 @@ async function assertGitRootAllowed(gitRoot: string, allowedRoots: string[]): Pr
 async function resolveBaseCommit(sourceRoot: string, baseRef: string): Promise<string> {
   try {
     return (await git(["rev-parse", "--verify", `${baseRef}^{commit}`], sourceRoot)).trim();
-  } catch {
+  } catch  {
     if (baseRef === "HEAD") {
       throw new GitWorktreeError(
         "GIT_REPOSITORY_HAS_NO_COMMITS",
@@ -576,7 +577,8 @@ async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
   } catch (error) {
-    if (isJsonObject(error) && error && "code" in error && error.code === "ENOENT") {
+    // SAFETY: Node fs errors are Error objects with an optional string code.
+    if (isErrorValue(error) && (error as NodeJS.ErrnoException).code === "ENOENT") {
       return false;
     }
 
@@ -595,12 +597,14 @@ async function git(args: string[], cwd: string): Promise<string> {
   } catch (error) {
     if (isGitUnavailable(error)) throw error;
 
-    const stderr = isJsonObject(error) && error && "stderr" in error
-      ? String((error as { stderr?: unknown }).stderr ?? "").trim()
+    const stderr = isObjectValue(error) && error && "stderr" in error
+      // SAFETY: The surrounding checks or construction already match this type.
+      ? String(unsafeNarrow<{ stderr?: WireInput }>(error).stderr ?? "").trim()
       : "";
 
-    const stdout = isJsonObject(error) && error && "stdout" in error
-      ? String((error as { stdout?: unknown }).stdout ?? "").trim()
+    const stdout = isObjectValue(error) && error && "stdout" in error
+      // SAFETY: The surrounding checks or construction already match this type.
+      ? String(unsafeNarrow<{ stdout?: WireInput }>(error).stdout ?? "").trim()
       : "";
 
     const details = stderr || stdout || (error instanceof Error ? error.message : String(error));
@@ -608,11 +612,12 @@ async function git(args: string[], cwd: string): Promise<string> {
   }
 }
 
-function isGitUnavailable(error: JsonValue): boolean {
+function isGitUnavailable(error: WireInput): boolean {
   return Boolean(
-    isJsonObject(error) &&
+    isObjectValue(error) &&
       error &&
       "code" in error &&
+      // SAFETY: The surrounding checks or construction already match this type.
       (error as { code?: unknown }).code === "ENOENT",
   );
 }

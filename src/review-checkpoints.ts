@@ -431,6 +431,7 @@ async function isKnownReviewCommit(gitRoot: string, reviewCommit: string): Promi
     if (!workspace || !kind) continue;
 
     const history = histories.get(workspace) ?? {};
+    // SAFETY: The surrounding checks or construction already match this type.
     history[kind as "open" | "baseline"] = commit;
     histories.set(workspace, history);
   }

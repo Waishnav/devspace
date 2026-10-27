@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
@@ -135,13 +136,13 @@ test("migration refuses to overwrite an existing backup", (t) => {
 
   assert.throws(
     () => loadDevspaceFiles(env),
-    (error: unknown) => error instanceof Error
+    (error: WireInput) => error instanceof Error
       && error.message.includes(`backup already exists at ${backupPath}`)
       && error.message.includes(`Move ${backupPath} out of the way, then run DevSpace again.`),
   );
 });
 
-function tempConfigDir(t: TestContext): { configDir: string; env: NodeJS.ProcessEnv } {
+function tempConfigDir(t: TestContext) {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
   t.after(() => rmSync(configDir, { recursive: true, force: true }));
 
@@ -185,6 +186,7 @@ async function migrateInChildProcess(
         return;
       }
 
+      // SAFETY: The surrounding checks or construction already match this type.
       resolve(JSON.parse(stdout) as { migrated: boolean });
     });
   });

@@ -1,3 +1,5 @@
+import { isJsonString } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -13,8 +15,6 @@ import {
 } from "./workspace-activity.js";
 import type { WorkspaceActivityStore } from "./workspace-activity-store.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
-import { isJsonString } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 
 /**
  * Read-only workspace observability pages: workspaces, their turns, and each
@@ -280,7 +280,7 @@ function isHttpsRequest(req: Request): boolean {
   return req.secure || req.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
 }
 
-function safeNextPath(value: JsonValue): string {
+function safeNextPath(value: WireInput): string {
   const fallback = `${WORKSPACE_WEB_PATH}/`;
 
   if (!isJsonString(value)) return fallback;

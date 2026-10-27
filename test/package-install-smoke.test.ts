@@ -56,6 +56,7 @@ function testPackedPackageLaunchers(): void {
       ...env,
     });
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const config = JSON.parse(cliOutput) as { configVersion?: number };
     assert.equal(config.configVersion, 1);
 
@@ -77,6 +78,7 @@ function testPackedPackageLaunchers(): void {
       DEVSPACE_OAUTH_OWNER_TOKEN: "",
     };
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const targets = JSON.parse(
       execInstalledBin(installRoot, "devspace", ["agents", "targets", "--json"], freshEnv),
     ) as { enabled: boolean; targets: Array<{ name: string }> };

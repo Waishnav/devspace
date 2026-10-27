@@ -1,5 +1,15 @@
 import { win32 } from "node:path";
 
+function hasAsciiControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+
+  return false;
+}
+
 const WINDOWS_INVALID_NAME_CHARS = /[<>"|?*]/u;
 const WINDOWS_DEVICE_NAME = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$/iu;
 
@@ -14,8 +24,7 @@ export function parseSafeWindowsArtifactRelativePath(
 ): SafeWindowsArtifactPath | undefined {
   if (
     !value
-    // oxlint-disable-next-line eslint/no-control-regex -- Windows forbids control chars in artifact paths.
-    || /[\u0000-\u001f\u007f]/u.test(value)
+    || hasAsciiControlCharacters(value)
     || /^[\\/]/u.test(value)
     || /^[A-Za-z]:/u.test(value)
     || win32.isAbsolute(value)

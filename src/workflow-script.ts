@@ -1,4 +1,5 @@
-import { isJsonString } from "./json-value.js";
+import { isJsonString, optionalFields } from "./json-value.js";
+
 export interface WorkflowScriptMeta {
   name: string;
   description?: string;
@@ -39,7 +40,7 @@ export function parseWorkflowScript(source: string): ParsedWorkflowScript {
     throw new Error("Workflow meta.description must be a string of at most 2048 characters.");
   }
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   if (!Number.isInteger(concurrency) || (concurrency as number) < 1 || (concurrency as number) > 16) {
     throw new Error("Workflow meta.concurrency must be an integer between 1 and 16.");
   }
@@ -47,8 +48,8 @@ export function parseWorkflowScript(source: string): ParsedWorkflowScript {
   return {
     meta: {
       name: name.trim(),
-      ...(description === undefined ? {} : { description }),
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      ...optionalFields(description === undefined ? undefined : { description }),
+      // SAFETY: The surrounding checks or construction already match this type.
       concurrency: concurrency as number,
     },
     body: source.slice(parser.position),
@@ -62,7 +63,7 @@ class MetaParser {
     this.position = position;
   }
 
-  object(): Record<string, string | number> {
+  object() {
     this.space();
     this.expect("{");
     const result: Record<string, string | number> = {};
@@ -130,7 +131,7 @@ class MetaParser {
 
       const escaped = this.source[this.position++];
 
-      const simple: Record<string, string> = {
+      const simple = {
         "\\": "\\", "'": "'", '"': '"', n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", 0: "\0",
       };
 
@@ -141,7 +142,10 @@ class MetaParser {
         value += String.fromCharCode(Number.parseInt(hex, 16));
         this.position += 4;
       } else if (escaped && Object.hasOwn(simple, escaped)) {
-        value += simple[escaped];
+        const replacement = Object.entries(simple).find(([key]) => key === escaped)?.[1];
+
+        if (replacement === undefined) throw this.error("Unsupported escape in workflow metadata.");
+        value += replacement;
       } else {
         throw this.error("Unsupported escape in workflow metadata.");
       }

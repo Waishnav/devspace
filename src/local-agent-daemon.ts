@@ -1,3 +1,5 @@
+import { isObjectValue, isJsonString } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
@@ -47,8 +49,6 @@ import type {
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { WORKFLOWS_ENV } from "./workflow-flag.js";
 import { WorkflowError, type WorkflowCall, type WorkflowEvent, type WorkflowRun, type WorkflowRunInput } from "./workflow-types.js";
-import { isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
@@ -359,7 +359,7 @@ export class LocalAgentDaemon {
     }
   }
 
-  private async dispatch(request: LocalAgentDaemonRequest, signal: AbortSignal): Promise<JsonValue> {
+  private async dispatch(request: LocalAgentDaemonRequest, signal: AbortSignal): Promise<WireInput> {
     if (request.protocolVersion !== LOCAL_AGENT_DAEMON_PROTOCOL_VERSION) {
       throw new LocalAgentDaemonProtocolError(
         "PROTOCOL_MISMATCH",
@@ -469,7 +469,7 @@ export class LocalAgentDaemon {
   }
 
   private async runTurnRequest<T>(
-    operation: () => Promise<Result<T, unknown>>,
+    operation: () => Promise<Result<T, WireInput>>,
   ): Promise<T> {
     this.activeTurnRequests += 1;
 
@@ -595,9 +595,9 @@ function safeEqual(actual: string, expected: string): boolean {
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-function readRequestId(value: JsonValue): string {
-  if (!value || !isJsonObject(value) || Array.isArray(value)) return "";
-  // SAFETY: Boundary value already validated or constructed to match this type.
+function readRequestId(value: WireInput): string {
+  if (!value || !isObjectValue(value) || Array.isArray(value)) return "";
+  // SAFETY: The surrounding checks or construction already match this type.
   const requestId = (value as JsonObject).requestId;
 
   return isJsonString(requestId) ? requestId : "";
@@ -628,11 +628,11 @@ export function readLocalAgentDaemonLogs(paths: LocalAgentDaemonPaths, lines = 2
   }
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function daemonErrorPayload(error: JsonValue): LocalAgentDaemonErrorPayload {
+function daemonErrorPayload(error: WireInput): LocalAgentDaemonErrorPayload {
   if (error instanceof WorkflowError) {
     return { code: error.code, message: error.message, retryable: error.retryable };
   }

@@ -1,13 +1,12 @@
+import { unsafeNarrow } from "../../../src/unsafe-narrow.js";
 import type { ShikiConfig } from "astro";
 
 // Code theme drawn from the V1 palette: warm neutrals for structure, amber for
-// SAFETY: Boundary value already validated or constructed to match this type.
 // literals (the same amber as running states), and green only for DevSpace's own
 // primitives (agent, parallel, phase) so they stand out from plain JavaScript.
 type Theme = NonNullable<ShikiConfig["theme"]>;
 
-// SAFETY: Shiki accepts this object theme; its Theme type is a string-or-object union.
-export const workbenchTheme = {
+export const workbenchTheme = unsafeNarrow<Theme>({
   name: "devspace-workbench",
   type: "dark",
   colors: { "editor.background": "#151515", "editor.foreground": "#e7e5df" },
@@ -22,12 +21,10 @@ export const workbenchTheme = {
     { scope: ["variable", "variable.other.readwrite", "meta.definition.variable"], settings: { foreground: "#e7e5df" } },
     { scope: ["punctuation.definition.template-expression"], settings: { foreground: "#8f8d86" } },
   ],
-// SAFETY: Boundary value already validated or constructed to match this type.
-} as Theme;
+});
 
 // Light counterpart for code shown on paper-coloured cards (profile files).
-// SAFETY: Shiki accepts this object theme; its Theme type is a string-or-object union.
-export const workbenchLightTheme = {
+export const workbenchLightTheme = unsafeNarrow<Theme>({
   name: "devspace-workbench-light",
   type: "light",
   colors: { "editor.background": "#f7f7f5", "editor.foreground": "#151515" },
@@ -36,5 +33,4 @@ export const workbenchLightTheme = {
     { scope: ["entity.name.tag.yaml", "support.type.property-name"], settings: { foreground: "#6d6c67" } },
     { scope: ["string", "string.unquoted", "constant.numeric", "constant.language"], settings: { foreground: "#9a5b13" } },
   ],
-// SAFETY: Boundary value already validated or constructed to match this type.
-} as Theme;
+});

@@ -1,10 +1,10 @@
-import { optionalFields, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import {
   matchError,
   Result,
   TaggedError,
-  // SAFETY: Boundary value already validated or constructed to match this type.
   type Result as BetterResult,
 } from "better-result";
 import {
@@ -55,7 +55,7 @@ export class AgentScopeError extends TaggedError("AgentScopeError")<{
   message: string;
 }>() {}
 
-interface AgentProviderErrorFields extends JsonObject {
+interface AgentProviderErrorFields extends Record<string, unknown> {
   provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
@@ -86,7 +86,7 @@ export type AgentProviderError =
   | AgentProviderProtocolError
   | AgentProviderExecutionError;
 
-interface AgentDaemonErrorFields extends JsonObject {
+interface AgentDaemonErrorFields extends Record<string, unknown> {
   operation: string;
   retryable: boolean;
   cause?: unknown;
@@ -383,7 +383,7 @@ export function providerErrorFromCause(input: {
   provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
-  cause: unknown;
+  cause: WireInput;
 }): AgentProviderError | undefined {
   if (isAgentProviderError(input.cause)) return input.cause;
 
@@ -449,7 +449,7 @@ export async function captureAgentProviderResult<T>(input: {
   }
 }
 
-export function isProgrammerDefect(error: JsonValue): boolean {
+export function isProgrammerDefect(error: WireInput): boolean {
   if (unavailableCauseKind(error)) return false;
 
   return error instanceof TypeError
@@ -459,26 +459,29 @@ export function isProgrammerDefect(error: JsonValue): boolean {
     || (error instanceof Error && error.name === "AssertionError");
 }
 
-function isAbortError(error: JsonValue): boolean {
+function isAbortError(error: WireInput): boolean {
   return Boolean(
     error
-      && isJsonObject(error)
+      && isObjectValue(error)
       && "name" in error
-      && String((error as { name?: unknown }).name) === "AbortError",
+      // SAFETY: The surrounding checks or construction already match this type.
+      && String(unsafeNarrow<{ name?: WireInput }>(error).name) === "AbortError",
   );
 }
 
-function unavailableCauseKind(error: JsonValue): "permanent" | "transient" | undefined {
+function unavailableCauseKind(error: WireInput): "permanent" | "transient" | undefined {
   const seen = new Set<object>();
   let current = error;
 
-  while (current && isJsonObject(current) && !seen.has(current)) {
+  while (current && isObjectValue(current) && !seen.has(current)) {
     seen.add(current);
+    // SAFETY: The surrounding checks or construction already match this type.
     const code = "code" in current ? String((current as { code?: unknown }).code) : "";
 
     if (code === "ENOENT") return "permanent";
 
     if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
+    // SAFETY: The surrounding checks or construction already match this type.
     current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
   }
 

@@ -1,7 +1,7 @@
+import { optionalFields } from "./json-value.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
-import { optionalFields } from "./json-value.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -110,7 +110,7 @@ function terminalSize(value: number | undefined, fallback: number): number {
 function processEnvironment(input?: {
   workspaceId?: string;
   workspaceRoot?: string;
-}): Record<string, string> {
+}) {
   return {
     ...Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
@@ -149,7 +149,12 @@ function takeTail(value: string, count: number): string {
   return characters.slice(Math.max(0, characters.length - count)).join("");
 }
 
-function splitBudget(maxCharacters: number): { head: number; tail: number } {
+interface CharacterBudget {
+  head: number;
+  tail: number;
+}
+
+function splitBudget(maxCharacters: number): CharacterBudget {
   return {
     head: Math.ceil(maxCharacters / 2),
     tail: Math.floor(maxCharacters / 2),
@@ -202,7 +207,7 @@ export class HeadTailBuffer {
     return this.totalCharacters > 0;
   }
 
-  drain(maxCharacters: number): { output: string; truncated: boolean } {
+  drain(maxCharacters: number): TruncatedOutput {
     if (!Number.isInteger(maxCharacters) || maxCharacters < 1) {
       throw new Error("Output limit must be a positive integer.");
     }
@@ -224,7 +229,12 @@ export class HeadTailBuffer {
   }
 }
 
-function truncateOutput(output: string, maxCharacters: number): { output: string; truncated: boolean } {
+interface TruncatedOutput {
+  output: string;
+  truncated: boolean;
+}
+
+function truncateOutput(output: string, maxCharacters: number): TruncatedOutput {
   const outputCharacters = codePointLength(output);
 
   if (outputCharacters <= maxCharacters) return { output, truncated: false };
@@ -241,7 +251,6 @@ function truncateOutput(output: string, maxCharacters: number): { output: string
 }
 
 /**
- // SAFETY: Boundary value already validated or constructed to match this type.
  * Groups the commands started on behalf of one caller, such as a Code Mode script.
  * Commands are adopted as soon as they spawn, so terminate() also covers a command
  * whose exec_command call has not returned its session ID yet.
@@ -265,7 +274,6 @@ export class ProcessOwner {
    * Stops every adopted command. Resolves with how many commands were killed
    * but never confirmed their exit: a descendant that left the process group
    * (e.g. via setsid) can keep inherited output open indefinitely, so the
-   // SAFETY: Boundary value already validated or constructed to match this type.
    * final wait is bounded and reported instead of treated as success.
    */
   async terminate(): Promise<number> {

@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -65,8 +68,6 @@ import type {
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { devspaceConfigDir } from "./user-config.js";
-import { optionalFields } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 import {
   WorkflowError,
   type WorkflowCall,
@@ -180,7 +181,7 @@ export class LocalAgentClient {
     const result = await this.request("agent.wait", {
       ids: [...agentIds],
       scope,
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...optionalFields(timeoutMs === undefined ? undefined : { timeoutMs }),
     }, transportTimeoutMs);
 
     return decodeRequestResult(result, "agent.wait", decodeAgentWaitResults);
@@ -548,28 +549,28 @@ export class LocalAgentClient {
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
     timeoutMs: number | null = this.requestTimeoutMs,
-  ): Promise<BetterResult<unknown, RequestError<M>>> {
+  ): Promise<BetterResult<WireInput, RequestError<M>>> {
     const ready = await (isObservationRequest(method)
       ? this.ensureReadyForObservation()
       : this.ensureReady());
 
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
+    // SAFETY: The surrounding checks or construction already match this type.
+    if (ready.isErr()) return unsafeNarrow<BetterResult<WireInput, RequestError<M>>>(ready);
     const authToken = this.authTokenResult(method);
 
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    if (authToken.isErr()) return authToken as BetterResult<unknown, RequestError<M>>;
+    // SAFETY: The surrounding checks or construction already match this type.
+    if (authToken.isErr()) return unsafeNarrow<BetterResult<WireInput, RequestError<M>>>(authToken);
 
-    const response = await sendRequest(this.endpoint, {
+    // SAFETY: The surrounding checks or construction already match this type.
+    const response = await sendRequest(this.endpoint, unsafeNarrow<LocalAgentDaemonRequest>({
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       authToken: authToken.value,
       method,
       params,
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    } as LocalAgentDaemonRequest, timeoutMs ?? undefined);
+    }), timeoutMs ?? undefined);
 
-    if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
+    if (response.isErr()) return unsafeNarrow<BetterResult<WireInput, RequestError<M>>>(response);
 
     if (!response.value.ok) {
       const error = isWorkflowMethod(method)
@@ -577,17 +578,17 @@ export class LocalAgentClient {
         : decodeRemoteError(response.value.error, method);
 
       if (!isRequestError(method, error)) {
+        // SAFETY: The surrounding checks or construction already match this type.
         return Result.err(new AgentDaemonInvalidResponseError({
           code: "DAEMON_INVALID_RESPONSE",
           operation: method,
           retryable: false,
           cause: response.value.error,
           message: "Local agent daemon returned an error that is invalid for this request.",
-        // SAFETY: Boundary value already validated or constructed to match this type.
         })) as BetterResult<unknown, RequestError<M>>;
       }
 
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       return Result.err(error) as BetterResult<unknown, RequestError<M>>;
     }
 
@@ -611,13 +612,13 @@ export class LocalAgentClient {
       }));
     }
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       authToken: authToken.value,
       method,
       params,
-    // SAFETY: Boundary value already validated or constructed to match this type.
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
 
     if (response.isErr()) return response;
@@ -788,7 +789,7 @@ async function sendRequest(
       if (newline === -1) return;
 
       try {
-        // SAFETY: Boundary value already validated or constructed to match this type.
+        // SAFETY: The surrounding checks or construction already match this type.
         const response = decodeLocalAgentDaemonResponse(JSON.parse(buffer.slice(0, newline)) as unknown);
 
         if (response.requestId !== request.requestId) {
@@ -829,17 +830,17 @@ async function sendRequest(
 }
 
 function decodeRequestResult<T, E>(
-  result: BetterResult<unknown, E>,
+  result: BetterResult<WireInput, E>,
   operation: string,
-  decode: (value: JsonValue) => T,
+  decode: (value: WireInput) => T,
 ): BetterResult<T, E | AgentDaemonInvalidResponseError> {
   return result.andThen((value) => decodeValue(value, operation, decode));
 }
 
 function decodeValue<T>(
-  value: JsonValue,
+  value: WireInput,
   operation: string,
-  decode: (value: JsonValue) => T,
+  decode: (value: WireInput) => T,
 ): BetterResult<T, AgentDaemonInvalidResponseError> {
   try {
     return Result.ok(decode(value));

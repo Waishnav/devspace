@@ -489,10 +489,7 @@ async function waitFor(check: () => boolean): Promise<void> {
   assert.equal(check(), true, "condition did not become true before timeout");
 }
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve(value?: T): void;
-} {
+function deferred<T>() {
   let resolve!: (value: T) => void;
 
   const promise = new Promise<T>((resolvePromise) => {

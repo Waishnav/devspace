@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +25,8 @@ function fakeV1Client() {
   const promptInputs: unknown[] = [];
   const health = { available: true };
 
-  const client = {
+  // SAFETY: The surrounding checks or construction already match this type.
+  const client = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() {
         if (!health.available) throw new Error("server unavailable");
@@ -31,14 +35,15 @@ function fakeV1Client() {
       },
     },
     session: {
-      async create(input: unknown) {
+      async create(input: WireInput) {
         createInputs.push(input);
         sessionNumber += 1;
 
         return { data: { id: `session_${sessionNumber}` } };
       },
-      async prompt(input: unknown) {
+      async prompt(input: WireInput) {
         promptInputs.push(input);
+        // SAFETY: The surrounding checks or construction already match this type.
         const sessionId = (input as { sessionID: string }).sessionID;
 
         return {
@@ -49,13 +54,14 @@ function fakeV1Client() {
         };
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
 
   return { client, createInputs, promptInputs, health };
 }
 
 function sharedServerFixture(t: TestContext) {
   const fake = fakeV1Client();
+  // SAFETY: The surrounding checks or construction already match this type.
   const state = { factoryCalls: 0, closeCalls: 0, factoryEnv: undefined as NodeJS.ProcessEnv | undefined };
 
   const factory: OpencodeFactory = async (_context, env) => {
@@ -161,6 +167,7 @@ test("a resumed OpenCode session applies an effort override", async (t) => {
     onEvent: (event) => { overrideEvents.push(event); },
   });
   assert.equal(callbackSessionId, firstRecord.providerSessionId);
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.equal((overrideEvents[0] as { type?: string } | undefined)?.type, "message");
   assert.deepEqual(promptInputs[2], {
     sessionID: "session_1",
@@ -267,19 +274,20 @@ test(
 );
 
 test("a prompt that outlives the provider timeout is a retryable protocol error", async () => {
-  const timeoutClient = {
+  // SAFETY: The surrounding checks or construction already match this type.
+  const timeoutClient = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() { return { data: { healthy: true } }; },
     },
     session: {
       async create() { return { data: { id: "session_timeout" } }; },
-      async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      async prompt(_input: WireInput, options?: { signal?: AbortSignal }) {
         return new Promise<never>((_resolve, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         });
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
 
   const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 5);
 
@@ -300,22 +308,23 @@ test("a prompt that outlives the provider timeout is a retryable protocol error"
 });
 
 // Stop ends the turn only once OpenCode confirms the abort; a stalled abort leaves it running.
-const abortClient = (abort: () => Promise<unknown>) => ({
+// SAFETY: The surrounding checks or construction already match this type.
+const abortClient = (abort: () => Promise<WireInput>) => unsafeNarrow<OpencodeClientLike>({
   global: {
     async health() { return { data: { healthy: true } }; },
   },
   session: {
     async create() { return { data: { id: "session_abort" } }; },
     abort,
-    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+    async prompt(_input: WireInput, options?: { signal?: AbortSignal }) {
       return new Promise<never>((_resolve, reject) => {
         options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       });
     },
   },
-}) as unknown as OpencodeClientLike;
+});
 
-const stopRun = async (abort: () => Promise<unknown>) => {
+const stopRun = async (abort: () => Promise<WireInput>) => {
   const stopRuntime = new OpencodeRuntime(abortClient(abort), { close: () => undefined }, 100);
   const stop = new AbortController();
   const run = stopRuntime.run({ prompt: "stop me", workspaceRoot: "/tmp/project", signal: stop.signal });
@@ -352,19 +361,19 @@ test("write modes map onto DevSpace agents whose permissions deny delegation", (
     external_directory: "deny",
   });
   const readOnlyPermissions = opencodePermissionFor("read_only");
-  assert.equal(typeof readOnlyPermissions === "object" ? readOnlyPermissions.bash : undefined, "deny");
+  assert.equal(isObjectValue(readOnlyPermissions) ? readOnlyPermissions.bash : undefined, "deny");
 
   for (const writeMode of ["read_only", "allowed", "full_access"] as const) {
     const config = opencodeAgentConfig(writeMode);
     assert.equal(config.mode, "primary");
-    assert.equal(typeof config.permission === "object" ? config.permission.task : undefined, "deny");
+    assert.equal(isObjectValue(config.permission) ? config.permission.task : undefined, "deny");
   }
 });
 
 test("an ordinary provider error keeps the healthy server runtime", async (t) => {
   let promptFailureCount = 0;
 
-  const applicationErrorClient = {
+  const applicationErrorClient = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() { return { data: { healthy: true } }; },
     },
@@ -396,7 +405,7 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
         };
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
 
   const applicationErrorPool = new LocalAgentRuntimePool();
   t.after(() => applicationErrorPool.close());

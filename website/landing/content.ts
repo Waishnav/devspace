@@ -91,7 +91,6 @@ export const FAQ = [
   },
   {
     q: "What is coming next?",
-    // SAFETY: Boundary value already validated or constructed to match this type.
     a: "Dynamic workflows ship in v1.1 as an experiment behind DEVSPACE_EXPERIMENTAL_WORKFLOWS=1. Further out: environments — a dedicated computer and compute for your agents, so long runs keep going while your laptop sleeps.",
   },
 ];

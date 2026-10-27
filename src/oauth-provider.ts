@@ -358,7 +358,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 function authorizationFormFields(
   client: OAuthClientInformationFull,
   params: AuthorizationParams,
-): Record<string, string | undefined> {
+) {
   return {
     response_type: "code",
     client_id: client.client_id,

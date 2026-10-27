@@ -1,3 +1,5 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -42,12 +44,13 @@ function fakeV2Client() {
   const waitInputs: unknown[] = [];
   const messageInputs: unknown[] = [];
 
-  const client = {
+  // SAFETY: The surrounding checks or construction already match this type.
+  const client = unsafeNarrow<OpencodeV2ClientLike>({
     server: {
       async info() { return { version: "2.0.20", pid: 1, urls: [], paths: { tmp: "/tmp" } }; },
     },
     session: {
-      async create(input: unknown) {
+      async create(input: WireInput) {
         createInputs.push(input);
 
         return {
@@ -59,7 +62,7 @@ function fakeV2Client() {
           location: { directory: "/tmp/project" },
         };
       },
-      async update(input: unknown) { updateInputs.push(input); },
+      async update(input: WireInput) { updateInputs.push(input); },
       async get() {
         return {
           id: "ses_v2",
@@ -71,16 +74,16 @@ function fakeV2Client() {
           location: { directory: "/tmp/project" },
         };
       },
-      async switchModel(input: unknown) { switchModelInputs.push(input); },
-      async prompt(input: unknown) {
+      async switchModel(input: WireInput) { switchModelInputs.push(input); },
+      async prompt(input: WireInput) {
         promptInputs.push(input);
 
         return { id: "inbox", sessionID: "ses_v2", time: { created: 1 }, type: "user", payload: { text: "x" }, delivery: "queue" };
       },
-      async wait(input: unknown) { waitInputs.push(input); },
+      async wait(input: WireInput) { waitInputs.push(input); },
     },
     message: {
-      async list(input: unknown) {
+      async list(input: WireInput) {
         messageInputs.push(input);
 
         return { data: [assistant], cursor: { previous: null, next: null } };
@@ -106,7 +109,7 @@ function fakeV2Client() {
         };
       },
     },
-  } as unknown as OpencodeV2ClientLike;
+  });
 
   return { client, createInputs, updateInputs, switchModelInputs, promptInputs, waitInputs, messageInputs };
 }
@@ -322,14 +325,14 @@ test("a runtime created after an upgrade follows the installed executable", asyn
 test("a turn that fails before assistant output surfaces the provider error", async () => {
   const { client } = fakeV2Client();
 
-  const failedClient = {
+  const failedClient = unsafeNarrow<OpencodeV2ClientLike>({
     ...client,
     message: {
       async list(input: { type?: string }) {
         return { data: input.type === "assistant" ? [] : [failedIdle], cursor: { previous: null, next: null } };
       },
     },
-  } as unknown as OpencodeV2ClientLike;
+  });
 
   const failedRuntime = new OpencodeV2Runtime(failedClient, { close: () => undefined });
   const failedRun = await failedRuntime.run({ prompt: "auth fails", workspaceRoot: "/tmp/project" });
@@ -347,7 +350,7 @@ test("a turn that fails before assistant output surfaces the provider error", as
 test("a continued turn that fails before output does not return the previous response", async () => {
   const { client } = fakeV2Client();
 
-  const staleClient = {
+  const staleClient = unsafeNarrow<OpencodeV2ClientLike>({
     ...client,
     session: {
       ...client.session,
@@ -360,7 +363,7 @@ test("a continued turn that fails before output does not return the previous res
         return { data: input.type === "assistant" ? [assistant] : [failedIdle], cursor: { previous: null, next: null } };
       },
     },
-  } as unknown as OpencodeV2ClientLike;
+  });
 
   const staleRuntime = new OpencodeV2Runtime(staleClient, { close: () => undefined });
 
@@ -377,21 +380,22 @@ test("a continued turn that fails before output does not return the previous res
 });
 
 // Stop ends the turn only once OpenCode confirms the interrupt; a failed interrupt leaves it running.
-const interruptRun = async (interrupt: () => Promise<unknown>) => {
+const interruptRun = async (interrupt: () => Promise<WireInput>) => {
   const { client } = fakeV2Client();
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const interruptClient = {
     ...client,
     session: {
       ...client.session,
       interrupt,
-      async wait(_input: unknown, options?: { signal?: AbortSignal }) {
+      async wait(_input: WireInput, options?: { signal?: AbortSignal }) {
         return new Promise<never>((_resolve, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         });
       },
     },
-  } as unknown as OpencodeV2ClientLike;
+  } as OpencodeV2ClientLike;
 
   const interruptRuntime = new OpencodeV2Runtime(interruptClient, { close: () => undefined }, 100);
   const stop = new AbortController();
@@ -415,14 +419,14 @@ test("a failed interrupt is a protocol error rather than a cancellation", async 
 test("a dead server makes the runtime report itself unavailable", async () => {
   const { client } = fakeV2Client();
 
-  const deadRuntime = new OpencodeV2Runtime({
+  const deadRuntime = new OpencodeV2Runtime(unsafeNarrow<OpencodeV2ClientLike>({
     ...client,
     server: {
       async info() {
         throw new ClientError("Transport", { cause: new TypeError("fetch failed") });
       },
     },
-  } as unknown as OpencodeV2ClientLike, { close: () => undefined });
+  }), { close: () => undefined });
 
   const deadRun = await deadRuntime.run({ prompt: "server gone", workspaceRoot: "/tmp/project" });
   assert.equal(deadRun.isErr() ? deadRun.error.code : "ok", "PROVIDER_UNAVAILABLE");

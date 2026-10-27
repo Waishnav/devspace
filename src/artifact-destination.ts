@@ -9,7 +9,6 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { ArtifactError } from "./artifact-error.js";
-import type { JsonValue } from "./json-value.js";
 
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 

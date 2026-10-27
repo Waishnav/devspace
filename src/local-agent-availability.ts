@@ -60,7 +60,6 @@ function checkLocalAgentProviderAvailability(
     case "opencode":
       return commandAvailability(providerInstanceId, resolveOpenCodeCommand(providerEnv), providerEnv);
     case "pi":
-      // SAFETY: Boundary value already validated or constructed to match this type.
       // Same resolution as the runtime: PI_COMMAND, then `pi` on PATH, then the bundled package.
       try {
         resolvePiCommand(providerEnv);
@@ -75,7 +74,6 @@ function checkLocalAgentProviderAvailability(
       }
 
     case "acp": {
-      // SAFETY: Boundary value already validated or constructed to match this type.
       // Resolve exactly as the driver does, so preflight and startup agree on the executable.
       const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
       const flavor = subagentAcpFlavor({ id: providerInstanceId, config: configured?.config });
@@ -97,7 +95,6 @@ function checkLocalAgentProviderAvailability(
   }
 }
 
-// SAFETY: Boundary value already validated or constructed to match this type.
 /** Resolves a provider's executable exactly as its driver will, without starting it. */
 export function localAgentProviderAvailability(
   providerInstanceId: LocalAgentProviderInstanceId,

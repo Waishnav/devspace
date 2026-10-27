@@ -1,3 +1,4 @@
+import { optionalFields } from "../json-value.js";
 import * as z from "zod/v4";
 import { applyPatch } from "../apply-patch.js";
 import {
@@ -49,7 +50,7 @@ function processResult(snapshot: ProcessSnapshot): string {
     : status;
 }
 
-function processOutputSchema(): z.ZodRawShape {
+function processOutputSchema(): Parameters<typeof z.object>[0] {
   return resultOutputSchema({
     session_id: z.number().optional(),
     running: z.boolean(),
@@ -359,6 +360,6 @@ export function processLogFields(result: ProcessSnapshot): Partial<ToolLogFields
     running: result.running,
     exitCode: result.exitCode,
     success,
-    ...(success ? {} : { error: termination }),
+    ...optionalFields(success ? undefined : { error: termination }),
   };
 }

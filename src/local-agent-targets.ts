@@ -1,9 +1,9 @@
+import { optionalFields } from "./json-value.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type { LocalAgentProviderInstanceId } from "./local-agent-provider.js";
 import type { SubagentProviderConfig } from "./local-agent-config.js";
 import { validateAgentId } from "./local-agent-id.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
-import { optionalFields } from "./json-value.js";
 
 export interface ParsedLocalAgentContinueArgs {
   agentId: string;

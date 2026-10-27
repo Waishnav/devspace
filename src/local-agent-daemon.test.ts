@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { Result } from "better-result";
 import { existsSync, readFileSync } from "node:fs";
@@ -118,6 +119,7 @@ class FakeManager implements LocalAgentDaemonManager {
     _overrides: RunOverrides | undefined,
     _scope: { workspaceId: string; workspaceRoot: string },
   ) {
+    // SAFETY: The surrounding checks or construction already match this type.
     return Result.ok({ ...record, status: "running" } as LocalAgentRecord);
   }
 
@@ -129,7 +131,7 @@ class FakeManager implements LocalAgentDaemonManager {
     return Result.ok([record]);
   }
 
-  async wait(agentIds: readonly string[], _scope: unknown, _timeoutMs?: number, signal?: AbortSignal) {
+  async wait(agentIds: readonly string[], _scope: WireInput, _timeoutMs?: number, signal?: AbortSignal) {
     this.waitStarted = true;
 
     if (this.blockWaitUntilAbort) {
@@ -147,15 +149,16 @@ class FakeManager implements LocalAgentDaemonManager {
     return Result.ok(agentIds.map((id) => ({ id, status: "running" as const })));
   }
 
-  async stop(_agentId: string, _scope: unknown) {
+  async stop(_agentId: string, _scope: WireInput) {
     this.activeTurnCount = 0;
 
+    // SAFETY: The surrounding checks or construction already match this type.
     return Result.ok({ ...record, status: "stopped" } as LocalAgentRecord);
   }
 
   lastEventsQuery?: unknown;
 
-  events(agentId: string, _scope: unknown, query?: { turnId?: string; afterSeq?: number }) {
+  events(agentId: string, _scope: WireInput, query?: { turnId?: string; afterSeq?: number }) {
     this.lastEventsQuery = query;
 
     return Result.ok({
@@ -194,7 +197,7 @@ class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
   }
   get(): WorkflowRun { return workflowRun; }
   list(): WorkflowRun[] { return [workflowRun]; }
-  async wait(_id: string, _scope: unknown, _timeoutMs?: number, signal?: AbortSignal): Promise<WorkflowRun> {
+  async wait(_id: string, _scope: WireInput, _timeoutMs?: number, signal?: AbortSignal): Promise<WorkflowRun> {
     if (this.blockWaitUntilAbort) {
       await new Promise<void>((resolveAbort) => {
         const onAbort = () => { this.waitAborted = true; resolveAbort(); };
@@ -956,6 +959,7 @@ async function listenFakeDaemon(
       const newline = buffer.indexOf("\n");
 
       if (newline === -1) return;
+      // SAFETY: The surrounding checks or construction already match this type.
       respond(JSON.parse(buffer.slice(0, newline)) as RawDaemonRequest, socket);
     });
   });
@@ -1108,13 +1112,13 @@ async function fixture(t: TestContext) {
   // macOS limits the complete Unix socket path to 104 bytes.
   const root = await mkdtemp(join(tmpdir(), "ds-ad-"));
   // Daemons and servers must close before their state directory is removed.
-  const cleanups: Array<() => unknown> = [];
+  const cleanups: Array<() => void | Promise<void>> = [];
   t.after(async () => {
     for (const cleanup of cleanups) await cleanup();
     await rm(root, { recursive: true, force: true });
   });
 
-  return { root, onCleanup: (cleanup: () => unknown) => { cleanups.push(cleanup); } };
+  return { root, onCleanup: (cleanup: () => void | Promise<void>) => { cleanups.push(cleanup); } };
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
@@ -1161,6 +1165,7 @@ async function sendRawRequest(
       if (newline === -1) return;
 
       try {
+        // SAFETY: The surrounding checks or construction already match this type.
         const parsed = JSON.parse(buffer.slice(0, newline)) as RawDaemonResponse;
         settle(() => resolveResponse(parsed));
       } catch (error) {

@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
@@ -13,7 +14,7 @@ test("the incoming artifact registry rejects unclaimed, ambiguous, and invalid a
 
 test("the OpenAI file adapter downloads only safe OpenAI file references", testOpenAIFileAdapter);
 
-test("incoming artifact log shapes redact values", testLogShapeRedaction);
+test("incoming artifact log shapes redact values", testLogValueRedaction);
 
 async function testRegistryFailsClosed(): Promise<void> {
   const registry = new IncomingArtifactAdapterRegistry();
@@ -50,11 +51,11 @@ async function testRegistryFailsClosed(): Promise<void> {
 
   assert.throws(
     () => new IncomingArtifactAdapterRegistry([{ ...ambiguous, id: "UPPER" }]),
-    (error: unknown) => error instanceof ArtifactError && error.code === "invalid_incoming_adapter",
+    (error: WireInput) => error instanceof ArtifactError && error.code === "invalid_incoming_adapter",
   );
   assert.throws(
     () => new IncomingArtifactAdapterRegistry([ambiguous, ambiguous]),
-    (error: unknown) => error instanceof ArtifactError && error.code === "duplicate_incoming_adapter",
+    (error: WireInput) => error instanceof ArtifactError && error.code === "duplicate_incoming_adapter",
   );
 }
 
@@ -208,7 +209,7 @@ async function testOpenAIFileAdapter(): Promise<void> {
   );
 }
 
-function testLogShapeRedaction(): void {
+function testLogValueRedaction(): void {
   const value = {
     download_url: "https://files.oaiusercontent.com/file_123/download?sig=super-secret",
     file_id: "file_secret",
@@ -235,9 +236,9 @@ async function collect(stream: Readable): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function expectArtifactError(promise: Promise<unknown>, code: string): Promise<void> {
+async function expectArtifactError(promise: Promise<WireInput>, code: string): Promise<void> {
   await assert.rejects(
     promise,
-    (error: unknown) => error instanceof ArtifactError && error.code === code,
+    (error: WireInput) => error instanceof ArtifactError && error.code === code,
   );
 }

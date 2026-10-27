@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -110,7 +111,7 @@ test("worktree opens require Git and create an isolated managed workspace", asyn
 
   await assert.rejects(
     () => context.registry.openWorkspace({ path: context.root, mode: "worktree" }),
-    (error: unknown) =>
+    (error: WireInput) =>
       error instanceof GitWorktreeError && error.code === "GIT_REPOSITORY_NOT_FOUND",
   );
 

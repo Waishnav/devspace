@@ -1,18 +1,18 @@
+import { optionalFields } from "./json-value.js";
 import { AgentProviderCancelledError } from "./local-agent-errors.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
-import type { JsonValue } from "./json-value.js";
 
 export function localAgentCancelledError(
   provider: LocalAgentDriverKind,
   operation: string,
-  cause?: JsonValue,
+  cause?: unknown,
 ): AgentProviderCancelledError {
   return new AgentProviderCancelledError({
     code: "PROVIDER_CANCELLED",
     provider,
     operation,
     retryable: false,
-    ...(cause === undefined ? {} : { cause }),
+    ...optionalFields(cause === undefined ? undefined : { cause }),
     message: `${provider} agent turn was stopped.`,
   });
 }

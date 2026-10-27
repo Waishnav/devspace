@@ -1,3 +1,5 @@
+import { isObjectValue, isJsonString } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -25,8 +27,6 @@ import {
 } from "./incoming-artifacts.js";
 import { logEvent } from "./logger.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
-import { isJsonString, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 const ARTIFACT_WRITE_ANNOTATIONS = {
   readOnlyHint: false,
@@ -156,7 +156,7 @@ export async function downloadIncomingArtifact({
   workspaceId: string;
   workspaceRoot: string;
   maxFileBytes: number;
-  file: unknown;
+  file: WireInput;
   path: string;
   publishEntry?: typeof defaultPublishEntry;
 }): Promise<DownloadIncomingArtifactResult> {
@@ -591,12 +591,12 @@ async function cleanupStalePartials(
   }
 }
 
-function incomingFileDownloadHostname(value: JsonValue): string | undefined {
-  if (!isJsonObject(value) || value === null || Array.isArray(value)) {
+function incomingFileDownloadHostname(value: WireInput): string | undefined {
+  if (!isObjectValue(value) || value === null || Array.isArray(value)) {
     return undefined;
   }
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const rawUrl = (value as JsonObject).download_url;
 
   if (!isJsonString(rawUrl)) return undefined;
@@ -610,7 +610,7 @@ function incomingFileDownloadHostname(value: JsonValue): string | undefined {
   }
 }
 
-function incomingStreamChunk(value: JsonValue): Buffer {
+function incomingStreamChunk(value: WireInput): Buffer {
   if (Buffer.isBuffer(value)) return value;
 
   if (isJsonString(value)) return Buffer.from(value);

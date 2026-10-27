@@ -1,3 +1,5 @@
+import { isJsonBoolean } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import * as z from "zod/v4";
 import {
   DEVSPACE_CONFIG_VERSION,
@@ -6,8 +8,6 @@ import {
 } from "./config-schema.js";
 import { storedSubagentsConfigSchema } from "./local-agent-config.js";
 import { LOCAL_AGENT_DEFAULT_PROVIDER_IDS } from "./local-agent-provider.js";
-import { isJsonBoolean } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 
 const legacyConfigSchema = z.object({
   host: z.string().optional(),
@@ -47,7 +47,7 @@ const LEGACY_CONFIG_KEYS = new Set([
   "ui",
 ]);
 
-export function migrateLegacyConfig(value: JsonValue): DevspaceConfig {
+export function migrateLegacyConfig(value: WireInput): DevspaceConfig {
   const legacy = legacyConfigSchema.parse(value);
   const unsupportedKeys = Object.keys(legacy).filter((key) => !LEGACY_CONFIG_KEYS.has(key));
 
@@ -82,15 +82,15 @@ export function migrateLegacyConfig(value: JsonValue): DevspaceConfig {
 }
 
 function definedEntries<T extends JsonObject>(value: T): Partial<T> {
+  // SAFETY: The surrounding checks or construction already match this type.
   return Object.fromEntries(
     Object.entries(value).filter((entry) => entry[1] !== undefined),
-  // SAFETY: Boundary value already validated or constructed to match this type.
   ) as Partial<T>;
 }
 
 function migrateLegacySubagents(
   value: z.infer<typeof storedSubagentsConfigSchema> | undefined,
-): unknown {
+): WireInput {
   if (value === undefined) return undefined;
 
   if (!isJsonBoolean(value)) return value;

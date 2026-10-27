@@ -1,3 +1,6 @@
+import { isJsonString, isJsonNumber, isObjectValue, optionalFields } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { delimiter, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,8 +15,6 @@ import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import { DEVSPACE_VERSION } from "./version.js";
-import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -355,18 +356,18 @@ const MAX_STDERR_BYTES = 32 * 1024;
 
 interface CodexEvent {
   method: string;
-  params?: unknown;
+  params?: WireInput;
 }
 
 interface CodexTurnResult {
   event: CodexEvent;
-  items: unknown[];
+  items: WireInput[];
 }
 
 interface CodexTurnAccumulator {
   threadId: string;
   turnId?: string;
-  items: unknown[];
+  items: WireInput[];
   onEvent?: (event: LocalAgentActivityEvent) => void;
   completed?: CodexEvent;
   resolve: (result: CodexTurnResult) => void;
@@ -375,7 +376,7 @@ interface CodexTurnAccumulator {
 
 class CodexAppServerRpc {
   private readonly pending = new Map<string, {
-    resolve: (value: JsonValue) => void;
+    resolve: (value: WireInput) => void;
     reject: (error: Error) => void;
   }>();
   private readonly turns = new Map<string, CodexTurnAccumulator>();
@@ -395,23 +396,23 @@ class CodexAppServerRpc {
     });
   }
 
-  request(method: string, params?: JsonValue): Promise<JsonValue> {
+  request(method: string, params?: WireInput): Promise<WireInput> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     const id = String(this.nextId++);
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.write({ id, method, ...(params === undefined ? {} : { params }) });
+      this.write({ id, method, ...optionalFields(params === undefined ? undefined : { params }) });
     });
   }
 
-  notify(method: string, params?: JsonValue): void {
-    this.write({ method, ...(params === undefined ? {} : { params }) });
+  notify(method: string, params?: WireInput): void {
+    this.write({ method, ...optionalFields(params === undefined ? undefined : { params }) });
   }
 
   async runTurn(
     threadId: string,
-    params: JsonValue,
+    params: WireInput,
     signal?: AbortSignal,
     onEvent?: (event: LocalAgentActivityEvent) => void,
   ): Promise<CodexTurnResult> {
@@ -446,7 +447,6 @@ class CodexAppServerRpc {
       turn.turnId = readString(asRecord(response)?.turn, "id");
 
       if (signal?.aborted && turn.turnId) {
-        // SAFETY: Boundary value already validated or constructed to match this type.
         // A failed interrupt must not report the turn as stopped: keep waiting for the
         // provider's terminal event; the manager bounds how long stop waits for it.
         await this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
@@ -487,7 +487,7 @@ class CodexAppServerRpc {
     let message: JsonObject;
 
     try {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       message = JSON.parse(trimmed) as JsonObject;
     } catch {
       this.fail(new Error("codex app-server emitted malformed JSON."));
@@ -554,7 +554,7 @@ class CodexAppServerRpc {
 
 export function reportCodexActivity(
   method: string,
-  item: JsonValue,
+  item: WireInput,
   onEvent: (event: LocalAgentActivityEvent) => void,
 ): void {
   if (method !== "item/started" && method !== "item/completed") return;
@@ -637,7 +637,7 @@ export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
   }
 }
 
-function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string | boolean> {
+function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined) {
   switch (writeMode) {
     case "allowed": return { type: "workspaceWrite", networkAccess: true };
     case "full_access": return { type: "dangerFullAccess" };
@@ -646,11 +646,7 @@ function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<st
   }
 }
 
-function parseCompletedTurn(params: JsonValue, items: JsonValue[]): {
-  finalResponse: string;
-  items: unknown[];
-  failure?: string;
-} {
+function parseCompletedTurn(params: WireInput, items: WireInput[]) {
   const turn = asRecord(asRecord(params)?.turn);
   const turnItems = turn?.items;
   const completedItems = (Array.isArray(turnItems) && turnItems.length > 0 ? turnItems : items).slice(-MAX_TURN_ITEMS);
@@ -719,24 +715,24 @@ function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolea
   return eventThreadId === turn.threadId || Boolean(turn.turnId && eventTurnId === turn.turnId);
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }
 
-function readString(value: JsonValue, key: string): string | undefined {
+function readString(value: WireInput, key: string): string | undefined {
   const result = asRecord(value)?.[key];
 
   return isJsonString(result) ? result : undefined;
 }
 
-function directString(value: JsonValue): string | undefined {
+function directString(value: WireInput): string | undefined {
   return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function protocolErrorText(value: JsonValue): string {
+function protocolErrorText(value: WireInput): string {
   const record = asRecord(value);
 
   if (!record) return String(value);
@@ -746,7 +742,7 @@ function protocolErrorText(value: JsonValue): string {
   return message ? `codex app-server${code === undefined ? "" : ` ${String(code)}`}: ${message}` : String(value);
 }
 
-function errorMessage(error: JsonValue): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }
 

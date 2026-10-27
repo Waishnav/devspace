@@ -1,7 +1,7 @@
+import { optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
-import { optionalFields } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 import {
   defaultDriverForProviderId,
   isLegacyAcpDriverKind,
@@ -134,7 +134,6 @@ export function resolveSubagentsConfig(config: ParsedSubagentsConfig): Subagents
         ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
         : defaultDriverForProviderId(provider.id)!;
 
-      // SAFETY: Boundary value already validated or constructed to match this type.
       // `driver: "cursor"` (or a built-in id) predates generic ACP; keep it as the ACP flavor.
       const flavor = provider.config?.flavor
         ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
@@ -178,7 +177,7 @@ export function implicitSubagentsConfig(): SubagentsConfig {
   };
 }
 
-export function parseSubagentsConfig(value: JsonValue): SubagentsConfig {
+export function parseSubagentsConfig(value: WireInput): SubagentsConfig {
   return resolveSubagentsConfig(subagentsConfigSchema.parse(value));
 }
 
@@ -214,7 +213,7 @@ export function localAgentProviderEnvironment(
 export function localAgentProviderEnvironmentOverrides(
   config: SubagentsConfig,
   providerInstanceId: LocalAgentProviderInstanceId,
-): Record<string, string> {
+) {
   return { ...subagentProviderConfig(config, providerInstanceId)?.env };
 }
 

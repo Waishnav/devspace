@@ -1,3 +1,5 @@
+import { isJsonString, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { open } from "node:fs/promises";
 import type { Result } from "better-result";
 import { loadAgentConfig } from "./config.js";
@@ -5,8 +7,6 @@ import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
 import type { WorkflowCall, WorkflowRun, WorkflowRunInput } from "./workflow-types.js";
 import { isManagedWorkflowWorkspace } from "./workflow-workspaces.js";
-import { optionalFields, isJsonString } from "./json-value.js";
-import type { JsonValue } from "./json-value.js";
 
 export async function runWorkflowCommand(args: string[], json: boolean): Promise<void> {
   try {
@@ -166,7 +166,7 @@ async function parseWorkflowRunArgs(args: string[]): Promise<Omit<WorkflowRunInp
     if (Buffer.byteLength(argsJson) > 128 * 1024) throw new Error("Workflow arguments exceed 131072 bytes.");
 
     try {
-      // SAFETY: Boundary value already validated or constructed to match this type.
+      // SAFETY: The surrounding checks or construction already match this type.
       input.args = JSON.parse(argsJson) as unknown;
     } catch (cause) {
       throw new Error(`Workflow arguments are not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -195,7 +195,7 @@ async function readBoundedFile(path: string, maxBytes: number, label: string): P
   }
 }
 
-function parseWorkflowWaitArgs(args: string[]): { id: string; timeoutMs: number } {
+function parseWorkflowWaitArgs(args: string[]) {
   let id: string | undefined;
   let timeoutMs = 60_000;
 
@@ -225,7 +225,7 @@ function parseWorkflowWaitArgs(args: string[]): { id: string; timeoutMs: number 
   return { id, timeoutMs };
 }
 
-function parseWorkflowEventsArgs(args: string[]): { id: string; after: number } {
+function parseWorkflowEventsArgs(args: string[]) {
   let id: string | undefined;
   let after = 0;
 
@@ -300,7 +300,8 @@ function formatCall(call: WorkflowCall, detailed = false): string {
   return `<call ${attributes}>${xml(JSON.stringify({ prompt: call.prompt, options: call.options, result: call.result, error: call.error }))}</call>`;
 }
 
-function workflowErrorPayload(error: JsonValue): { code: string; message: string; retryable: boolean } {
+function workflowErrorPayload(error: WireInput) {
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
 
   return {
@@ -311,12 +312,22 @@ function workflowErrorPayload(error: JsonValue): { code: string; message: string
 }
 
 function xml(value: string): string {
-  // oxlint-disable-next-line eslint/no-control-regex -- XML text must escape C0/C1 controls.
-  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
-    .replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  let escaped = "";
+
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      escaped += `\\u${code.toString(16).padStart(4, "0")}`;
+    } else {
+      escaped += character;
+    }
+  }
+
+  return escaped.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function printJson(value: JsonValue): void {
+function printJson(value: WireInput): void {
   console.log(JSON.stringify(value));
 }
 

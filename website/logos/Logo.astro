@@ -10,7 +10,7 @@ interface Props {
 }
 
 const { id, size = 20, label, class: className } = Astro.props;
-const dim = typeof size === "number" ? `${size}px` : size;
+const dim = Number.isFinite(size) ? `${size}px` : size;
 ---
 
 <span

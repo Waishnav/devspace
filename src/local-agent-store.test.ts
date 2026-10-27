@@ -41,6 +41,7 @@ try {
     "bbbbbbbb-0000-4000-8000-000000000000",
   ];
 
+  // SAFETY: The surrounding checks or construction already match this type.
   const uuidMock = mock.method(crypto, "randomUUID", () => uuids.shift() as `${string}-${string}-${string}-${string}-${string}`);
   syncBuiltinESMExports();
 
@@ -275,7 +276,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(legacyRecord?.driver, "acp");
   const inspect = new Database(databasePath(legacyStateDir), { readonly: true });
 
-  // SAFETY: Boundary value already validated or constructed to match this type.
+  // SAFETY: The surrounding checks or construction already match this type.
   const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)
     .find((column) => column.name === "driver");
 

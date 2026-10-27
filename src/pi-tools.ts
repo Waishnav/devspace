@@ -1,4 +1,4 @@
-import type { JsonValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import {
   createBashTool,
   createEditTool,
@@ -24,7 +24,7 @@ interface ToolContext {
   cwd: string;
 }
 
-function toMcpContent(result: AgentToolResult<unknown>): McpContent[] {
+function toMcpContent(result: AgentToolResult<WireInput>): McpContent[] {
   return result.content.map((content) => {
     if (content.type === "text") {
       return { type: "text", text: content.text };
@@ -38,13 +38,13 @@ function toMcpContent(result: AgentToolResult<unknown>): McpContent[] {
   });
 }
 
-function formatToolError(error: JsonValue): McpContent[] {
+function formatToolError(error: WireInput): McpContent[] {
   const message = error instanceof Error ? error.message : String(error);
 
   return [{ type: "text", text: message }];
 }
 
-async function runTool<TInput, TDetails = unknown>(
+async function runTool<TInput, TDetails = never>(
   execute: (input: TInput) => Promise<AgentToolResult<TDetails>>,
   input: TInput,
   _context: ToolContext,

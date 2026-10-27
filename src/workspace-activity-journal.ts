@@ -1,6 +1,7 @@
+import { isJsonString, isObjectValue, isJsonNumber, optionalFields, jsonKind } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
-import { optionalFields, isJsonString, isJsonNumber, isJsonObject } from "./json-value.js";
-import type { JsonObject, JsonValue } from "./json-value.js";
 import type {
   WorkspaceActivityStore,
   WorkspaceToolCallOrigin,
@@ -9,8 +10,13 @@ import type {
 
 type ToolHandlerExtra = {
   _meta?: JsonObject;
-  requestId?: unknown;
+  requestId?: WireInput;
 };
+
+interface SerializedError {
+  name: string;
+  message: string;
+}
 
 const MAX_STRING_LENGTH = 8 * 1024;
 const MAX_RECORD_LENGTH = 64 * 1024;
@@ -51,12 +57,12 @@ const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
 export class WorkspaceActivityJournal {
   constructor(
     private readonly store: WorkspaceActivityStore,
-    private readonly onError: (error: JsonValue) => void = () => {},
+    private readonly onError: (error: WireInput) => void = () => {},
   ) {}
 
   async capture<T>(input: {
     toolName: string;
-    arguments: unknown;
+    arguments: WireInput;
     extra: ToolHandlerExtra;
     operation: () => Promise<T>;
   }): Promise<T> {
@@ -111,13 +117,13 @@ export class WorkspaceActivityJournal {
   }
 
   private record(
-    input: { toolName: string; arguments: unknown; extra: ToolHandlerExtra },
+    input: { toolName: string; arguments: WireInput; extra: ToolHandlerExtra },
     outcome: {
       workspaceId?: string;
       turnId?: number;
       startedAt: Date;
       startedAtMs: number;
-      result?: unknown;
+      result?: WireInput;
       error?: { name: string; message: string };
     },
   ): void {
@@ -143,7 +149,7 @@ export class WorkspaceActivityJournal {
       requestId: requestIdFromExtra(input.extra.requestId),
       toolName: input.toolName,
       argumentsJson: journalJson(input.arguments ?? {}),
-      ...(resultSummary === undefined ? {} : { resultJson: journalJson(resultSummary) }),
+      ...optionalFields(resultSummary === undefined ? undefined : { resultJson: journalJson(resultSummary) }),
       ...optionalFields(outcome.error ? { errorJson: journalJson(outcome.error) } : undefined),
       isError: outcome.error !== undefined || asRecord(outcome.result)?.isError === true,
       startedAt: outcome.startedAt.toISOString(),
@@ -168,7 +174,7 @@ export class WorkspaceActivityJournal {
 }
 
 /** Serializes a value for the journal with secrets redacted and size capped. */
-export function journalJson(value: JsonValue): string {
+export function journalJson(value: WireInput): string {
   const json = JSON.stringify(redact(value, 0)) ?? "null";
 
   if (json.length <= MAX_RECORD_LENGTH) return json;
@@ -183,10 +189,9 @@ export function journalJson(value: JsonValue): string {
 /**
  * Keeps what a reader needs to understand a tool result: its text, structured
  * content, and error flag. Card metadata (`_meta`) is dropped because it
- // SAFETY: Boundary value already validated or constructed to match this type.
  * duplicates large payloads such as full review patches.
  */
-function summarizeResult(result: JsonValue): unknown {
+function summarizeResult(result: WireInput): WireInput {
   const record = asRecord(result);
 
   if (!record || !Array.isArray(record.content)) return result;
@@ -194,8 +199,7 @@ function summarizeResult(result: JsonValue): unknown {
   const text = record.content
     .map((block) => asRecord(block))
     .filter((block) => block?.type === "text" && isJsonString(block.text))
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    .map((block) => block!.text as string)
+    .map((block) => unsafeNarrow<string>(block!.text))
     .join("\n");
 
   return {
@@ -205,17 +209,17 @@ function summarizeResult(result: JsonValue): unknown {
   };
 }
 
-function redact(value: JsonValue, depth: number): unknown {
+function redact(value: WireInput, depth: number): WireInput {
   if (isJsonString(value)) return redactString(value);
 
-  if (value === null || !isJsonObject(value)) return value;
+  if (value === null || !isObjectValue(value)) return value;
 
   if (depth > 8) return "[nested]";
 
   if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
 
   return Object.fromEntries(
-    // SAFETY: Boundary value already validated or constructed to match this type.
+    // SAFETY: The surrounding checks or construction already match this type.
     Object.entries(value as JsonObject).map(([key, item]) => [
       key,
       SECRET_KEY_PATTERN.test(key) && isJsonString(item) && item !== ""
@@ -239,10 +243,10 @@ function redactString(value: string): string {
 
 /** The workspace card replays historical reviews through show_changes with this marker. */
 function toolCallOrigin(meta: JsonObject | undefined): WorkspaceToolCallOrigin {
-  return typeof meta?.["devspace/reviewRef"] === "string" ? "card" : "model";
+  return isJsonString(meta?.["devspace/reviewRef"]) ? "card" : "model";
 }
 
-function workspaceIdFromValue(value: JsonValue): string | undefined {
+function workspaceIdFromValue(value: WireInput): string | undefined {
   const record = asRecord(value);
   const direct = record?.workspace_id;
 
@@ -254,28 +258,28 @@ function workspaceIdFromValue(value: JsonValue): string | undefined {
   return isJsonString(nested) && nested.length > 0 ? nested : undefined;
 }
 
-function reviewRefFromValue(value: JsonValue): string | undefined {
+function reviewRefFromValue(value: WireInput): string | undefined {
   const structured = asRecord(asRecord(value)?.structuredContent);
   const reviewRef = structured?.review_ref;
 
   return isJsonString(reviewRef) && reviewRef.length > 0 ? reviewRef : undefined;
 }
 
-function requestIdFromExtra(value: JsonValue): string | undefined {
+function requestIdFromExtra(value: WireInput): string | undefined {
   return isJsonString(value) || isJsonNumber(value) ? String(value) : undefined;
 }
 
-function serializeError(error: JsonValue): { name: string; message: string } {
+function serializeError(error: WireInput): SerializedError {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
   }
 
-  return { name: typeof error, message: String(error) };
+  return { name: jsonKind(error), message: String(error) };
 }
 
-function asRecord(value: JsonValue): JsonObject | undefined {
-  return value !== null && isJsonObject(value) && !Array.isArray(value)
-    // SAFETY: Boundary value already validated or constructed to match this type.
-    ? value as JsonObject
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }
