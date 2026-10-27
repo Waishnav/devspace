@@ -203,7 +203,7 @@ async function main(): Promise<void> {
     : SCENARIOS;
 
   const results: Array<{ provider: string; scenario: string; error?: string; ms: number }> = [];
-  for (const provider of providers) {
+  const runProvider = async (provider: ProviderDefinition): Promise<void> => {
     for (const scenario of scenarios) {
       const startedAt = Date.now();
       const error = await runScenario(provider, scenario, mode).then(() => undefined, (cause: unknown) => (
@@ -213,7 +213,11 @@ async function main(): Promise<void> {
       console.log(`${error ? "FAIL" : "PASS"} ${mode} ${provider.id} ${scenario.name} (${Date.now() - startedAt}ms)`);
       if (error) console.log(indent(error));
     }
-  }
+  };
+  // Every scenario owns its config, state directory, and fixture, so replayed providers can run
+  // side by side. Live and record modes stay sequential to respect real provider rate limits.
+  if (mode === "replay") await Promise.all(providers.map(runProvider));
+  else for (const provider of providers) await runProvider(provider);
   const failed = results.filter((result) => result.error);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
   if (failed.length > 0) process.exitCode = 1;
