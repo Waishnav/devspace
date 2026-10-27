@@ -9,13 +9,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { type TestContext } from "node:test";
 import {
   loadDevspaceFiles,
   setDevspaceConfigValue,
   setDevspaceConfigValues,
 } from "./user-config.js";
 
-withConfigDir((configDir, env) => {
+test("a legacy config.json migrates once to config.jsonc and keeps a backup", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.json"), JSON.stringify({
     host: "0.0.0.0",
     port: 8787,
@@ -47,7 +49,8 @@ withConfigDir((configDir, env) => {
   assert.equal(nextLoad.migratedLegacyConfig, false);
 });
 
-await withConfigDirAsync(async (configDir) => {
+test("concurrent loads migrate a legacy config exactly once", async (t) => {
+  const { configDir } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.json"), JSON.stringify({
     port: 8787,
     allowedRoots: ["/work"],
@@ -65,7 +68,8 @@ await withConfigDirAsync(async (configDir) => {
   assert.equal(loadDevspaceFiles({ DEVSPACE_CONFIG_DIR: configDir }).config.server.port, 8787);
 });
 
-withConfigDir((configDir, env) => {
+test("config updates preserve JSONC comments", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.jsonc"), `{
     // This comment must survive config updates.
     "configVersion": 1,
@@ -93,21 +97,24 @@ withConfigDir((configDir, env) => {
   assert.equal(loadDevspaceFiles(env).config.tools.mode, "claude");
 });
 
-withConfigDir((configDir, env) => {
+test("an existing config.jsonc wins over an unreadable legacy config.json", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.jsonc"), JSON.stringify({ configVersion: 1 }));
   writeFileSync(join(configDir, "config.json"), "{");
   assert.equal(loadDevspaceFiles(env).config.server.port, 7676);
   assert.equal(existsSync(join(configDir, "config.json")), true);
 });
 
-withConfigDir((configDir, env) => {
+test("an unreadable config.jsonc fails without touching the legacy config", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.jsonc"), "{");
   writeFileSync(join(configDir, "config.json"), JSON.stringify({ port: 8787 }));
   assert.throws(() => loadDevspaceFiles(env), /Unable to read .*config\.jsonc/);
   assert.equal(existsSync(join(configDir, "config.json")), true);
 });
 
-withConfigDir((configDir, env) => {
+test("unsupported legacy keys fail migration without writing files", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   writeFileSync(join(configDir, "config.json"), JSON.stringify({ unknownSetting: true }));
   assert.throws(
     () => loadDevspaceFiles(env),
@@ -118,7 +125,8 @@ withConfigDir((configDir, env) => {
   assert.equal(existsSync(join(configDir, "config.json.v1.0.bak")), false);
 });
 
-withConfigDir((configDir, env) => {
+test("migration refuses to overwrite an existing backup", (t) => {
+  const { configDir, env } = tempConfigDir(t);
   const legacyPath = join(configDir, "config.json");
   const backupPath = join(configDir, "config.json.v1.0.bak");
   writeFileSync(legacyPath, JSON.stringify({ port: 8787 }));
@@ -132,29 +140,10 @@ withConfigDir((configDir, env) => {
   );
 });
 
-console.log("user config tests passed");
-
-function withConfigDir(
-  test: (configDir: string, env: NodeJS.ProcessEnv) => void,
-): void {
+function tempConfigDir(t: TestContext): { configDir: string; env: NodeJS.ProcessEnv } {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
-  const env = { DEVSPACE_CONFIG_DIR: configDir };
-  try {
-    test(configDir, env);
-  } finally {
-    rmSync(configDir, { recursive: true, force: true });
-  }
-}
-
-async function withConfigDirAsync(
-  test: (configDir: string) => Promise<void>,
-): Promise<void> {
-  const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
-  try {
-    await test(configDir);
-  } finally {
-    rmSync(configDir, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(configDir, { recursive: true, force: true }));
+  return { configDir, env: { DEVSPACE_CONFIG_DIR: configDir } };
 }
 
 async function migrateInChildProcess(

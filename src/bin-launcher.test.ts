@@ -3,8 +3,9 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxRoot = join(projectRoot, "node_modules", "tsx");
@@ -21,11 +22,18 @@ for (const entrypoint of [
     dist: "dist/local-agent-daemon-main.js",
   },
 ]) {
-  testLauncher(entrypoint);
+  test(`${entrypoint.bin} prefers source in a linked checkout and dist in a published package`, () => {
+    testLauncher(entrypoint);
+  });
 }
 
-testLinkedCheckoutReadsCurrentConfig();
-testMissingSourceRuntimeFailsClosed();
+test("the linked checkout launcher reads the current config", () => {
+  testLinkedCheckoutReadsCurrentConfig();
+});
+
+test("a source checkout without tsx fails closed instead of running stale dist", () => {
+  testMissingSourceRuntimeFailsClosed();
+});
 
 function testLinkedCheckoutReadsCurrentConfig(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-bin-config-test-"));

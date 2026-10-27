@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentProviderExecutionError,
@@ -22,6 +23,8 @@ const TEST_CAPABILITIES = {
   permissions: { enforcement: "native" },
   mcp: { supported: false },
 } as const;
+// Instance runtimes that idle eviction never closes, so tests control session release alone.
+const NEVER_IDLE = { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY } as const;
 
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_test",
@@ -31,18 +34,20 @@ const context: LocalAgentRuntimeContext = {
 };
 const input: LocalAgentRunInput = { prompt: "inspect", workspaceRoot: "/tmp/project" };
 
-for (const [code, retryable] of [["ENOENT", false], ["ECONNREFUSED", true], ["ENOTFOUND", true]] as const) {
-  const classified = await captureAgentProviderResult({
-    provider: "codex",
-    operation: "connect",
-    run: () => { throw Object.assign(new Error(code), { code }); },
-  });
-  assert.equal(classified.isErr(), true);
-  if (classified.isErr()) {
-    assert.equal(classified.error.code, "PROVIDER_UNAVAILABLE");
-    assert.equal(classified.error.retryable, retryable);
+test("connection failures classify as provider unavailable with the right retryability", async () => {
+  for (const [code, retryable] of [["ENOENT", false], ["ECONNREFUSED", true], ["ENOTFOUND", true]] as const) {
+    const classified = await captureAgentProviderResult({
+      provider: "codex",
+      operation: "connect",
+      run: () => { throw Object.assign(new Error(code), { code }); },
+    });
+    assert.equal(classified.isErr(), true);
+    if (classified.isErr()) {
+      assert.equal(classified.error.code, "PROVIDER_UNAVAILABLE");
+      assert.equal(classified.error.retryable, retryable);
+    }
   }
-}
+});
 
 class FakeRuntime implements LocalAgentRuntime {
   readonly provider = "codex" as const;
@@ -98,108 +103,110 @@ class FakeRuntime implements LocalAgentRuntime {
   }
 }
 
-const runtime = new FakeRuntime();
-let createCount = 0;
-const driver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => {
-    createCount += 1;
-    await Promise.resolve();
-    return Result.ok(runtime);
-  },
-};
-
-const pool = new LocalAgentRuntimePool();
-const [first, second] = await Promise.all([
-  pool.run(driver, context, input),
-  pool.run(driver, { ...context, agentId: "agt_other" }, { ...input, prompt: "second" }),
-]);
-assert.equal(createCount, 1, "runtime creation is single-flight per runtime key");
-assert.equal(unwrap(first).finalResponse, "done:inspect");
-assert.equal(unwrap(second).finalResponse, "done:second");
-assert.equal(runtime.runCount, 2);
-
-const running = pool.run(driver, context, { ...input, prompt: "wait", providerSessionId: "thread_1" });
-await new Promise<void>((resolve) => setImmediate(resolve));
-await pool.evictIdle(Date.now() + 10_000_000);
-assert.equal(runtime.closeCount, 0, "active runtimes are not evicted");
-runtime.releaseWait();
-await running;
-
-await pool.close();
-await pool.close();
-assert.equal(runtime.closeCount, 1, "runtime close is idempotent");
-assert.deepEqual(runtime.releasedSessions, [], "shutdown closes the runtime without racing session release");
-assert.equal(pool.size, 0);
-
-let clock = 0;
-const sessionRuntime = new FakeRuntime();
-const sessionPool = new LocalAgentRuntimePool({
-  now: () => clock,
-  sessionIdleTimeoutMs: 10,
-});
-const sessionDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(sessionRuntime),
-};
-await sessionPool.run(sessionDriver, context, input);
-clock = 11;
-sessionRuntime.releaseBlocked = true;
-const releasing = sessionPool.evictIdle();
-await waitFor(() => sessionRuntime.releaseStarted);
-const reused = sessionPool.run(sessionDriver, context, { ...input, providerSessionId: "thread_1", prompt: "reuse" });
-await new Promise<void>((resolve) => setImmediate(resolve));
-assert.equal(sessionRuntime.runCount, 1, "reuse waits for the in-flight session release");
-sessionRuntime.finishSessionRelease();
-await releasing;
-await reused;
-sessionRuntime.releaseBlocked = false;
-assert.equal(sessionRuntime.releaseInFlight, false);
-assert.deepEqual(sessionRuntime.releasedSessions, ["thread_1"]);
-assert.equal(sessionPool.size, 1, "releasing an idle session does not close the runtime");
-await sessionPool.close();
-
-const shutdownReleaseRuntime = new FakeRuntime();
-const shutdownReleasePool = new LocalAgentRuntimePool({
-  now: () => clock,
-  sessionIdleTimeoutMs: 10,
-});
-const shutdownReleaseDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(shutdownReleaseRuntime),
-};
-await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
-shutdownReleaseRuntime.releaseBlocked = true;
-const shutdownRelease = shutdownReleasePool.evictIdle(30);
-await waitFor(() => shutdownReleaseRuntime.releaseStarted);
-const shutdownReuse = shutdownReleasePool.run(
-  shutdownReleaseDriver,
-  context,
-  { ...input, providerSessionId: "thread_1", prompt: "reuse during shutdown" },
-);
-await new Promise<void>((resolve) => setImmediate(resolve));
-const shutdown = shutdownReleasePool.close();
-await new Promise<void>((resolve) => setImmediate(resolve));
-assert.equal(shutdownReleaseRuntime.closeCount, 0, "shutdown waits for an in-flight session release");
-shutdownReleaseRuntime.finishSessionRelease();
-await shutdownRelease;
-const shutdownReuseResult = await shutdownReuse;
-assert.equal(shutdownReuseResult.isErr(), true);
-if (shutdownReuseResult.isErr()) {
-  assert.equal(shutdownReuseResult.error.code, "PROVIDER_UNAVAILABLE");
-  assert.equal(shutdownReuseResult.error.retryable, true);
+function countingInstancePool() {
+  const runtime = new FakeRuntime();
+  const counts = { create: 0 };
+  const driver: LocalAgentDriver = {
+    providerInstanceId: "codex",
+    provider: "codex",
+    runtimePolicy: NEVER_IDLE,
+    capabilities: TEST_CAPABILITIES,
+    createRuntime: async () => {
+      counts.create += 1;
+      await Promise.resolve();
+      return Result.ok(runtime);
+    },
+  };
+  return { runtime, counts, driver, pool: new LocalAgentRuntimePool() };
 }
-await shutdown;
-assert.equal(shutdownReleaseRuntime.closeCount, 1);
+
+test("runtime creation is single-flight per runtime key", async (t) => {
+  const { runtime, counts, driver, pool } = countingInstancePool();
+  t.after(() => pool.close());
+  const [first, second] = await Promise.all([
+    pool.run(driver, context, input),
+    pool.run(driver, { ...context, agentId: "agt_other" }, { ...input, prompt: "second" }),
+  ]);
+  assert.equal(counts.create, 1, "runtime creation is single-flight per runtime key");
+  assert.equal(unwrap(first).finalResponse, "done:inspect");
+  assert.equal(unwrap(second).finalResponse, "done:second");
+  assert.equal(runtime.runCount, 2);
+});
+
+test("an active runtime is not evicted and shutdown closes it once without racing session release", async () => {
+  const { runtime, driver, pool } = countingInstancePool();
+  const running = pool.run(driver, context, { ...input, prompt: "wait", providerSessionId: "thread_1" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await pool.evictIdle(Date.now() + 10_000_000);
+  assert.equal(runtime.closeCount, 0, "active runtimes are not evicted");
+  runtime.releaseWait();
+  await running;
+
+  await pool.close();
+  await pool.close();
+  assert.equal(runtime.closeCount, 1, "runtime close is idempotent");
+  assert.deepEqual(runtime.releasedSessions, [], "shutdown closes the runtime without racing session release");
+  assert.equal(pool.size, 0);
+});
+
+test("reusing a session waits for its in-flight idle release", async () => {
+  let clock = 0;
+  const sessionRuntime = new FakeRuntime();
+  const sessionPool = new LocalAgentRuntimePool({
+    now: () => clock,
+    sessionIdleTimeoutMs: 10,
+  });
+  const sessionDriver = fakeDriver(async () => Result.ok(sessionRuntime), NEVER_IDLE);
+  await sessionPool.run(sessionDriver, context, input);
+  clock = 11;
+  sessionRuntime.releaseBlocked = true;
+  const releasing = sessionPool.evictIdle();
+  await waitFor(() => sessionRuntime.releaseStarted);
+  const reused = sessionPool.run(sessionDriver, context, { ...input, providerSessionId: "thread_1", prompt: "reuse" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sessionRuntime.runCount, 1, "reuse waits for the in-flight session release");
+  sessionRuntime.finishSessionRelease();
+  await releasing;
+  await reused;
+  sessionRuntime.releaseBlocked = false;
+  assert.equal(sessionRuntime.releaseInFlight, false);
+  assert.deepEqual(sessionRuntime.releasedSessions, ["thread_1"]);
+  assert.equal(sessionPool.size, 1, "releasing an idle session does not close the runtime");
+  await sessionPool.close();
+});
+
+test("shutdown waits for an in-flight session release and rejects reuse during shutdown", async () => {
+  const clock = 11;
+  const shutdownReleaseRuntime = new FakeRuntime();
+  const shutdownReleasePool = new LocalAgentRuntimePool({
+    now: () => clock,
+    sessionIdleTimeoutMs: 10,
+  });
+  const shutdownReleaseDriver = fakeDriver(async () => Result.ok(shutdownReleaseRuntime), NEVER_IDLE);
+  await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
+  shutdownReleaseRuntime.releaseBlocked = true;
+  const shutdownRelease = shutdownReleasePool.evictIdle(30);
+  await waitFor(() => shutdownReleaseRuntime.releaseStarted);
+  const shutdownReuse = shutdownReleasePool.run(
+    shutdownReleaseDriver,
+    context,
+    { ...input, providerSessionId: "thread_1", prompt: "reuse during shutdown" },
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const shutdown = shutdownReleasePool.close();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(shutdownReleaseRuntime.closeCount, 0, "shutdown waits for an in-flight session release");
+  shutdownReleaseRuntime.finishSessionRelease();
+  await shutdownRelease;
+  const shutdownReuseResult = await shutdownReuse;
+  assert.equal(shutdownReuseResult.isErr(), true);
+  if (shutdownReuseResult.isErr()) {
+    assert.equal(shutdownReuseResult.error.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(shutdownReuseResult.error.retryable, true);
+  }
+  await shutdown;
+  assert.equal(shutdownReleaseRuntime.closeCount, 1);
+});
 
 class CleanupFailureRuntime extends FakeRuntime {
   override async close(): Promise<void> {
@@ -218,41 +225,31 @@ class CleanupFailureRuntime extends FakeRuntime {
   }
 }
 
-const cleanupPool = new LocalAgentRuntimePool();
-const cleanupRuntime = new CleanupFailureRuntime();
-const cleanupDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance" },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(cleanupRuntime),
-};
-const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
-assert.equal(cleanupFailure.isErr(), true);
-if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider failed");
+test("a runtime cleanup failure does not replace the provider error", async () => {
+  const cleanupPool = new LocalAgentRuntimePool();
+  const cleanupRuntime = new CleanupFailureRuntime();
+  const cleanupDriver = fakeDriver(async () => Result.ok(cleanupRuntime));
+  const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
+  assert.equal(cleanupFailure.isErr(), true);
+  if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider failed");
+});
 
-{
+test("cleanup failure of a dead runtime does not hide successful recovery", async () => {
   const deadRuntime = new FakeRuntime();
   deadRuntime.alive = false;
   deadRuntime.close = async () => { throw new Error("dead runtime cleanup failed"); };
   const replacementRuntime = new FakeRuntime();
   let attempts = 0;
   const recoveryPool = new LocalAgentRuntimePool();
-  const recoveryDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance" },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime),
-  };
+  const recoveryDriver = fakeDriver(async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime));
 
   const recovered = await recoveryPool.run(recoveryDriver, context, input);
   assert.equal(recovered.isOk(), true, "cleanup failure does not hide successful runtime recovery");
   assert.equal(attempts, 2);
   await recoveryPool.close();
-}
+});
 
-{
+test("shutdown does not discard an already completed provider turn", async () => {
   let closeDuringRun: Promise<void> | undefined;
   let completedTurnPool!: LocalAgentRuntimePool;
   class ClosingAfterTurnRuntime extends FakeRuntime {
@@ -264,52 +261,42 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
   }
   const completedTurnRuntime = new ClosingAfterTurnRuntime();
   completedTurnPool = new LocalAgentRuntimePool();
-  const completedTurnDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance" },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(completedTurnRuntime),
-  };
+  const completedTurnDriver = fakeDriver(async () => Result.ok(completedTurnRuntime));
 
   const completedTurn = await completedTurnPool.run(completedTurnDriver, context, input);
   assert.equal(completedTurn.isOk(), true, "shutdown does not discard an already completed provider turn");
   if (completedTurn.isOk()) assert.equal(completedTurn.value.finalResponse, "done:inspect");
   await closeDuringRun;
-}
+});
 
-let resolveCreation!: (runtime: BetterResult<LocalAgentRuntime, AgentProviderError>) => void;
-const creating = new Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>((resolve) => { resolveCreation = resolve; });
-const raceRuntime = new FakeRuntime();
-const racePool = new LocalAgentRuntimePool();
-const raceDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance" },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: () => creating,
-};
-const pendingRun = racePool.run(raceDriver, context, input);
-await new Promise<void>((resolve) => setImmediate(resolve));
-const pendingClose = racePool.close();
-resolveCreation(Result.ok(raceRuntime));
-await pendingClose;
-const closedDuringCreation = await pendingRun;
-assert.equal(closedDuringCreation.isErr(), true);
-if (closedDuringCreation.isErr()) {
-  assert.equal(closedDuringCreation.error.code, "PROVIDER_UNAVAILABLE");
-  assert.equal(closedDuringCreation.error.retryable, true);
-}
-assert.equal(raceRuntime.closeCount, 1, "a runtime created during shutdown is closed");
+test("a runtime created during shutdown is closed and the closed pool rejects new runs", async () => {
+  let resolveCreation!: (runtime: BetterResult<LocalAgentRuntime, AgentProviderError>) => void;
+  const creating = new Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>((resolve) => { resolveCreation = resolve; });
+  const raceRuntime = new FakeRuntime();
+  const racePool = new LocalAgentRuntimePool();
+  const raceDriver = fakeDriver(() => creating);
+  const pendingRun = racePool.run(raceDriver, context, input);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const pendingClose = racePool.close();
+  resolveCreation(Result.ok(raceRuntime));
+  await pendingClose;
+  const closedDuringCreation = await pendingRun;
+  assert.equal(closedDuringCreation.isErr(), true);
+  if (closedDuringCreation.isErr()) {
+    assert.equal(closedDuringCreation.error.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(closedDuringCreation.error.retryable, true);
+  }
+  assert.equal(raceRuntime.closeCount, 1, "a runtime created during shutdown is closed");
 
-const afterClose = await racePool.run(raceDriver, context, input);
-assert.equal(afterClose.isErr(), true);
-if (afterClose.isErr()) {
-  assert.equal(afterClose.error.code, "PROVIDER_UNAVAILABLE");
-  assert.equal(afterClose.error.retryable, true);
-}
+  const afterClose = await racePool.run(raceDriver, context, input);
+  assert.equal(afterClose.isErr(), true);
+  if (afterClose.isErr()) {
+    assert.equal(afterClose.error.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(afterClose.error.retryable, true);
+  }
+});
 
-{
+test("concurrent callers share one failing creation attempt and a later caller can retry", async () => {
   const creationStarted = deferred<void>();
   const finishCreation = deferred<void>();
   let createAttempts = 0;
@@ -351,9 +338,9 @@ if (afterClose.isErr()) {
   await creationPool.run(creationDriver, context, input);
   assert.equal(createAttempts, 2, "a later caller can retry after creation fails");
   await creationPool.close();
-}
+});
 
-{
+test("a failed session release returns the session to retained state for reuse and retry", async () => {
   class FlakyReleaseRuntime extends FakeRuntime {
     releaseAttempts = 0;
 
@@ -370,13 +357,7 @@ if (afterClose.isErr()) {
     now: () => releaseClock,
     sessionIdleTimeoutMs: 10,
   });
-  const releaseDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(releaseRuntime),
-  };
+  const releaseDriver = fakeDriver(async () => Result.ok(releaseRuntime), NEVER_IDLE);
 
   await releasePool.run(releaseDriver, context, input);
   releaseClock = 11;
@@ -392,9 +373,9 @@ if (afterClose.isErr()) {
     "a failed release returns the session to retained state so it can be reused and retried",
   );
   await releasePool.close();
-}
+});
 
-{
+test("runtime policy scope and authority decide which runs share a runtime", async () => {
   let creates = 0;
   const policyPool = new LocalAgentRuntimePool();
   const policyDriver = (providerInstanceId: string, runtimePolicy: LocalAgentDriver["runtimePolicy"]): LocalAgentDriver => ({
@@ -447,7 +428,7 @@ if (afterClose.isErr()) {
   assert.equal(creates, 7, "workspace and write mode are explicit ACP runtime isolation dimensions");
 
   await policyPool.close();
-}
+});
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
@@ -470,4 +451,12 @@ function deferred<T>(): {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+// A codex driver whose runtime creation each scenario controls.
+function fakeDriver(
+  createRuntime: LocalAgentDriver["createRuntime"],
+  runtimePolicy: LocalAgentDriver["runtimePolicy"] = { scope: "instance" },
+): LocalAgentDriver {
+  return { providerInstanceId: "codex", provider: "codex", runtimePolicy, capabilities: TEST_CAPABILITIES, createRuntime };
 }

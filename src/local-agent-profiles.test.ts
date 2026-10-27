@@ -2,13 +2,57 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { type TestContext } from "node:test";
 import { loadConfig } from "./config.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
+test("project profiles override global profiles and disabled profiles are skipped", async (t) => {
+  const { workspaceRoot, enabledConfig } = await fixture(t);
+  const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
 
-try {
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0]?.name, "reviewer");
+  assert.equal(profiles[0]?.description, "Project reviewer #1.");
+  assert.equal(profiles[0]?.provider, "claude");
+  assert.equal(profiles[0]?.model, "sonnet");
+  assert.equal(profiles[0]?.effort, "high");
+  assert.equal(profiles[0]?.body, "Project body.");
+});
+
+test("profiles may target a named provider instance", async (t) => {
+  const { workspaceRoot, enabledConfig } = await fixture(t);
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "custom.md"),
+    [
+      "---",
+      "name: custom",
+      "description: Named provider instance.",
+      "provider: codex-work",
+      "---",
+      "",
+      "Custom body.",
+      "",
+    ].join("\n"),
+  );
+  const profilesWithNamedInstance = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
+  assert.deepEqual(profilesWithNamedInstance.map((profile) => profile.name), ["custom", "reviewer"]);
+  assert.equal(profilesWithNamedInstance[0]?.provider, "codex-work");
+});
+
+test("no profiles load while subagents are disabled", async (t) => {
+  const { configDir, workspaceRoot } = await fixture(t);
+  const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
+    workspaces: { allowedRoots: [workspaceRoot] },
+    subagents: { enabled: false, instructions: "on-demand", providers: [] },
+  }));
+  assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
+});
+
+async function fixture(t: TestContext) {
+  const root = await mkdtemp(join(tmpdir(), "devspace-agent-profiles-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
   const configDir = join(root, ".devspace-home");
   const workspaceRoot = join(root, "project");
   await mkdir(join(configDir, "agents"), { recursive: true });
@@ -62,37 +106,5 @@ try {
     workspaces: { allowedRoots: [workspaceRoot] },
     subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
-  const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
-
-  assert.equal(profiles.length, 1);
-  assert.equal(profiles[0]?.name, "reviewer");
-  assert.equal(profiles[0]?.description, "Project reviewer #1.");
-  assert.equal(profiles[0]?.provider, "claude");
-  assert.equal(profiles[0]?.model, "sonnet");
-  assert.equal(profiles[0]?.effort, "high");
-  assert.equal(profiles[0]?.body, "Project body.");
-  await writeFile(
-    join(workspaceRoot, ".devspace", "agents", "custom.md"),
-    [
-      "---",
-      "name: custom",
-      "description: Named provider instance.",
-      "provider: codex-work",
-      "---",
-      "",
-      "Custom body.",
-      "",
-    ].join("\n"),
-  );
-  const profilesWithNamedInstance = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
-  assert.deepEqual(profilesWithNamedInstance.map((profile) => profile.name), ["custom", "reviewer"]);
-  assert.equal(profilesWithNamedInstance[0]?.provider, "codex-work");
-
-  const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
-    workspaces: { allowedRoots: [workspaceRoot] },
-    subagents: { enabled: false, instructions: "on-demand", providers: [] },
-  }));
-  assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
-} finally {
-  await rm(root, { recursive: true, force: true });
+  return { configDir, workspaceRoot, enabledConfig };
 }

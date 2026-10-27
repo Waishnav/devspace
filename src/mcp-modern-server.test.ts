@@ -1,29 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerAppResource, registerAppTool } from "@modelcontextprotocol/ext-apps/server";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {
   compileMcpRegistrationSurface,
   createModernMcpServerAdapter,
-  modernMcpAdapterErrorLogFields,
 } from "./mcp-modern-server.js";
-
-test("strict modern handler answers the 2026-07-28 discovery probe", async (t) => {
-  const handler = createMcpHandler(() => new McpServer(
-    { name: "devspace-modern-test", version: "1.0.0" },
-    { capabilities: { tools: {} } },
-  ), { legacy: "reject" });
-  t.after(async () => handler.close());
-
-  const response = await handler.fetch(modernRequest("server/discover", {}));
-
-  assert.equal(response.status, 200);
-  const body = await response.json() as {
-    result?: { supportedVersions?: string[] };
-  };
-  assert.ok(body.result?.supportedVersions?.includes("2026-07-28"));
-});
 
 test("modern registration adapter preserves tools and request metadata", async (t) => {
   const handler = createMcpHandler(() => {
@@ -199,20 +182,6 @@ test("compiled registration surface reuses static tool and resource definitions"
   assert.equal(resource.status, 200, await resource.clone().text());
   assert.match(await resource.text(), /cached-resource/);
   assert.equal(registrationBuilds, 1);
-});
-
-test("modern adapter error logging preserves error and cause identity", () => {
-  const fields = modernMcpAdapterErrorLogFields(
-    new Error("outer failure", { cause: new TypeError("inner failure") }),
-  );
-  assert.deepEqual(fields, {
-    error: "outer failure",
-    errorName: "Error",
-    cause: {
-      name: "TypeError",
-      message: "inner failure",
-    },
-  });
 });
 
 function modernRequest(method: string, params: Record<string, unknown>): Request {

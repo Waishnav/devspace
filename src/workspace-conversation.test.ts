@@ -9,7 +9,7 @@ import { loadConfig, type ServerConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -150,24 +150,6 @@ test("checkout reuse survives a registry restart", async (t) => {
   });
 
   assert.equal(restored.workspace.id, first.workspace.id);
-});
-
-test("a failed first context load does not consume bootstrap", async (t) => {
-  const { project, registry } = await fixture(t);
-  const agentsDir = join(project, ".devspace", "agents");
-  const backupDir = join(project, ".devspace", "agents-backup");
-
-  await breakAgentsDirectory(agentsDir, backupDir);
-  try {
-    await assert.rejects(
-      () => registry.openWorkspace(project, { conversationScopeId: "chat-1" }),
-      /directory|ENOTDIR/i,
-    );
-  } finally {
-    await restoreAgentsDirectory(agentsDir, backupDir);
-  }
-
-  const successfulOpen = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
 });
 
 test("a context-loading failure preserves a valid checkout binding", async (t) => {

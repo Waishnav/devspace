@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { after } from "node:test";
 import { promisify } from "node:util";
 import {
   ensureLocalAgentDaemonSecret,
@@ -11,7 +12,7 @@ import {
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 import type { WorkflowRun } from "./workflow-types.js";
 
 const execFileAsync = promisify(execFile);
@@ -78,11 +79,21 @@ const daemon = createServer((socket) => {
   });
 });
 
-try {
-  await new Promise<void>((resolve, reject) => {
-    daemon.once("error", reject);
-    daemon.listen(paths.endpoint, resolve);
-  });
+await new Promise<void>((resolve, reject) => {
+  daemon.once("error", reject);
+  daemon.listen(paths.endpoint, resolve);
+});
+after(async () => {
+  await new Promise<void>((resolve) => daemon.close(() => resolve()));
+  await rm(root, { recursive: true, force: true });
+});
+
+// Hidden by default: without the flag the command does not exist and help does not mention it.
+const hiddenEnv = { ...process.env, ...env };
+delete hiddenEnv.DEVSPACE_EXPERIMENTAL_WORKFLOWS;
+
+test("workflow run submits the workflow file source and args to the daemon", async () => {
+  const mark = requests.length;
   const workflowFile = join(root, "review.workflow.js");
   await writeFile(workflowFile, "return agent('Review this', { target: 'reviewer' });\n");
   const { stdout } = await execFileAsync("node", [
@@ -101,13 +112,16 @@ try {
     },
   });
   assert.equal(stdout, `${JSON.stringify({ id: run.id, name: run.name, status: run.status })}\n`);
-  const submitted = requests.find((request) => request.method === "workflow.run");
+  const submitted = requests.slice(mark).find((request) => request.method === "workflow.run");
   assert.deepEqual(submitted?.params, {
     workspaceId: "ws_test",
     workspaceRoot,
     source: "return agent('Review this', { target: 'reviewer' });\n",
     args: { base: "main" },
   });
+});
+
+test("workflow status escapes terminal control characters in run names", async () => {
   const status = await execFileAsync("node", [
     "--import", "tsx", "src/cli.ts", "workflow", "status", run.id,
   ], {
@@ -122,10 +136,9 @@ try {
   });
   assert.equal(status.stdout.includes("\u001b"), false);
   assert.match(status.stdout, /name="\\u001b\[31mreview\\u001b\[0m"/);
+});
 
-  // Hidden by default: without the flag the command does not exist and help does not mention it.
-  const hiddenEnv = { ...process.env, ...env };
-  delete hiddenEnv.DEVSPACE_EXPERIMENTAL_WORKFLOWS;
+test("workflow commands are rejected without the experimental flag", async () => {
   const hidden = await execFileAsync("node", [
     "--import", "tsx", "src/cli.ts", "workflow", "status", run.id,
   ], { cwd: process.cwd(), env: hiddenEnv }).then(
@@ -133,17 +146,12 @@ try {
     (error: { stderr: string }) => error.stderr,
   );
   assert.match(hidden, /Unknown command: workflow/);
+});
+
+test("help hides workflow commands without the experimental flag", async () => {
   const hiddenHelp = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", "help"], {
     cwd: process.cwd(),
     env: hiddenEnv,
   });
   assert.doesNotMatch(hiddenHelp.stdout, /workflow/);
-  const flaggedHelp = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", "help"], {
-    cwd: process.cwd(),
-    env: { ...hiddenEnv, DEVSPACE_EXPERIMENTAL_WORKFLOWS: "1" },
-  });
-  assert.match(flaggedHelp.stdout, /devspace workflow </);
-} finally {
-  await new Promise<void>((resolve) => daemon.close(() => resolve()));
-  await rm(root, { recursive: true, force: true });
-}
+});

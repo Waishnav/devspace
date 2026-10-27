@@ -2,25 +2,32 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import { installAgentsSkill, parseSkillSource, renderAgentsSkill } from "./agents-skill.js";
 
-const skill = renderAgentsSkill();
-assert.match(skill, /^---\nname: devspace-agents\ndescription: Delegate focused coding/);
-assert.match(skill, /devspace agents targets/);
-assert.equal(
-  readFileSync(new URL("../skills/subagents/SKILL.md", import.meta.url), "utf8").replace(/\r\n/g, "\n").split("\n---\n")[1],
-  skill.split("\n---\n")[1],
-  "the standalone skill must share the managed skill body",
-);
-assert.match(renderAgentsSkill("cursor-rule"), /^---\ndescription: Delegate focused coding[^\n]*\nalwaysApply: false\n---\n\n# DevSpace subagents/);
-
-assert.deepEqual(parseSkillSource("---\r\nname: x\r\ndescription: Do things\r\n---\r\n\r\n# Body\r\n"), {
-  description: "Do things",
-  body: "\n# Body\n",
+test("the managed skill renders as a skill and as a Cursor rule sharing the standalone body", () => {
+  const skill = renderAgentsSkill();
+  assert.match(skill, /^---\nname: devspace-agents\ndescription: Delegate focused coding/);
+  assert.match(skill, /devspace agents targets/);
+  assert.equal(
+    readFileSync(new URL("../skills/subagents/SKILL.md", import.meta.url), "utf8").replace(/\r\n/g, "\n").split("\n---\n")[1],
+    skill.split("\n---\n")[1],
+    "the standalone skill must share the managed skill body",
+  );
+  assert.match(renderAgentsSkill("cursor-rule"), /^---\ndescription: Delegate focused coding[^\n]*\nalwaysApply: false\n---\n\n# DevSpace subagents/);
 });
 
-const root = mkdtempSync(join(tmpdir(), "devspace-skill-test-"));
-try {
+test("skill sources with CRLF frontmatter parse into description and body", () => {
+  assert.deepEqual(parseSkillSource("---\r\nname: x\r\ndescription: Do things\r\n---\r\n\r\n# Body\r\n"), {
+    description: "Do things",
+    body: "\n# Body\n",
+  });
+});
+
+test("the skill installs to each target's global and project locations", (t) => {
+  const skill = renderAgentsSkill();
+  const root = mkdtempSync(join(tmpdir(), "devspace-skill-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home");
   const project = join(root, "project");
   const env = {};
@@ -46,6 +53,4 @@ try {
     installAgentsSkill("codex", { project: false, home, cwd: project, env: { CODEX_HOME: join(root, "codex") } }),
     join(root, "codex/skills/devspace-agents/SKILL.md"),
   );
-} finally {
-  rmSync(root, { recursive: true, force: true });
-}
+});

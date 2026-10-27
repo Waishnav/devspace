@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
@@ -13,8 +14,9 @@ const sourceConfigDir = join(root, "config");
 const sourceStateDir = join(root, "state");
 const scriptPath = fileURLToPath(new URL("../scripts/dev-state.ts", import.meta.url));
 const tsxCliPath = fileURLToPath(import.meta.resolve("tsx/cli"));
+after(() => rm(root, { recursive: true, force: true }));
 
-try {
+test("seed copies source config and state, and reset reseeds only once source auth is valid", async () => {
   await mkdir(checkoutRoot, { recursive: true });
   await mkdir(join(sourceConfigDir, "skills", "example"), { recursive: true });
   await mkdir(sourceStateDir, { recursive: true });
@@ -73,11 +75,7 @@ try {
   const resetDatabase = new Database(localDatabasePath, { readonly: true });
   assert.deepEqual(resetDatabase.prepare("select value from marker order by rowid").pluck().all(), ["source"]);
   resetDatabase.close();
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
-
-console.log("dev state tests passed");
+});
 
 async function runDevState(command: "seed" | "reset"): Promise<void> {
   return new Promise((resolve, reject) => {

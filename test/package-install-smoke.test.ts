@@ -3,12 +3,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeTestDevspaceConfig } from "../src/test-support/config.test.js";
+import { writeTestDevspaceConfig } from "../src/test-support/config.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
-testPackedPackageLaunchers();
+test("the packed package installs working devspace and devspace-agentd launchers", () => {
+  testPackedPackageLaunchers();
+});
 
 function testPackedPackageLaunchers(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-packed-bin-test-"));
