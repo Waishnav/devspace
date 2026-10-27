@@ -12,6 +12,19 @@
   // Workers Builds runs `wrangler preview` for non-production branches, which
   // requires this block (assets and compatibility settings stay top level).
   "previews": {},
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 1,
+      "persist": true
+    }
+  },
   "routes": [{ "pattern": "devspace.run", "custom_domain": true }],
   "env": {
     // Manual staging deploy (`npx wrangler deploy --env staging`) of a build
