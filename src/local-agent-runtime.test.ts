@@ -22,6 +22,8 @@ const TEST_CAPABILITIES = {
   permissions: { enforcement: "native" },
   mcp: { supported: false },
 } as const;
+// Instance runtimes that idle eviction never closes, so tests control session release alone.
+const NEVER_IDLE = { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY } as const;
 
 const context: LocalAgentRuntimeContext = {
   agentId: "agt_test",
@@ -103,7 +105,7 @@ let createCount = 0;
 const driver: LocalAgentDriver = {
   providerInstanceId: "codex",
   provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
+  runtimePolicy: NEVER_IDLE,
   capabilities: TEST_CAPABILITIES,
   createRuntime: async () => {
     createCount += 1;
@@ -141,13 +143,7 @@ const sessionPool = new LocalAgentRuntimePool({
   now: () => clock,
   sessionIdleTimeoutMs: 10,
 });
-const sessionDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(sessionRuntime),
-};
+const sessionDriver = fakeDriver(async () => Result.ok(sessionRuntime), NEVER_IDLE);
 await sessionPool.run(sessionDriver, context, input);
 clock = 11;
 sessionRuntime.releaseBlocked = true;
@@ -170,13 +166,7 @@ const shutdownReleasePool = new LocalAgentRuntimePool({
   now: () => clock,
   sessionIdleTimeoutMs: 10,
 });
-const shutdownReleaseDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(shutdownReleaseRuntime),
-};
+const shutdownReleaseDriver = fakeDriver(async () => Result.ok(shutdownReleaseRuntime), NEVER_IDLE);
 await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
 shutdownReleaseRuntime.releaseBlocked = true;
 const shutdownRelease = shutdownReleasePool.evictIdle(30);
@@ -220,13 +210,7 @@ class CleanupFailureRuntime extends FakeRuntime {
 
 const cleanupPool = new LocalAgentRuntimePool();
 const cleanupRuntime = new CleanupFailureRuntime();
-const cleanupDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance" },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: async () => Result.ok(cleanupRuntime),
-};
+const cleanupDriver = fakeDriver(async () => Result.ok(cleanupRuntime));
 const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
 assert.equal(cleanupFailure.isErr(), true);
 if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider failed");
@@ -238,13 +222,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
   const replacementRuntime = new FakeRuntime();
   let attempts = 0;
   const recoveryPool = new LocalAgentRuntimePool();
-  const recoveryDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance" },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime),
-  };
+  const recoveryDriver = fakeDriver(async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime));
 
   const recovered = await recoveryPool.run(recoveryDriver, context, input);
   assert.equal(recovered.isOk(), true, "cleanup failure does not hide successful runtime recovery");
@@ -264,13 +242,7 @@ if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider
   }
   const completedTurnRuntime = new ClosingAfterTurnRuntime();
   completedTurnPool = new LocalAgentRuntimePool();
-  const completedTurnDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance" },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(completedTurnRuntime),
-  };
+  const completedTurnDriver = fakeDriver(async () => Result.ok(completedTurnRuntime));
 
   const completedTurn = await completedTurnPool.run(completedTurnDriver, context, input);
   assert.equal(completedTurn.isOk(), true, "shutdown does not discard an already completed provider turn");
@@ -282,13 +254,7 @@ let resolveCreation!: (runtime: BetterResult<LocalAgentRuntime, AgentProviderErr
 const creating = new Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>((resolve) => { resolveCreation = resolve; });
 const raceRuntime = new FakeRuntime();
 const racePool = new LocalAgentRuntimePool();
-const raceDriver: LocalAgentDriver = {
-  providerInstanceId: "codex",
-  provider: "codex",
-  runtimePolicy: { scope: "instance" },
-  capabilities: TEST_CAPABILITIES,
-  createRuntime: () => creating,
-};
+const raceDriver = fakeDriver(() => creating);
 const pendingRun = racePool.run(raceDriver, context, input);
 await new Promise<void>((resolve) => setImmediate(resolve));
 const pendingClose = racePool.close();
@@ -370,13 +336,7 @@ if (afterClose.isErr()) {
     now: () => releaseClock,
     sessionIdleTimeoutMs: 10,
   });
-  const releaseDriver: LocalAgentDriver = {
-    providerInstanceId: "codex",
-    provider: "codex",
-    runtimePolicy: { scope: "instance", idleTimeoutMs: Number.POSITIVE_INFINITY },
-    capabilities: TEST_CAPABILITIES,
-    createRuntime: async () => Result.ok(releaseRuntime),
-  };
+  const releaseDriver = fakeDriver(async () => Result.ok(releaseRuntime), NEVER_IDLE);
 
   await releasePool.run(releaseDriver, context, input);
   releaseClock = 11;
@@ -470,4 +430,12 @@ function deferred<T>(): {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+// A codex driver whose runtime creation each scenario controls.
+function fakeDriver(
+  createRuntime: LocalAgentDriver["createRuntime"],
+  runtimePolicy: LocalAgentDriver["runtimePolicy"] = { scope: "instance" },
+): LocalAgentDriver {
+  return { providerInstanceId: "codex", provider: "codex", runtimePolicy, capabilities: TEST_CAPABILITIES, createRuntime };
 }
