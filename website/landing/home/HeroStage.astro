@@ -20,14 +20,17 @@ const tabs = [
       </button>
     ))}
   </div>
-  <div class="panels">
-    <div class="panel is-active" data-panel="0"><ChatMock /></div>
-    <div class="panel" data-panel="1"><SubagentsMock /></div>
-    <div class="panel" data-panel="2"><RoutingMap /></div>
+  <div class="viewport" data-viewport>
+    <div class="panels">
+      <div class="panel is-active" data-panel="0"><ChatMock /></div>
+      <div class="panel" data-panel="1"><SubagentsMock /></div>
+      <div class="panel" data-panel="2"><RoutingMap /></div>
+    </div>
   </div>
 </div>
 
 <script>
+  const DESIGN_WIDTH = 940;
   const root = document.querySelector<HTMLElement>("[data-tabs]");
   if (root) {
     const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-tab]")];
@@ -44,6 +47,11 @@ const tabs = [
       timer = setInterval(() => show((current + 1) % panels.length), 14000);
     }
     tabs.forEach((t, i) => t.addEventListener("click", () => { clearInterval(timer); show(i); }));
+    // The mocks are fixed-size illustrations: scale them like a video instead of reflowing.
+    const viewport = root.querySelector<HTMLElement>("[data-viewport]")!;
+    new ResizeObserver(() => {
+      viewport.style.setProperty("--scale", String(Math.min(1, viewport.clientWidth / DESIGN_WIDTH)));
+    }).observe(viewport);
     const initial = Number(new URLSearchParams(location.search).get("tab"));
     if (initial > 0 && initial < panels.length) show(initial);
   }
@@ -58,11 +66,10 @@ const tabs = [
   }
   .tabs button:hover { border-color: #151515; }
   .tabs button[aria-selected="true"] { background: #151515; border-color: #151515; color: #f5f5f3; }
-  /* Every tab shares one height so the window stays centred in the frame. */
-  .panels { position: relative; height: 640px; }
+  /* Mocks are laid out at a fixed 940x640 and scaled to fit; --scale is set from the viewport width. */
+  .viewport { --scale: 1; height: calc(640px * var(--scale)); overflow: hidden; }
+  .panels { width: 940px; height: 640px; transform: scale(var(--scale)); transform-origin: top left; }
   .panel { display: none; height: 100%; }
   .panel.is-active { display: block; }
   .panel > :global(.mock) { height: 100%; }
-
-  @media (max-width: 820px) { .panels { height: auto; } .panel > :global(.mock) { height: auto; } }
 </style>
