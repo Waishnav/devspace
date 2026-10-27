@@ -30,73 +30,31 @@ const profiles: LocalAgentProfile[] = [
   },
 ];
 
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "hello", "world"]), {
-  target: "codex",
-  prompt: "hello world",
-  model: undefined,
-  effort: undefined,
-  ...defaults,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model", "gpt-5.1", "hello"]), {
-  target: "codex",
-  prompt: "hello",
-  model: "gpt-5.1",
-  effort: undefined,
-  ...defaults,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--model=gpt-5.1", "hello"]), {
-  target: "codex",
-  prompt: "hello",
-  model: "gpt-5.1",
-  effort: undefined,
-  ...defaults,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort", "high", "hello"]), {
-  target: "codex",
-  prompt: "hello",
-  model: undefined,
-  effort: "high",
-  ...defaults,
-});
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--effort=high", "hello"]), {
-  target: "codex",
-  prompt: "hello",
-  model: undefined,
-  effort: "high",
-  ...defaults,
-});
-
-assert.throws(
-  () => parseLocalAgentRunArgs(["codex", "--model"]),
-  /Missing value for --model/,
-);
-
-assert.throws(
-  () => parseLocalAgentRunArgs(["codex", "--effort"]),
-  /Missing value for --effort/,
-);
-
-assert.throws(
-  () => parseLocalAgentRunArgs(["codex", "--unknown", "hello"]),
-  /Unknown option: --unknown/,
-);
-
-assert.throws(
-  () => parseLocalAgentRunArgs(["codex", "--model", "--unknown", "hello"]),
-  /Unknown option: --unknown/,
-);
-
-assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
-  target: "codex",
-  prompt: "--json literal",
-  model: undefined,
-  effort: undefined,
-  ...defaults,
-});
+for (const [args, expected] of [
+  [["codex", "hello", "world"], { prompt: "hello world" }],
+  [["codex", "--model", "gpt-5.1", "hello"], { prompt: "hello", model: "gpt-5.1" }],
+  [["codex", "--model=gpt-5.1", "hello"], { prompt: "hello", model: "gpt-5.1" }],
+  [["codex", "--effort", "high", "hello"], { prompt: "hello", effort: "high" }],
+  [["codex", "--effort=high", "hello"], { prompt: "hello", effort: "high" }],
+  // `--` ends option parsing so prompts may start with a dash.
+  [["codex", "--", "--json", "literal"], { prompt: "--json literal" }],
+] as const) {
+  assert.deepEqual(parseLocalAgentRunArgs([...args]), {
+    target: "codex",
+    model: undefined,
+    effort: undefined,
+    ...defaults,
+    ...expected,
+  });
+}
+for (const [args, error] of [
+  [["codex", "--model"], /Missing value for --model/],
+  [["codex", "--effort"], /Missing value for --effort/],
+  [["codex", "--unknown", "hello"], /Unknown option: --unknown/],
+  [["codex", "--model", "--unknown", "hello"], /Unknown option: --unknown/],
+] as const) {
+  assert.throws(() => parseLocalAgentRunArgs([...args]), error);
+}
 
 assert.deepEqual(
   parseLocalAgentRunArgs(["codex", "--write-mode", "read_only", "--request-id=job-1", "--wait", "--timeout", "90", "hi"]),
@@ -135,56 +93,25 @@ assert.deepEqual(parseLocalAgentContinueArgs(["agt_1", "--wait", "go on"]), {
 });
 
 {
-  const target = resolveLocalAgentTarget("reviewer", profiles);
-  assert.equal(target?.kind, "profile");
-  assert.equal(target?.name, "reviewer");
-  assert.equal(target?.provider, "codex");
-  assert.equal(target?.model, "gpt-5-codex");
-  assert.equal(target?.effort, "high");
-}
-
-{
-  const target = resolveLocalAgentTarget("reviewer", profiles, "gpt-5.2", "xhigh");
-  assert.equal(target?.kind, "profile");
-  assert.equal(target?.model, "gpt-5.2");
-  assert.equal(target?.effort, "xhigh");
-}
-
-{
-  const providers = [{ id: "opencode", driver: "opencode", enabled: true }] as const;
-  const target = resolveLocalAgentTarget("opencode", profiles, undefined, undefined, providers);
-  assert.equal(target?.kind, "provider");
-  assert.equal(target?.name, "opencode");
-  assert.equal(target?.provider, "opencode");
-  assert.equal(target?.model, undefined);
-  assert.equal(target?.effort, undefined);
-}
-
-{
-  const providers = [{ id: "opencode", driver: "opencode", enabled: true }] as const;
-  const target = resolveLocalAgentTarget("opencode", profiles, "kimi-k2", "deep", providers);
-  assert.equal(target?.kind, "provider");
-  assert.equal(target?.model, "kimi-k2");
-  assert.equal(target?.effort, "deep");
-}
-
-{
-  const providerDefaults = [{
-    id: "codex",
-    driver: "codex",
-    enabled: true,
-    model: "gpt-default",
-    effort: "medium",
-  }] as const;
-  const raw = resolveLocalAgentTarget("codex", profiles, undefined, undefined, providerDefaults);
-  assert.equal(raw?.model, "gpt-default");
-  assert.equal(raw?.effort, "medium");
-  const profiled = resolveLocalAgentTarget("reviewer", profiles, undefined, undefined, providerDefaults);
-  assert.equal(profiled?.model, "gpt-5-codex");
-  assert.equal(profiled?.effort, "high");
-  const overridden = resolveLocalAgentTarget("reviewer", profiles, "gpt-run", "xhigh", providerDefaults);
-  assert.equal(overridden?.model, "gpt-run");
-  assert.equal(overridden?.effort, "xhigh");
+  // Model and effort precedence: run override, then profile, then provider default.
+  const providers = [
+    { id: "codex", driver: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+    { id: "opencode", driver: "opencode", enabled: true },
+  ] as const;
+  for (const [name, model, effort, expected] of [
+    ["reviewer", undefined, undefined, { kind: "profile", provider: "codex", model: "gpt-5-codex", effort: "high" }],
+    ["reviewer", "gpt-run", "xhigh", { kind: "profile", provider: "codex", model: "gpt-run", effort: "xhigh" }],
+    ["codex", undefined, undefined, { kind: "provider", provider: "codex", model: "gpt-default", effort: "medium" }],
+    ["opencode", undefined, undefined, { kind: "provider", provider: "opencode", model: undefined, effort: undefined }],
+    ["opencode", "kimi-k2", "deep", { kind: "provider", provider: "opencode", model: "kimi-k2", effort: "deep" }],
+  ] as const) {
+    const target = resolveLocalAgentTarget(name, profiles, model, effort, providers);
+    assert.deepEqual(
+      { kind: target?.kind, provider: target?.provider, model: target?.model, effort: target?.effort },
+      expected,
+      name,
+    );
+  }
 }
 
 {
