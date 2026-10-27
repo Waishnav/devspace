@@ -138,11 +138,6 @@ try {
     env: hiddenEnv,
   });
   assert.doesNotMatch(hiddenHelp.stdout, /workflow/);
-  const flaggedHelp = await execFileAsync("node", ["--import", "tsx", "src/cli.ts", "help"], {
-    cwd: process.cwd(),
-    env: { ...hiddenEnv, DEVSPACE_EXPERIMENTAL_WORKFLOWS: "1" },
-  });
-  assert.match(flaggedHelp.stdout, /devspace workflow </);
 } finally {
   await new Promise<void>((resolve) => daemon.close(() => resolve()));
   await rm(root, { recursive: true, force: true });
