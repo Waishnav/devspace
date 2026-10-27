@@ -23,6 +23,7 @@ class FakeRuntime implements LocalAgentRuntime {
   constructor(private readonly workspaceRoot: string, private readonly runRoots: string[]) {}
   async run(_input: LocalAgentRunInput): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.runRoots.push(this.workspaceRoot);
+
     return Result.ok({ provider: "codex", finalResponse: "done", providerSessionId: "session", items: [] });
   }
   async releaseSession(): Promise<void> {}
@@ -34,6 +35,7 @@ class FakeRuntime implements LocalAgentRuntime {
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }
 
@@ -161,6 +163,7 @@ function fixture(t: TestContext) {
 
   /** The workspace root each run was given, to prove where the provider actually works. */
   const runRoots: string[] = [];
+
   const driver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
@@ -176,6 +179,7 @@ function fixture(t: TestContext) {
   };
 
   const store = new LocalAgentStore(join(temp, "state"));
+
   const manager = new LocalAgentManager({
     store,
     drivers: [driver],
@@ -184,12 +188,14 @@ function fixture(t: TestContext) {
     worktreeRoot,
     subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
   });
+
   t.after(async () => {
     await manager.close();
     rmSync(temp, { recursive: true, force: true });
   });
 
   const scope = { workspaceRoot: source };
+
   const start = (extra: { agentId?: string; worktree?: { branch?: string }; workspaceRoot?: string }) =>
     manager.start({ target: "codex", prompt: "go", workspaceRoot: source, writeMode: "full_access", ...extra });
 

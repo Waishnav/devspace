@@ -22,7 +22,9 @@ export function bindLocalAgentAbort(
 ): () => void {
   if (!signal) return () => undefined;
   const onAbort = () => { void Promise.resolve(interrupt()).catch(() => undefined); };
+
   if (signal.aborted) onAbort();
   else signal.addEventListener("abort", onAbort, { once: true });
+
   return () => signal.removeEventListener("abort", onAbort);
 }

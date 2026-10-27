@@ -36,9 +36,11 @@ export interface Transcript {
 export function readTranscript(path: string): Transcript {
   const lines = readFileSync(path, "utf8").split("\n").filter((line) => line.trim());
   const [meta, ...frames] = lines.map((line) => JSON.parse(line) as unknown);
+
   if ((meta as TranscriptMeta | undefined)?.type !== "meta") {
     throw new Error(`${path} does not start with a transcript meta line.`);
   }
+
   return { meta: meta as TranscriptMeta, frames: frames as TranscriptFrame[] };
 }
 
@@ -69,9 +71,11 @@ function placeholders(context: ScrubContext): Array<[string, string]> {
 export function scrub(value: unknown, context: ScrubContext): unknown {
   return mapStrings(value, (text) => {
     let next = text;
+
     for (const [actual, placeholder] of placeholders(context)) {
       if (actual) next = next.replaceAll(actual, placeholder);
     }
+
     return redactSecrets(next).replace(EMAIL, "user@example.invalid");
   });
 }
@@ -79,17 +83,22 @@ export function scrub(value: unknown, context: ScrubContext): unknown {
 export function restore(value: unknown, context: ScrubContext): unknown {
   return mapStrings(value, (text) => {
     let next = text;
+
     for (const [actual, placeholder] of placeholders(context)) next = next.replaceAll(placeholder, actual);
+
     return next;
   });
 }
 
 export function mapStrings(value: unknown, map: (text: string) => string): unknown {
   if (typeof value === "string") return map(value);
+
   if (Array.isArray(value)) return value.map((entry) => mapStrings(entry, map));
+
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, mapStrings(entry, map)]));
   }
+
   return value;
 }
 

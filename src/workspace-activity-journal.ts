@@ -14,6 +14,7 @@ const MAX_STRING_LENGTH = 8 * 1024;
 const MAX_RECORD_LENGTH = 64 * 1024;
 const REDACTED = "[redacted]";
 const SECRET_KEY_PATTERN = /(token|secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
+
 // Value patterns are deliberately shape- or context-bound (an Authorization
 // header, an env-var name, a credential flag) so ordinary prose and source code
 // such as "Basic functionality" or `MAX_TOKENS=4096` survive intact. A pattern's
@@ -60,12 +61,14 @@ export class WorkspaceActivityJournal {
     const startedAt = new Date();
     const startedAtMs = performance.now();
     const argumentWorkspaceId = workspaceIdFromValue(input.arguments);
+
     // Calls belong to the turn that was open when they started.
     const turnId = argumentWorkspaceId
       ? this.safely(() => this.openTurnId(argumentWorkspaceId, startedAt))
       : undefined;
 
     let result: T;
+
     try {
       result = await input.operation();
     } catch (error) {
@@ -86,6 +89,7 @@ export class WorkspaceActivityJournal {
       startedAtMs,
       result,
     }));
+
     return result;
   }
 
@@ -119,12 +123,15 @@ export class WorkspaceActivityJournal {
 
     const completedAt = new Date();
     const origin = toolCallOrigin(input.extra._meta);
+
     const reviewRef = origin === "model" && input.toolName === "show_changes" && !outcome.error
       ? reviewRefFromValue(outcome.result)
       : undefined;
+
     const turnId = reviewRef
       ? this.store.closeTurn(outcome.workspaceId, reviewRef, completedAt).id
       : outcome.turnId ?? this.store.openTurn(outcome.workspaceId, completedAt).id;
+
     const resultSummary = outcome.result === undefined ? undefined : summarizeResult(outcome.result);
 
     this.store.recordToolCall({
@@ -152,6 +159,7 @@ export class WorkspaceActivityJournal {
       } catch {
         // Error reporting must not affect the tool call either.
       }
+
       return undefined;
     }
   }
@@ -160,7 +168,9 @@ export class WorkspaceActivityJournal {
 /** Serializes a value for the journal with secrets redacted and size capped. */
 export function journalJson(value: unknown): string {
   const json = JSON.stringify(redact(value, 0)) ?? "null";
+
   if (json.length <= MAX_RECORD_LENGTH) return json;
+
   return JSON.stringify({
     truncated: true,
     length: json.length,
@@ -175,6 +185,7 @@ export function journalJson(value: unknown): string {
  */
 function summarizeResult(result: unknown): unknown {
   const record = asRecord(result);
+
   if (!record || !Array.isArray(record.content)) return result;
 
   const text = record.content
@@ -182,6 +193,7 @@ function summarizeResult(result: unknown): unknown {
     .filter((block) => block?.type === "text" && typeof block.text === "string")
     .map((block) => block!.text as string)
     .join("\n");
+
   return {
     ...(text ? { text } : {}),
     ...(record.structuredContent !== undefined ? { structuredContent: record.structuredContent } : {}),
@@ -191,8 +203,11 @@ function summarizeResult(result: unknown): unknown {
 
 function redact(value: unknown, depth: number): unknown {
   if (typeof value === "string") return redactString(value);
+
   if (value === null || typeof value !== "object") return value;
+
   if (depth > 8) return "[nested]";
+
   if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
 
   return Object.fromEntries(
@@ -207,9 +222,11 @@ function redact(value: unknown, depth: number): unknown {
 
 function redactString(value: string): string {
   let redacted = value;
+
   for (const [pattern, replacement] of SECRET_VALUE_PATTERNS) {
     redacted = redacted.replace(pattern, replacement);
   }
+
   return redacted.length > MAX_STRING_LENGTH
     ? `${redacted.slice(0, MAX_STRING_LENGTH)}… [truncated ${redacted.length - MAX_STRING_LENGTH} chars]`
     : redacted;
@@ -223,16 +240,19 @@ function toolCallOrigin(meta: Record<string, unknown> | undefined): WorkspaceToo
 function workspaceIdFromValue(value: unknown): string | undefined {
   const record = asRecord(value);
   const direct = record?.workspace_id;
+
   if (typeof direct === "string" && direct.length > 0) return direct;
 
   const structured = asRecord(record?.structuredContent);
   const nested = structured?.workspace_id;
+
   return typeof nested === "string" && nested.length > 0 ? nested : undefined;
 }
 
 function reviewRefFromValue(value: unknown): string | undefined {
   const structured = asRecord(asRecord(value)?.structuredContent);
   const reviewRef = structured?.review_ref;
+
   return typeof reviewRef === "string" && reviewRef.length > 0 ? reviewRef : undefined;
 }
 
@@ -244,6 +264,7 @@ function serializeError(error: unknown): { name: string; message: string } {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
   }
+
   return { name: typeof error, message: String(error) };
 }
 

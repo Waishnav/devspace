@@ -16,6 +16,7 @@ test("the packed package installs working devspace and devspace-agentd launchers
 function testPackedPackageLaunchers(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-packed-bin-test-"));
   const installRoot = join(root, "install");
+
   try {
     mkdirSync(installRoot, { recursive: true });
     execFileSync(npmExecutable(), ["pack", "--silent", "--pack-destination", root], {
@@ -43,15 +44,18 @@ function testPackedPackageLaunchers(): void {
     });
 
     const configRoot = join(root, "config");
+
     const env = writeTestDevspaceConfig(configRoot, {
       storage: { stateDir: join(root, "state") },
       workspaces: { allowedRoots: [root], worktreeRoot: join(root, "worktrees") },
       skills: { agentDir: join(root, "agents") },
     });
+
     const cliOutput = execInstalledBin(installRoot, "devspace", ["config", "get"], {
       ...process.env,
       ...env,
     });
+
     const config = JSON.parse(cliOutput) as { configVersion?: number };
     assert.equal(config.configVersion, 1);
 
@@ -64,6 +68,7 @@ function testPackedPackageLaunchers(): void {
 
     // A fresh machine has no config, auth, or OAuth setup; agent commands must still work.
     const home = join(root, "home");
+
     const freshEnv = {
       ...process.env,
       HOME: home,
@@ -71,9 +76,11 @@ function testPackedPackageLaunchers(): void {
       DEVSPACE_CONFIG_DIR: join(root, "fresh-config"),
       DEVSPACE_OAUTH_OWNER_TOKEN: "",
     };
+
     const targets = JSON.parse(
       execInstalledBin(installRoot, "devspace", ["agents", "targets", "--json"], freshEnv),
     ) as { enabled: boolean; targets: Array<{ name: string }> };
+
     assert.equal(targets.enabled, true);
     assert.ok(targets.targets.some((target) => target.name === "claude"));
     assert.match(
@@ -103,6 +110,7 @@ function execInstalledBin(
     ".bin",
     process.platform === "win32" ? `${name}.cmd` : name,
   );
+
   return execFileSync(executable, args, {
     encoding: "utf8",
     env,

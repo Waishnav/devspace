@@ -17,11 +17,13 @@ export function resolveCliWorkspaceContext(
 ): CliWorkspaceContext {
   const workspaceId = env.DEVSPACE_WORKSPACE_ID?.trim() || undefined;
   const injectedRoot = workspaceId ? env.DEVSPACE_WORKSPACE_ROOT?.trim() : undefined;
+
   const candidate = canonicalizePath(
     injectedRoot ? resolve(injectedRoot) : findGitRoot(cwd) ?? resolve(cwd),
   );
 
   if (!workspaceId) return { workspaceId, workspaceRoot: candidate };
+
   try {
     return {
       workspaceId,
@@ -31,6 +33,7 @@ export function resolveCliWorkspaceContext(
     if (authorizeManagedWorkspace?.(candidate, workspaceId)) {
       return { workspaceId, workspaceRoot: candidate };
     }
+
     throw error;
   }
 }
@@ -50,7 +53,9 @@ export function findGitRoot(cwd: string): string | undefined {
     windowsHide: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
+
   if (result.status !== 0) return undefined;
   const root = result.stdout.trim();
+
   return root ? resolve(root) : undefined;
 }

@@ -3,6 +3,7 @@ import { claudeInstructions, registerClaudeTools } from "./claude.js";
 import { type ToolSurface, type ToolSurfaceName } from "./types.js";
 
 export type { ToolSurfaceName } from "./types.js";
+
 export { DEFAULT_TOOL_SURFACE, detectToolSurface, type HostHints } from "./detect.js";
 
 const TOOL_SURFACES: Record<ToolSurfaceName, ToolSurface> = {

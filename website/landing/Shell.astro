@@ -35,14 +35,18 @@ const {
   // Any element with data-copy copies its value and flags data-copied briefly.
   document.addEventListener("click", async (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-copy]");
+
     if (!target) return;
+
     // Only claim success when the clipboard write actually happened.
     if (!navigator.clipboard) return;
+
     try {
       await navigator.clipboard.writeText(target.dataset.copy ?? "");
     } catch {
       return;
     }
+
     target.dataset.copied = "";
     setTimeout(() => delete target.dataset.copied, 1400);
   });

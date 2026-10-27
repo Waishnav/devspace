@@ -72,8 +72,11 @@ export const AGENT_EXIT_CODES = { completed: 0, failed: 2, stopped: 3, timeout: 
 /** With several agents, the most severe outcome wins: failed, then stopped, then timeout. */
 export function agentObservationExitCode(observations: readonly AgentObservationOutput[]): number {
   if (observations.some((entry) => entry.status === "failed")) return AGENT_EXIT_CODES.failed;
+
   if (observations.some((entry) => entry.status === "stopped")) return AGENT_EXIT_CODES.stopped;
+
   if (observations.some((entry) => entry.status === "running")) return AGENT_EXIT_CODES.timeout;
+
   return AGENT_EXIT_CODES.completed;
 }
 
@@ -122,6 +125,7 @@ export function presentAgentSummary(record: LocalAgentRecord): AgentSummaryOutpu
 
 export function presentAgentObservation(record: LocalAgentRecord): AgentObservationOutput {
   const receipt = presentAgentReceipt(record);
+
   switch (receipt.status) {
     case "completed":
       return {
@@ -146,16 +150,21 @@ export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): str
   if (!catalog.enabled) {
     return "<disabled>Subagents are disabled by subagents.enabled in config.jsonc. Remove the subagents key to detect installed agents, or set enabled to true.</disabled>";
   }
+
   const unavailable = catalog.unavailable.map((provider) => (
     `<unavailable name="${escapeXmlAttribute(provider.name)}">${escapeXmlText(provider.reason)}</unavailable>`
   ));
+
   const targets = catalog.targets.map((target) => {
     const settings = xmlAttributes({ model: target.model, effort: target.effort });
+
     if (target.kind === "provider") {
       return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
+
     return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
   });
+
   return [...targets, ...unavailable].join("\n");
 }
 
@@ -171,19 +180,24 @@ export function formatAgentObservation(observation: AgentObservationOutput): str
   if (observation.status === "running" && observation.wait) {
     return `<agent${agentAttributes(observation, { wait: observation.wait })}/>`;
   }
+
   if (observation.status === "completed" && observation.response !== undefined) {
     return `<agent${agentAttributes(observation)}>${escapeXmlText(observation.response)}</agent>`;
   }
+
   if ((observation.status === "failed" || observation.status === "stopped") && observation.error) {
     const { code, retryable, message, detail } = observation.error;
     const cause = detail ? `<cause>${escapeXmlText(detail)}</cause>` : "";
+
     return `<agent${agentAttributes(observation, { code, retryable: String(retryable) })}>${escapeXmlText(message)}${cause}</agent>`;
   }
+
   return formatAgentReceipt(observation);
 }
 
 export function formatAgentTurnEvent(event: LocalAgentTurnEvent): string {
   const base = { seq: String(event.seq), type: event.type, turn: event.turnId };
+
   switch (event.type) {
     case "turn_started":
       return `<event${xmlAttributes({ ...base, at: event.at })}/>`;
@@ -196,10 +210,12 @@ export function formatAgentTurnEvent(event: LocalAgentTurnEvent): string {
         tool: event.tool,
         status: event.type === "tool_completed" ? event.status : undefined,
       });
+
       return event.summary
         ? `<event${attributes}>${escapeXmlText(event.summary)}</event>`
         : `<event${attributes}/>`;
     }
+
     case "turn_completed":
       return `<event${xmlAttributes({
         ...base,
@@ -213,6 +229,7 @@ export function formatAgentTurnEvent(event: LocalAgentTurnEvent): string {
 
 export function formatAgentCommandError(error: AgentCommandErrorOutput): string {
   const agentId = error.agentId ? ` agent-id="${escapeXmlAttribute(error.agentId)}"` : "";
+
   return `<error code="${escapeXmlAttribute(error.code)}" retryable="${error.retryable ?? false}"${agentId}>${escapeXmlText(error.message)}</error>`;
 }
 

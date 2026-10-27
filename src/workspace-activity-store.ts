@@ -11,6 +11,7 @@ import {
 import type { WorkspaceMode, WorkspaceStatus } from "./workspace-store.js";
 
 export type WorkspaceTurnStatus = "open" | "closed";
+
 export type WorkspaceToolCallOrigin = "model" | "card";
 
 export interface ActivityWorkspaceRecord {
@@ -93,6 +94,7 @@ export class WorkspaceActivityStore {
   openTurn(workspaceId: string, now = new Date()): WorkspaceTurn {
     const open = this.database.sqlite.transaction(() => {
       const existing = this.findOpenTurnRow(workspaceId);
+
       if (existing) return existing;
 
       const previous = this.database.db
@@ -100,6 +102,7 @@ export class WorkspaceActivityStore {
         .from(workspaceTurns)
         .where(eq(workspaceTurns.workspaceSessionId, workspaceId))
         .get();
+
       return this.database.db
         .insert(workspaceTurns)
         .values({
@@ -111,11 +114,13 @@ export class WorkspaceActivityStore {
         .returning()
         .get();
     });
+
     return this.withCallCounts(open.immediate());
   }
 
   currentTurn(workspaceId: string): WorkspaceTurn | undefined {
     const row = this.findOpenTurnRow(workspaceId);
+
     return row ? this.withCallCounts(row) : undefined;
   }
 
@@ -128,6 +133,7 @@ export class WorkspaceActivityStore {
       .where(eq(workspaceTurns.id, turn.id))
       .run();
     this.pruneClosedTurns(workspaceId);
+
     return { ...turn, status: "closed", reviewRef, closedAt: now.toISOString() };
   }
 
@@ -149,6 +155,7 @@ export class WorkspaceActivityStore {
         durationMs: input.durationMs,
       })
       .run();
+
     return Number(inserted.lastInsertRowid);
   }
 
@@ -159,6 +166,7 @@ export class WorkspaceActivityStore {
 
   getWorkspace(workspaceId: string): ActivityWorkspaceRecord | undefined {
     const row = this.workspaceQuery().where(eq(workspaceSessions.id, workspaceId)).get();
+
     return row ? rowToWorkspace(row) : undefined;
   }
 
@@ -202,6 +210,7 @@ export class WorkspaceActivityStore {
         eq(workspaceTurns.sequence, sequence),
       ))
       .get();
+
     return row ? rowToTurn(row) : undefined;
   }
 
@@ -247,6 +256,7 @@ export class WorkspaceActivityStore {
 
   private withCallCounts(row: WorkspaceTurnRow): WorkspaceTurn {
     const counts = this.turnQuery().where(eq(workspaceTurns.id, row.id)).get();
+
     return counts ? rowToTurn(counts) : rowToTurn({ turn: row, toolCalls: 0, failedToolCalls: 0 });
   }
 
@@ -288,6 +298,7 @@ function rowToTurn(row: {
   failedToolCalls: number;
 }): WorkspaceTurn {
   const { turn } = row;
+
   return {
     id: turn.id,
     workspaceId: turn.workspaceSessionId,

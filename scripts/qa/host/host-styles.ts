@@ -2,7 +2,9 @@ import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 // ext-apps' package root re-exports its spec types extensionlessly, which NodeNext cannot follow.
 type HostContext = NonNullable<NonNullable<ConstructorParameters<typeof AppBridge>[3]>["hostContext"]>;
+
 type McpUiTheme = NonNullable<HostContext["theme"]>;
+
 type McpUiHostStyles = NonNullable<HostContext["styles"]>;
 
 // Representative host palettes using the spec's style variable names. Real

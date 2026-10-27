@@ -31,8 +31,10 @@ test("the skill installs to each target's global and project locations", (t) => 
   const home = join(root, "home");
   const project = join(root, "project");
   const env = {};
+
   const global = (target: Parameters<typeof installAgentsSkill>[0]) =>
     installAgentsSkill(target, { project: false, home, env, cwd: project });
+
   const local = (target: Parameters<typeof installAgentsSkill>[0]) =>
     installAgentsSkill(target, { project: true, home, env, cwd: project });
 

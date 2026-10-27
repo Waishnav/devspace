@@ -62,6 +62,7 @@ test("requests keep every field the daemon acts on", () => {
     writeMode: "read_only",
     worktree: { branch: "feature/x" },
   };
+
   assert.deepEqual({ ...request("agent.start", startParams).params }, startParams);
 
   const direct = request("agent.start", { target: "reviewer", prompt: "Review this", workspaceRoot: "/tmp/project" });
@@ -115,6 +116,7 @@ test("results keep every field and preserve response whitespace", () => {
     { id: "agt_two", status: "running", wait: "timeout" },
     { id: "agt_three", status: "failed", error: { code: "PROVIDER_EXECUTION_ERROR", message: "Failed.", retryable: true } },
   ];
+
   assert.deepEqual(decodeAgentWaitResults(waitResults), waitResults);
 
   const hello = {
@@ -130,6 +132,7 @@ test("results keep every field and preserve response whitespace", () => {
     },
     configMatches: false,
   };
+
   assert.deepEqual(decodeDaemonHello(hello), hello);
 
   assert.equal(decodeWorkflowRun({
@@ -170,12 +173,14 @@ test("error responses survive an encode and decode round trip", () => {
     target: "reviewer",
     operation: "create_runtime",
   } as const;
+
   const response = decodeLocalAgentDaemonResponse(JSON.parse(encodeLocalAgentDaemonResponse({
     requestId: "req_error",
     protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
     ok: false,
     error,
   })));
+
   assert.equal(response.ok, false);
   assert.deepEqual(!response.ok && response.error, error);
 });

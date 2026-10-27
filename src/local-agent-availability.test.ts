@@ -8,6 +8,7 @@ import { getLocalAgentProviderAvailabilitySnapshot } from "./local-agent-availab
 function tempDirectory(t: TestContext, prefix: string): string {
   const directory = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
+
   return directory;
 }
 
@@ -16,6 +17,7 @@ test("a missing or empty provider command is reported unavailable", () => {
     ...process.env,
     CODEX_COMMAND: "/definitely/missing/devspace-codex",
   });
+
   assert.deepEqual(snapshot.find((provider) => provider.name === "codex"), {
     name: "codex",
     available: false,
@@ -48,6 +50,7 @@ test("a configured provider command is preflighted without exposing its env", (t
   );
   writeFileSync(executable, "#!/bin/sh\nexit 0\n");
   chmodSync(executable, 0o700);
+
   const availability = getLocalAgentProviderAvailabilitySnapshot(
     {
       ...process.env,
@@ -66,6 +69,7 @@ test("a configured provider command is preflighted without exposing its env", (t
       }],
     },
   ).find((provider) => provider.name === "codex");
+
   assert.deepEqual(availability, {
     name: "codex",
     available: true,
@@ -80,6 +84,7 @@ test("configured ACP providers are listed once and preflight their flavor's exec
   writeFileSync(grok, "#!/bin/sh\nexit 0\n");
   chmodSync(grok, 0o700);
   const env = { PATH: directory };
+
   const config = {
     enabled: true,
     instructions: "on-demand" as const,
@@ -89,6 +94,7 @@ test("configured ACP providers are listed once and preflight their flavor's exec
       { id: "kiro", driver: "acp" as const, enabled: true, command: "kiro" },
     ],
   };
+
   const snapshot = getLocalAgentProviderAvailabilitySnapshot(env, config);
   assert.deepEqual(snapshot.filter((provider) => provider.name === "cursor").length, 1, "configured built-in ACP ids are listed once");
   assert.equal(snapshot.find((provider) => provider.name === "cursor-work")?.available, true, "preflight checks the flavor's executable");
@@ -101,13 +107,17 @@ test("PI_COMMAND and OPENCODE_COMMAND override executables found on PATH", (t) =
   const pi = join(directory, "pi");
   writeFileSync(pi, "#!/bin/sh\nexit 0\n");
   chmodSync(pi, 0o700);
+
   const availability = (env: NodeJS.ProcessEnv) => getLocalAgentProviderAvailabilitySnapshot(env)
     .find((provider) => provider.name === "pi");
+
   assert.equal(availability({ PATH: directory })?.available, true, "a system pi on PATH is launchable");
   assert.equal(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.available, false);
   assert.match(availability({ PATH: directory, PI_COMMAND: "/definitely/missing/pi" })?.reason ?? "", /missing\/pi/);
+
   const opencode = (env: NodeJS.ProcessEnv) => getLocalAgentProviderAvailabilitySnapshot(env)
     .find((provider) => provider.name === "opencode");
+
   assert.equal(opencode({ PATH: "", OPENCODE_COMMAND: pi })?.available, true, "OPENCODE_COMMAND names the executable");
   assert.equal(opencode({ PATH: directory, OPENCODE_COMMAND: "/definitely/missing/opencode" })?.available, false);
 });

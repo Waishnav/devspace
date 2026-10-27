@@ -51,6 +51,7 @@ const transcriptsDir = join(harnessDir, "transcripts");
 const TURN_TIMEOUT_SECONDS = 180;
 const STOP_BOUND_MS = 15_000;
 const NON_STREAMING_TOOL_DELAY_MS = 8_000;
+
 // The stop scenario's `sleep 20` plus slack for the provider to start it.
 const LATE_WRITE_DEADLINE_MS = 25_000;
 
@@ -98,6 +99,7 @@ const SCENARIOS: Scenario[] = [
     async run(run) {
       const promptedAt = Date.now();
       const id = await start(run, "Run the shell command `sleep 20 && echo late > late.txt`, then reply SLEPT.");
+
       if (streams(run.provider)) {
         await waitForEvent(run, id, (event) => event.type === "tool_started");
       } else {
@@ -105,14 +107,17 @@ const SCENARIOS: Scenario[] = [
         await waitForEvent(run, id, (event) => event.type === "turn_started");
         await delay(NON_STREAMING_TOOL_DELAY_MS);
       }
+
       const stoppedAt = Date.now();
       const stopped = await cli(run, ["agents", "stop", id, "--json"]);
       expect(stopped.code === 0, `stop failed: ${stopped.stdout}${stopped.stderr}`);
       let result = stopped.json;
+
       while (result.status === "running" && Date.now() - stoppedAt < STOP_BOUND_MS) {
         await delay(250);
         result = (await cli(run, ["agents", "show", id, "--json"])).json;
       }
+
       expect(result.status === "stopped", `expected stopped within ${STOP_BOUND_MS}ms, got ${describe(result)}`);
       const before = (await cli(run, ["agents", "events", id, "--json"])).json.events.length;
       await delay(2_000);
@@ -120,6 +125,7 @@ const SCENARIOS: Scenario[] = [
       const events = (await cli(run, ["agents", "events", id, "--json"])).json.events;
       expect(after.json.status === "stopped", `status changed after stop: ${describe(after.json)}`);
       expect(events.length === before, "events were appended after the turn stopped");
+
       // Replay runs no tools, so only a live provider can prove the sleep was killed:
       // check after it would have finished.
       if (run.mode !== "replay") await delay(Math.max(0, promptedAt + LATE_WRITE_DEADLINE_MS - Date.now()));
@@ -142,6 +148,7 @@ const SCENARIOS: Scenario[] = [
       expect(types.at(-1) === "turn_completed" && events.at(-1)?.status === "completed", `last event is ${JSON.stringify(events.at(-1))}`);
       expect(types.includes("message"), `no message event in ${types.join(",")}`);
       expect(events.every((event) => event.turnId === result.turnId), "events span more than one turnId");
+
       if (streams(run.provider)) {
         expect(types.includes("tool_started") && types.includes("tool_completed"), `no tool events in ${types.join(",")}`);
       }
@@ -159,13 +166,16 @@ const SCENARIOS: Scenario[] = [
       const result = await waitFor(run, id);
       expect(result.status === "completed", `expected completed, got ${describe(result)}`);
       const shown = (await cli(run, ["agents", "show", id, "--json"])).json;
+
       for (const output of [result, shown]) {
         expect(output.worktree === worktree && output.branch === branch, `worktree and branch were not reported: ${describe(output)}`);
       }
+
       expect(worktree !== run.workspace && existsSync(join(worktree, "README.md")), `${worktree} is not a checkout of the fixture`);
       expect(git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]) === branch, `worktree is not on ${branch}`);
       expect(git(run.workspace, ["status", "--porcelain"]) === "", "the source checkout was modified");
       expect(!existsSync(join(run.workspace, "probe.txt")), "probe.txt appeared in the source checkout");
+
       // A replayed provider executes no tools, so the file can only be checked against a real one.
       if (run.mode !== "replay") {
         expect(existsSync(join(worktree, "probe.txt")), `probe.txt is missing from ${worktree}`);
@@ -194,28 +204,37 @@ async function main(): Promise<void> {
       scenario: { type: "string", multiple: true },
     },
   });
+
   if (values.live && values.record) throw new Error("--live and --record are exclusive.");
   const mode: Mode = values.record ? "record" : values.live ? "live" : "replay";
+
   if (!existsSync(cliPath)) throw new Error("dist/cli.js is missing; run pnpm build first.");
   const providers = (positionals.length > 0 ? positionals : recordedProviders()).map(providerDefinition);
+
   const scenarios = values.scenario
     ? values.scenario.map((name) => SCENARIOS.find((scenario) => scenario.name === name) ?? fail(`Unknown scenario ${name}.`))
     : SCENARIOS;
 
   const results: Array<{ provider: string; scenario: string; error?: string; ms: number }> = [];
+
   for (const provider of providers) {
     for (const scenario of scenarios) {
       const startedAt = Date.now();
+
       const error = await runScenario(provider, scenario, mode).then(() => undefined, (cause: unknown) => (
         cause instanceof Error ? cause.message : String(cause)
       ));
+
       results.push({ provider: provider.id, scenario: scenario.name, error, ms: Date.now() - startedAt });
       console.log(`${error ? "FAIL" : "PASS"} ${mode} ${provider.id} ${scenario.name} (${Date.now() - startedAt}ms)`);
+
       if (error) console.log(indent(error));
     }
   }
+
   const failed = results.filter((result) => result.error);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
+
   if (failed.length > 0) process.exitCode = 1;
 }
 
@@ -236,6 +255,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     : mode === "live"
       ? undefined
       : writeShimWrapper(root, provider, scenario, mode, workspace, runDir);
+
   mkdirSync(configDir);
   writeFileSync(join(configDir, "config.jsonc"), JSON.stringify({
     configVersion: 1,
@@ -259,16 +279,19 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
     DEVSPACE_OAUTH_OWNER_TOKEN: "agents-qa-owner-token-that-is-long-enough",
     DEVSPACE_AGENTD_IDLE_TIMEOUT_MS: "60000",
   };
+
   // Run as an installed devspace would: this checkout's node_modules/.bin (with the bundled
   // Pi SDK) must not shadow the provider executables on PATH.
   if (env.PATH) env.PATH = removeDevspaceNodeModulesBinFromPath(env.PATH);
   delete env.DEVSPACE_WORKSPACE_ID;
   delete env.DEVSPACE_WORKSPACE_ROOT;
   const run: Run = { provider, mode, scenario: scenario.name, workspace, runDir, env };
+
   try {
     if (mode === "replay" && scenario.transcript && !existsSync(transcriptPath(provider, scenario) + ".jsonl")) {
       throw new Error(`No transcript; record it with: pnpm qa:agents ${provider.id} --record --scenario ${scenario.name}`);
     }
+
     await scenario.run(run);
   } catch (error) {
     const report = join(runDir, "replay-failures.log");
@@ -277,6 +300,7 @@ async function runScenario(provider: ProviderDefinition, scenario: Scenario, mod
   } finally {
     await stopDaemon(run).catch(() => undefined);
   }
+
   // A provider process that was just stopped may still be writing as the daemon exits.
   if (!process.env.DEVSPACE_QA_KEEP) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
@@ -300,30 +324,37 @@ function writeShimWrapper(
     DEVSPACE_AGENT_SHIM_WORKTREE_ROOT: join(root, "worktrees"),
     ...(process.env.DEVSPACE_AGENT_SHIM_TRACE ? { DEVSPACE_AGENT_SHIM_TRACE: "1" } : {}),
   };
+
   const tsx = import.meta.resolve("tsx");
+
   const lines = [
     "#!/bin/sh",
     ...Object.entries(variables).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
     `exec ${shellQuote(process.execPath)} --import ${shellQuote(tsx)} ${shellQuote(shimPath)} "$@"`,
     "",
   ];
+
   const path = join(root, "bin", `${provider.id}-shim`);
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(path, lines.join("\n"));
   chmodSync(path, 0o755);
+
   return path;
 }
 
 /** `daemon stop` only requests shutdown; wait for that daemon to exit so it stops logging into the directory we remove. */
 async function stopDaemon(run: Run): Promise<void> {
   const pid = (await cli(run, ["agents", "daemon", "stop", "--json"])).json?.pid;
+
   if (typeof pid !== "number") return;
+
   for (let waited = 0; waited < 10_000 && isAlive(pid); waited += 100) await delay(100);
 }
 
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch {
     return false;
@@ -333,23 +364,29 @@ function isAlive(pid: number): boolean {
 async function start(run: Run, prompt: string, flags: string[] = []): Promise<string> {
   const result = await cli(run, ["agents", "run", run.provider.id, ...flags, "--json", prompt]);
   expect(result.code === 0 && typeof result.json?.id === "string", `run failed: ${result.stdout}${result.stderr}`);
+
   return result.json.id;
 }
 
 async function waitFor(run: Run, id: string): Promise<any> {
   const result = await cli(run, ["agents", "wait", id, "--timeout", String(TURN_TIMEOUT_SECONDS), "--json"]);
   expect(Array.isArray(result.json), `wait failed: ${result.stdout}${result.stderr}`);
+
   return result.json[0];
 }
 
 async function waitForEvent(run: Run, id: string, predicate: (event: any) => boolean): Promise<void> {
   const deadline = Date.now() + TURN_TIMEOUT_SECONDS * 1_000;
+
   while (Date.now() < deadline) {
     const page = (await cli(run, ["agents", "events", id, "--json"])).json;
+
     if (page?.events?.some(predicate)) return;
+
     if (page?.status && page.status !== "running") throw new Error(`turn ended before the expected event: ${JSON.stringify(page)}`);
     await delay(250);
   }
+
   throw new Error("timed out waiting for an agent event");
 }
 
@@ -367,11 +404,13 @@ function exec(run: Run, args: string[]): Promise<CliResult> {
     child.on("error", reject);
     child.on("close", (code) => {
       let json: unknown;
+
       try {
         json = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
       } catch {
         json = undefined;
       }
+
       resolvePromise({ code, stdout, stderr, json });
     });
   });
@@ -379,6 +418,7 @@ function exec(run: Run, args: string[]): Promise<CliResult> {
 
 function streams(provider: ProviderDefinition): boolean {
   const driver = createLocalAgentDrivers().find((entry) => entry.providerInstanceId === provider.id);
+
   return driver?.capabilities.turns.streaming === true;
 }
 
@@ -392,7 +432,9 @@ function transcriptPath(provider: ProviderDefinition, scenario: Scenario): strin
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+
   return result.stdout.trim();
 }
 

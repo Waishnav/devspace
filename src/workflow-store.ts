@@ -20,13 +20,16 @@ export class WorkflowStore {
       ? this.database.sqlite.prepare("select record_json from workflow_runs where workspace_root = ? and workspace_id is ? order by rowid desc")
         .all(scope.workspaceRoot, scope.workspaceId ?? null)
       : this.database.sqlite.prepare("select record_json from workflow_runs order by rowid desc").all();
+
     return rows.map((row) => decode<WorkflowSnapshot>(row)!);
   }
   update(id: string, patch: Partial<Pick<WorkflowSnapshot, "status" | "result" | "error">>): WorkflowSnapshot {
     const run = this.get(id);
+
     if (!run) throw new WorkflowError("WORKFLOW_NOT_FOUND", `Unknown workflow run: ${id}`);
     Object.assign(run, patch, { updatedAt: new Date().toISOString() });
     this.database.sqlite.prepare("update workflow_runs set record_json = ? where id = ?").run(JSON.stringify(run), id);
+
     return run;
   }
   addCall(call: WorkflowCall): void {
@@ -48,10 +51,12 @@ export class WorkflowStore {
   }
   updateCall(runId: string, index: number, patch: Partial<WorkflowCall>): WorkflowCall {
     const call = this.call(runId, index);
+
     if (!call) throw new WorkflowError("WORKFLOW_CALL_NOT_FOUND", `Unknown workflow call: ${index}`);
     Object.assign(call, patch, { updatedAt: new Date().toISOString() });
     this.database.sqlite.prepare("update workflow_calls set record_json = ? where run_id = ? and call_index = ?")
       .run(JSON.stringify(call), runId, index);
+
     return call;
   }
   event(runId: string, type: string, data: unknown): void {
@@ -62,9 +67,11 @@ export class WorkflowStore {
     const rows = this.database.sqlite.prepare("select * from workflow_events where run_id = ? and sequence > ? order by sequence limit 100").all(runId, after) as Array<{
       sequence: number; run_id: string; type: string; data_json: string; created_at: string;
     }>;
+
     return rows.map((r) => ({ sequence: r.sequence, runId: r.run_id, type: r.type, data: JSON.parse(r.data_json), createdAt: r.created_at }));
   }
 }
+
 function decode<T>(row: unknown): T | undefined {
   return row ? JSON.parse((row as { record_json: string }).record_json) as T : undefined;
 }

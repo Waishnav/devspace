@@ -27,6 +27,7 @@ const TEST_CAPABILITIES = {
   permissions: { enforcement: "native" },
   mcp: { supported: false },
 } as const;
+
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -53,17 +54,20 @@ class FakeRuntime implements LocalAgentRuntime {
     callbacks?: LocalAgentRunCallbacks,
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.inputs.push(input);
+
     if (input.prompt.includes("stream")) {
       callbacks?.onEvent?.({ type: "tool_started", tool: "bash", summary: "curl -H 'Authorization: Bearer abcdefghijklmnop' x" });
       callbacks?.onEvent?.({ type: "tool_completed", tool: "bash", summary: "curl", status: "failed" });
       callbacks?.onEvent?.({ type: "message", text: "  checked it  " });
       callbacks?.onEvent?.({ type: "message", text: "   " });
     }
+
     if (input.prompt.includes("flood")) {
       for (let index = 0; index < 600; index += 1) {
         callbacks?.onEvent?.({ type: "tool_started", tool: "read", summary: `file-${index}` });
       }
     }
+
     if (input.prompt.includes("detail-fail")) {
       return Result.err(new AgentProviderExecutionError({
         code: "PROVIDER_EXECUTION_ERROR",
@@ -74,24 +78,33 @@ class FakeRuntime implements LocalAgentRuntime {
         message: "Codex agent turn failed.",
       }));
     }
+
     if (input.prompt.includes("early-fail")) {
       await callbacks?.onSessionId?.("thread_early");
+
       return Result.err(providerFailure("provider failed after session creation"));
     }
+
     if (input.prompt.includes("defect")) throw new TypeError("internal defect");
+
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
+
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
+
     if (input.prompt.includes("finish-despite-stop")) {
       await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
     }
+
     if (input.prompt.includes("cancel-me")) {
       await new Promise<void>((resolve) => {
         const done = () => resolve();
+
         if (input.signal?.aborted) done();
         else input.signal?.addEventListener("abort", done, { once: true });
       });
+
       return Result.err(new AgentProviderCancelledError({
         code: "PROVIDER_CANCELLED",
         provider: "codex",
@@ -100,6 +113,7 @@ class FakeRuntime implements LocalAgentRuntime {
         message: "codex agent turn was stopped.",
       }));
     }
+
     return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_test",
@@ -140,6 +154,7 @@ function providerFailure(message: string): AgentProviderExecutionError {
 test("a profile loader defect surfaces as a panic", async (t) => {
   const { root, scope, driver } = await fixture(t);
   const defectStore = new LocalAgentStore(join(root, "defect-state"));
+
   const defectManager = new LocalAgentManager({
     store: defectStore,
     drivers: [driver],
@@ -150,6 +165,7 @@ test("a profile loader defect surfaces as a panic", async (t) => {
     allowedRoots: [root],
     subagents,
   });
+
   await assert.rejects(
     defectManager.start({
       target: "reviewer",
@@ -166,6 +182,7 @@ test("a profile loader defect surfaces as a panic", async (t) => {
 test("a missing provider executable fails the request before any agent record exists", async (t) => {
   const { root, scope, driver, profile } = await fixture(t);
   const unavailableStore = new LocalAgentStore(join(root, "unavailable-state"));
+
   const unavailableManager = new LocalAgentManager({
     store: unavailableStore,
     drivers: [driver],
@@ -175,12 +192,14 @@ test("a missing provider executable fails the request before any agent record ex
     subagents,
     providerAvailability: (name) => ({ name, available: false, reason: "codex executable not found" }),
   });
+
   const unavailable = await unavailableManager.start({
     target: "reviewer",
     prompt: "inspect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   });
+
   assert.equal(unavailable.isErr() && unavailable.error.code, "PROVIDER_UNAVAILABLE");
   assert.deepEqual(unwrap(unavailableManager.list(scope)), []);
   await unavailableManager.close();
@@ -192,18 +211,22 @@ test("queued cancellation never launches the provider runtime", async (t) => {
   const queuedProfiles = new Promise<void>((resolve) => { releaseQueuedProfiles = resolve; });
   let queuedProfileLoads = 0;
   const queuedStore = new LocalAgentStore(join(root, "queued-state"));
+
   const queuedManager = new LocalAgentManager({
     store: queuedStore,
     drivers: [driver],
     pool: new LocalAgentRuntimePool(),
     loadProfiles: async () => {
       queuedProfileLoads += 1;
+
       if (queuedProfileLoads === 2) await queuedProfiles;
+
       return [profile];
     },
     allowedRoots: [root],
     subagents,
   });
+
   const queued = unwrap(await queuedManager.start({
     agentId: "workflow-queued-cancel",
     target: "reviewer",
@@ -211,6 +234,7 @@ test("queued cancellation never launches the provider runtime", async (t) => {
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => queuedProfileLoads === 2);
   const queuedCancellation = queuedManager.stop(queued.id, scope);
   releaseQueuedProfiles();
@@ -221,36 +245,44 @@ test("queued cancellation never launches the provider runtime", async (t) => {
 
 test("a workspace outside the allowed roots is rejected", async (t) => {
   const { manager, scope } = await fixture(t);
+
   const outside = await manager.start({
     target: "reviewer",
     prompt: "outside",
     workspaceId: scope.workspaceId,
     workspaceRoot: join(tmpdir(), "outside"),
   });
+
   assert.equal(outside.isErr(), true);
+
   if (outside.isErr()) assert.equal(outside.error.code, "WORKSPACE_NOT_ALLOWED");
 });
 
 test("an unknown target is rejected", async (t) => {
   const { manager, root, scope } = await fixture(t);
+
   const unknown = await manager.start({
     target: "missing",
     prompt: "inspect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   });
+
   assert.equal(unknown.isErr(), true);
+
   if (unknown.isErr()) assert.equal(unknown.error.code, "UNKNOWN_TARGET");
 });
 
 test("stop cancels a running turn", async (t) => {
   const { manager, store, root, scope, getRecord } = await fixture(t);
+
   const cancellable = unwrap(await manager.start({
     target: "codex",
     prompt: "cancel-me",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => getRecord(cancellable.id).status === "running");
   const stopped = unwrap(await manager.stop(cancellable.id, scope));
   assert.equal(stopped.status, "stopped");
@@ -261,19 +293,23 @@ test("stop cancels a running turn", async (t) => {
 // A provider that ignores stop leaves the turn running; stop reports that instead of hanging.
 test("stop reports a provider that ignores it instead of hanging", async (t) => {
   const { manager, root, scope, runtimes, getRecord } = await fixture(t);
+
   const stubborn = unwrap(await manager.start({
     target: "codex",
     prompt: "hold",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(stubborn.id)?.inputs.length === 1);
   const stubbornStop = await manager.stop(stubborn.id, scope);
   assert.equal(stubbornStop.isErr(), true);
+
   if (stubbornStop.isErr()) {
     assert.equal(stubbornStop.error.code, "AGENT_CONFLICT");
     assert.equal(stubbornStop.error.retryable, true);
   }
+
   assert.equal(getRecord(stubborn.id).status, "running");
   runtimes.get(stubborn.id)?.release();
   await waitFor(() => getRecord(stubborn.id).status === "idle");
@@ -282,15 +318,18 @@ test("stop reports a provider that ignores it instead of hanging", async (t) => 
 // A turn that completes normally despite the stop request is not reported as stopped.
 test("a turn that completes normally despite a stop request is not reported as stopped", async (t) => {
   const { manager, root, scope, runtimes } = await fixture(t);
+
   const finishing = unwrap(await manager.start({
     target: "codex",
     prompt: "finish-despite-stop",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(finishing.id)?.inputs.length === 1);
   const finishingStop = await manager.stop(finishing.id, scope);
   assert.equal(finishingStop.isErr(), true);
+
   if (finishingStop.isErr()) {
     assert.equal(finishingStop.error.code, "AGENT_CONFLICT");
     assert.equal(finishingStop.error.retryable, false);
@@ -299,12 +338,14 @@ test("a turn that completes normally despite a stop request is not reported as s
 
 test("a named provider instance keeps its driver and model, even after a later same-name profile appears", async (t) => {
   const { manager, root, scope, runtimes, getRecord, profile, lateProfiles } = await fixture(t);
+
   const namedInstance = unwrap(await manager.start({
     target: "codex-work",
     prompt: "inspect named instance",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   assert.equal(namedInstance.providerInstanceId, "codex-work");
   assert.equal(namedInstance.driver, "codex");
   assert.equal(namedInstance.model, "gpt-work");
@@ -321,12 +362,14 @@ test("a named provider instance keeps its driver and model, even after a later s
 // A profile shadows a provider instance with the same name, on start and on every continuation.
 test("a profile shadows a provider instance with the same name on start and every continuation", async (t) => {
   const { manager, root, scope, runtimes, getRecord } = await fixture(t);
+
   const shadowed = unwrap(await manager.start({
     target: "codex-shadow",
     prompt: "first",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => getRecord(shadowed.id).status === "idle");
   unwrap(await manager.continue(shadowed.id, "second", {}, scope));
   await waitFor(() => runtimes.get(shadowed.id)?.inputs.length === 2);
@@ -339,42 +382,52 @@ test("a profile shadows a provider instance with the same name on start and ever
 
 test("a disabled profile cannot start", async (t) => {
   const { manager, root, scope } = await fixture(t);
+
   const disabled = await manager.start({
     target: "disabled-reviewer",
     prompt: "inspect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   });
+
   assert.equal(disabled.isErr(), true);
+
   if (disabled.isErr()) assert.equal(disabled.error.code, "PROVIDER_DISABLED");
 });
 
 test("a configured provider without a driver cannot start", async (t) => {
   const { manager, root, scope } = await fixture(t);
+
   const unconfigured = await manager.start({
     target: "claude",
     prompt: "inspect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   });
+
   assert.equal(unconfigured.isErr(), true);
+
   if (unconfigured.isErr()) assert.equal(unconfigured.error.code, "PROVIDER_NOT_CONFIGURED");
 });
 
 test("a provider missing from the subagents config is an unknown target", async (t) => {
   const { manager, root, scope } = await fixture(t);
+
   const disabledProvider = await manager.start({
     target: "pi",
     prompt: "inspect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   });
+
   assert.equal(disabledProvider.isErr(), true);
+
   if (disabledProvider.isErr()) assert.equal(disabledProvider.error.code, "UNKNOWN_TARGET");
 });
 
 test("an agent whose profile was disabled later cannot continue", async (t) => {
   const { manager, store, root, scope, disabledProfile } = await fixture(t);
+
   const previouslyCreatedDisabled = store.create({
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
@@ -382,9 +435,11 @@ test("an agent whose profile was disabled later cannot continue", async (t) => {
     providerInstanceId: "codex",
     driver: "codex",
   });
+
   store.update(previouslyCreatedDisabled.id, { status: "idle" });
   const disabledContinuation = await manager.continue(previouslyCreatedDisabled.id, "inspect", {}, scope);
   assert.equal(disabledContinuation.isErr(), true);
+
   if (disabledContinuation.isErr()) assert.equal(disabledContinuation.error.code, "PROVIDER_DISABLED");
 });
 
@@ -396,6 +451,7 @@ test("reconciling after a restart fails the interrupted turn and keeps the previ
 
   const mismatchedGet = manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root });
   assert.equal(mismatchedGet.isErr(), true);
+
   if (mismatchedGet.isErr()) assert.equal(mismatchedGet.error.code, "WORKSPACE_MISMATCH");
 
   unwrap(manager.reconcileActiveRuns());
@@ -410,12 +466,14 @@ test("reconciling after a restart fails the interrupted turn and keeps the previ
 
 test("a running agent applies provider defaults and rejects a concurrent continuation", async (t) => {
   const { manager, store, root, scope, runtimes, getRecord } = await fixture(t);
+
   const first = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   assert.equal(first.status, "running");
   assert.equal(first.model, "gpt-default");
   assert.equal(first.effort, "medium");
@@ -423,6 +481,7 @@ test("a running agent applies provider defaults and rejects a concurrent continu
   await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
   const conflict = await manager.continue(first.id, "another prompt", {}, scope);
   assert.equal(conflict.isErr(), true);
+
   if (conflict.isErr()) {
     assert.equal(conflict.error.code, "AGENT_CONFLICT");
     assert.equal("agentId" in conflict.error ? conflict.error.agentId : undefined, first.id);
@@ -442,6 +501,7 @@ test("a repeated request id returns the same agent, rejects changed input, and n
   const { manager, root, scope, runtimes, getRecord, startCompleted } = await fixture(t);
   const first = await startCompleted("hold");
   const duplicateId = "workflow-dispatch-1";
+
   const duplicateInput = {
     agentId: duplicateId,
     target: "reviewer",
@@ -450,28 +510,38 @@ test("a repeated request id returns the same agent, rejects changed input, and n
     workspaceRoot: root,
     writeMode: "read_only" as const,
   };
+
   const [duplicate, simultaneousRetry] = await Promise.all([
     manager.start(duplicateInput).then(unwrap),
     manager.start(duplicateInput).then(unwrap),
   ]);
+
   assert.equal(simultaneousRetry.id, duplicate.id);
   await waitFor(() => runtimes.get(duplicate.id)?.inputs.length === 1);
+
   const duplicateRetry = unwrap(await manager.start({
     ...duplicateInput,
   }));
+
   assert.equal(duplicateRetry.id, duplicate.id);
   assert.equal(runtimes.get(duplicate.id)?.inputs.length, 1);
+
   const mismatchedDuplicate = await manager.start({
     ...duplicateInput,
     prompt: "different prompt",
   });
+
   assert.equal(mismatchedDuplicate.isErr(), true);
+
   if (mismatchedDuplicate.isErr()) assert.equal(mismatchedDuplicate.error.code, "AGENT_CONFLICT");
+
   const reconfiguredDuplicate = await manager.start({
     ...duplicateInput,
     model: "gpt-other",
   });
+
   assert.equal(reconfiguredDuplicate.isErr(), true);
+
   if (reconfiguredDuplicate.isErr()) assert.equal(reconfiguredDuplicate.error.code, "AGENT_CONFLICT");
   const duplicateTurn = unwrap(manager.getTurn(duplicate.id, scope));
   assert.equal(duplicateTurn?.status, "running");
@@ -485,31 +555,40 @@ test("a repeated request id returns the same agent, rejects changed input, and n
   const authorityUpgrade = await manager.continue(duplicate.id, "expand authority", {
     writeMode: "allowed",
   }, scope);
+
   assert.equal(authorityUpgrade.isErr(), true);
+
   if (authorityUpgrade.isErr()) assert.equal(authorityUpgrade.error.code, "AGENT_CONFLICT");
 });
 
 test("continuations apply run overrides and persist authority reductions", async (t) => {
   const { manager, store, scope, getRecord, startCompleted } = await fixture(t);
   const first = await startCompleted("hold");
+
   const continued = unwrap(await manager.continue(first.id, "continue", {
     model: "gpt-run",
     effort: "high",
   }, scope));
+
   assert.equal(continued.status, "running");
   await waitFor(() => getRecord(first.id).status === "idle");
   assert.equal(getRecord(first.id).model, "gpt-run");
   assert.equal(getRecord(first.id).effort, "high");
+
   const reduced = unwrap(await manager.continue(first.id, "reduce authority", {
     writeMode: "read_only",
   }, scope));
+
   assert.equal(reduced.writeMode, "read_only");
   await waitFor(() => getRecord(first.id).status === "idle");
   assert.equal(getRecord(first.id).writeMode, "read_only", "authority reductions persist across continuations");
+
   const restoreAuthority = await manager.continue(first.id, "restore authority", {
     writeMode: "allowed",
   }, scope);
+
   assert.equal(restoreAuthority.isErr(), true);
+
   if (restoreAuthority.isErr()) assert.equal(restoreAuthority.error.code, "AGENT_CONFLICT");
   assert.deepEqual(
     store.listTurns(first.id).map((turn) => ({ prompt: turn.prompt, status: turn.status })),
@@ -523,6 +602,7 @@ test("continuations apply run overrides and persist authority reductions", async
 
 test("an idempotent retry returns the current agent and never redispatches", async (t) => {
   const { manager, store, root, scope, getRecord } = await fixture(t);
+
   const mutableDispatchInput = {
     agentId: "workflow-sticky-dispatch",
     target: "reviewer",
@@ -531,6 +611,7 @@ test("an idempotent retry returns the current agent and never redispatches", asy
     workspaceRoot: root,
     writeMode: "allowed" as const,
   };
+
   const mutableDispatch = unwrap(await manager.start(mutableDispatchInput));
   await waitFor(() => getRecord(mutableDispatch.id).status === "idle");
   unwrap(await manager.continue(mutableDispatch.id, "reduce stable dispatch", {
@@ -546,12 +627,14 @@ test("an idempotent retry returns the current agent and never redispatches", asy
 test("different agents receive independent logical runtimes", async (t) => {
   const { manager, root, scope, runtimes, getRecord, startCompleted } = await fixture(t);
   const first = await startCompleted("hold");
+
   const second = unwrap(await manager.start({
     target: "reviewer",
     prompt: "second agent",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => getRecord(second.id).status === "idle");
   assert.notEqual(first.id, second.id);
   assert.notEqual(runtimes.get(first.id), runtimes.get(second.id), "different agents receive independent logical runtimes");
@@ -559,12 +642,14 @@ test("different agents receive independent logical runtimes", async (t) => {
 
 test("a provider error fails the turn and releases active-turn ownership", async (t) => {
   const { manager, store, root, scope, getRecord } = await fixture(t);
+
   const failed = unwrap(await manager.start({
     target: "reviewer",
     prompt: "fail",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => getRecord(failed.id).status === "error");
   assert.equal(getRecord(failed.id).error, "provider failed");
   assert.equal(getRecord(failed.id).errorCode, "PROVIDER_EXECUTION_ERROR");
@@ -584,26 +669,32 @@ test("a turn that fails after session creation keeps the provider session id", a
 
 test("multi-agent wait remains pending until every turn finishes", async (t) => {
   const { manager, root, scope, runtimes, getRecord } = await fixture(t);
+
   const waitingOne = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold wait one",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   const waitingTwo = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold wait two",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(waitingOne.id)?.inputs.length === 1);
   await waitFor(() => runtimes.get(waitingTwo.id)?.inputs.length === 1);
   let multiWaitSettled = false;
+
   const multiWait = manager.wait([waitingOne.id, waitingTwo.id, waitingOne.id], scope)
     .then((result) => {
       multiWaitSettled = true;
+
       return result;
     });
+
   runtimes.get(waitingOne.id)!.release();
   await waitFor(() => getRecord(waitingOne.id).status === "idle");
   assert.equal(multiWaitSettled, false, "multi-agent wait must remain pending until every turn finishes");
@@ -617,12 +708,14 @@ test("multi-agent wait remains pending until every turn finishes", async (t) => 
 test("a timed wait reports finished turns and times out running ones", async (t) => {
   const { manager, root, scope, runtimes, getRecord, startEarlyFailure } = await fixture(t);
   const earlyFailure = await startEarlyFailure();
+
   const timedWaitAgent = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold timed wait",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(timedWaitAgent.id)?.inputs.length === 1);
 
   const timedWaitResults = unwrap(await manager.wait([earlyFailure.id, timedWaitAgent.id], scope, 5));
@@ -650,12 +743,14 @@ test("a timed wait reports finished turns and times out running ones", async (t)
 
 test("cancelling a waiter does not stop its turn", async (t) => {
   const { manager, root, scope, runtimes, getRecord } = await fixture(t);
+
   const cancelledWaitAgent = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold cancelled wait",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(cancelledWaitAgent.id)?.inputs.length === 1);
   const waitAbort = new AbortController();
   const cancelledWait = manager.wait([cancelledWaitAgent.id], scope, undefined, waitAbort.signal);
@@ -671,19 +766,23 @@ test("waiting on an unknown agent fails", async (t) => {
   const waitingOne = await startCompleted("hold wait one");
   const invalidWait = await manager.wait([waitingOne.id, "agt_missing"], scope, 5);
   assert.equal(invalidWait.isErr(), true);
+
   if (invalidWait.isErr()) assert.equal(invalidWait.error.code, "AGENT_NOT_FOUND");
 });
 
 test("continuing from another workspace root or id is a workspace mismatch", async (t) => {
   const { manager, root, scope, startCompleted } = await fixture(t);
   const first = await startCompleted("hold");
+
   const wrongWorkspace = await manager.continue(
     first.id,
     "wrong workspace",
     {},
     { workspaceId: scope.workspaceId, workspaceRoot: join(root, "other") },
   );
+
   assert.equal(wrongWorkspace.isErr(), true);
+
   if (wrongWorkspace.isErr()) assert.equal(wrongWorkspace.error.code, "WORKSPACE_MISMATCH");
 
   const wrongWorkspaceId = await manager.continue(
@@ -692,18 +791,22 @@ test("continuing from another workspace root or id is a workspace mismatch", asy
     {},
     { workspaceId: "ws_other", workspaceRoot: root },
   );
+
   assert.equal(wrongWorkspaceId.isErr(), true);
+
   if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
 });
 
 test("managed and direct agents may run outside the allowed roots", async (t) => {
   const { manager, directRoot } = await fixture(t);
+
   const managed = unwrap(await manager.start({
     target: "reviewer",
     prompt: "managed worktree",
     workspaceId: "ws_managed",
     workspaceRoot: directRoot,
   }));
+
   await waitFor(() => unwrap(manager.get(managed.id, {
     workspaceId: "ws_managed",
     workspaceRoot: directRoot,
@@ -714,6 +817,7 @@ test("managed and direct agents may run outside the allowed roots", async (t) =>
     prompt: "direct outside allowed roots",
     workspaceRoot: directRoot,
   }));
+
   await waitFor(() => unwrap(manager.get(directOutside.id, { workspaceRoot: directRoot })).status === "idle");
   assert.equal(directOutside.workspaceId, undefined);
   assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id).sort(), [
@@ -725,27 +829,32 @@ test("managed and direct agents may run outside the allowed roots", async (t) =>
 test("a direct agent has no workspace id and rejects a mismatched one", async (t) => {
   const { manager, root, startCompleted } = await fixture(t);
   const first = await startCompleted("hold");
+
   const direct = unwrap(await manager.start({
     target: "reviewer",
     prompt: "direct harness",
     workspaceRoot: root,
   }));
+
   await waitFor(() => unwrap(manager.get(direct.id, { workspaceRoot: root })).status === "idle");
   assert.equal(direct.workspaceId, undefined);
   assert.equal(unwrap(manager.get(first.id, { workspaceRoot: root })).id, first.id);
   const directWrongId = manager.get(direct.id, { workspaceId: "ws_other", workspaceRoot: root });
   assert.equal(directWrongId.isErr(), true);
+
   if (directWrongId.isErr()) assert.equal(directWrongId.error.code, "WORKSPACE_MISMATCH");
 });
 
 test("a thrown runtime defect is an internal error, not a provider error", async (t) => {
   const { manager, root, scope, getRecord } = await fixture(t);
+
   const defect = unwrap(await manager.start({
     target: "reviewer",
     prompt: "defect",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => getRecord(defect.id).status === "error");
   assert.equal(getRecord(defect.id).errorCode, "AGENT_INTERNAL_ERROR");
   assert.notEqual(getRecord(defect.id).errorCode, "PROVIDER_EXECUTION_ERROR");
@@ -755,12 +864,14 @@ test("a thrown runtime defect is an internal error, not a provider error", async
 test("each turn gets an app-owned id and its activity is persisted as a redacted log", async (t) => {
   const { manager, store, root, scope, getRecord } = await fixture(t);
   const { stale } = seedStaleRecord(store, root, scope.workspaceId);
+
   const streamed = unwrap(await manager.start({
     target: "codex",
     prompt: "stream",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   assert.match(streamed.latestTurnId ?? "", /^trn_[0-9a-f]{8}$/);
   await manager.wait([streamed.id], scope);
   const streamedEvents = unwrap(manager.events(streamed.id, scope));
@@ -790,12 +901,14 @@ test("each turn gets an app-owned id and its activity is persisted as a redacted
 
 test("a flooded turn log is bounded and counts the dropped events", async (t) => {
   const { manager, root, scope } = await fixture(t);
+
   const flooded = unwrap(await manager.start({
     target: "codex",
     prompt: "flood",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await manager.wait([flooded.id], scope);
   const floodedEvents = unwrap(manager.events(flooded.id, scope)).events;
   assert.equal(floodedEvents.length, 500);
@@ -812,12 +925,14 @@ test("a flooded turn log is bounded and counts the dropped events", async (t) =>
 // A failed turn keeps the provider's own explanation, redacted, next to the generic message.
 test("a failed turn keeps the provider's redacted explanation next to the generic message", async (t) => {
   const { manager, root, scope, getRecord } = await fixture(t);
+
   const detailed = unwrap(await manager.start({
     target: "codex",
     prompt: "detail-fail",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   assert.deepEqual(withoutTurnId(unwrap(await manager.wait([detailed.id], scope))), [{
     id: detailed.id,
     status: "failed",
@@ -844,12 +959,14 @@ test("a failed turn keeps the provider's redacted explanation next to the generi
 
 test("closing the manager closes runtimes with active turns", async (t) => {
   const { manager, root, scope, runtimes } = await fixture(t);
+
   const shuttingDown = unwrap(await manager.start({
     target: "reviewer",
     prompt: "hold during shutdown",
     workspaceId: scope.workspaceId,
     workspaceRoot: root,
   }));
+
   await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);
   const closing = manager.close();
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -864,6 +981,7 @@ async function fixture(t: TestContext) {
   const directRoot = await mkdtemp(join(tmpdir(), "devspace-direct-agent-manager-test-"));
   const stateDir = join(root, "state");
   const scope = { workspaceId: "ws_test", workspaceRoot: root };
+
   const profile: LocalAgentProfile = {
     name: "reviewer",
     description: "Test reviewer",
@@ -872,12 +990,14 @@ async function fixture(t: TestContext) {
     body: "Review only.",
     disabled: false,
   };
+
   const disabledProfile: LocalAgentProfile = {
     ...profile,
     name: "disabled-reviewer",
     filePath: join(root, "disabled-reviewer.md"),
     disabled: true,
   };
+
   const shadowProfile: LocalAgentProfile = {
     ...profile,
     name: "codex-shadow",
@@ -887,6 +1007,7 @@ async function fixture(t: TestContext) {
   };
 
   const runtimes = new Map<string, FakeRuntime>();
+
   const driver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
@@ -895,9 +1016,11 @@ async function fixture(t: TestContext) {
     createRuntime: async (context: LocalAgentRuntimeContext) => {
       const runtime = new FakeRuntime();
       runtimes.set(context.agentId, runtime);
+
       return Result.ok(runtime);
     },
   };
+
   const workDriver: LocalAgentDriver = { ...driver, providerInstanceId: "codex-work" };
   const shadowDriver: LocalAgentDriver = { ...driver, providerInstanceId: "codex-shadow" };
 
@@ -917,6 +1040,7 @@ async function fixture(t: TestContext) {
     subagents,
     stopTimeoutMs: 200,
   });
+
   t.after(async () => {
     await manager.close();
     await rm(root, { recursive: true, force: true });
@@ -933,9 +1057,11 @@ async function fixture(t: TestContext) {
       workspaceId: scope.workspaceId,
       workspaceRoot: root,
     }));
+
     await waitFor(() => runtimes.get(agent.id)?.inputs.length === 1);
     runtimes.get(agent.id)!.release();
     await waitFor(() => getRecord(agent.id).status === "idle");
+
     return agent;
   };
 
@@ -946,7 +1072,9 @@ async function fixture(t: TestContext) {
       workspaceId: scope.workspaceId,
       workspaceRoot: root,
     }));
+
     await waitFor(() => getRecord(earlyFailure.id).status === "error");
+
     return earlyFailure;
   };
 
@@ -976,8 +1104,10 @@ function seedStaleRecord(store: LocalAgentStore, root: string, workspaceId: stri
     providerInstanceId: "codex",
     driver: "codex",
   });
+
   const staleTurn = store.beginTurn(stale.id, { turnId: "trn_stale", prompt: "interrupted turn" });
   store.update(stale.id, { latestResponse: "previous response" });
+
   return { stale, staleTurn };
 }
 
@@ -988,13 +1118,16 @@ function withoutTurnId<T extends { turnId?: string }>(results: T[]): Omit<T, "tu
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
+
   while (!check() && Date.now() < deadline) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+
   assert.equal(check(), true, "condition did not become true before timeout");
 }

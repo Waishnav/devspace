@@ -42,7 +42,9 @@ interface TextFile {
 }
 
 type StagedTextFile = TextFile | null;
+
 type FileIdentity = Pick<Stats, "dev" | "ino">;
+
 type FileIdentityReader = (path: string) => Promise<FileIdentity>;
 
 function patchError(message: string): Error {
@@ -51,9 +53,11 @@ function patchError(message: string): Error {
 
 export function parsePatch(patch: string): PatchAction[] {
   const lines = patchLines(patch);
+
   if (lines.shift()?.trim() !== "*** Begin Patch") {
     throw patchError("missing *** Begin Patch marker");
   }
+
   if (lines.pop()?.trim() !== "*** End Patch") {
     throw patchError("missing *** End Patch marker");
   }
@@ -63,25 +67,31 @@ export function parsePatch(patch: string): PatchAction[] {
 
   while (index < lines.length) {
     const header = lines[index++].trim();
+
     if (header === "") continue;
 
     if (header.startsWith("*** Environment ID: ")) {
       if (!header.slice("*** Environment ID: ".length).trim()) {
         throw patchError("environment id cannot be empty");
       }
+
       continue;
     }
 
     if (header.startsWith("*** Add File: ")) {
       const path = header.slice("*** Add File: ".length);
       const content: string[] = [];
+
       while (index < lines.length && !isTopLevelHeader(lines[index])) {
         const line = lines[index++];
+
         if (!line.startsWith("+")) {
           throw patchError(`added file line must start with +: ${line}`);
         }
+
         content.push(line.slice(1));
       }
+
       if (content.length === 0) throw patchError(`add file for ${path} has no content`);
       actions.push({
         kind: "add",
@@ -106,8 +116,10 @@ export function parsePatch(patch: string): PatchAction[] {
       }
 
       let current: UpdateHunk | undefined;
+
       const finishCurrent = (): void => {
         if (!current) return;
+
         if (current.lines.length === 0) throw patchError(`empty update hunk for ${path}`);
         hunks.push(current);
         current = undefined;
@@ -116,10 +128,12 @@ export function parsePatch(patch: string): PatchAction[] {
       while (index < lines.length) {
         const line = lines[index];
         const trimmed = line.trim();
+
         if (!current && trimmed === "") {
           index++;
           continue;
         }
+
         if (trimmed === "*** End of File") {
           if (!current) throw patchError(`end-of-file marker without update hunk for ${path}`);
           current.endOfFile = true;
@@ -139,17 +153,20 @@ export function parsePatch(patch: string): PatchAction[] {
 
         current ??= { lines: [] };
         index++;
+
         if (line.startsWith(" ")) current.lines.push({ kind: "context", text: line.slice(1) });
         else if (line.startsWith("+")) current.lines.push({ kind: "add", text: line.slice(1) });
         else if (line.startsWith("-")) current.lines.push({ kind: "remove", text: line.slice(1) });
         else if (line === "\\ No newline at end of file") continue;
         else throw patchError(`hunk line must start with space, +, or -: ${line}`);
       }
+
       finishCurrent();
 
       if (hunks.length === 0 && !moveTo) {
         throw patchError(`update for ${path} has no hunks or move destination`);
       }
+
       actions.push({ kind: "update", path, moveTo, hunks });
       continue;
     }
@@ -158,6 +175,7 @@ export function parsePatch(patch: string): PatchAction[] {
   }
 
   if (actions.length === 0) throw patchError("contains no file actions");
+
   return actions;
 }
 
@@ -165,6 +183,7 @@ function patchLines(patch: string): string[] {
   let lines = patch.replace(/\r\n/g, "\n").trim().split("\n");
   const first = lines[0]?.trim();
   const last = lines.at(-1)?.trim();
+
   if (
     (first === "<<EOF" || first === "<<'EOF'" || first === '<<"EOF"') &&
     last?.endsWith("EOF") &&
@@ -172,11 +191,13 @@ function patchLines(patch: string): string[] {
   ) {
     lines = lines.slice(1, -1);
   }
+
   return lines;
 }
 
 function isTopLevelHeader(line: string): boolean {
   const trimmed = line.trim();
+
   return (
     trimmed.startsWith("*** Add File: ") ||
     trimmed.startsWith("*** Delete File: ") ||
@@ -187,6 +208,7 @@ function isTopLevelHeader(line: string): boolean {
 
 function isInside(root: string, path: string): boolean {
   const rel = relative(root, path);
+
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
@@ -197,22 +219,28 @@ async function resolveConfinedPath(root: string, input: string): Promise<string>
 
   const rootPath = await realpath(root);
   const target = resolve(rootPath, input);
+
   if (!isInside(rootPath, target)) {
     throw patchError(`path escapes the workspace: ${input}`);
   }
 
   let existing = target;
+
   while (true) {
     try {
       const resolved = await realpath(existing);
+
       if (!isInside(rootPath, resolved)) {
         throw patchError(`path resolves outside the workspace: ${input}`);
       }
+
       break;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+
       if (code !== "ENOENT") throw error;
       const parent = dirname(existing);
+
       if (parent === existing) throw error;
       existing = parent;
     }
@@ -226,7 +254,9 @@ function splitFile(content: string): { lines: string[]; eol: string; finalNewlin
   const normalized = content.replace(/\r\n/g, "\n");
   const finalNewline = normalized.endsWith("\n");
   const lines = normalized.split("\n");
+
   if (finalNewline) lines.pop();
+
   return { lines, eol, finalNewline };
 }
 
@@ -243,6 +273,7 @@ function findSequence(haystack: string[], needle: string[], from: number, endOfF
   ]) {
     const start = endOfFile ? haystack.length - needle.length : from;
     const end = haystack.length - needle.length;
+
     for (let index = start; index <= end; index += 1) {
       if (index >= from && matchAt(index, normalize)) return index;
     }
@@ -259,18 +290,22 @@ function applyHunks(path: string, content: string, hunks: UpdateHunk[]): string 
   for (const hunk of hunks) {
     if (hunk.changeContext) {
       const contextIndex = findSequence(lines, [hunk.changeContext], cursor);
+
       if (contextIndex < 0) {
         throw patchError(`could not find hunk context in ${path}: ${hunk.changeContext}`);
       }
+
       cursor = contextIndex + 1;
     }
 
     const oldLines = hunk.lines
       .filter((line) => line.kind !== "add")
       .map((line) => line.text);
+
     const newLines = hunk.lines
       .filter((line) => line.kind !== "remove")
       .map((line) => line.text);
+
     const index = hunk.endOfFile && oldLines.length === 0
       ? lines.length
       : findSequence(lines, oldLines, cursor, hunk.endOfFile);
@@ -285,12 +320,14 @@ function applyHunks(path: string, content: string, hunks: UpdateHunk[]): string 
   }
 
   const normalized = `${lines.join("\n")}\n`;
+
   return file.eol === "\r\n" ? normalized.replace(/\n/g, "\r\n") : normalized;
 }
 
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK);
+
     return true;
   } catch {
     return false;
@@ -305,17 +342,20 @@ export async function replaceFile(
 ): Promise<void> {
   if (platform !== "win32" || !destinationExists) {
     await rename(temporary, destination);
+
     return;
   }
 
   const backup = `${temporary}.original`;
   await rename(destination, backup);
+
   try {
     await rename(temporary, destination);
   } catch (error) {
     await rename(backup, destination);
     throw error;
   }
+
   await rm(backup, { force: true });
 }
 
@@ -325,6 +365,7 @@ export async function isSamePatchFile(
   readIdentity: FileIdentityReader = lstat,
 ): Promise<boolean> {
   if (source === destination) return true;
+
   if (source.toLowerCase() !== destination.toLowerCase()) return false;
 
   try {
@@ -332,9 +373,11 @@ export async function isSamePatchFile(
       readIdentity(source),
       readIdentity(destination),
     ]);
+
     return sourceIdentity.dev === destinationIdentity.dev && sourceIdentity.ino === destinationIdentity.ino;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
+
     if (code === "ENOENT" || code === "ENOTDIR") return false;
     throw error;
   }
@@ -350,12 +393,15 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
     if (staged.has(absolute)) return staged.get(absolute) ?? null;
     const file = await readOptionalTextFile(absolute, displayPath);
     staged.set(absolute, file);
+
     return file;
   };
 
   const readStagedRequired = async (absolute: string, displayPath: string): Promise<TextFile> => {
     const file = await readStagedOptional(absolute, displayPath);
+
     if (!file) throw patchError(`file does not exist: ${displayPath}`);
+
     return file;
   };
 
@@ -380,12 +426,16 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
     }
 
     const updated = applyHunks(action.path, file.content, action.hunks);
+
     if (action.moveTo) {
       const destination = await resolveConfinedPath(root, action.moveTo);
       const samePatchFile = await isSamePatchFile(absolute, destination);
+
       if (!samePatchFile) await readStagedOptional(destination, action.moveTo);
+
       if (samePatchFile) staged.delete(absolute);
       staged.set(destination, { content: updated, mode: file.mode });
+
       if (!samePatchFile) staged.set(absolute, null);
       patches.push(unifiedFilePatch(action.path, action.moveTo, file.content, updated));
       results.push({ path: action.moveTo, previousPath: action.path, operation: "move" });
@@ -406,31 +456,38 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
 
   const unifiedPatch = patches.filter(Boolean).join("\n");
   const stats = countPatchStats(unifiedPatch);
+
   return { files: results, patch: unifiedPatch, ...stats };
 }
 
 async function readOptionalTextFile(absolute: string, displayPath: string): Promise<TextFile | null> {
   if (!(await fileExists(absolute))) return null;
   const metadata = await stat(absolute);
+
   if (!metadata.isFile()) throw patchError(`path is not a regular file: ${displayPath}`);
+
   return { content: await readUtf8Text(absolute, displayPath), mode: metadata.mode };
 }
 
 async function readUtf8Text(absolute: string, displayPath: string): Promise<string> {
   const bytes = await readFile(absolute);
   let content: string;
+
   try {
     content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw patchError(`file is not valid UTF-8 text: ${displayPath}`);
   }
+
   if (content.includes("\0")) throw patchError(`file appears to be binary: ${displayPath}`);
+
   return content;
 }
 
 async function writeTextFile(destination: string, content: string, mode?: number): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
   const temporary = `${destination}.devspace-patch-${process.pid}-${randomUUID()}`;
+
   try {
     await writeFile(temporary, content, mode === undefined ? undefined : { mode });
     await replaceFile(temporary, destination, await fileExists(destination));
@@ -448,6 +505,7 @@ function unifiedFilePatch(
 ): string {
   const oldFileName = oldContent === null ? "/dev/null" : `a/${oldPath}`;
   const newFileName = newContent === null ? "/dev/null" : `b/${newPath}`;
+
   const body = createTwoFilesPatch(
     oldFileName,
     newFileName,
@@ -470,16 +528,21 @@ function unifiedFilePatch(
 
 function stripFinalNewline(value: string): string {
   if (value.endsWith("\r\n")) return value.slice(0, -2);
+
   if (value.endsWith("\n")) return value.slice(0, -1);
+
   return value;
 }
 
 function countPatchStats(patch: string): { additions: number; removals: number } {
   let additions = 0;
   let removals = 0;
+
   for (const line of patch.split("\n")) {
     if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+
     if (line.startsWith("-") && !line.startsWith("---")) removals += 1;
   }
+
   return { additions, removals };
 }

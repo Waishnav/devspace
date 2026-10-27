@@ -40,14 +40,19 @@ const root = mkdtempSync(join(tmpdir(), "devspace-cli-agents-test-"));
 const configDir = join(root, ".devspace");
 const stateDir = join(root, ".state");
 const projectRoot = join(root, "project");
+
 mkdirSync(stateDir, { recursive: true });
+
 mkdirSync(join(configDir, "agents"), { recursive: true });
+
 mkdirSync(projectRoot, { recursive: true });
+
 const cliConfigEnv = writeTestDevspaceConfig(configDir, {
   workspaces: { allowedRoots: [projectRoot] },
   storage: { stateDir },
   subagents: { enabled: true, instructions: "on-demand", providers: [] },
 });
+
 writeFileSync(
   join(configDir, "agents", "reviewer.md"),
   [
@@ -63,7 +68,9 @@ writeFileSync(
     "",
   ].join("\n"),
 );
+
 const store = new LocalAgentStore(stateDir);
+
 const current = store.update(
   store.create({
     workspaceId: "ws_current",
@@ -76,6 +83,7 @@ const current = store.update(
   }).id,
   { status: "idle", latestResponse: "Review complete.", providerSessionId: "provider_secret" },
 );
+
 const other = store.update(
   store.create({
     workspaceId: "ws_other",
@@ -86,23 +94,29 @@ const other = store.update(
   }).id,
   { status: "running" },
 );
+
 store.close();
 
 const daemonSocket = localAgentDaemonPaths(stateDir).endpoint;
 const daemonRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+
 const daemon = createNetServer((socket) => {
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk: string | Buffer) => {
     buffer += chunk.toString();
     const newline = buffer.indexOf("\n");
+
     if (newline === -1) return;
+
     const request = JSON.parse(buffer.slice(0, newline)) as {
       requestId: string;
       method: string;
       params?: Record<string, unknown>;
     };
+
     daemonRequests.push(request);
+
     if (request.method === "agent.start") {
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
@@ -115,8 +129,10 @@ const daemon = createNetServer((socket) => {
           target: "missing",
         },
       }));
+
       return;
     }
+
     const eventsPage = (afterSeq: unknown) => ({
       agentId: current.id,
       turnId: "trn_follow",
@@ -132,6 +148,7 @@ const daemon = createNetServer((socket) => {
             { type: "turn_completed", status: "completed", turnId: "trn_follow", seq: 5, at: "t5" },
           ],
     });
+
     const result = request.method === "agent.events"
       ? eventsPage(request.params?.afterSeq)
       : request.method === "agent.list"
@@ -158,6 +175,7 @@ const daemon = createNetServer((socket) => {
             configMatches: true,
           }
         : null;
+
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -166,6 +184,7 @@ const daemon = createNetServer((socket) => {
     }));
   });
 });
+
 await new Promise<void>((resolveListen, rejectListen) => {
   daemon.once("error", rejectListen);
   daemon.listen(daemonSocket, resolveListen);
@@ -213,6 +232,7 @@ test("agents ls --json prints agent summaries as JSON", async () => {
 
 test("agents ls outside a DevSpace shell scopes the list to the cwd", async () => {
   const mark = daemonRequests.length;
+
   const { stdout: directOutput } = await execFileAsync(
     "node",
     ["--import", tsxLoader, cliPath, "agents", "ls"],
@@ -227,6 +247,7 @@ test("agents ls outside a DevSpace shell scopes the list to the cwd", async () =
       },
     },
   );
+
   assert.match(directOutput, new RegExp(current.id));
   const directList = requestsSince(mark).reverse().find((request) => request.method === "agent.list");
   assert.deepEqual(directList?.params, { workspaceRoot: realpathSync.native(projectRoot) });
@@ -249,6 +270,7 @@ test("agents show prints an immediate snapshot", async () => {
 // A wait that times out exits 4 so scripts can tell it from completion.
 test("agents wait exits 4 when an agent is still running at the timeout", async () => {
   const mark = daemonRequests.length;
+
   const waitTimeout = await execCli([
     "agents",
     "wait",
@@ -260,6 +282,7 @@ test("agents wait exits 4 when an agent is still running at the timeout", async 
     () => assert.fail("wait should exit 4 when an agent is still running"),
     (error: { code: number; stdout: string }) => error,
   );
+
   assert.equal(waitTimeout.code, 4);
   assert.equal(
     waitTimeout.stdout,
@@ -300,16 +323,20 @@ test("agents events --follow pins its turn and resumes after the last seen event
 
 test("agents run --json prints structured errors and exits non-zero", async () => {
   let commandFailure: unknown;
+
   try {
     await execCli(["agents", "run", "missing", "--json", "inspect"]);
   } catch (error) {
     commandFailure = error;
   }
+
   assert.ok(commandFailure, "structured CLI errors should exit non-zero");
   const stdout = (commandFailure as { stdout?: string }).stdout ?? "";
+
   const payload = JSON.parse(stdout) as {
     error: { code: string; message: string; retryable: boolean; target: string };
   };
+
   assert.equal(payload.error.code, "UNKNOWN_TARGET");
   assert.equal(payload.error.retryable, false);
   assert.equal(payload.error.target, "missing");
@@ -317,11 +344,13 @@ test("agents run --json prints structured errors and exits non-zero", async () =
 
 test("agents run prints XML errors on stderr and exits non-zero", async () => {
   let xmlCommandFailure: unknown;
+
   try {
     await execCli(["agents", "run", "missing", "inspect"]);
   } catch (error) {
     xmlCommandFailure = error;
   }
+
   assert.ok(xmlCommandFailure, "XML CLI errors should exit non-zero");
   assert.equal(
     (xmlCommandFailure as { stderr?: string }).stderr,
@@ -359,6 +388,7 @@ test("agents run rejects unknown options and suggests -- for dash-prefixed promp
         (error as { stderr?: string }).stderr,
         '<error code="AGENT_COMMAND_ERROR" retryable="false">Unknown option: --unknown. Use -- before prompt text that starts with a dash.</error>\n',
       );
+
       return true;
     },
   );

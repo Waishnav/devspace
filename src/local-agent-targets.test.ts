@@ -112,6 +112,7 @@ test("model and effort come from the run override, then the profile, then the pr
     { id: "codex", driver: "codex", enabled: true, model: "gpt-default", effort: "medium" },
     { id: "opencode", driver: "opencode", enabled: true },
   ] as const;
+
   for (const [name, model, effort, expected] of [
     ["reviewer", undefined, undefined, { kind: "profile", provider: "codex", model: "gpt-5-codex", effort: "high" }],
     ["reviewer", "gpt-run", "xhigh", { kind: "profile", provider: "codex", model: "gpt-run", effort: "xhigh" }],
@@ -135,6 +136,7 @@ test("a named provider instance resolves as a provider target", () => {
     enabled: true,
     model: "gpt-work",
   }] as const;
+
   const target = resolveLocalAgentTarget("codex-work", profiles, undefined, undefined, providerInstances);
   assert.equal(target?.kind, "provider");
   assert.equal(target?.provider, "codex-work");

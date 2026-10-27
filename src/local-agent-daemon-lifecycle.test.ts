@@ -71,5 +71,6 @@ async function fixture(t: TestContext) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const paths = localAgentDaemonPaths(join(root, "state"));
   ensureLocalAgentDaemonStateDir(paths.stateDir);
+
   return paths;
 }

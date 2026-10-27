@@ -231,6 +231,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
     case "workflow.events": {
       const lookup = decodeWorkflowLookup(params);
       const after = asRecord(params)?.after;
+
       return {
         requestId,
         protocolVersion,
@@ -242,10 +243,12 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         },
       };
     }
+
     case "workflow.list":
       return { requestId, protocolVersion, authToken, method, params: decodeWorkspaceScope(params) };
     case "workflow.wait": {
       const lookup = decodeWorkflowLookup(params);
+
       return {
         requestId,
         protocolVersion,
@@ -254,8 +257,10 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         params: { ...lookup, ...decodeOptionalTimeout(params, 60_000) },
       };
     }
+
     case "workflow.call": {
       const lookup = decodeWorkflowLookup(params);
+
       return {
         requestId,
         protocolVersion,
@@ -267,6 +272,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         },
       };
     }
+
     case "daemon.logs":
       return {
         requestId,
@@ -284,11 +290,14 @@ export function decodeLocalAgentDaemonResponse(value: unknown): LocalAgentDaemon
   const record = asRecord(value);
   const requestId = requiredString(record?.requestId, "requestId");
   const protocolVersion = requiredInteger(record?.protocolVersion, "protocolVersion");
+
   if (record?.ok === true) {
     return { requestId, protocolVersion, ok: true, result: record.result };
   }
+
   if (record?.ok === false) {
     const error = asRecord(record.error);
+
     return {
       requestId,
       protocolVersion,
@@ -305,17 +314,21 @@ export function decodeLocalAgentDaemonResponse(value: unknown): LocalAgentDaemon
       },
     };
   }
+
   throw new LocalAgentDaemonProtocolError("INVALID_RESPONSE", "Daemon returned an invalid response.");
 }
 
 export function decodeAgentRecord(value: unknown): LocalAgentRecord {
   const record = asRecord(value);
   const status = requiredString(record?.status, "status");
+
   if (!isLocalAgentStatus(status)) throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent status.");
   const driver = requiredString(record?.driver, "driver");
+
   if (!isLocalAgentDriverKind(driver)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent driver.");
   }
+
   return {
     id: requiredString(record?.id, "id"),
     workspaceId: optionalString(record?.workspaceId),
@@ -343,6 +356,7 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
 
 export function decodeAgentRecordList(value: unknown): LocalAgentRecord[] {
   if (!Array.isArray(value)) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid agent list.");
+
   return value.map(decodeAgentRecord);
 }
 
@@ -350,11 +364,13 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
   if (!Array.isArray(value)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid agent wait results.");
   }
+
   return value.map((entry): LocalAgentWaitResult => {
     const record = asRecord(entry);
     const turnId = optionalString(record?.turnId);
     const worktree = optionalString(record?.worktree);
     const branch = optionalString(record?.branch);
+
     return {
       ...decodeWaitBody(record),
       ...(turnId === undefined ? {} : { turnId }),
@@ -367,18 +383,24 @@ export function decodeAgentWaitResults(value: unknown): LocalAgentWaitResult[] {
 function decodeWaitBody(record: Record<string, unknown> | undefined): LocalAgentWaitResult {
   const id = requiredString(record?.id, "id");
   const status = requiredString(record?.status, "status");
+
   switch (status) {
     case "running": {
       const wait = optionalString(record?.wait);
+
       if (wait !== undefined && wait !== "timeout") {
         throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid agent wait state.");
       }
+
       return { id, status, ...(wait ? { wait } : {}) };
     }
+
     case "completed": {
       const response = typeof record?.response === "string" ? record.response : undefined;
+
       return { id, status, ...(response === undefined ? {} : { response }) };
     }
+
     case "failed":
       return { id, status, error: decodeWaitError(record?.error) };
     case "stopped":
@@ -395,12 +417,15 @@ function decodeWaitBody(record: Record<string, unknown> | undefined): LocalAgent
 export function decodeTurnEvents(value: unknown): LocalAgentTurnEvents {
   const record = asRecord(value);
   const status = requiredString(record?.status, "status");
+
   if (status !== "running" && status !== "completed" && status !== "failed" && status !== "stopped") {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid turn status.");
   }
+
   if (!Array.isArray(record?.events)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid turn events.");
   }
+
   return {
     agentId: requiredString(record.agentId, "agentId"),
     turnId: requiredString(record.turnId, "turnId"),
@@ -411,13 +436,16 @@ export function decodeTurnEvents(value: unknown): LocalAgentTurnEvents {
 
 function decodeTurnEvent(value: unknown): LocalAgentTurnEvent {
   const record = asRecord(value);
+
   const base = {
     turnId: requiredString(record?.turnId, "event.turnId"),
     seq: requiredInteger(record?.seq, "event.seq"),
     at: requiredString(record?.at, "event.at"),
   };
+
   const type = requiredString(record?.type, "event.type");
   const summary = optionalContentString(record?.summary);
+
   switch (type) {
     case "turn_started":
       return { type, ...base };
@@ -427,14 +455,19 @@ function decodeTurnEvent(value: unknown): LocalAgentTurnEvent {
       return { type, tool: requiredString(record?.tool, "event.tool"), ...(summary ? { summary } : {}), ...base };
     case "tool_completed": {
       const status = requiredString(record?.status, "event.status");
+
       if (status !== "completed" && status !== "failed") break;
+
       return { type, tool: requiredString(record?.tool, "event.tool"), ...(summary ? { summary } : {}), status, ...base };
     }
+
     case "turn_completed": {
       const status = requiredString(record?.status, "event.status");
+
       if (status !== "completed" && status !== "failed" && status !== "stopped") break;
       const errorCode = optionalString(record?.errorCode);
       const droppedEvents = typeof record?.droppedEvents === "number" ? record.droppedEvents : undefined;
+
       return {
         type,
         status,
@@ -444,19 +477,24 @@ function decodeTurnEvent(value: unknown): LocalAgentTurnEvent {
       };
     }
   }
+
   throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid turn event.");
 }
 
 export function decodeWorkflowRun(value: unknown): WorkflowRun {
   const record = asRecord(value);
   const status = requiredString(record?.status, "status");
+
   if (!isWorkflowStatus(status)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid workflow status.");
   }
+
   const writeMode = requiredString(record?.writeMode, "writeMode");
+
   if (!isWorkflowWriteMode(writeMode)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid workflow write mode.");
   }
+
   return {
     id: requiredString(record?.id, "id"),
     workspaceId: optionalString(record?.workspaceId),
@@ -476,17 +514,22 @@ export function decodeWorkflowRun(value: unknown): WorkflowRun {
 
 export function decodeWorkflowRunList(value: unknown): WorkflowRun[] {
   if (!Array.isArray(value)) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid workflow list.");
+
   return value.map(decodeWorkflowRun);
 }
 
 export function decodeWorkflowCall(value: unknown): WorkflowCall {
   const record = asRecord(value);
   const status = requiredString(record?.status, "status");
+
   if (!isWorkflowCallStatus(status)) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid workflow call status.");
   }
+
   const options = asRecord(record?.options);
+
   if (!options) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Invalid workflow call options.");
+
   const decodedOptions: WorkflowAgentOptions = {
     target: requiredString(options.target, "options.target"),
     model: optionalString(options.model),
@@ -498,6 +541,7 @@ export function decodeWorkflowCall(value: unknown): WorkflowCall {
     ...(options.isolation === "worktree" ? { isolation: "worktree" } : {}),
     workspace: optionalString(options.workspace),
   };
+
   return {
     runId: requiredString(record?.runId, "runId"),
     index: requiredNonNegativeInteger(record?.index, "index"),
@@ -519,6 +563,7 @@ export function decodeWorkflowCall(value: unknown): WorkflowCall {
 
 export function decodeWorkflowCallList(value: unknown): WorkflowCall[] {
   if (!Array.isArray(value)) throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid workflow call list.");
+
   return value.map(decodeWorkflowCall);
 }
 
@@ -526,8 +571,10 @@ export function decodeWorkflowEventList(value: unknown): WorkflowEvent[] {
   if (!Array.isArray(value) || value.length > 100) {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid workflow event page.");
   }
+
   return value.map((entry): WorkflowEvent => {
     const record = asRecord(entry);
+
     return {
       sequence: requiredNonNegativeInteger(record?.sequence, "sequence"),
       runId: requiredString(record?.runId, "runId"),
@@ -541,9 +588,11 @@ export function decodeWorkflowEventList(value: unknown): WorkflowEvent[] {
 export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
   const record = asRecord(value);
   const state = requiredString(record?.state, "state");
+
   if (state !== "ready" && state !== "stopping") {
     throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned an invalid status.");
   }
+
   return {
     state,
     protocolVersion: requiredInteger(record?.protocolVersion, "protocolVersion"),
@@ -561,6 +610,7 @@ export function decodeDaemonStatus(value: unknown): LocalAgentDaemonStatus {
 
 export function decodeDaemonHello(value: unknown): LocalAgentDaemonHello {
   const record = asRecord(value);
+
   return {
     status: decodeDaemonStatus(record?.status),
     configMatches: requiredBoolean(record?.configMatches, "configMatches"),
@@ -569,6 +619,7 @@ export function decodeDaemonHello(value: unknown): LocalAgentDaemonHello {
 
 export function decodeDaemonLogs(value: unknown): string {
   if (typeof value !== "string") throw new LocalAgentDaemonProtocolError("INVALID_RESULT", "Daemon returned invalid logs.");
+
   return value;
 }
 
@@ -582,15 +633,18 @@ export class LocalAgentDaemonProtocolError extends Error {
 function decodeEmptyParams(value: unknown): Record<string, never> {
   if (value === undefined) return {};
   const record = asRecord(value);
+
   if (!record || Object.keys(record).length > 0) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "This daemon method does not accept parameters.");
   }
+
   return {};
 }
 
 function decodeStartInput(value: unknown): StartLocalAgentInput {
   const record = asRecord(value);
   const worktree = asRecord(record?.worktree);
+
   return {
     agentId: optionalString(record?.agentId),
     target: requiredString(record?.target, "target"),
@@ -607,6 +661,7 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
 function decodeContinueInput(value: unknown): { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides } {
   const record = asRecord(value);
   const overrides = asRecord(record?.overrides);
+
   return {
     id: requiredString(record?.id, "id"),
     prompt: requiredContentString(record?.prompt, "prompt"),
@@ -621,7 +676,9 @@ function decodeContinueInput(value: unknown): { id: string; prompt: string; scop
 
 function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
   const record = asRecord(value);
+
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workspace scope is required.");
+
   return {
     workspaceId: optionalString(record.workspaceId),
     workspaceRoot: requiredString(record.workspaceRoot, "scope.workspaceRoot"),
@@ -634,8 +691,10 @@ function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
 
 function decodeStopParams(value: unknown): { ifIdle?: boolean } {
   const record = asRecord(value);
+
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Daemon stop options must be an object.");
   const ifIdle = optionalBoolean(record.ifIdle);
+
   return ifIdle === undefined ? {} : { ifIdle };
 }
 
@@ -645,14 +704,19 @@ function decodeWaitParams(value: unknown): {
   timeoutMs?: number;
 } {
   const record = asRecord(value);
+
   if (!record) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Agent wait options must be an object.");
   }
+
   const ids = record?.ids;
+
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "At least one subagent id is required.");
   }
+
   const timeoutMs = record.timeoutMs;
+
   if (
     timeoutMs !== undefined
     && (typeof timeoutMs !== "number"
@@ -665,6 +729,7 @@ function decodeWaitParams(value: unknown): {
       "Wait timeout must be an integer between 0 and 2147483647 milliseconds.",
     );
   }
+
   return {
     ids: ids.map((id, index) => requiredString(id, `ids[${index}]`)),
     scope: decodeWorkspaceScope(record.scope),
@@ -674,17 +739,22 @@ function decodeWaitParams(value: unknown): {
 
 function decodeWorkflowRunInput(value: unknown): WorkflowRunInput {
   const record = asRecord(value);
+
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workflow input must be an object.");
   const source = optionalContentString(record.source);
   const name = optionalString(record.name);
   const resume = optionalString(record.resume);
+
   if ([source, name, resume].filter((entry) => entry !== undefined).length !== 1) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Exactly one workflow source, name, or resume id is required.");
   }
+
   const writeMode = record.writeMode;
+
   if (writeMode !== undefined && writeMode !== "read_only" && writeMode !== "allowed") {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Invalid workflow write mode.");
   }
+
   return {
     ...decodeWorkspaceScope(record),
     ...(source === undefined ? {} : { source }),
@@ -697,6 +767,7 @@ function decodeWorkflowRunInput(value: unknown): WorkflowRunInput {
 
 function decodeWorkflowLookup(value: unknown): { id: string; scope: LocalAgentWorkspaceScope } {
   const record = asRecord(value);
+
   return {
     id: requiredString(record?.id, "id"),
     scope: decodeWorkspaceScope(record?.scope),
@@ -705,16 +776,20 @@ function decodeWorkflowLookup(value: unknown): { id: string; scope: LocalAgentWo
 
 function decodeOptionalTimeout(value: unknown, max: number): { timeoutMs?: number } {
   const timeoutMs = asRecord(value)?.timeoutMs;
+
   if (timeoutMs === undefined) return {};
+
   if (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 0 || (timeoutMs as number) > max) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Wait timeout must be an integer between 0 and ${max} milliseconds.`);
   }
+
   return { timeoutMs: timeoutMs as number };
 }
 
 function decodeWaitError(value: unknown): LocalAgentFailure {
   const record = asRecord(value);
   const detail = optionalContentString(record?.detail);
+
   return {
     code: requiredString(record?.code, "error.code"),
     message: requiredContentString(record?.message, "error.message"),
@@ -726,10 +801,13 @@ function decodeWaitError(value: unknown): LocalAgentFailure {
 function decodeEventsParams(value: unknown): { id: string; scope: LocalAgentWorkspaceScope } & LocalAgentTurnEventsQuery {
   const record = asRecord(value);
   const afterSeq = record?.afterSeq;
+
   if (afterSeq !== undefined && (typeof afterSeq !== "number" || !Number.isSafeInteger(afterSeq) || afterSeq < 0)) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "afterSeq must be a non-negative integer.");
   }
+
   const turnId = optionalString(record?.turnId);
+
   return {
     id: requiredString(record?.id, "id"),
     scope: decodeWorkspaceScope(record?.scope),
@@ -745,17 +823,22 @@ function decodeWorkflowFailure(value: unknown): { code: string; message: string;
 function decodeLogsParams(value: unknown): { lines?: number } {
   if (value === undefined) return {};
   const record = asRecord(value);
+
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Log options must be an object.");
   const lines = record.lines;
+
   if (lines === undefined) return {};
+
   if (typeof lines !== "number" || !Number.isInteger(lines) || lines < 1 || lines > 10_000) {
     throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Log lines must be an integer between 1 and 10000.");
   }
+
   return { lines };
 }
 
 function decodeWriteMode(value: unknown): LocalAgentWriteMode | undefined {
   if (value === undefined) return undefined;
+
   if (value === "read_only" || value === "allowed" || value === "full_access") return value;
   throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Invalid write mode.");
 }
@@ -780,13 +863,17 @@ function isWorkflowCallStatus(value: string): value is WorkflowCall["status"] {
 
 function requiredString(value: unknown, field: string): string {
   const result = optionalString(value);
+
   if (!result) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Missing ${field}.`);
+
   return result;
 }
 
 function requiredContentString(value: unknown, field: string): string {
   const result = optionalContentString(value);
+
   if (result === undefined) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Missing ${field}.`);
+
   return result;
 }
 
@@ -794,12 +881,15 @@ function requiredInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
   }
+
   return value;
 }
 
 function requiredNonNegativeInteger(value: unknown, field: string): number {
   const result = requiredInteger(value, field);
+
   if (result < 0) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `${field} must be non-negative.`);
+
   return result;
 }
 
@@ -807,17 +897,20 @@ function requiredBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") {
     throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
   }
+
   return value;
 }
 
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
+
   return trimmed || undefined;
 }
 
 function optionalContentString(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
+
   return value;
 }
 
@@ -827,6 +920,7 @@ function optionalBoolean(value: unknown): boolean | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
   return value as Record<string, unknown>;
 }
 

@@ -8,6 +8,7 @@ const H = 420;
 const hostY = HOSTS.map((_, i) => (H / HOSTS.length) * (i + 0.5));
 const provY = PROVIDERS.map((_, i) => (H / PROVIDERS.length) * (i + 0.5));
 const mid = H / 2;
+
 const curve = (x1: number, y1: number, x2: number, y2: number) =>
   `M${x1} ${y1} C ${x1 + (x2 - x1) * 0.55} ${y1}, ${x2 - (x2 - x1) * 0.55} ${y2}, ${x2} ${y2}`;
 ---
@@ -46,12 +47,15 @@ const curve = (x1: number, y1: number, x2: number, y2: number) =>
 
 <script>
   const root = document.querySelector<HTMLElement>("[data-map]");
+
   if (root) {
     const hosts = [...root.querySelectorAll<HTMLElement>("[data-host]")];
     const provs = [...root.querySelectorAll<HTMLElement>("[data-prov]")];
     const caption = root.querySelector<HTMLElement>("[data-caption]")!;
+
     const set = (list: HTMLElement[], attr: string, on: number[]) =>
       list.forEach((el, i) => el.classList.toggle("on", on.includes(i)));
+
     const paint = (h: number, targets: number[]) => {
       set(hosts, "host", [h]);
       set(provs, "prov", targets);
@@ -59,12 +63,16 @@ const curve = (x1: number, y1: number, x2: number, y2: number) =>
       root.querySelectorAll<SVGPathElement>("[data-prov-path]").forEach((p, i) => p.classList.toggle("on", targets.includes(i)));
       caption.textContent = `${hosts[h]!.dataset.name} → ${targets.map((t) => provs[t]!.dataset.name).join(" + ")}`;
     };
+
     let step = 0;
+
     const tick = () => {
       paint(step % hosts.length, [(step * 2) % provs.length, (step * 2 + 3) % provs.length]);
       step++;
     };
+
     tick();
+
     if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(tick, 1700);
   }
 </script>

@@ -32,20 +32,24 @@ const tabs = [
 <script>
   const DESIGN_WIDTH = 940;
   const root = document.querySelector<HTMLElement>("[data-tabs]");
+
   if (root) {
     const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-tab]")];
     const panels = [...root.querySelectorAll<HTMLElement>("[data-panel]")];
     let current = 0;
     let timer: ReturnType<typeof setInterval> | undefined;
+
     const show = (i: number) => {
       current = i;
       tabs.forEach((t, j) => t.setAttribute("aria-selected", String(i === j)));
       panels.forEach((p, j) => p.classList.toggle("is-active", i === j));
     };
+
     // Autoplay until the visitor picks a tab themselves.
     if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
       timer = setInterval(() => show((current + 1) % panels.length), 14000);
     }
+
     tabs.forEach((t, i) => t.addEventListener("click", () => { clearInterval(timer); show(i); }));
     // The mocks are fixed-size illustrations: scale them like a video instead of reflowing.
     const viewport = root.querySelector<HTMLElement>("[data-viewport]")!;
@@ -53,6 +57,7 @@ const tabs = [
       viewport.style.setProperty("--scale", String(Math.min(1, viewport.clientWidth / DESIGN_WIDTH)));
     }).observe(viewport);
     const initial = Number(new URLSearchParams(location.search).get("tab"));
+
     if (initial > 0 && initial < panels.length) show(initial);
   }
 </script>

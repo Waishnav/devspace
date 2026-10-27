@@ -76,6 +76,7 @@ import Logo from "../../logos/Logo.astro";
   // Types the next prompt once the rest of the session has played. Restarts
   // whenever the tab is shown again.
   const composer = document.querySelector<HTMLElement>("[data-composer]");
+
   if (composer) {
     const mention = composer.querySelector<HTMLElement>("[data-mention]")!;
     const rest = composer.querySelector<HTMLElement>("[data-rest]")!;
@@ -86,22 +87,30 @@ import Logo from "../../logos/Logo.astro";
 
     const clear = () => { timers.forEach(clearTimeout); timers = []; };
     const reset = () => { mention.textContent = ""; rest.textContent = ""; };
+
     const play = () => {
       clear();
       reset();
-      if (reduced) { mention.textContent = full[0]!; rest.textContent = full[1]!; return; }
+
+      if (reduced) { mention.textContent = full[0]!; rest.textContent = full[1]!;
+
+ return; }
+
       let delay = 4400;
       full.forEach((chunk, part) => {
         const target = part === 0 ? mention : rest;
+
         for (let i = 1; i <= chunk.length; i++) {
           delay += 40 + Math.random() * 45;
           timers.push(window.setTimeout(() => (target.textContent = chunk.slice(0, i)), delay));
         }
+
         delay += 250;
       });
     };
 
     play();
+
     if (panel) {
       new MutationObserver(() => { if (panel.classList.contains("is-active")) play(); else { clear(); reset(); } })
         .observe(panel, { attributes: true, attributeFilter: ["class"] });

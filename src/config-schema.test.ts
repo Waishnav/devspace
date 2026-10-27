@@ -15,11 +15,13 @@ test("the config schema rejects unrecognized keys", () => {
 
 test("oauth.refreshTokenGraceSeconds defaults to 0 and accepts integers from 0 to 600", () => {
   assert.equal(devspaceConfigSchema.parse({ configVersion: 1 }).oauth.refreshTokenGraceSeconds, 0);
+
   for (const refreshTokenGraceSeconds of [0, 1, 600]) {
     assert.equal(devspaceConfigSchema.parse({
       configVersion: 1, oauth: { refreshTokenGraceSeconds },
     }).oauth.refreshTokenGraceSeconds, refreshTokenGraceSeconds);
   }
+
   for (const refreshTokenGraceSeconds of [-1, 601, 1.5, "600"]) {
     assert.equal(devspaceConfigSchema.safeParse({
       configVersion: 1, oauth: { refreshTokenGraceSeconds },
@@ -38,6 +40,7 @@ test("oauth.allowedResourceUrls accepts HTTPS and loopback HTTP URLs only", () =
       configVersion: 1, oauth: { allowedResourceUrls: [url] },
     }), url);
   }
+
   for (const url of [
     "http://tunnel.example.com/mcp", "http://192.168.1.1/mcp",
     "http://localhost.example.com/mcp", "http://127.0.0.1.example.com/mcp",
@@ -52,9 +55,11 @@ test("oauth.allowedResourceUrls accepts HTTPS and loopback HTTP URLs only", () =
 
 test("the committed JSON schema matches the generated config schema", () => {
   const generatedSchema = `${JSON.stringify(devspaceConfigJsonSchema(), null, 2)}\n`;
+
   const committedSchema = readFileSync(
     new URL("../schema/v1/devspace.schema.json", import.meta.url),
     "utf8",
   ).replace(/\r\n/g, "\n");
+
   assert.equal(committedSchema, generatedSchema, "run `npm run schema:config` after changing config-schema.ts");
 });

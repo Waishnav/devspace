@@ -4,15 +4,18 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { ArtifactError } from "./artifact-error.js";
 
 const ADAPTER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+
 const OPENAI_FILE_HOSTS = new Set([
   "files.oaiusercontent.com",
 ]);
+
 // ChatGPT-generated files are served from regional OpenAI-managed Azure storage
 // accounts. Accept that account family only, never arbitrary Azure Blob hosts.
 const OPENAI_REGIONAL_BLOB_HOST_PATTERN = /^oaisdmntpr[a-z0-9]+\.blob\.core\.windows\.net$/u;
 const OPENAI_FILENAME_SAFE_FILE_ID_PATTERN = /^file[-_][A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 const OPENAI_FILE_ID_MAX_LENGTH = 512;
 const OPENAI_FILE_ID_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/u;
+
 const OPENAI_FILE_KEYS = new Set([
   "download_url",
   "file_id",
@@ -21,6 +24,7 @@ const OPENAI_FILE_KEYS = new Set([
   "name",
   "size",
 ]);
+
 const OPENAI_FILE_REDIRECT_LIMIT = 3;
 const OPENAI_FILE_DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -46,6 +50,7 @@ export class IncomingArtifactAdapterRegistry {
 
   constructor(adapters: readonly IncomingArtifactAdapter[] = []) {
     const ids = new Set<string>();
+
     for (const adapter of adapters) {
       if (!ADAPTER_ID_PATTERN.test(adapter.id)) {
         throw new ArtifactError(
@@ -53,21 +58,26 @@ export class IncomingArtifactAdapterRegistry {
           "Incoming artifact adapter IDs must be short lowercase identifiers.",
         );
       }
+
       if (ids.has(adapter.id)) {
         throw new ArtifactError(
           "duplicate_incoming_adapter",
           `Incoming artifact adapter '${adapter.id}' is registered more than once.`,
         );
       }
+
       ids.add(adapter.id);
     }
+
     this.adapters = [...adapters];
   }
 
   async open(value: unknown): Promise<OpenedIncomingArtifact> {
     const matching: IncomingArtifactAdapter[] = [];
+
     for (const adapter of this.adapters) {
       let handles = false;
+
       try {
         handles = adapter.canHandle(value);
       } catch {
@@ -76,6 +86,7 @@ export class IncomingArtifactAdapterRegistry {
           `Incoming artifact adapter '${adapter.id}' failed during recognition.`,
         );
       }
+
       if (handles) matching.push(adapter);
     }
 
@@ -85,6 +96,7 @@ export class IncomingArtifactAdapterRegistry {
         "No trusted incoming artifact adapter recognized this file reference.",
       );
     }
+
     if (matching.length > 1) {
       throw new ArtifactError(
         "ambiguous_incoming_artifact",
@@ -94,6 +106,7 @@ export class IncomingArtifactAdapterRegistry {
 
     const adapter = matching[0];
     let source: IncomingArtifactSource;
+
     try {
       source = await adapter.open(value);
     } catch (error) {
@@ -103,12 +116,14 @@ export class IncomingArtifactAdapterRegistry {
         `Incoming artifact adapter '${adapter.id}' could not open the file reference.`,
       );
     }
+
     try {
       validateIncomingArtifactSource(source);
     } catch (error) {
       source?.stream?.destroy?.();
       throw error;
     }
+
     return { ...source, adapterId: adapter.id };
   }
 }
@@ -131,6 +146,7 @@ export function createOpenAIIncomingArtifactAdapter(
 ): IncomingArtifactAdapter {
   const fetchFile = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? OPENAI_FILE_DOWNLOAD_TIMEOUT_MS;
+
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ArtifactError(
       "invalid_openai_file_adapter",
@@ -146,6 +162,7 @@ export function createOpenAIIncomingArtifactAdapter(
 
       let downloadUrl = validateOpenAIFileUrl(reference.download_url);
       let response: Response | undefined;
+
       for (let redirect = 0; redirect <= OPENAI_FILE_REDIRECT_LIMIT; redirect += 1) {
         try {
           response = await fetchFile(downloadUrl, {
@@ -162,12 +179,14 @@ export function createOpenAIIncomingArtifactAdapter(
         if (!isRedirectStatus(response.status)) break;
         const location = response.headers.get("location");
         await response.body?.cancel().catch(() => undefined);
+
         if (!location || redirect === OPENAI_FILE_REDIRECT_LIMIT) {
           throw new ArtifactError(
             "openai_file_download_failed",
             "ChatGPT file download returned an invalid redirect.",
           );
         }
+
         downloadUrl = validateOpenAIFileUrl(new URL(location, downloadUrl).toString());
       }
 
@@ -180,6 +199,7 @@ export function createOpenAIIncomingArtifactAdapter(
       }
 
       const responseSize = responseContentLength(response);
+
       if (
         reference.size !== undefined
         && responseSize !== undefined
@@ -191,6 +211,7 @@ export function createOpenAIIncomingArtifactAdapter(
           "ChatGPT file metadata did not match the downloaded content.",
         );
       }
+
       const mimeType = reference.mime_type ?? responseMimeType(response);
 
       return {
@@ -229,12 +250,19 @@ export function describeIncomingArtifactValue(
 
   const describe = (current: unknown, depth: number): IncomingArtifactValueShape => {
     if (current === null) return { type: "null" };
+
     if (current === undefined) return { type: "undefined" };
+
     if (typeof current === "boolean") return { type: "boolean" };
+
     if (typeof current === "number") return { type: "number", finite: Number.isFinite(current) };
+
     if (typeof current === "bigint") return { type: "bigint" };
+
     if (typeof current === "function") return { type: "function" };
+
     if (typeof current === "symbol") return { type: "symbol" };
+
     if (typeof current === "string") {
       return {
         type: "string",
@@ -242,6 +270,7 @@ export function describeIncomingArtifactValue(
         length: current.length,
       };
     }
+
     if (seen.has(current)) return { type: "cycle" };
     seen.add(current);
 
@@ -249,7 +278,9 @@ export function describeIncomingArtifactValue(
       if (depth >= maxDepth) {
         return { type: "array", length: current.length, items: [], truncated: current.length > 0 };
       }
+
       const items = current.slice(0, maxEntries).map((item) => describe(item, depth + 1));
+
       return {
         type: "array",
         length: current.length,
@@ -259,6 +290,7 @@ export function describeIncomingArtifactValue(
     }
 
     const keys = Object.keys(current).sort();
+
     if (depth >= maxDepth) {
       return {
         type: "object",
@@ -267,16 +299,21 @@ export function describeIncomingArtifactValue(
         truncated: keys.length > 0,
       };
     }
+
     const entries: Record<string, IncomingArtifactValueShape> = {};
+
     for (const [index, key] of keys.slice(0, maxEntries).entries()) {
       let entryValue: unknown;
+
       try {
         entryValue = (current as Record<string, unknown>)[key];
       } catch {
         entryValue = undefined;
       }
+
       entries[safeValueEntryKey(key, index)] = describe(entryValue, depth + 1);
     }
+
     return {
       type: "object",
       constructor: safeConstructorName(current),
@@ -295,18 +332,21 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
       "Incoming artifact adapter returned an invalid source.",
     );
   }
+
   if (typeof source.name !== "string" || source.name.length === 0) {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter must provide a filename.",
     );
   }
+
   if (source.mimeType !== undefined && typeof source.mimeType !== "string") {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
       "Incoming artifact adapter returned an invalid MIME hint.",
     );
   }
+
   if (
     source.size !== undefined
     && (!Number.isSafeInteger(source.size) || source.size < 0)
@@ -316,7 +356,9 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
       "Incoming artifact adapter returned an invalid byte size.",
     );
   }
+
   const stream = source.stream as Partial<Readable> | undefined;
+
   if (!stream || typeof stream[Symbol.asyncIterator] !== "function") {
     throw new ArtifactError(
       "invalid_incoming_artifact_source",
@@ -328,6 +370,7 @@ function validateIncomingArtifactSource(source: IncomingArtifactSource): void {
 function isOpenAIFileReferenceCandidate(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value);
+
   return keys.length >= 2
     && keys.every((key) => OPENAI_FILE_KEYS.has(key))
     && Object.hasOwn(value, "download_url")
@@ -344,6 +387,7 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
 
   const downloadUrl = value.download_url;
   const fileId = value.file_id;
+
   if (
     typeof downloadUrl !== "string"
     || typeof fileId !== "string"
@@ -358,14 +402,17 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
   const mimeType = nullableString(value.mime_type);
   const fileName = nullableString(value.file_name);
   const nameAlias = nullableString(value.name);
+
   if (mimeType === null || fileName === null || nameAlias === null) {
     throw new ArtifactError(
       "invalid_openai_file_reference",
       "ChatGPT file reference is malformed.",
     );
   }
+
   const normalizedFileName = normalizeSuppliedOpenAIFileName(fileName);
   const normalizedNameAlias = normalizeSuppliedOpenAIFileName(nameAlias);
+
   if (
     normalizedFileName
     && normalizedNameAlias
@@ -379,6 +426,7 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
 
   let size: number | undefined;
   const rawSize = value.size;
+
   if (rawSize !== undefined && rawSize !== null) {
     if (typeof rawSize !== "number" || !Number.isSafeInteger(rawSize) || rawSize < 0) {
       throw new ArtifactError(
@@ -386,6 +434,7 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
         "ChatGPT file reference is malformed.",
       );
     }
+
     size = rawSize;
   }
 
@@ -400,6 +449,7 @@ function normalizeOpenAIFileReference(value: unknown): OpenAIFileReference {
 
 function nullableString(value: unknown): string | undefined | null {
   if (value === undefined || value === null) return undefined;
+
   return typeof value === "string" ? value : null;
 }
 
@@ -409,9 +459,11 @@ function normalizeOpenAIFileName(
   mimeType: string | undefined,
 ): string {
   if (suppliedName) return suppliedName;
+
   const safeBaseName = OPENAI_FILENAME_SAFE_FILE_ID_PATTERN.test(fileId)
     ? fileId
     : "chatgpt-file";
+
   return `${safeBaseName}${extensionForMimeType(mimeType) ?? ".bin"}`;
 }
 
@@ -425,9 +477,11 @@ function normalizeSuppliedOpenAIFileName(value: string | undefined): string | un
   if (!value) return undefined;
   const normalized = value.replaceAll("\\", "/");
   const candidate = basename(normalized).trim();
+
   if (!candidate || candidate === "." || candidate === ".." || candidate.startsWith(".")) {
     return undefined;
   }
+
   return candidate;
 }
 
@@ -447,6 +501,7 @@ function extensionForMimeType(mimeType: string | undefined): string | undefined 
 
 function validateOpenAIFileUrl(value: string): string {
   let url: URL;
+
   try {
     url = new URL(value);
   } catch {
@@ -455,6 +510,7 @@ function validateOpenAIFileUrl(value: string): string {
       "ChatGPT file download URL is invalid.",
     );
   }
+
   if (
     url.protocol !== "https:"
     || !isTrustedOpenAIFileHost(url.hostname)
@@ -468,6 +524,7 @@ function validateOpenAIFileUrl(value: string): string {
       "ChatGPT file download URL is outside the trusted file host.",
     );
   }
+
   return url.toString();
 }
 
@@ -485,13 +542,16 @@ function isRedirectStatus(status: number): boolean {
 
 function responseMimeType(response: Response): string | undefined {
   const value = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+
   return value || undefined;
 }
 
 function responseContentLength(response: Response): number | undefined {
   const value = response.headers.get("content-length");
+
   if (!value || !/^\d+$/u.test(value)) return undefined;
   const size = Number(value);
+
   return Number.isSafeInteger(size) ? size : undefined;
 }
 
@@ -503,13 +563,17 @@ function classifyValueString(
   value: string,
 ): "absolute-path" | "url" | "data-url" | "text" {
   if (value.startsWith("data:")) return "data-url";
+
   if (isAbsolute(value)) return "absolute-path";
+
   try {
     const parsed = new URL(value);
+
     if (parsed.protocol === "http:" || parsed.protocol === "https:") return "url";
   } catch {
     // Non-URL strings are summarized only by type and length.
   }
+
   return "text";
 }
 
@@ -522,6 +586,7 @@ function safeValueEntryKey(value: string, index: number): string {
 function safeConstructorName(value: object): string | undefined {
   try {
     const name = value.constructor?.name;
+
     return typeof name === "string" && name.length <= 80 ? name : undefined;
   } catch {
     return undefined;

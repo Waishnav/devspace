@@ -27,7 +27,9 @@ interface TurnResponse {
 
 function parseRoute(pathname: string): Route {
   const match = pathname.match(/^\/web\/w\/([^/]+)(?:\/turns\/(\d+))?\/?$/);
+
   if (!match) return { page: "workspaces" };
+
   return {
     page: "workspace",
     workspaceId: decodeURIComponent(match[1]!),
@@ -37,6 +39,7 @@ function parseRoute(pathname: string): Route {
 
 function workspacePath(workspaceId: string, turn?: number): string {
   const base = `${BASE}/w/${encodeURIComponent(workspaceId)}`;
+
   return turn === undefined ? base : `${base}/turns/${turn}`;
 }
 
@@ -52,9 +55,12 @@ function useRoute(): Route {
       setRoute(parseRoute(window.location.pathname));
       window.scrollTo(0, 0);
     };
+
     window.addEventListener("popstate", update);
+
     return () => window.removeEventListener("popstate", update);
   }, []);
+
   return route;
 }
 
@@ -69,20 +75,26 @@ function useJson<T>(url: string): Loaded<T> {
       .then(async (response) => {
         if (response.status === 401) {
           window.location.assign(`${BASE}/login?next=${encodeURIComponent(window.location.pathname)}`);
+
           return;
         }
+
         const body = await response.json() as T & { error?: string };
+
         if (cancelled) return;
+
         if (!response.ok) setState({ status: "error", message: body.error ?? `Request failed (${response.status}).` });
         else setState({ status: "ready", data: body });
       })
       .catch((error: unknown) => {
         if (!cancelled) setState({ status: "error", message: error instanceof Error ? error.message : String(error) });
       });
+
     return () => {
       cancelled = true;
     };
   }, [url]);
+
   return state;
 }
 
@@ -91,6 +103,7 @@ type ThemePreference = "system" | "light" | "dark";
 function readThemePreference(): ThemePreference {
   try {
     const stored = window.localStorage.getItem("devspace-web-theme");
+
     return stored === "light" || stored === "dark" ? stored : "system";
   } catch {
     return "system";
@@ -104,6 +117,7 @@ function useTheme(): [ReviewThemeType, ThemePreference, (preference: ThemePrefer
   useEffect(() => {
     const update = () => setSystemDark(media.matches);
     media.addEventListener("change", update);
+
     return () => media.removeEventListener("change", update);
   }, [media]);
 
@@ -114,6 +128,7 @@ function useTheme(): [ReviewThemeType, ThemePreference, (preference: ThemePrefer
 
   return [resolved, preference, (next) => {
     setPreference(next);
+
     try {
       if (next === "system") window.localStorage.removeItem("devspace-web-theme");
       else window.localStorage.setItem("devspace-web-theme", next);
@@ -170,17 +185,21 @@ function Link({ href, className, children }: { href: string; className?: string;
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
+
     event.preventDefault();
     navigate(href);
   };
+
   return <a href={href} className={className} onClick={onClick}>{children}</a>;
 }
 
 function WorkspacesPage() {
   const state = useJson<{ workspaces: ActivityWorkspace[] }>(`${BASE}/api/workspaces`);
+
   if (state.status !== "ready") return <LoadState state={state} />;
 
   const { workspaces } = state.data;
+
   return (
     <section>
       <h1 className="page-title">Workspaces</h1>
@@ -215,6 +234,7 @@ function WorkspacesPage() {
 
 function WorkspacePage({ workspaceId, turn, theme }: { workspaceId: string; turn?: number; theme: ReviewThemeType }) {
   const state = useJson<WorkspaceResponse>(`${BASE}/api/workspaces/${encodeURIComponent(workspaceId)}`);
+
   if (state.status !== "ready") return <LoadState state={state} />;
 
   const { workspace, context, turns } = state.data;
@@ -364,6 +384,7 @@ function TurnDiffSection({ diff, theme }: { diff: TurnDiff; theme: ReviewThemeTy
   const review = diff.status === "available" ? diff.review : undefined;
   const parsed = useMemo(() => parseReviewFiles(review?.patch), [review?.patch]);
   const [open, setOpen] = useState(() => new Set(parsed.length <= 6 ? parsed.map((file) => file.name) : []));
+
   const tree = useMemo(() => buildDiffTree(review?.files.map((file) => ({
     path: file.path,
     additions: file.additions,
@@ -378,6 +399,7 @@ function TurnDiffSection({ diff, theme }: { diff: TurnDiff; theme: ReviewThemeTy
       </section>
     );
   }
+
   if (diff.status === "unavailable") {
     return (
       <section className="turn-section">
@@ -421,7 +443,9 @@ function TurnDiffSection({ diff, theme }: { diff: TurnDiff; theme: ReviewThemeTy
                 open={open.has(fileDiff.name)}
                 onToggle={() => setOpen((current) => {
                   const next = new Set(current);
+
                   if (!next.delete(fileDiff.name)) next.add(fileDiff.name);
+
                   return next;
                 })}
               />
@@ -519,6 +543,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
   const text = typeof value === "object" && value !== null && "text" in value && Object.keys(value).length === 1
     ? String((value as { text: unknown }).text)
     : JSON.stringify(value, null, 2);
+
   return (
     <div className="json-block">
       <div className="json-label">{label}</div>
@@ -529,6 +554,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 
 function LoadState({ state }: { state: Loaded<unknown> }) {
   if (state.status === "error") return <p className="status error">{state.message}</p>;
+
   return <p className="status muted">Loading…</p>;
 }
 
@@ -551,28 +577,36 @@ function fileAnchor(path: string): string {
 function argumentSummary(args: unknown): string {
   if (typeof args !== "object" || args === null) return "";
   const record = args as Record<string, unknown>;
+
   if (typeof record.patch === "string") {
     const files = [...record.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((match) => match[1]);
+
     if (files.length > 0) return truncate(files.join(", "), 120);
   }
+
   for (const key of ["cmd", "command", "path", "task", "query"]) {
     if (typeof record[key] === "string") return truncate(record[key] as string, 120);
   }
+
   const { workspace_id: _workspaceId, ...rest } = record;
   const json = JSON.stringify(rest);
+
   return json === "{}" ? "" : truncate(json, 120);
 }
 
 function resultSummary(result: unknown): string {
   if (typeof result !== "object" || result === null) return "";
   const text = (result as { text?: unknown }).text;
+
   if (typeof text !== "string") return "";
   const line = text.split("\n").find((entry) => entry.trim().length > 0) ?? "";
+
   return truncate(line, 160);
 }
 
 function errorMessage(error: unknown): string {
   const message = (error as { message?: unknown } | undefined)?.message;
+
   return typeof message === "string" ? truncate(message, 160) : "Failed";
 }
 
@@ -599,17 +633,23 @@ function formatTime(iso: string): string {
 /** Omits the date from a range end on the same day as its start. */
 function formatEnd(startIso: string, endIso: string): string {
   const sameDay = new Date(startIso).toDateString() === new Date(endIso).toDateString();
+
   return sameDay ? new Date(endIso).toLocaleTimeString(undefined, { timeStyle: "short" }) : formatTime(endIso);
 }
 
 function relativeTime(iso: string): string {
   const seconds = Math.round((Date.now() - Date.parse(iso)) / 1000);
+
   if (!Number.isFinite(seconds)) return "";
+
   if (seconds < 60) return "just now";
   const minutes = Math.round(seconds / 60);
+
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
+
   if (hours < 24) return `${hours} h ago`;
+
   return formatTime(iso);
 }
 

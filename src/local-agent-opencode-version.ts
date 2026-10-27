@@ -26,9 +26,11 @@ export function resolveOpenCodeCommand(env: NodeJS.ProcessEnv): string {
 
 export function classifyOpenCodeCliVersion(output: string): ProbedOpenCodeRuntime | undefined {
   const match = output.trim().match(/(?:^|\s)v?((\d+)\.\d+\.\d+(?:[-+][^\s]+)?)(?:$|\s)/);
+
   if (!match?.[1] || !match[2]) return undefined;
   const major = Number(match[2]);
   const version = match[1];
+
   return {
     generation: major >= 2 ? "v2" : "v1",
     version,
@@ -42,8 +44,10 @@ export function encodeOpenCodeV2SessionId(nativeSessionId: string): string {
 export function requireOpenCodeV2NativeSessionId(providerSessionId: string): string {
   if (providerSessionId.startsWith(OPENCODE_V2_SESSION_PREFIX)) {
     const nativeSessionId = providerSessionId.slice(OPENCODE_V2_SESSION_PREFIX.length);
+
     if (nativeSessionId) return nativeSessionId;
   }
+
   throw incompatibleOpenCodeSession("v2", providerSessionId);
 }
 
@@ -70,6 +74,7 @@ export async function probeOpenCodeBinary(
 ): Promise<ProbedOpenCodeRuntime> {
   const output = await runOpenCodeVersion(env);
   const result = classifyOpenCodeCliVersion(output);
+
   if (result) return result;
   throw new AgentProviderProtocolError({
     code: "PROVIDER_PROTOCOL_ERROR",
@@ -86,8 +91,10 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+
     let output = "";
     let settled = false;
+
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -100,6 +107,7 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
         message: `OpenCode version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT_MS}ms.`,
       }));
     }, OPENCODE_VERSION_PROBE_TIMEOUT_MS);
+
     timer.unref();
     child.stdout?.on("data", (chunk: Buffer | string) => { output += chunk.toString(); });
     child.stderr?.on("data", (chunk: Buffer | string) => { output += chunk.toString(); });
@@ -123,6 +131,7 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+
       if (code === 0) resolve(output);
       else reject(new AgentProviderUnavailableError({
         code: "PROVIDER_UNAVAILABLE",

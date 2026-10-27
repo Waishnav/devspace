@@ -1,6 +1,7 @@
 import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName = "open_workspace" | "show_changes";
+
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
 export type ReviewFileType =
@@ -72,6 +73,7 @@ export function summaryNumber(
   key: string,
 ): number | undefined {
   const value = summary?.[key];
+
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 

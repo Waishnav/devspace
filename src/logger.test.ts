@@ -6,6 +6,7 @@ import { requestIp, type TrustProxyMode } from "./logger.js";
 
 async function observedIps(trustProxy: TrustProxyMode): Promise<{ reqIp: string; logged: string }> {
   const app = express();
+
   if (trustProxy) app.set("trust proxy", trustProxy);
   app.get("/", (req, res) => {
     res.json({ reqIp: req.ip, logged: requestIp(req, trustProxy) });
@@ -13,8 +14,10 @@ async function observedIps(trustProxy: TrustProxyMode): Promise<{ reqIp: string;
 
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
+
   try {
     const { port } = server.address() as AddressInfo;
+
     // The client supplies the leftmost hop and a CF header; the local proxy appends the real peer.
     const response = await fetch(`http://127.0.0.1:${port}/`, {
       headers: {
@@ -22,6 +25,7 @@ async function observedIps(trustProxy: TrustProxyMode): Promise<{ reqIp: string;
         "x-forwarded-for": "198.51.100.66, 203.0.113.7",
       },
     });
+
     return await response.json() as { reqIp: string; logged: string };
   } finally {
     server.close();

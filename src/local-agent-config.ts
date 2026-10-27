@@ -46,14 +46,17 @@ const providerSchema = z.object({
   const driver = provider.driver
     ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
     : defaultDriverForProviderId(provider.id);
+
   if (!driver) {
     context.addIssue({
       code: "custom",
       path: ["driver"],
       message: `Subagent provider instance ${provider.id} must declare a driver.`,
     });
+
     return;
   }
+
   if (driver !== "acp" && provider.config !== undefined) {
     context.addIssue({
       code: "custom",
@@ -61,9 +64,11 @@ const providerSchema = z.object({
       message: `${driver} does not support ACP config.`,
     });
   }
+
   const flavor = provider.config?.flavor
     ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
     ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+
   if (driver === "acp" && flavor && provider.config?.args !== undefined) {
     context.addIssue({
       code: "custom",
@@ -71,6 +76,7 @@ const providerSchema = z.object({
       message: `${flavor} sets its own ACP arguments for each write mode; config.args applies only to generic ACP providers.`,
     });
   }
+
   if (driver === "acp" && !provider.command && !isLegacyAcpDriverKind(provider.id)) {
     context.addIssue({
       code: "custom",
@@ -86,6 +92,7 @@ export const subagentsConfigSchema = z.object({
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
   const seen = new Set<LocalAgentProviderInstanceId>();
+
   for (const [index, provider] of value.providers.entries()) {
     if (seen.has(provider.id)) {
       context.addIssue({
@@ -94,6 +101,7 @@ export const subagentsConfigSchema = z.object({
         message: `Duplicate subagent provider: ${provider.id}`,
       });
     }
+
     seen.add(provider.id);
   }
 });
@@ -104,6 +112,7 @@ export const storedSubagentsConfigSchema = z.union([
 ]);
 
 type ParsedSubagentProviderConfig = z.infer<typeof providerSchema>;
+
 type ParsedSubagentsConfig = z.infer<typeof subagentsConfigSchema>;
 
 export interface SubagentProviderConfig extends Omit<ParsedSubagentProviderConfig, "driver"> {
@@ -123,10 +132,12 @@ export function resolveSubagentsConfig(config: ParsedSubagentsConfig): Subagents
       const driver = provider.driver
         ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
         : defaultDriverForProviderId(provider.id)!;
+
       // `driver: "cursor"` (or a built-in id) predates generic ACP; keep it as the ACP flavor.
       const flavor = provider.config?.flavor
         ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
         ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+
       return {
         ...provider,
         driver,
@@ -192,7 +203,9 @@ export function localAgentProviderEnvironment(
   const env = { ...inherited, ...providerConfig?.env };
   const commandVariable = providerConfig ? providerCommandVariable(providerConfig.driver) : undefined;
   const command = providerConfig?.command;
+
   if (commandVariable && command) env[commandVariable] = command;
+
   return env;
 }
 
@@ -233,6 +246,7 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
         : {}),
       ...(provider.config ? { config: provider.config } : {}),
     }));
+
   return createHash("sha256")
     .update(JSON.stringify({ enabled: config.enabled, providers }))
     .digest("hex");

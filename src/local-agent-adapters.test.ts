@@ -214,6 +214,7 @@ test("multiple instances of one driver are created with agent-scoped runtimes", 
       { id: "claude-personal", driver: "claude", enabled: true },
     ],
   });
+
   const drivers = createLocalAgentDrivers({ subagents });
   assert.deepEqual(
     drivers.map((driver) => [driver.providerInstanceId, driver.provider]),

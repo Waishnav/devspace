@@ -48,6 +48,7 @@ const LEGACY_CONFIG_KEYS = new Set([
 export function migrateLegacyConfig(value: unknown): DevspaceConfig {
   const legacy = legacyConfigSchema.parse(value);
   const unsupportedKeys = Object.keys(legacy).filter((key) => !LEGACY_CONFIG_KEYS.has(key));
+
   if (unsupportedKeys.length > 0) {
     throw new Error(
       `Unsupported legacy configuration keys: ${unsupportedKeys.sort().join(", ")}`,
@@ -88,7 +89,9 @@ function migrateLegacySubagents(
   value: z.infer<typeof storedSubagentsConfigSchema> | undefined,
 ): unknown {
   if (value === undefined) return undefined;
+
   if (typeof value !== "boolean") return value;
+
   return {
     enabled: value,
     providers: value

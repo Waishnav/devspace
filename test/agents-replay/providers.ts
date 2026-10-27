@@ -56,10 +56,13 @@ const require = createRequire(import.meta.url);
  */
 function redactAcpFrame(frame: Record<string, unknown>): unknown {
   const update = (frame.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update;
+
   if (frame.method === "session/update" && update?.sessionUpdate === "available_commands_update") return undefined;
   const result = frame.result as Record<string, unknown> | undefined;
+
   if (!result || !("sessionId" in result)) return frame;
   const models = result.models as { currentModelId?: unknown; availableModels?: unknown[] } | undefined;
+
   return {
     ...frame,
     result: {
@@ -89,8 +92,10 @@ function redactGrokFrame(frame: Record<string, unknown>): unknown {
   if (typeof frame.method === "string" && /^_?x\.ai\//.test(frame.method) && !frame.method.endsWith("/session/prompt_complete")) {
     return undefined;
   }
+
   const redacted = redactAcpFrame(frame) as Record<string, unknown> | undefined;
   const result = redacted?.result as Record<string, unknown> | undefined;
+
   return redacted && result && "_meta" in result ? { ...redacted, result: { ...result, _meta: {} } } : redacted;
 }
 
@@ -124,6 +129,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     protocol: {
       kind: (frame) => {
         const request = frame.request as Record<string, unknown> | undefined;
+
         return frame.type === "control_request" && typeof request?.subtype === "string"
           ? `control_request:${request.subtype}`
           : String(frame.type);
@@ -138,6 +144,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     redactFrame: (frame) => {
       // SessionStart and other hooks report the user's own hook commands and output.
       if (frame.type === "system" && String(frame.subtype).startsWith("hook_")) return undefined;
+
       if (frame.type === "system" && frame.subtype === "init") {
         return {
           ...frame,
@@ -146,7 +153,9 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
           memory_paths: {},
         };
       }
+
       const response = (frame.response as Record<string, unknown> | undefined)?.response as Record<string, unknown> | undefined;
+
       if (frame.type === "control_response" && response && "commands" in response) {
         return {
           ...frame,
@@ -156,12 +165,14 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
           },
         };
       }
+
       return frame;
     },
     realCommand: () => {
       // The SDK runs its bundled native CLI unless CLAUDE_COMMAND is set.
       const sdk = dirname(require.resolve("@anthropic-ai/claude-agent-sdk"));
       const platform = `${process.platform}-${process.arch}`;
+
       return createRequire(join(sdk, "package.json"))
         .resolve(`@anthropic-ai/claude-agent-sdk-${platform}/claude${process.platform === "win32" ? ".exe" : ""}`);
     },
@@ -181,6 +192,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     // so recordings may point Pi at an isolated agent dir (see README).
     liveEnv: (): Record<string, string> => {
       const agentDir = process.env.DEVSPACE_QA_PI_AGENT_DIR;
+
       return agentDir ? { PI_CODING_AGENT_DIR: agentDir } : {};
     },
     realCommand: () => "pi",
@@ -209,9 +221,12 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     redactFrame: (frame) => {
       if (typeof frame.method === "string") return CODEX_USER_ENVIRONMENT_METHODS.has(frame.method) ? undefined : frame;
       const result = frame.result as Record<string, unknown> | undefined;
+
       // The initialize reply names the OS; thread replies list the user's instruction files.
       if (result && "userAgent" in result) return { ...frame, result: { ...result, userAgent: "codex" } };
+
       if (result && "instructionSources" in result) return { ...frame, result: { ...result, instructionSources: [] } };
+
       return frame;
     },
     realCommand: () => "codex",
@@ -233,6 +248,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
     liveEnv: (): Record<string, string> => {
       const home = join(tmpdir(), "devspace-agents-qa-copilot-home");
       mkdirSync(home, { recursive: true });
+
       return { COPILOT_HOME: home };
     },
     realCommand: () => "copilot",
@@ -251,8 +267,10 @@ function emptied(record: Record<string, unknown>, keys: string[]): Record<string
 
 export function providerDefinition(name: string): ProviderDefinition {
   const definition = PROVIDERS[name];
+
   if (!definition) {
     throw new Error(`Unknown provider ${name}. Known providers: ${Object.keys(PROVIDERS).join(", ")}.`);
   }
+
   return definition;
 }

@@ -17,15 +17,18 @@ import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 function fakeCursorConnection() {
   const requests: Array<{ method: string; params?: unknown }> = [];
   const queues = new Map<string, { values: unknown[] }>();
+
   const connection = {
     agent: {
       async notify(_method: string, _params?: unknown): Promise<void> {},
       async request(method: string, params?: unknown): Promise<unknown> {
         requests.push({ method, params });
         const input = params as { sessionId?: string } | undefined;
+
         if (method === "session/new") {
           const sessionId = "cursor_session_1";
           queues.set(sessionId, { values: [] });
+
           return {
             sessionId,
             configOptions: [
@@ -34,13 +37,17 @@ function fakeCursorConnection() {
             ],
           };
         }
+
         if (method === "session/resume") {
           const sessionId = input?.sessionId ?? "cursor_session_1";
           queues.set(sessionId, { values: [] });
+
           return { sessionId };
         }
+
         if (method === "session/prompt" && (params as { prompt: Array<{ text: string }> }).prompt[0]?.text === "use tools") {
           const sessionId = input?.sessionId ?? "";
+
           for (const update of [
             { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Let me " } },
             { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "look." } },
@@ -48,8 +55,10 @@ function fakeCursorConnection() {
             { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed" },
             { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
           ]) deliverAcpSessionUpdate(queues, { sessionId, update } as never);
+
           return { stopReason: "end_turn" };
         }
+
         if (method === "session/prompt") {
           const queue = queues.get(input?.sessionId ?? "");
           queue?.values.push({
@@ -58,14 +67,17 @@ function fakeCursorConnection() {
               content: { type: "text", text: "ACP response" },
             },
           });
+
           return { stopReason: "end_turn" };
         }
+
         return {};
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   };
+
   const runtime = new AcpRuntime({
     flavor: "cursor",
     command: "cursor-agent",
@@ -74,6 +86,7 @@ function fakeCursorConnection() {
     capabilities: { resume: true, close: true, additionalDirectories: true },
     queues,
   }, connection);
+
   return { requests, queues, connection, runtime };
 }
 
@@ -90,9 +103,12 @@ async function runFirstAndWarm({ runtime }: CursorFixture, sessionIds: string[] 
   }, {
     onSessionId: (sessionId) => { sessionIds.push(sessionId); },
   });
+
   assert.equal(firstResult.isOk(), true);
+
   if (firstResult.isErr()) throw firstResult.error;
   const first = firstResult.value;
+
   const warmResult = await runtime.run({
     prompt: "warm",
     workspaceRoot: "/tmp/project",
@@ -103,9 +119,12 @@ async function runFirstAndWarm({ runtime }: CursorFixture, sessionIds: string[] 
   }, {
     onSessionId: (sessionId) => { sessionIds.push(sessionId); },
   });
+
   assert.equal(warmResult.isOk(), true);
+
   if (warmResult.isErr()) throw warmResult.error;
   const warm = warmResult.value;
+
   return { first, warm };
 }
 
@@ -141,11 +160,13 @@ test("session updates stream as activity with message chunks joined between tool
   const { runtime } = fixture;
   const { first } = await runFirstAndWarm(fixture);
   const acpEvents: unknown[] = [];
+
   const toolsResult = await runtime.run({
     prompt: "use tools",
     workspaceRoot: "/tmp/project",
     providerSessionId: first.providerSessionId ?? undefined,
   }, { onEvent: (event) => { acpEvents.push(event); } });
+
   assert.equal(toolsResult.isOk() && toolsResult.value.finalResponse, "Let me look.Done.");
   assert.deepEqual(acpEvents, [
     { type: "message", text: "Let me look." },
@@ -180,6 +201,7 @@ test("a cold resume keeps persisted config and rejects an unadvertised model ove
     capabilities: { resume: true, close: false },
     queues,
   }, connection);
+
   const resumedPersistedResult = await resumedRuntime.run({
     prompt: "resumed with persisted config",
     workspaceRoot: "/tmp/project",
@@ -187,7 +209,9 @@ test("a cold resume keeps persisted config and rejects an unadvertised model ove
     model: "model-a",
     effort: "high",
   });
+
   assert.equal(resumedPersistedResult.isOk(), true);
+
   if (resumedPersistedResult.isErr()) throw resumedPersistedResult.error;
   const resumedPersisted = resumedPersistedResult.value;
   assert.equal(resumedPersisted.finalResponse, "ACP response");
@@ -196,6 +220,7 @@ test("a cold resume keeps persisted config and rejects an unadvertised model ove
     4,
     "cold resume must not require config metadata just to preserve prior model/effort state",
   );
+
   const resumeFailure = await resumedRuntime.run({
     prompt: "resumed",
     workspaceRoot: "/tmp/project",
@@ -203,7 +228,9 @@ test("a cold resume keeps persisted config and rejects an unadvertised model ove
     model: "model-that-is-not-advertised-after-resume",
     modelOverrideRequested: true,
   });
+
   assert.equal(resumeFailure.isErr(), true);
+
   if (resumeFailure.isErr()) assert.equal(resumeFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
   assert.equal(requests.filter(({ method }) => method === "session/resume").length, 1);
   assert.equal(requests.filter(({ method }) => method === "session/set_config_option").length, 4);
@@ -218,6 +245,7 @@ test("a cold resume keeps persisted config and rejects an unadvertised model ove
 
 test("session close support does not depend on resume support", async () => {
   const { requests, connection } = fakeCursorConnection();
+
   const closeOnlyRuntime = new AcpRuntime({
     flavor: "cursor",
     command: "cursor-agent",
@@ -225,6 +253,7 @@ test("session close support does not depend on resume support", async () => {
     env: {},
     capabilities: { resume: false, close: true },
   }, connection);
+
   await closeOnlyRuntime.releaseSession("close_only_session");
   assert.equal(
     requests.filter(({ method, params }) => method === "session/close" && (params as { sessionId?: string })?.sessionId === "close_only_session").length,
@@ -280,15 +309,19 @@ test("a second turn on a session with an active turn is rejected", async () => {
   let markPromptEntered!: () => void;
   const overlappingPrompt = new Promise<void>((resolvePrompt) => { releaseOverlappingPrompt = resolvePrompt; });
   const promptEntered = new Promise<void>((resolveEntered) => { markPromptEntered = resolveEntered; });
+
   const overlapConnection = {
     agent: {
       async notify(_method: string, _params?: unknown): Promise<void> {},
       async request(method: string, params?: unknown): Promise<unknown> {
         const input = params as { sessionId?: string } | undefined;
+
         if (method === "session/new") {
           overlapQueues.set("overlap_session", { values: [] });
+
           return { sessionId: "overlap_session" };
         }
+
         if (method === "session/prompt") {
           markPromptEntered();
           await overlappingPrompt;
@@ -298,14 +331,17 @@ test("a second turn on a session with an active turn is rejected", async () => {
               content: { type: "text", text: "overlap response" },
             },
           });
+
           return { stopReason: "end_turn" };
         }
+
         return {};
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   };
+
   const overlapRuntime = new AcpRuntime({
     flavor: "cursor",
     command: "cursor-agent",
@@ -313,11 +349,14 @@ test("a second turn on a session with an active turn is rejected", async () => {
     env: {},
     queues: overlapQueues,
   }, overlapConnection);
+
   let overlapSessionId: string | undefined;
+
   const firstOverlappingTurn = overlapRuntime.run({
     prompt: "first overlapping turn",
     workspaceRoot: "/tmp/project",
   }, { onSessionId: (sessionId) => { overlapSessionId = sessionId; } });
+
   await promptEntered;
   await assert.rejects(
     overlapRuntime.run({
@@ -330,6 +369,7 @@ test("a second turn on a session with an active turn is rejected", async () => {
   releaseOverlappingPrompt();
   const completedOverlappingTurn = await firstOverlappingTurn;
   assert.equal(completedOverlappingTurn.isOk(), true);
+
   if (completedOverlappingTurn.isErr()) throw completedOverlappingTurn.error;
   assert.equal(completedOverlappingTurn.value.finalResponse, "overlap response");
   await overlapRuntime.close();
@@ -385,9 +425,11 @@ test("ACP runtimes are agent-scoped", () => {
 // Generic ACP agents cannot be held to a restricted write mode, so they run only with full_access.
 test("generic ACP agents run only with full_access", async () => {
   const genericDriver = new AcpLocalAgentDriver({ command: process.execPath, args: ["-e", ""] });
+
   for (const writeMode of ["read_only", "allowed"] as const) {
     const restricted = await genericDriver.createRuntime({ ...cachedContext, writeMode });
     assert.equal(restricted.isErr(), true);
+
     if (restricted.isErr()) assert.match(restricted.error.message, /full_access/);
   }
 });
@@ -395,6 +437,7 @@ test("generic ACP agents run only with full_access", async () => {
 test("a missing ACP command is a retryable protocol error", async () => {
   const missingCommand = await missingCommandDriver().createRuntime(cachedContext);
   assert.equal(missingCommand.isErr(), true);
+
   if (missingCommand.isErr()) {
     assert.equal(missingCommand.error.code, "PROVIDER_PROTOCOL_ERROR");
     assert.equal(missingCommand.error.retryable, true);
@@ -420,13 +463,16 @@ test(
     );
     await writeFile(command, `@ECHO OFF\r\n"${process.execPath}" "${recorder}" %*\r\n`);
     const shimDriver = new AcpLocalAgentDriver({ flavor: "copilot", env: process.env, commandResolver: () => command });
+
     const shimStartup = await shimDriver.createRuntime({
       ...cachedContext,
       providerInstanceId: "copilot",
       provider: "acp",
       workspaceRoot,
     });
+
     assert.equal(shimStartup.isErr(), true);
+
     if (shimStartup.isErr()) assert.equal(shimStartup.error.code, "PROVIDER_PROTOCOL_ERROR");
     const forwarded = JSON.parse(await readFile(marker, "utf8")) as string[];
     assert.equal(
@@ -459,6 +505,7 @@ for (const [flavor, modeId] of [
     const modeRequests: Array<{ method: string; params?: unknown }> = [];
     const modeQueues = new Map<string, { values: unknown[] }>();
     let refuseMode = false;
+
     const modeRuntime = new AcpRuntime({
       flavor,
       command: flavor,
@@ -470,22 +517,28 @@ for (const [flavor, modeId] of [
         async notify(): Promise<void> {},
         async request(method: string, params?: unknown): Promise<unknown> {
           modeRequests.push({ method, params });
+
           if (method === "session/new") {
             modeQueues.set(`${flavor}_mode_session`, { values: [] });
+
             return { sessionId: `${flavor}_mode_session` };
           }
+
           if (method === "session/set_mode" && refuseMode) throw new Error("unknown mode");
+
           if (method === "session/prompt") {
             modeQueues.get(`${flavor}_mode_session`)?.values.push({
               update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } },
             });
           }
+
           return {};
         },
       },
       close() {},
       closed: new Promise<void>(() => undefined),
     });
+
     const modeMethods = () => modeRequests.map(({ method }) => method);
 
     await modeRuntime.run({ prompt: "write", workspaceRoot: "/tmp/project", writeMode: "allowed" });
@@ -501,10 +554,12 @@ for (const [flavor, modeId] of [
     modeRequests.length = 0;
     const refused = await modeRuntime.run({ prompt: "write", workspaceRoot: "/tmp/project", writeMode: "read_only", providerSessionId: `${flavor}_mode_session` });
     assert.equal(refused.isErr(), true);
+
     if (refused.isErr()) {
       assert.equal(refused.error.code, "PROVIDER_PROTOCOL_ERROR");
       assert.match(refused.error.message, /read-only mode/);
     }
+
     assert.equal(modeMethods().includes("session/prompt"), false, `${flavor} must not prompt without its read-only mode`);
     await modeRuntime.close();
   });
@@ -514,14 +569,17 @@ function grokFixture() {
   const grokRequests: Array<{ method: string; params?: unknown }> = [];
   const grokQueues = new Map<string, { values: unknown[] }>();
   const grokCompletionRegistry = new GrokPromptCompletionRegistry();
+
   const grokConnection = {
     agent: {
       async notify(_method: string, _params?: unknown): Promise<void> {},
       async request(method: string, params?: unknown): Promise<unknown> {
         grokRequests.push({ method, params });
         const input = params as { sessionId?: string; _meta?: { promptId?: string } } | undefined;
+
         if (method === "session/new") {
           grokQueues.set("grok_session_1", { values: [] });
+
           return {
             sessionId: "grok_session_1",
             models: {
@@ -533,7 +591,9 @@ function grokFixture() {
             },
           };
         }
+
         if (method === "session/set_model") return {};
+
         if (method === "session/prompt") {
           grokQueues.get(input?.sessionId ?? "")?.values.push({
             update: {
@@ -546,14 +606,17 @@ function grokFixture() {
             promptId: input?._meta?.promptId,
             stopReason: "end_turn",
           }));
+
           return new Promise(() => undefined);
         }
+
         return {};
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   };
+
   const grokRuntime = new AcpRuntime({
     flavor: "grok",
     command: "grok",
@@ -564,18 +627,22 @@ function grokFixture() {
     grokCompletionRegistry,
     promptCompletionTimeoutMs: 100,
   }, grokConnection);
+
   return { grokRequests, grokCompletionRegistry, grokRuntime };
 }
 
 test("Grok selects its model and effort and completes the prompt from its completion signal", async () => {
   const { grokRequests, grokCompletionRegistry, grokRuntime } = grokFixture();
+
   const grokResult = await grokRuntime.run({
     prompt: "which model are you",
     workspaceRoot: "/tmp/project",
     model: "grok-4.5",
     effort: "low",
   });
+
   assert.equal(grokResult.isOk(), true);
+
   if (grokResult.isErr()) throw grokResult.error;
   assert.equal(grokResult.value.finalResponse, "Grok response");
   assert.deepEqual(
@@ -620,40 +687,49 @@ test("Grok rejects unadvertised models and efforts and lists the available ones"
             },
           };
         }
+
         return {};
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   };
+
   const grokConfigurationRuntime = new AcpRuntime({
     flavor: "grok",
     command: "grok",
     args: ["agent", "stdio"],
     env: {},
   }, grokConfigurationConnection);
+
   const invalidGrokModel = await grokConfigurationRuntime.run({
     prompt: "invalid model",
     workspaceRoot: "/tmp/project",
     model: "grok-unknown",
   });
+
   assert.equal(invalidGrokModel.isErr(), true);
+
   if (invalidGrokModel.isErr()) {
     assert.equal(invalidGrokModel.error.code, "PROVIDER_PROTOCOL_ERROR");
     assert.equal(invalidGrokModel.error.retryable, false);
     assert.match(invalidGrokModel.error.message, /Available models: grok-4\.5/);
   }
+
   const invalidGrokEffort = await grokConfigurationRuntime.run({
     prompt: "invalid effort",
     workspaceRoot: "/tmp/project",
     effort: "high",
   });
+
   assert.equal(invalidGrokEffort.isErr(), true);
+
   if (invalidGrokEffort.isErr()) {
     assert.equal(invalidGrokEffort.error.code, "PROVIDER_PROTOCOL_ERROR");
     assert.equal(invalidGrokEffort.error.retryable, false);
     assert.match(invalidGrokEffort.error.message, /Available efforts: low/);
   }
+
   await grokConfigurationRuntime.close();
 });
 
@@ -661,6 +737,7 @@ test("Grok rejects unadvertised models and efforts and lists the available ones"
 test("a provider that never answers after session/cancel is given up on", async () => {
   const stuckRequests: string[] = [];
   const stuckNotifications: string[] = [];
+
   const stuckRuntime = new AcpRuntime({
     flavor: "cursor",
     command: "cursor-agent",
@@ -672,19 +749,23 @@ test("a provider that never answers after session/cancel is given up on", async 
       async notify(method: string): Promise<void> { stuckNotifications.push(method); },
       async request(method: string): Promise<unknown> {
         stuckRequests.push(method);
+
         if (method === "session/new") return { sessionId: "stuck_session" };
+
         return new Promise(() => undefined);
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   });
+
   const stuckAbort = new AbortController();
   const stuckRun = stuckRuntime.run({ prompt: "never answers", workspaceRoot: "/tmp/project", signal: stuckAbort.signal });
   await new Promise((resolveTick) => setTimeout(resolveTick, 10));
   stuckAbort.abort();
   const stuckResult = await stuckRun;
   assert.equal(stuckResult.isErr(), true);
+
   if (stuckResult.isErr()) assert.equal(stuckResult.error.code, "PROVIDER_CANCELLED");
   assert.deepEqual(stuckNotifications, ["session/cancel"]);
   assert.equal(stuckRuntime.isAlive(), false, "an unresponsive provider is dropped from the pool");
@@ -693,6 +774,7 @@ test("a provider that never answers after session/cancel is given up on", async 
 // Stop requested before the prompt is sent must not start provider work.
 test("a stop requested before the prompt is sent starts no provider work", async () => {
   const preAbortRequests: string[] = [];
+
   const preAbortRuntime = new AcpRuntime({
     flavor: "cursor",
     command: "cursor-agent",
@@ -703,20 +785,25 @@ test("a stop requested before the prompt is sent starts no provider work", async
       async notify(): Promise<void> {},
       async request(method: string): Promise<unknown> {
         preAbortRequests.push(method);
+
         return method === "session/new" ? { sessionId: "pre_abort_session" } : { stopReason: "end_turn" };
       },
     },
     close() {},
     closed: new Promise<void>(() => undefined),
   });
+
   const preAborted = new AbortController();
   preAborted.abort();
+
   const preAbortResult = await preAbortRuntime.run({
     prompt: "should not run",
     workspaceRoot: "/tmp/project",
     signal: preAborted.signal,
   });
+
   assert.equal(preAbortResult.isErr(), true);
+
   if (preAbortResult.isErr()) assert.equal(preAbortResult.error.code, "PROVIDER_CANCELLED");
   assert.equal(preAbortRequests.includes("session/prompt"), false);
   await preAbortRuntime.close();

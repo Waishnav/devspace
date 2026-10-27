@@ -82,17 +82,20 @@ test("worktrees prune removes only managed worktrees unused for three days", asy
 
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+
   return stdout.trim();
 }
 
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
+
     return true;
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
       return false;
     }
+
     throw error;
   }
 }

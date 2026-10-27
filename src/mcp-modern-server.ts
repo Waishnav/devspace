@@ -33,6 +33,7 @@ export function createModernMcpServerAdapter(
   const server = new McpServer(serverInfo, options);
   const registerModernTool = server.registerTool.bind(server) as unknown as ModernRegisterTool;
   const registerModernResource = server.registerResource.bind(server) as unknown as ModernRegisterResource;
+
   const registrationTarget: McpRegistrationTarget = {
     registerTool: ((
       name: string,
@@ -45,10 +46,12 @@ export function createModernMcpServerAdapter(
     )) as LegacyMcpServer["registerTool"],
     registerResource: ((...args: unknown[]) => {
       const callback = args.at(-1) as (...callbackArgs: unknown[]) => unknown;
+
       return registerModernResource(
         ...args.slice(0, -1),
         (...callbackArgs: unknown[]) => {
           const context = callbackArgs.at(-1) as ServerContext;
+
           return callback(
             ...callbackArgs.slice(0, -1),
             legacyToolHandlerExtra(context),
@@ -68,6 +71,7 @@ export function compileMcpRegistrationSurface(
   registerSurface: (target: McpRegistrationTarget) => void,
 ): (target: McpRegistrationTarget) => void {
   const registrations: RegistrationReplay[] = [];
+
   const recordingTarget: McpRegistrationTarget = {
     registerTool: ((...args: unknown[]) => {
       registrations.push((target) => {
@@ -83,6 +87,7 @@ export function compileMcpRegistrationSurface(
 
   registerSurface(recordingTarget);
   const compiled = Object.freeze(registrations.slice());
+
   return (target) => {
     for (const replay of compiled) replay(target);
   };
@@ -90,6 +95,7 @@ export function compileMcpRegistrationSurface(
 
 export function modernMcpAdapterErrorLogFields(error: Error): Record<string, unknown> {
   const cause = error.cause;
+
   return {
     error: error.message,
     errorName: error.name,

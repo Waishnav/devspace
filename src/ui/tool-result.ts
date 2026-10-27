@@ -18,6 +18,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   if (structured) {
     const workspaceId = stringField(structured.workspace_id);
     const reviewRef = stringField(structured.review_ref);
+
     if (workspaceId && reviewRef) {
       if (isCompleteReviewCard(metaCard)) {
         return {
@@ -29,6 +30,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
           },
         };
       }
+
       return { kind: "review-reference", workspaceId, reviewRef };
     }
 
@@ -37,6 +39,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
         ...structured,
         payload: { patch: structured.patch },
       });
+
       if (legacyCard) {
         return { kind: "card", card: { ...legacyCard, tool: "show_changes" } };
       }
@@ -44,8 +47,10 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
 
     const root = stringField(structured.root);
     const mode = workspaceMode(structured.mode);
+
     if (workspaceId && root && mode) {
       const structuredCard = structuredWorkspaceCardFields(structured) ?? {};
+
       return {
         kind: "card",
         card: {
@@ -66,6 +71,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   if (metaCard?.workspaceId && (metaCard.files?.length || metaCard.payload?.patch)) {
     return { kind: "card", card: { ...metaCard, tool: "show_changes" } };
   }
+
   if (metaCard?.workspaceId && metaCard.root && metaCard.mode) {
     return { kind: "card", card: { ...metaCard, tool: "open_workspace" } };
   }
@@ -78,6 +84,7 @@ function structuredWorkspaceCardFields(
 ): Partial<ToolResultCard> | undefined {
   if (!record) return undefined;
   const worktreeRecord = asRecord(record.worktree);
+
   return cardFields({
     root: record.root,
     mode: record.mode,
@@ -112,6 +119,7 @@ function isCompleteReviewCard(
   if (!card || !Array.isArray(card.files) || typeof card.payload?.patch !== "string") {
     return false;
   }
+
   return numberField(card.summary?.files) !== undefined
     && numberField(card.summary?.additions) !== undefined
     && numberField(card.summary?.removals) !== undefined;
@@ -124,10 +132,13 @@ export function toolResultFromChatGptGlobals(
 
   const responseMetadata = asRecord(globals.toolResponseMetadata);
   const metadataResult = mcpToolResult(globals.toolResponseMetadata);
+
   const structuredContent = asRecord(globals.toolOutput)
     ?? asRecord(metadataResult?.structuredContent);
+
   const resultMeta = asRecord(metadataResult?._meta)
     ?? directResultMeta(responseMetadata);
+
   if (!metadataResult && !structuredContent && !resultMeta) return undefined;
 
   return {
@@ -141,18 +152,22 @@ function directResultMeta(
   metadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
+
   return "card" in metadata ? metadata : undefined;
 }
 
 function mcpToolResult(value: unknown): CallToolResult | undefined {
   const metadata = asRecord(value);
+
   if (!metadata) return undefined;
 
   const direct = asRecord(metadata.mcp_tool_result);
+
   if (direct) return direct as CallToolResult;
 
   const callToolResult = asRecord(metadata.call_tool_result);
   const nested = asRecord(callToolResult?.mcp_tool_result);
+
   return nested ? nested as CallToolResult : undefined;
 }
 
@@ -163,20 +178,24 @@ function cardFields(record: Record<string, unknown> | undefined): Partial<ToolRe
     path: stringField(item.path),
     content: stringField(item.content),
   }));
+
   const availableAgentsFiles = arrayRecords(record.availableAgentsFiles)?.map((item) => ({
     path: stringField(item.path),
   }));
+
   const skills = arrayRecords(record.skills)?.map((item) => ({
     name: stringField(item.name),
     description: stringField(item.description),
     path: stringField(item.path),
   }));
+
   const agentProviders = arrayRecords(record.agentProviders)?.map((item) => ({
     id: stringField(item.id),
     model: stringField(item.model),
     effort: stringField(item.effort),
     note: stringField(item.note),
   }));
+
   const agents = arrayRecords(record.agents)?.map((item) => ({
     name: stringField(item.name),
     description: stringField(item.description),
@@ -184,6 +203,7 @@ function cardFields(record: Record<string, unknown> | undefined): Partial<ToolRe
     model: stringField(item.model),
     effort: stringField(item.effort),
   }));
+
   const files = arrayRecords(record.files)?.map((item) => ({
     path: stringField(item.path),
     previousPath: stringField(item.previousPath),
@@ -191,6 +211,7 @@ function cardFields(record: Record<string, unknown> | undefined): Partial<ToolRe
     additions: numberField(item.additions),
     removals: numberField(item.removals),
   }));
+
   const worktreeRecord = asRecord(record.worktree);
   const reviewRecord = asRecord(record.review);
   const summary = asRecord(record.summary);
@@ -242,8 +263,10 @@ function reviewAvailability(
   record: Record<string, unknown> | undefined,
 ): ToolResultCard["review"] {
   if (!record || typeof record.available !== "boolean") return undefined;
+
   if (record.available) return { available: true };
   const reason = stringField(record.reason);
+
   return reason ? { available: false, reason } : undefined;
 }
 
@@ -263,8 +286,10 @@ function workspaceMode(value: unknown): ToolResultCard["mode"] {
 
 function arrayRecords(value: unknown): Array<Record<string, unknown>> | undefined {
   if (!Array.isArray(value)) return undefined;
+
   return value.flatMap((item) => {
     const record = asRecord(item);
+
     return record ? [record] : [];
   });
 }

@@ -29,35 +29,44 @@ async function fixture(runner?: typeof runWorkflowScript) {
   let active = 0;
   let maximum = 0;
   let releaseHold: (() => void) | undefined;
+
   const runtime: LocalAgentRuntime = {
     provider: "codex", isAlive: () => true, close: async () => {}, releaseSession: async () => {},
     run: async (input, callbacks) => {
       inputs.push(input);
       active++;
       maximum = Math.max(maximum, active);
+
       try {
         await callbacks?.onSessionId?.(`session_${inputs.length}`);
+
         if (input.prompt === "commit") {
           await writeFile(join(input.workspaceRoot, "committed.txt"), "preserve this commit");
           execFileSync("git", ["add", "committed.txt"], { cwd: input.workspaceRoot });
           execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "Worker change"], { cwd: input.workspaceRoot });
           await writeFile(join(input.workspaceRoot, "untracked.txt"), "preserve this too");
         }
+
         if (input.prompt === "hold") {
           await new Promise<void>((resolve) => {
             releaseHold = resolve;
             input.signal?.addEventListener("abort", () => resolve(), { once: true });
+
             if (input.signal?.aborted) resolve();
           });
+
           if (input.signal?.aborted) return Result.err(new AgentProviderCancelledError({
             code: "PROVIDER_CANCELLED", provider: "codex", operation: "run", retryable: false, message: "Test provider confirmed cancellation.",
           }));
         }
+
         await new Promise((resolve) => setTimeout(resolve, 5));
+
         return Result.ok({ provider: "codex" as const, providerSessionId: null, finalResponse: input.prompt.startsWith("Your last response") ? '{"ok":true}' : input.prompt, items: [] });
       } finally { active--; }
     },
   };
+
   const agents = new LocalAgentManager({
     store: new LocalAgentStore(stateDir), pool: new LocalAgentRuntimePool(), loadProfiles: async () => [],
     subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
@@ -73,12 +82,16 @@ async function fixture(runner?: typeof runWorkflowScript) {
     allowedRoots: [root],
     authorizeManagedWorkspace: (path, id) => isManagedWorkflowWorkspace(config, path, id),
   });
+
   const store = new WorkflowStore(stateDir);
+
   const workflows = new WorkflowManager({
     store, agents, runner, config, loadProfiles: async () => [], allowedRoots: [root],
     subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
   });
+
   const scope = { workspaceRoot: root };
+
   return {
     dir, root, inputs, agents, store, workflows, scope, maximum: () => maximum,
     release: () => releaseHold?.(),
@@ -88,9 +101,11 @@ async function fixture(runner?: typeof runWorkflowScript) {
 
 test("real JS pipeline runs in parallel, preserves order and durable turn ownership", async () => {
   const f = await fixture();
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: `export const meta = {name:'test',concurrency:2};
       return await pipeline(['a','b','c'], value => agent(value,{target:'codex'}), (value,item) => agent(value+item,{target:'codex'}));` });
+
     const done = await f.workflows.wait(run.id, f.scope);
     assert.equal(done.status, "completed", JSON.stringify(done.error));
     assert.deepEqual(done.result, ["aa", "bb", "cc"].map((value) => ({ status: "completed", value })));
@@ -109,8 +124,10 @@ test("real JS pipeline runs in parallel, preserves order and durable turn owners
 
 test("workspaces outside the allowed roots are rejected with a workflow error", async () => {
   const f = await fixture();
+
   try {
     const outside = await mkdtemp(join(tmpdir(), "devspace-workflow-outside-"));
+
     try {
       await assert.rejects(
         f.workflows.run({ workspaceRoot: outside, source: "return 1;" }),
@@ -127,8 +144,10 @@ test("workspaces outside the allowed roots are rejected with a workflow error", 
 test("shared daemon capacity bounds simultaneous workflows", async () => {
   const f = await fixture(async ({ onAgent }) => {
     await Promise.all(Array.from({ length: 16 }, (_, i) => onAgent(String(i), { target: "codex" })));
+
     return "done";
   });
+
   try {
     const source = "export const meta={concurrency:16}; return null;";
     const runs = await Promise.all([f.workflows.run({ ...f.scope, source }), f.workflows.run({ ...f.scope, source })]);
@@ -139,6 +158,7 @@ test("shared daemon capacity bounds simultaneous workflows", async () => {
 
 test("cancelling one workflow stops its exact owned turn and preserves another shared-runtime agent", async () => {
   const f = await fixture(async ({ onAgent }) => await onAgent("hold", { target: "codex" }) as string);
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
     await until(() => f.inputs.length === 1);
@@ -157,8 +177,10 @@ test("normal return with unawaited calls cancels children before persisting fail
   const f = await fixture(async ({ onAgent }) => {
     void Promise.resolve(onAgent("hold", { target: "codex" })).catch(() => {});
     await until(() => f.inputs.length === 1);
+
     return "early";
   });
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
     const done = await f.workflows.wait(run.id, f.scope);
@@ -172,13 +194,16 @@ test("schema validates before dispatch and one correction runs with reduced auth
   const f = await fixture(async ({ onAgent }) => await onAgent("work", {
     target: "codex", schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
   }) as { ok: boolean });
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;", writeMode: "allowed" });
     assert.deepEqual((await f.workflows.wait(run.id, f.scope)).result, { ok: true });
     assert.deepEqual(f.inputs.map((i) => i.writeMode), ["allowed", "read_only"]);
     assert.equal(f.workflows.calls(run.id, f.scope).length, 1);
   } finally { await f.close(); }
+
   const invalid = await fixture(async ({ onAgent }) => await onAgent("never", { target: "codex", schema: { type: "nonsense" } }) as null);
+
   try {
     const run = await invalid.workflows.run({ ...invalid.scope, source: "return null;" });
     assert.equal((await invalid.workflows.wait(run.id, invalid.scope)).error?.code, "INVALID_SCHEMA");
@@ -188,6 +213,7 @@ test("schema validates before dispatch and one correction runs with reduced auth
 
 test("resume reuses only compatible read-only prefix and rejects changed context and active runs", async () => {
   const f = await fixture(async ({ onAgent }) => await onAgent("review", { target: "codex" }) as string);
+
   try {
     const first = await f.workflows.run({ ...f.scope, source: "return null;" });
     await assert.rejects(f.workflows.run({ ...f.scope, resume: first.id }), (e: unknown) => e instanceof WorkflowError && e.code === "WORKFLOW_ACTIVE");
@@ -204,6 +230,7 @@ test("resume reuses only compatible read-only prefix and rejects changed context
 
 test("resume hashes only files Git does not ignore", async () => {
   const f = await fixture(async () => null);
+
   try {
     await writeFile(join(f.root, ".gitignore"), "node_modules/\n");
     await writeFile(join(f.root, "tracked.txt"), "tracked");
@@ -229,6 +256,7 @@ test("resume hashes only files Git does not ignore", async () => {
 
 test("resume rejects staged Git state changes even when worktree files are unchanged", async () => {
   const f = await fixture(async () => null);
+
   try {
     await writeFile(join(f.root, "staged.txt"), "same content");
     const first = await f.workflows.run({ ...f.scope, source: "return null;" });
@@ -243,6 +271,7 @@ test("resume rejects staged Git state changes even when worktree files are uncha
 
 test("nested workflow shares capacity at concurrency one and cannot recursively nest", async () => {
   const f = await fixture();
+
   try {
     await mkdir(join(f.root, ".devspace", "workflows"), { recursive: true });
     await writeFile(join(f.root, ".devspace", "workflows", "child.js"), "return await agent('nested',{target:'codex'});");
@@ -257,8 +286,10 @@ test("nested workflow shares capacity at concurrency one and cannot recursively 
 test("worktree calls share their logical workspace and preserve commits plus dirty files", async () => {
   const f = await fixture(async ({ onAgent }) => {
     await onAgent("commit", { target: "codex", isolation: "worktree", workspace: "implementation" });
+
     return await onAgent("verify", { target: "codex", workspace: "implementation", writeMode: "read_only" }) as string;
   });
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;", writeMode: "allowed" });
     const done = await f.workflows.wait(run.id, f.scope);
@@ -275,6 +306,7 @@ test("worktree calls share their logical workspace and preserve commits plus dir
 
 test("restart reconciliation preserves durable ownership without dispatching interrupted calls", async () => {
   const f = await fixture(async () => "done");
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
     await f.workflows.wait(run.id, f.scope);
@@ -296,8 +328,10 @@ test("restart reconciliation preserves durable ownership without dispatching int
 test("parallel unnamed isolated calls receive distinct worktrees", async () => {
   const f = await fixture(async ({ onAgent }) => {
     await Promise.all([0, 1].map((i) => onAgent(String(i), { target: "codex", isolation: "worktree" })));
+
     return "done";
   });
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
     const done = await f.workflows.wait(run.id, f.scope);
@@ -312,14 +346,17 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
   const originalGetTurn = f.agents.getTurn.bind(f.agents);
   const originalStop = f.agents.stop.bind(f.agents);
   let close: Promise<void> | undefined;
+
   try {
     const run = await f.workflows.run({ ...f.scope, source: "return null;" });
     await until(() => f.inputs.length === 1);
     await until(() => f.workflows.calls(run.id, f.scope)[0]?.turnId !== undefined);
     const call = f.workflows.call(run.id, 0, f.scope);
+
     const runningTurn: LocalAgentTurnRecord = {
       id: 1, turnId: call.turnId!, agentId: call.agentId, prompt: call.prompt, status: "running", createdAt: "now",
     };
+
     f.agents.getTurn = () => Result.ok(runningTurn);
     f.agents.stop = async () => Result.err(new AgentConflictError({
       code: "AGENT_CONFLICT", agentId: call.agentId, operation: "stop", retryable: true,
@@ -332,6 +369,7 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("workflow close timed out")), 2_000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     const reopened = new WorkflowStore(join(f.dir, "state"));
+
     try {
       assert.equal(reopened.get(run.id)?.status, "stopping");
       assert.equal(reopened.get(run.id)?.error?.code, "RECOVERY_REQUIRED");
@@ -348,12 +386,15 @@ test("shutdown stops retrying unconfirmed provider cancellation and preserves re
 
 async function until(check: () => boolean): Promise<void> {
   const end = Date.now() + 5_000;
+
   while (!check()) {
     if (Date.now() > end) throw new Error("Test condition timed out");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
 function unwrap<T, E>(result: import("better-result").Result<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }

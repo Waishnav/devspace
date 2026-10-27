@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 if (process.platform === "darwin") {
   const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
   for (const architecture of ["arm64", "x64"]) {
     const helper = resolve(
       projectRoot,
@@ -13,6 +14,7 @@ if (process.platform === "darwin") {
       `darwin-${architecture}`,
       "spawn-helper",
     );
+
     try {
       await chmod(helper, 0o755);
     } catch (error) {

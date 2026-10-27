@@ -7,13 +7,19 @@ import test, { after } from "node:test";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 
 const root = mkdtempSync(join(tmpdir(), "devspace-cli-workspace-test-"));
+
 after(() => rmSync(root, { recursive: true, force: true }));
+
 const repository = join(root, "repository");
 const nested = join(repository, "packages", "app");
 const plainDirectory = join(root, "plain");
+
 mkdirSync(nested, { recursive: true });
+
 mkdirSync(plainDirectory);
+
 execFileSync("git", ["init", "--quiet", repository]);
+
 // Git returns canonical paths, while macOS and Windows temp directories may
 // be reported through aliases such as /var or an 8.3 short path.
 const allowedRoot = realpathSync.native(root);
@@ -61,6 +67,7 @@ test("a managed workspace outside allowed roots is used once authorized", () => 
     DEVSPACE_WORKSPACE_ROOT: plainRoot,
   }, nestedRoot, (workspaceRoot, workspaceId) => {
     managedChecks += 1;
+
     return workspaceId === "ws_managed" && workspaceRoot === plainRoot;
   }), {
     workspaceId: "ws_managed",

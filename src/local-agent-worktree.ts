@@ -27,18 +27,21 @@ export async function createAgentWorktree(input: {
     Result.err(new AgentScopeError({ code, operation: "start", retryable: false, cause, message }));
 
   const eligibility = await getGitEligibility(input.workspaceRoot).catch(() => undefined);
+
   if (!eligibility?.ok) {
     return failure(
       "WORKTREE_NOT_GIT_REPOSITORY",
       `--worktree needs a git repository, but ${input.workspaceRoot} is not inside one. Run from a git checkout, or drop --worktree.`,
     );
   }
+
   if (!eligibility.hasHead) {
     return failure("WORKTREE_CREATE_FAILED", "--worktree needs at least one commit to branch from. Create an initial commit first.");
   }
 
   // Ref names cannot contain ':', which agent ids may.
   const branch = input.branch ?? `devspace/${input.agentId.replaceAll(":", "-")}`;
+
   try {
     // The checkout is already authorized by the manager; it is the only root the worktree may come from.
     const worktree = await createManagedWorktree({
@@ -46,9 +49,11 @@ export async function createAgentWorktree(input: {
       branch,
       config: { allowedRoots: [input.workspaceRoot], worktreeRoot: input.worktreeRoot },
     });
+
     return Result.ok({ path: worktree.path, branch });
   } catch (cause) {
     const message = cause instanceof GitWorktreeError || cause instanceof Error ? cause.message : String(cause);
+
     return failure("WORKTREE_CREATE_FAILED", `Could not create a worktree on branch ${branch}. ${message}`, cause);
   }
 }
@@ -56,6 +61,7 @@ export async function createAgentWorktree(input: {
 /** A worktree is the user's to remove; a later turn on a removed one fails clearly instead of running elsewhere. */
 export function missingWorktreeError(record: LocalAgentRecord, operation: string): AgentScopeError | undefined {
   if (!record.worktreePath || existsSync(record.worktreePath)) return undefined;
+
   return new AgentScopeError({
     code: "WORKTREE_MISSING",
     agentId: record.id,

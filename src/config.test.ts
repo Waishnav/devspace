@@ -11,11 +11,13 @@ const ownerToken = "test-owner-token-that-is-long-enough";
 function tempConfigDir(t: TestContext, prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+
   return dir;
 }
 
 function serverConfigDir(t: TestContext) {
   const configDir = tempConfigDir(t, "devspace-config-test-");
+
   return { configDir, env: { DEVSPACE_CONFIG_DIR: configDir, DEVSPACE_OAUTH_OWNER_TOKEN: ownerToken } };
 }
 

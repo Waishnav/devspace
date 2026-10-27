@@ -15,9 +15,11 @@ const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const repoRoot = dirname(packageJsonPath);
+
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
   bin: { devspace: string };
 };
+
 // This verifies the compiled entrypoint declared for the installed `devspace`
 // command. npm's package-install shim itself is outside this focused test.
 const cliPath = join(repoRoot, packageJson.bin.devspace);
@@ -44,11 +46,14 @@ test("show-changes prints a Git-backed historical review", async (t) => {
   const review = await manager.reviewChanges({ workspaceId: "ws_cli", root: project });
 
   const configDir = join(root, ".devspace");
+
   const env = writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [project] },
     storage: { stateDir: join(root, ".state") },
   });
+
   const cliArgs = [cliPath, "show-changes", review.reviewRef];
+
   const plain = await execFileAsync("node", cliArgs, {
     cwd: project,
     env: {
@@ -59,6 +64,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     },
     encoding: "utf8",
   });
+
   assert.match(plain.stdout, /\+review me/);
 
   const json = await execFileAsync("node", [...cliArgs, "--json"], {
@@ -71,10 +77,12 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     },
     encoding: "utf8",
   });
+
   const parsed = JSON.parse(json.stdout) as {
     reviewRef: string;
     patch: string;
   };
+
   assert.equal(parsed.reviewRef, review.reviewRef);
   assert.equal(parsed.patch, review.patch);
 
@@ -82,6 +90,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     cwd: project,
     encoding: "utf8",
   })).stdout.trim();
+
   await assert.rejects(
     execFileAsync("node", [cliPath, "show-changes", head], {
       cwd: project,
@@ -98,6 +107,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
         (error as { stderr?: string }).stderr ?? "",
         /Unknown DevSpace review reference/,
       );
+
       return true;
     },
   );

@@ -201,6 +201,7 @@ test("prune persistence failure restores the removed worktree", async (t) => {
   const fixture = await worktreeFixture(t, "ws_store_failure", {
     createStore: (stateDir) => new FailPruneStore(stateDir),
   });
+
   await writeFile(join(fixture.worktreePath, "README.md"), "recover me\n");
 
   const result = unwrap(await cleanupManagedWorktrees({
@@ -232,23 +233,28 @@ test("failed prune compensation leaves the session pruned for later recovery", a
         execFileSync("git", ["update-ref", "-d", managedWorktreeRecoveryRef(id)], {
           cwd: this.sourceRoot,
         });
+
         return Result.err(new WorkspaceStoreError(
           "mark_session_pruned",
           new Error("injected persistence failure"),
           id,
         ));
       }
+
       return super.markSessionPruned(id, recoveryKind);
     }
   }
 
   let store!: FailOnceAndBreakRecoveryStore;
+
   const fixture = await worktreeFixture(t, "ws_failed_compensation", {
     createStore: (stateDir) => {
       store = new FailOnceAndBreakRecoveryStore(stateDir);
+
       return store;
     },
   });
+
   store.sourceRoot = fixture.sourceRoot;
   await writeFile(join(fixture.worktreePath, "README.md"), "recover later\n");
 
@@ -287,6 +293,7 @@ test("restore rejects a pruned worktree path through an escaping symlink", async
     baseSha: await git(fixture.sourceRoot, ["rev-parse", "HEAD"]),
     managed: true,
   });
+
   unwrap(fixture.store.markSessionPruned(session.id));
   const pruned = fixture.store.getSession(session.id);
   assert.ok(pruned);
@@ -351,6 +358,7 @@ async function worktreeFixture(
   await mkdir(sourceRoot);
   await mkdir(worktreeRoot);
   await writeFile(join(sourceRoot, "README.md"), "initial\n");
+
   if (options.gitignore) await writeFile(join(sourceRoot, ".gitignore"), options.gitignore);
   await git(sourceRoot, ["init"]);
   await git(sourceRoot, ["config", "user.email", "devspace@example.com"]);
@@ -385,22 +393,26 @@ function futureCutoff(): Date {
 
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+
   return stdout.trim();
 }
 
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
+
     return true;
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
       return false;
     }
+
     throw error;
   }
 }
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }

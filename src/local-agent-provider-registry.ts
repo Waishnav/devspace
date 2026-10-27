@@ -28,6 +28,7 @@ export class LocalAgentProviderRegistry {
   register(kind: LocalAgentDriverKind, factory: LocalAgentDriverFactory): this {
     if (this.factories.has(kind)) throw new Error(`Local agent driver already registered: ${kind}`);
     this.factories.set(kind, factory);
+
     return this;
   }
 
@@ -37,13 +38,17 @@ export class LocalAgentProviderRegistry {
     inheritedEnv: NodeJS.ProcessEnv,
   ): LocalAgentDriver {
     const factory = this.factories.get(instance.driver);
+
     if (!factory) throw new Error(`No local agent driver registered for: ${instance.driver}`);
+
     const env = subagents
       ? localAgentProviderEnvironment(subagents, instance.id, inheritedEnv)
       : inheritedEnv;
+
     const envOverrides = subagents
       ? localAgentProviderEnvironmentOverrides(subagents, instance.id)
       : {};
+
     return new ProviderInstanceDriver(instance.id, factory({ instance, env, envOverrides }));
   }
 }

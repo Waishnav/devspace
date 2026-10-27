@@ -36,6 +36,7 @@ export function writeTestDevspaceConfig(
     logging: { ...defaults.logging, ...overrides.logging },
     oauth: { ...defaults.oauth, ...overrides.oauth },
   }, env);
+
   return {
     ...env,
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",

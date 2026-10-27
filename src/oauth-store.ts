@@ -27,6 +27,7 @@ export interface PersistedTokenPair {
 
 function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boolean {
   let parsed: URL;
+
   try {
     parsed = new URL(redirectUri);
   } catch {
@@ -34,6 +35,7 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   }
 
   if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return true;
+
   return allowedHosts.includes(parsed.hostname);
 }
 
@@ -62,6 +64,7 @@ export class SqliteOAuthStore {
     }
 
     const now = Math.floor(Date.now() / 1000);
+
     const registered: OAuthClientInformationFull = {
       ...client,
       client_id: `devspace-${randomUUID()}`,
@@ -143,6 +146,7 @@ export class SqliteOAuthStore {
     const save = this.database.sqlite.transaction(() => {
       if (consumedRefreshTokenHash) {
         const now = Math.floor(Date.now() / 1000);
+
         // Retried rotations must not extend the original grace deadline or TTL.
         const result = this.refreshTokenGraceSeconds > 0
           ? this.database.sqlite
@@ -151,11 +155,13 @@ export class SqliteOAuthStore {
           : this.database.sqlite
               .prepare("delete from oauth_refresh_tokens where token_hash = ?")
               .run(consumedRefreshTokenHash);
+
         if (result.changes !== 1) return false;
       }
 
       this.saveAccessToken(pair.accessTokenHash, pair.accessToken);
       this.saveRefreshToken(pair.refreshTokenHash, pair.refreshToken);
+
       return true;
     });
 

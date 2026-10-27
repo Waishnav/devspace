@@ -33,14 +33,18 @@ export type CodexCommandResolver = (env: NodeJS.ProcessEnv) => ResolvedCodexComm
 export function codexCommandEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+
   if (env.CODEX_COMMAND) return next;
+
   if (next.PATH) next.PATH = removeDevspaceNodeModulesBinFromPath(next.PATH);
+
   return next;
 }
 
 export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): ResolvedCodexCommand | undefined {
   const command = env.CODEX_COMMAND ?? "codex";
   const probeEnv = codexCommandEnvironment(env);
+
   for (const candidate of commandCandidates(command, probeEnv)) {
     const result = spawnSync(candidate, ["--version"], {
       encoding: "utf8",
@@ -49,11 +53,16 @@ export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): Resol
       timeout: 5_000,
       shell: usesWindowsCommandShell(candidate),
     });
+
     const code = result.error && "code" in result.error ? result.error.code : undefined;
+
     if (code === "ENOENT") continue;
+
     if (result.error || result.status !== 0) continue;
+
     return { executable: candidate, version: parseCodexVersion(result.stdout) };
   }
+
   return undefined;
 }
 
@@ -68,11 +77,13 @@ export function isCodexAppServerSupported(
     timeout: 5_000,
     shell: usesWindowsCommandShell(command),
   });
+
   return result.error === undefined && result.status === 0;
 }
 
 export function parseCodexVersion(output: string | undefined): string | undefined {
   const match = output?.trim().match(/v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/);
+
   return match?.[1];
 }
 
@@ -132,11 +143,14 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex app-server is not running.",
           });
         }
+
         const threadResponse = await this.rpc.request(
           input.providerSessionId ? "thread/resume" : "thread/start",
           threadParams(input),
         );
+
         const threadId = readString(asRecord(threadResponse)?.thread, "id");
+
         if (!threadId) {
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
@@ -149,16 +163,20 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
         }
 
         await callbacks?.onSessionId?.(threadId);
+
         if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         let completed: CodexTurnResult;
+
         try {
           completed = await this.rpc.runTurn(threadId, turnParams(input, threadId), input.signal, callbacks?.onEvent);
         } catch (cause) {
           if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
           throw cause;
         }
+
         if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
         const parsed = parseCompletedTurn(completed.event.params, completed.items);
+
         if (parsed.failure) {
           throw new AgentProviderExecutionError({
             code: "PROVIDER_EXECUTION_ERROR",
@@ -169,6 +187,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex agent turn failed.",
           });
         }
+
         if (!parsed.finalResponse.trim()) {
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
@@ -179,6 +198,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
             message: "Codex did not return a final assistant response.",
           });
         }
+
         return {
           provider: this.provider,
           providerSessionId: threadId,
@@ -191,6 +211,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
 
   async releaseSession(providerSessionId: string): Promise<void> {
     if (!this.alive) return;
+
     try {
       await this.rpc.request("thread/unsubscribe", { threadId: providerSessionId });
     } catch {
@@ -207,14 +228,18 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
     this.closePromise = (async () => {
       this.alive = false;
       this.rpc.fail(new Error("codex app-server closed."));
+
       if (!this.child.stdin.destroyed) this.child.stdin.end();
+
       if (this.child.exitCode === null) {
         terminateProcessTree(this.child, "SIGTERM", process.platform !== "win32");
+
         if (!await waitForProcessExit(this.child, 1_000)) {
           terminateProcessTree(this.child, "SIGKILL", process.platform !== "win32");
         }
       }
     })();
+
     return this.closePromise;
   }
 }
@@ -224,16 +249,20 @@ async function waitForProcessExit(
   timeoutMs: number,
 ): Promise<boolean> {
   if (child.exitCode !== null) return true;
+
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       child.removeListener("exit", onExit);
       resolve(false);
     }, timeoutMs);
+
     timer.unref();
+
     const onExit = () => {
       clearTimeout(timer);
       resolve(true);
     };
+
     child.once("exit", onExit);
   });
 }
@@ -264,6 +293,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const command = this.resolveCommand();
+
         if (!command) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -273,6 +303,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
             message: "Codex executable was not found.",
           });
         }
+
         if (!isCodexAppServerSupported(command.executable, this.env)) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -282,13 +313,16 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
             message: "Installed Codex does not support app-server.",
           });
         }
+
         const runtime = new CodexAppServerRuntime({
           command: command.executable,
           env: codexCommandEnvironment(this.env),
           version: command.version,
         });
+
         try {
           await runtime.initialize();
+
           return runtime;
         } catch (cause) {
           await runtime.close();
@@ -310,6 +344,7 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
       this.resolvedCommand = this.commandResolver(this.env);
       this.commandResolved = true;
     }
+
     return this.resolvedCommand;
   }
 }
@@ -362,6 +397,7 @@ class CodexAppServerRpc {
   request(method: string, params?: unknown): Promise<unknown> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     const id = String(this.nextId++);
+
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.write({ id, method, ...(params === undefined ? {} : { params }) });
@@ -379,13 +415,16 @@ class CodexAppServerRpc {
     onEvent?: (event: LocalAgentActivityEvent) => void,
   ): Promise<CodexTurnResult> {
     if (this.fatalError) throw this.fatalError;
+
     if (this.turns.has(threadId)) throw new Error(`Codex thread ${threadId} already has an active turn.`);
     let resolveTurn!: (result: CodexTurnResult) => void;
     let rejectTurn!: (error: Error) => void;
+
     const completion = new Promise<CodexTurnResult>((resolve, reject) => {
       resolveTurn = resolve;
       rejectTurn = reject;
     });
+
     const turn: CodexTurnAccumulator = {
       threadId,
       items: [],
@@ -393,23 +432,30 @@ class CodexAppServerRpc {
       resolve: resolveTurn,
       reject: rejectTurn,
     };
+
     this.turns.set(threadId, turn);
+
     const removeAbort = bindLocalAgentAbort(signal, async () => {
       if (!turn.turnId) return;
       await this.request("turn/interrupt", { threadId, turnId: turn.turnId });
     });
+
     try {
       const response = await this.request("turn/start", params);
       turn.turnId = readString(asRecord(response)?.turn, "id");
+
       if (signal?.aborted && turn.turnId) {
         // A failed interrupt must not report the turn as stopped: keep waiting for the
         // provider's terminal event; the manager bounds how long stop waits for it.
         await this.request("turn/interrupt", { threadId, turnId: turn.turnId }).catch(() => undefined);
       }
+
       if (turn.completed) return { event: turn.completed, items: turn.items };
+
       return await completion;
     } finally {
       removeAbort();
+
       if (this.turns.get(threadId) === turn) this.turns.delete(threadId);
     }
   }
@@ -417,7 +463,9 @@ class CodexAppServerRpc {
   fail(error: Error): void {
     if (this.fatalError) return;
     this.fatalError = new Error(`${error.message}${this.stderr.trim() ? `\n${this.stderr.trim()}` : ""}${this.version ? `\ncodex version: ${this.version}` : ""}`);
+
     for (const pending of this.pending.values()) pending.reject(this.fatalError);
+
     for (const turn of this.turns.values()) turn.reject(this.fatalError);
     this.pending.clear();
     this.turns.clear();
@@ -432,38 +480,54 @@ class CodexAppServerRpc {
     this.buffer += line;
     const trimmed = this.buffer.trim();
     this.buffer = "";
+
     if (!trimmed) return;
     let message: Record<string, unknown>;
+
     try {
       message = JSON.parse(trimmed) as Record<string, unknown>;
     } catch {
       this.fail(new Error("codex app-server emitted malformed JSON."));
+
       return;
     }
+
     const id = typeof message.id === "string" || typeof message.id === "number" ? String(message.id) : undefined;
     const method = typeof message.method === "string" ? message.method : undefined;
+
     if (id && !method) {
       const pending = this.pending.get(id);
+
       if (!pending) return;
       this.pending.delete(id);
+
       if (message.error !== undefined) pending.reject(new Error(protocolErrorText(message.error)));
       else pending.resolve(message.result);
+
       return;
     }
+
     if (id && method) {
       this.write({ id: message.id, error: { code: -32601, message: `Unsupported app-server request: ${method}` } });
+
       return;
     }
+
     if (!method) return;
     const event = { method, params: message.params };
     const turn = this.findTurn(event);
+
     if (!turn) return;
     const params = asRecord(event.params);
+
     if (params?.item !== undefined) {
       turn.items.push(params.item);
+
       if (turn.items.length > MAX_TURN_ITEMS) turn.items.shift();
+
       if (turn.onEvent) reportCodexActivity(event.method, params.item, turn.onEvent);
     }
+
     if (event.method !== "turn/completed" || !turnMatchesEvent(turn, event)) return;
     turn.completed = event;
     turn.resolve({ event, items: turn.items.slice() });
@@ -472,11 +536,15 @@ class CodexAppServerRpc {
   private findTurn(event: CodexEvent): CodexTurnAccumulator | undefined {
     const params = asRecord(event.params);
     const threadId = typeof params?.threadId === "string" ? params.threadId : undefined;
+
     const turnId = typeof params?.turnId === "string"
       ? params.turnId
       : readString(asRecord(params?.turn), "id");
+
     if (threadId) return this.turns.get(threadId);
+
     if (!turnId) return undefined;
+
     return Array.from(this.turns.values()).find((turn) => turn.turnId === turnId);
   }
 }
@@ -488,17 +556,25 @@ export function reportCodexActivity(
 ): void {
   if (method !== "item/started" && method !== "item/completed") return;
   const record = asRecord(item);
+
   if (!record) return;
+
   if (record.type === "agentMessage" || record.type === "agent_message") {
     if (method === "item/completed" && typeof record.text === "string") onEvent({ type: "message", text: record.text });
+
     return;
   }
+
   const tool = codexTool(record);
+
   if (!tool) return;
+
   if (method === "item/started") {
     onEvent({ type: "tool_started", ...tool });
+
     return;
   }
+
   const failed = record.status === "failed" || record.status === "declined";
   onEvent({ type: "tool_completed", ...tool, status: failed ? "failed" : "completed" });
 }
@@ -510,13 +586,17 @@ function codexTool(item: Record<string, unknown>): { tool: string; summary?: str
     case "fileChange": {
       const changes = Array.isArray(item.changes) ? item.changes : [];
       const paths = changes.map((change) => readString(change, "path")).filter(Boolean);
+
       return { tool: "edit", ...(paths.length > 0 ? { summary: paths.join(", ") } : {}) };
     }
+
     case "mcpToolCall": {
       const server = directString(item.server);
       const name = directString(item.tool) ?? "tool";
+
       return { tool: server ? `${server}.${name}` : name, summary: summarizeToolInput(item.arguments) };
     }
+
     case "webSearch":
       return { tool: "web_search", summary: summarizeToolInput(item) };
     default:
@@ -572,19 +652,25 @@ function parseCompletedTurn(params: unknown, items: unknown[]): {
   const turnItems = turn?.items;
   const completedItems = (Array.isArray(turnItems) && turnItems.length > 0 ? turnItems : items).slice(-MAX_TURN_ITEMS);
   let finalResponse = "";
+
   for (const item of completedItems) {
     const record = asRecord(item);
+
     if (!record) continue;
     const type = record.type;
+
     if ((type === "agentMessage" || type === "agent_message") && typeof record.text === "string") {
       finalResponse = record.text;
     }
   }
+
   const status = turn?.status;
   const error = asRecord(turn?.error);
+
   const failure = status === "failed"
     ? directString(error?.message) ?? "Codex turn failed."
     : undefined;
+
   return { finalResponse, items: completedItems, failure };
 }
 
@@ -599,10 +685,13 @@ export function codexAppServerError(message: string, version?: string, stderr?: 
 function commandCandidates(command: string, env: NodeJS.ProcessEnv): string[] {
   if (command.includes("/") || command.includes("\\") || /\.(?:cmd|bat|exe|com)$/i.test(command)) return [command];
   const path = env.PATH;
+
   if (!path) return [command];
+
   const extensions = process.platform === "win32"
     ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
     : [""];
+
   return path.split(delimiter)
     .filter(Boolean)
     .flatMap((directory) => extensions.map((extension) => resolve(directory, `${command}${extension}`)));
@@ -615,11 +704,15 @@ function usesWindowsCommandShell(command: string): boolean {
 function turnMatchesEvent(turn: CodexTurnAccumulator, event: CodexEvent): boolean {
   const params = asRecord(event.params);
   const eventThreadId = typeof params?.threadId === "string" ? params.threadId : undefined;
+
   const eventTurnId = typeof params?.turnId === "string"
     ? params.turnId
     : readString(asRecord(params?.turn), "id");
+
   if (eventThreadId && eventThreadId !== turn.threadId) return false;
+
   if (turn.turnId && eventTurnId && turn.turnId !== eventTurnId) return false;
+
   return eventThreadId === turn.threadId || Boolean(turn.turnId && eventTurnId === turn.turnId);
 }
 
@@ -631,6 +724,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readString(value: unknown, key: string): string | undefined {
   const result = asRecord(value)?.[key];
+
   return typeof result === "string" ? result : undefined;
 }
 
@@ -640,9 +734,11 @@ function directString(value: unknown): string | undefined {
 
 function protocolErrorText(value: unknown): string {
   const record = asRecord(value);
+
   if (!record) return String(value);
   const message = directString(record.message);
   const code = record.code;
+
   return message ? `codex app-server${code === undefined ? "" : ` ${String(code)}`}: ${message}` : String(value);
 }
 
@@ -652,7 +748,9 @@ function errorMessage(error: unknown): string {
 
 function appendTail(value: string, chunk: string, maxBytes: number): string {
   const next = value + chunk;
+
   if (Buffer.byteLength(next, "utf8") <= maxBytes) return next;
   const bytes = Buffer.from(next, "utf8");
+
   return bytes.subarray(bytes.length - maxBytes).toString("utf8");
 }

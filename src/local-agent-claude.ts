@@ -57,6 +57,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   push(value: T): void {
     if (this.closed) throw new Error("Claude input stream is closed.");
     const waiter = this.waiters.shift();
+
     if (waiter) waiter.resolve({ done: false, value });
     else this.values.push(value);
   }
@@ -64,6 +65,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+
     while (this.waiters.length > 0) this.waiters.shift()!.resolve({ done: true, value: undefined });
   }
 
@@ -73,8 +75,11 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
 
   next(): Promise<IteratorResult<T>> {
     const value = this.values.shift();
+
     if (value !== undefined) return Promise.resolve({ done: false, value });
+
     if (this.closed) return Promise.resolve({ done: true, value: undefined });
+
     return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 }
@@ -109,19 +114,25 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             message: "Claude runtime is not running.",
           });
         }
+
         const removeAbort = bindLocalAgentAbort(input.signal, () => this.query.interrupt());
+
         try {
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
         const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
+
         if (input.effort) {
           Object.assign(flagSettings, {
             alwaysThinkingEnabled: true,
             effortLevel: input.effort,
           });
         }
+
         await this.query.applyFlagSettings(flagSettings);
         await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
+
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
+
         if (input.signal?.aborted) throw localAgentCancelledError("claude", "run");
         this.inputQueue.push({
           type: "user",
@@ -131,13 +142,16 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
 
         const items: unknown[] = [];
         const toolCalls = new Map<string, ClaudeToolCall>();
+
         for (;;) {
           let next: IteratorResult<unknown>;
+
           try {
             next = await this.iterator.next();
           } catch (error) {
             if (input.signal?.aborted) throw localAgentCancelledError("claude", "run", error);
             this.alive = false;
+
             if (isProgrammerDefect(error) && !isClaudeExecutableError(error)) throw error;
             throw new AgentProviderUnavailableError({
               code: "PROVIDER_UNAVAILABLE",
@@ -148,6 +162,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query stream failed.",
             });
           }
+
           if (next.done) {
             this.alive = false;
             throw new AgentProviderProtocolError({
@@ -158,21 +173,28 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query ended before returning a result.",
             });
           }
+
           const message = next.value;
           items.push(message);
           const record = asRecord(message);
+
           if (record && callbacks?.onEvent) reportClaudeActivity(record, toolCalls, callbacks.onEvent);
+
           if (typeof record?.session_id === "string") {
             const previousSessionId = this.providerSessionId;
             this.providerSessionId = record.session_id;
+
             if (previousSessionId !== this.providerSessionId) {
               await callbacks?.onSessionId?.(this.providerSessionId);
             }
           }
+
           if (record?.type !== "result") continue;
+
           if (input.signal?.aborted) throw localAgentCancelledError("claude", "run");
 
           const resultError = claudeResultError(record);
+
           if (resultError) {
             throw new AgentProviderExecutionError({
               code: "PROVIDER_EXECUTION_ERROR",
@@ -183,7 +205,9 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude agent turn failed.",
             });
           }
+
           const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
               code: "PROVIDER_PROTOCOL_ERROR",
@@ -193,6 +217,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude did not return a final assistant response.",
             });
           }
+
           return {
             provider: this.provider,
             providerSessionId: this.providerSessionId ?? null,
@@ -252,6 +277,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+
         const input: LocalAgentRunInput = {
           prompt: "",
           workspaceRoot: context.workspaceRoot,
@@ -260,11 +286,13 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
           model: context.model,
           effort: context.effort,
         };
+
         const query = await this.factory({
           context,
           options: claudeQueryOptions(context, input, this.env),
           prompt: inputQueue,
         });
+
         return new ClaudeQueryRuntime(query, inputQueue, context);
       },
     });
@@ -276,6 +304,7 @@ async function defaultClaudeQueryFactory({
   prompt,
 }: ClaudeQueryFactoryInput): Promise<ClaudeQueryLike> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
+
   return query({
     prompt,
     options: options as never,
@@ -290,6 +319,7 @@ export function claudeQueryOptions(
   const executable = env.CLAUDE_COMMAND;
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
+
   return {
     cwd: input.workspaceRoot,
     ...(input.model ? { model: input.model } : {}),
@@ -337,6 +367,7 @@ function claudeAuthorityOptions(
       enabled: false,
       allowUnsandboxedCommands: true,
     };
+
     return {
       sandbox,
       settings: {
@@ -347,10 +378,12 @@ function claudeAuthorityOptions(
   }
 
   const allowed = writeMode !== "read_only";
+
   const permissions = {
     defaultMode: "dontAsk",
     deny: allowed ? [] : ["Bash", "Edit"],
   };
+
   const sandbox = {
     enabled: true,
     failIfUnavailable: true,
@@ -361,11 +394,13 @@ function claudeAuthorityOptions(
       denyWrite: allowed ? [] : [workspaceRoot],
     },
   };
+
   return { sandbox, settings: { permissions, sandbox } };
 }
 
 export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
+
   for (const key of [
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -374,19 +409,23 @@ export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.Process
   ]) {
     delete next[key];
   }
+
   return next;
 }
 
 export function claudeResultError(record: Record<string, unknown>): string | undefined {
   const subtype = typeof record.subtype === "string" ? record.subtype : undefined;
   const isError = record.is_error === true || subtype?.startsWith("error");
+
   if (!isError) return undefined;
+
   const message =
     directString(record.error) ??
     directString(record.message) ??
     directString(record.result) ??
     subtype ??
     "Claude returned an error result.";
+
   return `Claude returned an error result: ${message}`;
 }
 
@@ -403,17 +442,22 @@ export function reportClaudeActivity(
 ): void {
   if (record.type !== "assistant" && record.type !== "user") return;
   const content = asRecord(record.message)?.content;
+
   if (!Array.isArray(content)) return;
+
   for (const value of content) {
     const block = asRecord(value);
+
     if (record.type === "assistant" && block?.type === "text" && typeof block.text === "string") {
       onEvent({ type: "message", text: block.text });
     } else if (record.type === "assistant" && block?.type === "tool_use" && typeof block.name === "string") {
       const call = { tool: block.name, summary: summarizeToolInput(block.input) };
+
       if (typeof block.id === "string") toolCalls.set(block.id, call);
       onEvent({ type: "tool_started", ...call });
     } else if (record.type === "user" && block?.type === "tool_result" && typeof block.tool_use_id === "string") {
       const call = toolCalls.get(block.tool_use_id);
+
       if (!call) continue;
       toolCalls.delete(block.tool_use_id);
       onEvent({ type: "tool_completed", ...call, status: block.is_error === true ? "failed" : "completed" });

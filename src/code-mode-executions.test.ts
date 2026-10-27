@@ -15,6 +15,7 @@ test("concurrency limiter never runs more tasks than its limit", async () => {
     let active = 0;
     let peak = 0;
     const releases: Array<() => void> = [];
+
     const task = () => limit(async () => {
       peak = Math.max(peak, ++active);
       await new Promise<void>((resolve) => releases.push(resolve));
@@ -27,10 +28,12 @@ test("concurrency limiter never runs more tasks than its limit", async () => {
     await afterMicrotasks(delay);
     started.push(task());
     await settle();
+
     while (releases.length > 0) {
       releases.shift()?.();
       await settle();
     }
+
     await Promise.all(started);
     assert.equal(peak, 4, `peak exceeded the limit with a caller arriving after ${delay} microtasks`);
   }

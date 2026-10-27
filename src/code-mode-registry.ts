@@ -36,6 +36,7 @@ export class CodeModeRegistry {
         output,
         handler,
       });
+
       // This target collects internal registrations; nothing is registered with the MCP host.
       return undefined;
     }) as unknown as McpRegistrationTarget["registerTool"],
@@ -61,12 +62,16 @@ export class CodeModeRegistry {
       execute: async (value: unknown, { signal }) => {
         if (signal.aborted) throw new Error("Code execution cancelled.");
         const parsed = entry.input.safeParse({ ...(typeof value === "object" && value !== null ? value : {}), workspace_id: workspaceId });
+
         if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
         const response = await entry.handler(parsed.data, { signal });
+
         if (response.isError) throw new Error(contentText(response.content ?? []) || `${entry.name} failed`);
         const result = response.structuredContent ?? { result: contentText(response.content ?? []) };
         const validated = entry.output.safeParse(result);
+
         if (!validated.success) throw new Error(`Invalid ${entry.name} response: ${validated.error.message}`);
+
         return result;
       },
     }));

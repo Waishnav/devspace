@@ -47,13 +47,17 @@ function ReviewPayload({
   const patch = card.payload?.patch;
   const themeType: ReviewThemeType = hostContext?.theme === "light" ? "light" : "dark";
   const files = useMemo(() => parseReviewFiles(patch), [patch]);
+
   const visibleFiles = typeof visibleFileCount === "number"
     ? files.slice(0, visibleFileCount)
     : files;
+
   const [openFiles, setOpenFiles] = useState(() => new Set<string>());
 
   if (errorMessage) return <StatusLine message={errorMessage} tone="error" />;
+
   if (!patch) return <StatusLine message="Diff payload is not available." />;
+
   if (files.length === 0) return <StatusLine message="No diff hunks to review." />;
 
   if (files.length === 1) {
@@ -69,6 +73,7 @@ function ReviewPayload({
       <div className="review-diff-files">
         {visibleFiles.map((fileDiff, index) => {
           const key = reviewFileKey(fileDiff, index);
+
           return (
             <ReviewDiffFile
               key={key}
@@ -79,11 +84,13 @@ function ReviewPayload({
               open={openFiles.has(key)}
               onToggle={() => {
                 const next = new Set(openFiles);
+
                 if (next.has(key)) {
                   next.delete(key);
                 } else {
                   next.add(key);
                 }
+
                 setOpenFiles(next);
               }}
             />

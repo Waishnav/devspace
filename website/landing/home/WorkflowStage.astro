@@ -8,12 +8,14 @@ import { workbenchTheme } from "./theme";
 
 // Illustrative timings (ticks). Review and QA overlap: that is the parallel().
 const byTask = Object.fromEntries(MATRIX.map((m) => [m.task, m]));
+
 const CALLS = [
   { label: "plan", phase: "Plan", start: 0, end: 5, ...byTask.Plan! },
   { label: "implement", phase: "Build", start: 5, end: 13, ...byTask.Implement! },
   { label: "review", phase: "Verify", start: 13, end: 18, ...byTask.Review! },
   { label: "qa", phase: "Verify", start: 13, end: 20, ...byTask.QA! },
 ];
+
 const PHASES = ["Plan", "Build", "Verify"];
 
 // What the inspector would show for the running call in each phase.
@@ -26,10 +28,14 @@ const ACTIVITY: Array<{ phase: string; lines: Array<[string, string]> }> = [
 
 // Which phase each source line belongs to (the meta block belongs to none).
 let current: string | null = null;
+
 const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
   const match = /\bphase\("(\w+)"/.exec(line);
+
   if (match) current = match[1]!;
+
   if (line.startsWith("return")) current = null;
+
   return current ?? "";
 });
 ---
@@ -81,6 +87,7 @@ const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
 
 <script>
   const root = document.querySelector<HTMLElement>("[data-wf]");
+
   if (root) {
     const last = Number(root.dataset.last);
     const linePhases: string[] = JSON.parse(root.dataset.phases!);
@@ -94,6 +101,7 @@ const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
     const render = (tick: number) => {
       let done = 0;
       let active = "";
+
       for (const call of calls) {
         const start = Number(call.dataset.start);
         const end = Number(call.dataset.end);
@@ -102,14 +110,18 @@ const linePhases = WORKFLOW_SNIPPET.split("\n").map((line) => {
         call.dataset.state = state;
         call.querySelector<HTMLElement>("[data-state-label]")!.textContent = state === "done" ? "completed" : state;
         call.querySelector<HTMLElement>(".call__bar b")!.style.width = `${progress * 100}%`;
+
         if (state === "done") done++;
+
         if (state !== "queued") active = call.dataset.phase!;
       }
+
       for (const phase of phases) {
         const finished = calls.filter((c) => c.dataset.phase === phase.dataset.phase && c.dataset.state === "done").length;
         phase.querySelector("[data-count]")!.textContent = `${finished}/${phase.dataset.total}`;
         phase.classList.toggle("is-active", phase.dataset.phase === active);
       }
+
       root.dataset.active = active;
       const finished = done === calls.length;
       root.dataset.finished = String(finished);

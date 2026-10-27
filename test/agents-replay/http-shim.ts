@@ -30,6 +30,7 @@ export function serveArgs(args: string[]): { hostname: string; port: number } | 
   if (args[0] !== "serve") return undefined;
   const flag = (name: string) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   const port = Number(flag("port"));
+
   return Number.isInteger(port) ? { hostname: flag("hostname") ?? "127.0.0.1", port } : undefined;
 }
 
@@ -47,26 +48,32 @@ export async function recordHttp(options: {
   const child = spawn(options.command, childArgs, { env: options.env, stdio: ["ignore", "pipe", "inherit"] });
   child.on("error", (error) => options.fail(`Could not start ${options.command}: ${error.message}`));
   child.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 : 1)));
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => child.kill(signal));
+
   const upstream = await new Promise<URL>((resolve) => {
     let output = "";
     child.stdout.on("data", (chunk) => {
       output += chunk.toString();
       const match = output.match(/listening on\s+(https?:\/\/\S+)/);
+
       if (match?.[1]) resolve(new URL(match[1]));
     });
   });
 
   let nextId = 0;
+
   const server = createServer(async (req, res) => {
     const id = ++nextId;
     const body = await readBody(req);
     options.append("in", requestFrame(id, req, body));
     // Uncompressed responses keep transcript bodies readable.
     const { "accept-encoding": _encoding, ...headers } = req.headers;
+
     const proxied = httpRequest(new URL(req.url ?? "/", upstream), { method: req.method, headers }, (response) => {
       const type = String(response.headers["content-type"] ?? "");
       res.writeHead(response.statusCode ?? 502, response.headers);
+
       if (type.includes("text/event-stream")) {
         options.append("out", { id, status: response.statusCode, type, stream: true });
         let buffer = "";
@@ -74,9 +81,11 @@ export async function recordHttp(options: {
           res.write(chunk);
           buffer += chunk.toString();
           let boundary: number;
+
           while ((boundary = buffer.indexOf("\n\n")) >= 0) {
             const event = sseData(buffer.slice(0, boundary));
             buffer = buffer.slice(boundary + 2);
+
             if (event !== undefined) options.append("out", { id, event });
           }
         });
@@ -84,8 +93,10 @@ export async function recordHttp(options: {
           options.append("out", { id, end: true });
           res.end();
         });
+
         return;
       }
+
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
       response.on("end", () => {
@@ -94,11 +105,13 @@ export async function recordHttp(options: {
         res.end(text);
       });
     });
+
     proxied.on("error", () => res.destroy());
     // A client that gives up on a long poll closes its socket; pass that on.
     res.on("close", () => { if (!res.writableFinished) proxied.destroy(); });
     proxied.end(body);
   });
+
   server.listen(port, hostname, () => {
     process.stdout.write(`opencode server listening on http://${hostname}:${port}\n`);
   });
@@ -116,22 +129,28 @@ export function replayHttp(options: {
   const { hostname, port } = serveArgs(options.args)!;
   const open = new Map<number, ServerResponse>();
   let nextId = 0;
+
   const server = createServer(async (req, res) => {
     const id = ++nextId;
     open.set(id, res);
     res.on("close", () => open.delete(id));
     options.receive(requestFrame(id, req, await readBody(req)));
   });
+
   server.listen(port, hostname, () => {
     process.stdout.write(`opencode server listening on http://${hostname}:${port}\n`);
   });
+
   return {
     respond(frame) {
       const record = frame as { id?: number; status?: number; type?: string; body?: unknown; stream?: boolean; event?: unknown; end?: boolean };
       const res = open.get(Number(record.id));
+
       if (!res || res.writableEnded) return;
+
       if (record.status !== undefined) {
         res.writeHead(record.status, record.type ? { "content-type": record.type } : {});
+
         if (!record.stream) {
           res.end(record.body === undefined ? undefined : typeof record.body === "string" ? record.body : JSON.stringify(record.body));
         }
@@ -151,12 +170,14 @@ function requestFrame(id: number, req: IncomingMessage, body: Buffer): HttpReque
 function bodyField(text: string): { body?: unknown } {
   if (!text) return {};
   const parsed = parseFrame(text);
+
   return { body: parsed !== null && typeof parsed === "object" && "raw" in parsed ? text : parsed };
 }
 
 /** The data of one SSE event, parsed as JSON when it is. */
 function sseData(block: string): unknown {
   const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+
   return data ? bodyField(data).body : undefined;
 }
 

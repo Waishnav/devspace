@@ -47,12 +47,15 @@ export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
   const env = options.env ?? process.env;
+
   const instances = options.subagents?.providers ?? LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => ({
     id,
     driver: id === "cursor" || id === "copilot" || id === "grok" ? "acp" : id,
     enabled: true,
   } satisfies SubagentProviderConfig));
+
   const registry = createLocalAgentProviderRegistry(options);
+
   return instances.map((instance) => registry.create(instance, options.subagents, env));
 }
 

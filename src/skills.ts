@@ -32,6 +32,7 @@ export interface SkillReadResolution {
 
 const SUBAGENTS_SKILL_NAME = "subagents";
 const WORKFLOWS_SKILL_NAME = "workflows";
+
 type ManagedSkillName = typeof SUBAGENTS_SKILL_NAME | typeof WORKFLOWS_SKILL_NAME;
 
 // The workflows skill is part of the hidden DEVSPACE_EXPERIMENTAL_WORKFLOWS feature.
@@ -51,9 +52,11 @@ function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): string 
 
   if (existsSync(targetPath)) {
     const stat = lstatSync(targetPath);
+
     if (stat.isFile() && source === readFileSync(targetPath, "utf8")) {
       return targetPath;
     }
+
     if (stat.isDirectory()) {
       throw new Error(`Managed ${name} skill path is a directory: ${targetPath}`);
     }
@@ -61,6 +64,7 @@ function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): string 
 
   mkdirSync(dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.${process.pid}.tmp`;
+
   try {
     writeFileSync(tempPath, source, { mode: 0o644 });
     rmSync(targetPath, { force: true });
@@ -79,16 +83,19 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
   ];
+
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
   );
 
   const seen = new Set<string>();
+
   return [...defaultPaths, ...config.skillPaths]
     .map((path) => resolveSkillPath(path, cwd))
     .filter((path) => {
       if (seen.has(path)) return false;
       seen.add(path);
+
       return true;
     });
 }
@@ -101,6 +108,7 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
   const managedNames = managedSkillNames();
+
   if (config.subagents.enabled) {
     for (const name of managedNames) syncManagedSkill(config, name);
   }
@@ -113,13 +121,17 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   });
 
   const withoutManaged = withoutManagedSkills(config, result, managedNames);
+
   if (!config.subagents.enabled) return withoutManaged;
 
   const managed = managedNames.map((name) => {
     const managedDir = dirname(join(config.devspaceSkillsDir, name, "SKILL.md"));
+
     const skill = loadSkillsFromDir({ dir: managedDir, source: "devspace" })
       .skills.find((entry) => entry.name === name);
+
     if (!skill) throw new Error(`Managed ${name} skill could not be loaded.`);
+
     return skill;
   });
 
@@ -136,6 +148,7 @@ function withoutManagedSkills(
 ): LoadedSkills {
   // A managed workflows copy left behind while the feature was on must not be advertised once it is off.
   const staleWorkflows = join(config.devspaceSkillsDir, WORKFLOWS_SKILL_NAME);
+
   return {
     skills: result.skills.filter((skill) => (
       !managedNames.includes(skill.name as ManagedSkillName)
@@ -143,6 +156,7 @@ function withoutManagedSkills(
     )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
+
       return !(collision?.resourceType === "skill" && managedNames.includes(collision.name as ManagedSkillName));
     }),
   };
@@ -156,6 +170,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const skillFilePath = resolve(skill.filePath);
+
     if (absolutePath === skillFilePath) {
       return { absolutePath, skill };
     }
@@ -163,6 +178,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const baseDir = resolve(skill.baseDir);
+
     if (!isPathInsideRoot(absolutePath, baseDir)) continue;
 
     return { absolutePath, skill };
@@ -176,6 +192,7 @@ export function formatPathForPrompt(path: string): string {
   const resolvedPath = resolve(path);
 
   if (resolvedPath === home) return "~";
+
   if (resolvedPath.startsWith(`${home}${sep}`)) {
     return `~/${resolvedPath.slice(home.length + 1).split(sep).join("/")}`;
   }

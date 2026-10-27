@@ -14,6 +14,7 @@ export async function shutdownHttpServer(
       else resolve();
     });
   });
+
   httpServer.closeIdleConnections?.();
 
   await closeApplication();

@@ -42,10 +42,12 @@ test("profiles may target a named provider instance", async (t) => {
 
 test("no profiles load while subagents are disabled", async (t) => {
   const { configDir, workspaceRoot } = await fixture(t);
+
   const disabledConfig = loadConfig(writeTestDevspaceConfig(configDir, {
     workspaces: { allowedRoots: [workspaceRoot] },
     subagents: { enabled: false, instructions: "on-demand", providers: [] },
   }));
+
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);
 });
 
@@ -106,5 +108,6 @@ async function fixture(t: TestContext) {
     workspaces: { allowedRoots: [workspaceRoot] },
     subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
+
   return { configDir, workspaceRoot, enabledConfig };
 }

@@ -18,6 +18,7 @@ test("an exported meta object is parsed and stripped from the body", () => {
   };
   return args;
 `);
+
   assert.deepEqual(parsed.meta, {
     name: "review-files",
     description: "Review\nfiles",
@@ -37,6 +38,7 @@ test("meta may follow leading comments", () => {
   const commented = parseWorkflowScript(`// @ts-check
 /* workflow metadata */
 export const meta = { name: "commented" }; return 1;`);
+
   assert.equal(commented.meta.name, "commented");
   assert.equal(commented.body.trim(), "return 1;");
 });
@@ -44,10 +46,12 @@ export const meta = { name: "commented" }; return 1;`);
 // Long whitespace runs that do not lead to a meta declaration must fail fast (no regex backtracking blowup).
 test("the meta prefix scan is linear in leading whitespace and comments", () => {
   const slowStart = Date.now();
+
   for (const filler of [" ", "\n", "\r\n", " //a\n"]) {
     const source = `${filler.repeat(5_000)}return 1;`;
     assert.equal(parseWorkflowScript(source).body, source);
   }
+
   assert.ok(Date.now() - slowStart < 1_000, "meta prefix scan must be linear");
   assert.equal(parseWorkflowScript(`${" ".repeat(5_000)}export const meta = { name: "late" }; return 1;`).meta.name, "late");
 });

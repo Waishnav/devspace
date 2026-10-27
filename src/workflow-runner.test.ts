@@ -10,6 +10,7 @@ test("the guest sees its args but no host globals", async () => {
     args: { value: 42 },
     onAgent: () => null,
   });
+
   assert.deepEqual(basic, {
     args: { value: 42 },
     host: ["undefined", "undefined", "undefined", "undefined", "undefined"],
@@ -56,6 +57,7 @@ test("a __proto__ key in an agent result stays an own property and pollutes noth
 
 test("agent calls reach onAgent with their prompt and target", async () => {
   const calls: Array<{ prompt: string; target: string }> = [];
+
   const bridged = await runWorkflowScript({
     source: `
       export const meta = { name: 'bridge', concurrency: 2 };
@@ -63,9 +65,11 @@ test("agent calls reach onAgent with their prompt and target", async () => {
     `,
     onAgent: async (prompt, options) => {
       calls.push({ prompt, target: options.target });
+
       return { ok: true };
     },
   });
+
   assert.deepEqual(bridged, { ok: true });
   assert.deepEqual(calls, [{ prompt: "inspect", target: "reviewer" }]);
 });
@@ -81,9 +85,11 @@ test("parallel settles each item independently", async () => {
     `,
     onAgent: async (prompt) => {
       await delay(Number(prompt));
+
       return Number(prompt) * 2;
     },
   });
+
   assert.deepEqual(parallel, [
     { status: "completed", value: 60 },
     { status: "failed", error: { code: "WORKFLOW_STEP_FAILED", message: "expected failure", retryable: false } },
@@ -101,6 +107,7 @@ test("pipeline threads each item through every stage", async () => {
     `,
     onAgent: (prompt) => Number(prompt),
   });
+
   assert.deepEqual(pipeline, [
     { status: "completed", value: { value: 4, item: 2, index: 0 } },
     { status: "completed", value: { value: 7, item: 3, index: 1 } },
@@ -109,6 +116,7 @@ test("pipeline threads each item through every stage", async () => {
 
 test("phase binds agent calls to the phase and emits phase and log events", async () => {
   const events: Array<{ type: string; data: unknown }> = [];
+
   const phased = await runWorkflowScript({
     source: `
       const value = await phase("review", boundAgent => boundAgent("go", { target: "worker" }));
@@ -118,6 +126,7 @@ test("phase binds agent calls to the phase and emits phase and log events", asyn
     onAgent: (_prompt, options) => options.phase,
     onEvent: (type, data) => { events.push({ type, data }); },
   });
+
   assert.equal(phased, "review");
   assert.deepEqual(events.map(({ type }) => type), ["phase_started", "phase_completed", "log"]);
   assert.deepEqual(events[2]?.data, ["done", "review"]);
@@ -140,6 +149,7 @@ test("nested workflows run through onWorkflow", async () => {
     onAgent: () => null,
     onWorkflow: (name, args) => ({ name, args }),
   });
+
   assert.deepEqual(nested, { name: "child", args: { n: 1 } });
 });
 
@@ -169,6 +179,7 @@ test("an invalid agent call throws a catchable validation error", async () => {
     source: `try { await agent("go", {}); } catch (error) { return error.code; }`,
     onAgent: () => null,
   });
+
   assert.equal(caughtValidation, "WORKFLOW_INVALID_AGENT_CALL");
 });
 
@@ -187,10 +198,14 @@ test("provider errors keep their code and retryability", async () => {
 test("unawaited agent calls fail the run", async () => {
   let finishDetached!: () => void;
   const detachedCall = new Promise<void>((resolve) => { finishDetached = resolve; });
+
   const detached = runWorkflowScript({
     source: `agent("detached", { target: "worker" }); return "done";`,
-    onAgent: async () => { await detachedCall; return null; },
+    onAgent: async () => { await detachedCall;
+
+ return null; },
   });
+
   await assert.rejects(
     detached,
     (error: unknown) => error instanceof WorkflowError && error.code === "UNAWAITED_CALLS",
@@ -260,6 +275,7 @@ test("aborting the signal cancels a pending agent call", async () => {
   const controller = new AbortController();
   let agentStarted!: () => void;
   const started = new Promise<void>((resolve) => { agentStarted = resolve; });
+
   const aborted = runWorkflowScript({
     source: `return agent("wait", { target: "worker" });`,
     signal: controller.signal,
@@ -268,6 +284,7 @@ test("aborting the signal cancels a pending agent call", async () => {
       await new Promise(() => undefined);
     },
   });
+
   await started;
   controller.abort();
   await assert.rejects(

@@ -30,8 +30,10 @@ import type { LocalAgentRecord } from "./local-agent-store.js";
 import type { WorkflowCall, WorkflowEvent, WorkflowRun, WorkflowRunInput } from "./workflow-types.js";
 
 const CONFIG_REVISION = "test-provider-config";
+
 // Only a scope value for the fake managers; the directory is never created.
 const PROJECT_ROOT = join(tmpdir(), "ds-ad-project");
+
 const record: LocalAgentRecord = {
   id: "agt_test",
   workspaceId: "ws_test",
@@ -44,6 +46,7 @@ const record: LocalAgentRecord = {
   createdAt: "now",
   updatedAt: "now",
 };
+
 const workflowRun: WorkflowRun = {
   id: "wfl_test",
   workspaceId: "ws_test",
@@ -56,6 +59,7 @@ const workflowRun: WorkflowRun = {
   updatedAt: "now",
   callCount: 1,
 };
+
 const workflowCall: WorkflowCall = {
   runId: workflowRun.id,
   index: 0,
@@ -69,6 +73,7 @@ const workflowCall: WorkflowCall = {
   createdAt: "now",
   updatedAt: "now",
 };
+
 const workflowEvent: WorkflowEvent = {
   sequence: 1,
   runId: workflowRun.id,
@@ -93,10 +98,12 @@ class FakeManager implements LocalAgentDaemonManager {
   async start(input: StartLocalAgentInput) {
     this.lastInput = input;
     this.startStarted = true;
+
     if (this.blockStartUntilRelease) {
       await new Promise<void>((resolveStart) => { this.releaseStart = resolveStart; });
       this.activeTurnCount = 1;
     }
+
     return Result.ok(record);
   }
 
@@ -124,21 +131,25 @@ class FakeManager implements LocalAgentDaemonManager {
 
   async wait(agentIds: readonly string[], _scope: unknown, _timeoutMs?: number, signal?: AbortSignal) {
     this.waitStarted = true;
+
     if (this.blockWaitUntilAbort) {
       await new Promise<void>((resolveAbort) => {
         const onAbort = () => {
           this.waitAborted = true;
           resolveAbort();
         };
+
         if (signal?.aborted) onAbort();
         else signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
+
     return Result.ok(agentIds.map((id) => ({ id, status: "running" as const })));
   }
 
   async stop(_agentId: string, _scope: unknown) {
     this.activeTurnCount = 0;
+
     return Result.ok({ ...record, status: "stopped" } as LocalAgentRecord);
   }
 
@@ -146,6 +157,7 @@ class FakeManager implements LocalAgentDaemonManager {
 
   events(agentId: string, _scope: unknown, query?: { turnId?: string; afterSeq?: number }) {
     this.lastEventsQuery = query;
+
     return Result.ok({
       agentId,
       turnId: "trn_test",
@@ -177,6 +189,7 @@ class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
   lastInput?: WorkflowRunInput;
   async run(input: WorkflowRunInput): Promise<WorkflowRun> {
     this.lastInput = input;
+
     return workflowRun;
   }
   get(): WorkflowRun { return workflowRun; }
@@ -185,18 +198,23 @@ class FakeWorkflows implements LocalAgentDaemonWorkflowManager {
     if (this.blockWaitUntilAbort) {
       await new Promise<void>((resolveAbort) => {
         const onAbort = () => { this.waitAborted = true; resolveAbort(); };
+
         if (signal?.aborted) onAbort();
         else signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
+
     return workflowRun;
   }
   calls(): WorkflowCall[] { return [workflowCall]; }
   call(): WorkflowCall { return workflowCall; }
   events(): WorkflowEvent[] { return [workflowEvent]; }
-  async cancel(): Promise<WorkflowRun> { this.cancelled = true; return { ...workflowRun, status: "cancelled" }; }
+  async cancel(): Promise<WorkflowRun> { this.cancelled = true;
+
+ return { ...workflowRun, status: "cancelled" }; }
   async close(): Promise<void> {
     this.closeOrder.push("workflows");
+
     if (this.hangClose) await new Promise<void>(() => {});
     this.closed = true;
     this.activeRunCount = 0;
@@ -207,6 +225,7 @@ test("daemon diagnostics do not start a missing daemon", async (t) => {
   const { root } = await fixture(t);
   const missingDaemonStateDir = join(root, "missing-daemon-state");
   let diagnosticSpawnCount = 0;
+
   const missingDaemonClient = new LocalAgentClient({
     stateDir: missingDaemonStateDir,
     configRevision: CONFIG_REVISION,
@@ -214,6 +233,7 @@ test("daemon diagnostics do not start a missing daemon", async (t) => {
     requestTimeoutMs: 50,
     spawnDaemon: () => { diagnosticSpawnCount += 1; },
   });
+
   for (const diagnostic of [
     () => missingDaemonClient.status(),
     () => missingDaemonClient.stop(),
@@ -221,8 +241,10 @@ test("daemon diagnostics do not start a missing daemon", async (t) => {
   ]) {
     const result = await diagnostic();
     assert.equal(result.isErr(), true);
+
     if (result.isErr()) assert.equal(result.error.code, "DAEMON_UNAVAILABLE");
   }
+
   assert.equal(diagnosticSpawnCount, 0, "daemon diagnostics must not start a missing daemon");
 });
 
@@ -254,6 +276,7 @@ test("the client proxies agent and workflow requests and stop closes workflows b
   const closeOrder: string[] = [];
   const manager = new FakeManager(closeOrder);
   const workflows = new FakeWorkflows(closeOrder);
+
   const daemon = new LocalAgentDaemon({
     stateDir: join(root, "state"),
     configRevision: CONFIG_REVISION,
@@ -261,6 +284,7 @@ test("the client proxies agent and workflow requests and stop closes workflows b
     workflows,
     idleShutdownMs: 60_000,
   });
+
   const client = new LocalAgentClient({
     stateDir: join(root, "state"),
     configRevision: CONFIG_REVISION,
@@ -276,6 +300,7 @@ test("the client proxies agent and workflow requests and stop closes workflows b
       workspaceId: record.workspaceId!,
       workspaceRoot: PROJECT_ROOT,
     }));
+
     assert.equal(started.id, record.id);
     assert.equal(manager.lastInput?.prompt, "Review this");
     const recordScope = { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot };
@@ -322,6 +347,7 @@ test("disconnecting a workflow wait does not cancel the workflow", async (t) => 
   const workflowWaits = new FakeWorkflows();
   workflowWaits.blockWaitUntilAbort = true;
   workflowWaits.activeRunCount = 1;
+
   const workflowWaitDaemon = new LocalAgentDaemon({
     stateDir: workflowWaitStateDir,
     configRevision: CONFIG_REVISION,
@@ -329,6 +355,7 @@ test("disconnecting a workflow wait does not cancel the workflow", async (t) => 
     workflows: workflowWaits,
     idleShutdownMs: 60_000,
   });
+
   const workflowWaitClient = new LocalAgentClient({
     stateDir: workflowWaitStateDir,
     configRevision: CONFIG_REVISION,
@@ -336,11 +363,13 @@ test("disconnecting a workflow wait does not cancel the workflow", async (t) => 
     requestTimeoutMs: 20,
     spawnDaemon: () => { void workflowWaitDaemon.start(); },
   });
+
   try {
     const result = await workflowWaitClient.waitWorkflow(workflowRun.id, {
       workspaceId: workflowRun.workspaceId,
       workspaceRoot: workflowRun.workspaceRoot,
     }, 0);
+
     assert.equal(result.isErr(), true);
     await waitFor(() => workflowWaits.waitAborted);
     assert.equal(workflowWaits.cancelled, false, "disconnecting a wait must not cancel the workflow");
@@ -358,6 +387,7 @@ test("a stalled workflow shutdown leaves budget for the agent manager phase", as
   stalledManager.activeTurnCount = 0;
   const stalledWorkflows = new FakeWorkflows();
   stalledWorkflows.hangClose = true;
+
   const stalledDaemon = new LocalAgentDaemon({
     stateDir: join(root, "stalled-workflows"),
     configRevision: CONFIG_REVISION,
@@ -366,7 +396,9 @@ test("a stalled workflow shutdown leaves budget for the agent manager phase", as
     shutdownTimeoutMs: 400,
     idleShutdownMs: 60_000,
   });
+
   const keepAlive = setInterval(() => {}, 50); // withTimeout timers are unref'd; a never-settling close would otherwise end the process
+
   try {
     await stalledDaemon.start();
     const stalledStart = Date.now();
@@ -386,6 +418,7 @@ test("active workflows keep the daemon alive", async (t) => {
   activeWorkflowManager.activeTurnCount = 0;
   const activeWorkflows = new FakeWorkflows();
   activeWorkflows.activeRunCount = 1;
+
   const activeWorkflowDaemon = new LocalAgentDaemon({
     stateDir: activeWorkflowStateDir,
     configRevision: CONFIG_REVISION,
@@ -394,6 +427,7 @@ test("active workflows keep the daemon alive", async (t) => {
     idleShutdownMs: 20,
     idleCheckIntervalMs: 5,
   });
+
   try {
     await activeWorkflowDaemon.start();
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 60));
@@ -411,12 +445,14 @@ test("a daemon without a workflow manager rejects workflow requests with guidanc
   const hiddenStateDir = join(root, "hidden-workflows-state");
   const hiddenManager = new FakeManager();
   hiddenManager.activeTurnCount = 0;
+
   const hiddenDaemon = new LocalAgentDaemon({
     stateDir: hiddenStateDir,
     configRevision: CONFIG_REVISION,
     manager: hiddenManager,
     idleShutdownMs: 60_000,
   });
+
   const hiddenClient = new LocalAgentClient({
     stateDir: hiddenStateDir,
     configRevision: CONFIG_REVISION,
@@ -424,13 +460,16 @@ test("a daemon without a workflow manager rejects workflow requests with guidanc
     requestTimeoutMs: 2_000,
     spawnDaemon: () => { void hiddenDaemon.start(); },
   });
+
   try {
     const rejected = await hiddenClient.runWorkflow({ workspaceId: record.workspaceId, workspaceRoot: record.workspaceRoot, name: "review" });
     assert.equal(rejected.isErr(), true);
+
     if (rejected.isErr()) {
       assert.equal(rejected.error.code, "WORKFLOWS_UNAVAILABLE");
       assert.match(rejected.error.message, /DEVSPACE_EXPERIMENTAL_WORKFLOWS=1/);
     }
+
     assert.equal(unwrap(await hiddenClient.status()).activeWorkflows, 0);
   } finally {
     await hiddenDaemon.close();
@@ -442,6 +481,7 @@ test("an idle daemon shuts itself down", async (t) => {
   const idleStateDir = join(root, "idle-state");
   const idleManager = new FakeManager();
   idleManager.activeTurnCount = 0;
+
   const idleDaemon = new LocalAgentDaemon({
     stateDir: idleStateDir,
     configRevision: CONFIG_REVISION,
@@ -449,6 +489,7 @@ test("an idle daemon shuts itself down", async (t) => {
     idleShutdownMs: 200,
     idleCheckIntervalMs: 10,
   });
+
   const idleClient = new LocalAgentClient({
     stateDir: idleStateDir,
     configRevision: CONFIG_REVISION,
@@ -470,12 +511,14 @@ test("only one competing daemon acquires the state-directory lock", async (t) =>
   const ownershipStateDir = join(root, "ownership-state");
   const ownerManager = new FakeManager();
   const competingManager = new FakeManager();
+
   const ownerDaemon = new LocalAgentDaemon({
     stateDir: ownershipStateDir,
     configRevision: CONFIG_REVISION,
     manager: ownerManager,
     idleShutdownMs: 60_000,
   });
+
   const competingDaemon = new LocalAgentDaemon({
     stateDir: ownershipStateDir,
     configRevision: CONFIG_REVISION,
@@ -488,6 +531,7 @@ test("only one competing daemon acquires the state-directory lock", async (t) =>
       ownerDaemon.start(),
       competingDaemon.start(),
     ]);
+
     assert.equal(
       startupResults.filter((result) => result.status === "fulfilled").length,
       1,
@@ -503,11 +547,13 @@ test("only one competing daemon acquires the state-directory lock", async (t) =>
     await competingDaemon.close();
     assert.equal(readFileSync(ownerDaemon.paths.lockPath, "utf8"), lockBefore);
     assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
+
     const ownerClient = new LocalAgentClient({
       stateDir: ownershipStateDir,
       configRevision: CONFIG_REVISION,
       spawnDaemon: () => { throw new Error("the winning daemon should already be reachable"); },
     });
+
     assert.equal(unwrap(await ownerClient.status()).pid, process.pid);
   } finally {
     await competingDaemon.close();
@@ -517,6 +563,7 @@ test("only one competing daemon acquires the state-directory lock", async (t) =>
 
 test("a failed daemon spawn reports a startup failure", async (t) => {
   const { root } = await fixture(t);
+
   const startupFailureClient = new LocalAgentClient({
     stateDir: join(root, "startup-failure-state"),
     configRevision: CONFIG_REVISION,
@@ -524,8 +571,10 @@ test("a failed daemon spawn reports a startup failure", async (t) => {
     requestTimeoutMs: 10,
     spawnDaemon: () => { throw new Error("spawn failed"); },
   });
+
   const startupFailure = await startupFailureClient.ensureReady();
   assert.equal(startupFailure.isErr(), true);
+
   if (startupFailure.isErr()) assert.equal(startupFailure.error.code, "DAEMON_STARTUP_FAILURE");
 });
 
@@ -535,21 +584,26 @@ test("an idle daemon with a stale provider config is replaced", async (t) => {
   const staleIdleStateDir = join(root, "si");
   const staleIdleManager = new FakeManager();
   staleIdleManager.activeTurnCount = 0;
+
   const staleIdleDaemon = new LocalAgentDaemon({
     stateDir: staleIdleStateDir,
     configRevision: "old-provider-config",
     manager: staleIdleManager,
     idleShutdownMs: 60_000,
   });
+
   const currentManager = new FakeManager();
   currentManager.activeTurnCount = 0;
+
   const currentDaemon = new LocalAgentDaemon({
     stateDir: staleIdleStateDir,
     configRevision: CONFIG_REVISION,
     manager: currentManager,
     idleShutdownMs: 60_000,
   });
+
   let currentDaemonSpawns = 0;
+
   const staleIdleClient = new LocalAgentClient({
     stateDir: staleIdleStateDir,
     configRevision: CONFIG_REVISION,
@@ -560,6 +614,7 @@ test("an idle daemon with a stale provider config is replaced", async (t) => {
       void currentDaemon.start();
     },
   });
+
   try {
     await staleIdleDaemon.start();
     assert.equal(unwrap(await staleIdleClient.ensureReady()).state, "ready");
@@ -576,6 +631,7 @@ test("a busy daemon with a stale provider config keeps serving but rejects new s
   const staleActiveStateDir = join(root, "sa");
   const staleActiveManager = new FakeManager();
   const staleActiveWorkflows = new FakeWorkflows();
+
   const staleActiveDaemon = new LocalAgentDaemon({
     stateDir: staleActiveStateDir,
     configRevision: "old-provider-config",
@@ -583,7 +639,9 @@ test("a busy daemon with a stale provider config keeps serving but rejects new s
     workflows: staleActiveWorkflows,
     idleShutdownMs: 60_000,
   });
+
   let staleActiveSpawns = 0;
+
   const staleActiveClient = new LocalAgentClient({
     stateDir: staleActiveStateDir,
     configRevision: CONFIG_REVISION,
@@ -591,14 +649,17 @@ test("a busy daemon with a stale provider config keeps serving but rejects new s
     requestTimeoutMs: 500,
     spawnDaemon: () => { staleActiveSpawns += 1; },
   });
+
   try {
     await staleActiveDaemon.start();
     const changed = await staleActiveClient.ensureReady();
     assert.equal(changed.isErr(), true);
+
     if (changed.isErr()) {
       assert.equal(changed.error.code, "DAEMON_CONFIG_CHANGED");
       assert.equal(changed.error.retryable, true);
     }
+
     assert.equal(staleActiveSpawns, 0);
     assert.equal(staleActiveManager.closed, false);
     const staleScope = { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot };
@@ -608,13 +669,16 @@ test("a busy daemon with a stale provider config keeps serving but rejects new s
       { id: record.id, status: "running" },
     ]);
     assert.equal(unwrap(await staleActiveClient.cancelWorkflow(workflowRun.id, staleScope)).status, "cancelled");
+
     const blockedStart = await staleActiveClient.run({
       target: "reviewer",
       prompt: "must use current provider config",
       workspaceId: record.workspaceId!,
       workspaceRoot: record.workspaceRoot,
     });
+
     assert.equal(blockedStart.isErr(), true);
+
     if (blockedStart.isErr()) assert.equal(blockedStart.error.code, "DAEMON_CONFIG_CHANGED");
     assert.equal("configRevision" in unwrap(await staleActiveClient.status()), false);
   } finally {
@@ -628,33 +692,40 @@ test("a daemon with an agent start in flight is not replaced for a config change
   const configRaceManager = new FakeManager();
   configRaceManager.activeTurnCount = 0;
   configRaceManager.blockStartUntilRelease = true;
+
   const configRaceDaemon = new LocalAgentDaemon({
     stateDir: configRaceStateDir,
     configRevision: "old-provider-config",
     manager: configRaceManager,
     idleShutdownMs: 60_000,
   });
+
   const matchingRaceClient = new LocalAgentClient({
     stateDir: configRaceStateDir,
     configRevision: "old-provider-config",
     spawnDaemon: () => { throw new Error("the existing daemon should be used"); },
   });
+
   const changedRaceClient = new LocalAgentClient({
     stateDir: configRaceStateDir,
     configRevision: CONFIG_REVISION,
     spawnDaemon: () => { throw new Error("a busy daemon must not be replaced"); },
   });
+
   try {
     await configRaceDaemon.start();
+
     const starting = matchingRaceClient.run({
       target: "reviewer",
       prompt: "race with replacement",
       workspaceId: record.workspaceId,
       workspaceRoot: record.workspaceRoot,
     });
+
     await waitFor(() => configRaceManager.startStarted);
     const changed = await changedRaceClient.ensureReady();
     assert.equal(changed.isErr(), true);
+
     if (changed.isErr()) assert.equal(changed.error.code, "DAEMON_CONFIG_CHANGED");
     assert.equal(configRaceManager.closed, false);
     configRaceManager.releaseBlockedStart();
@@ -674,12 +745,16 @@ test("a legacy-protocol daemon is stopped and replaced only after it releases it
   const legacyLock = new LocalAgentDaemonLock(upgradePaths);
   legacyLock.acquire();
   const legacyMethods: string[] = [];
+
   const legacyServer = await listenFakeDaemon(upgradePaths.endpoint, (request, socket) => {
     legacyMethods.push(`${request.method}:${request.protocolVersion}`);
+
     if (request.protocolVersion !== 1) {
       socket.end(protocolMismatch(request, 1));
+
       return;
     }
+
     const stopping = request.method === "daemon.stop";
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
@@ -694,16 +769,20 @@ test("a legacy-protocol daemon is stopped and replaced only after it releases it
       }
     });
   });
+
   const replacementManager = new FakeManager();
   replacementManager.activeTurnCount = 0;
+
   const replacementDaemon = new LocalAgentDaemon({
     stateDir: upgradeStateDir,
     configRevision: CONFIG_REVISION,
     manager: replacementManager,
     idleShutdownMs: 60_000,
   });
+
   let replacementSpawns = 0;
   let spawnedBeforeLegacyLockReleased = false;
+
   const upgradeClient = new LocalAgentClient({
     stateDir: upgradeStateDir,
     configRevision: CONFIG_REVISION,
@@ -715,6 +794,7 @@ test("a legacy-protocol daemon is stopped and replaced only after it releases it
       void replacementDaemon.start();
     },
   });
+
   try {
     assert.equal(
       unwrap(await upgradeClient.ensureReady()).protocolVersion,
@@ -740,16 +820,20 @@ test("a daemon that is replaced concurrently is accepted once it speaks the curr
   const replacementRacePaths = localAgentDaemonPaths(replacementRaceStateDir);
   ensureLocalAgentDaemonSecret(replacementRacePaths);
   let replacementRaceProtocol = 1;
+
   const replacementRaceServer = await listenFakeDaemon(replacementRacePaths.endpoint, (request, socket) => {
     if (request.protocolVersion !== replacementRaceProtocol) {
       socket.end(protocolMismatch(request, replacementRaceProtocol));
+
       return;
     }
+
     const status = fakeDaemonStatus(
       replacementRacePaths.endpoint,
       replacementRaceProtocol,
       request.method === "daemon.stop" ? "stopping" : "ready",
     );
+
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
       protocolVersion: replacementRaceProtocol,
@@ -764,6 +848,7 @@ test("a daemon that is replaced concurrently is accepted once it speaks the curr
       }
     });
   });
+
   const replacementRaceClient = new LocalAgentClient({
     stateDir: replacementRaceStateDir,
     configRevision: CONFIG_REVISION,
@@ -773,6 +858,7 @@ test("a daemon that is replaced concurrently is accepted once it speaks the curr
       throw new Error("the replacement daemon is already running");
     },
   });
+
   try {
     assert.equal(
       unwrap(await replacementRaceClient.ensureReady()).protocolVersion,
@@ -789,6 +875,7 @@ test("a daemon that never answers a request times out", async (t) => {
   await mkdir(timeoutStateDir, { recursive: true });
   const timeoutPaths = localAgentDaemonPaths(timeoutStateDir);
   ensureLocalAgentDaemonSecret(timeoutPaths);
+
   const timeoutServer = await listenFakeDaemon(timeoutPaths.endpoint, (request, socket) => {
     if (request.method !== "hello") return;
     socket.end(encodeLocalAgentDaemonResponse({
@@ -798,6 +885,7 @@ test("a daemon that never answers a request times out", async (t) => {
       result: fakeDaemonStatus(timeoutPaths.endpoint, LOCAL_AGENT_DAEMON_PROTOCOL_VERSION),
     }));
   });
+
   try {
     const timeoutClient = new LocalAgentClient({
       stateDir: timeoutStateDir,
@@ -806,8 +894,10 @@ test("a daemon that never answers a request times out", async (t) => {
       requestTimeoutMs: 20,
       spawnDaemon: () => { throw new Error("existing daemon should be used"); },
     });
+
     const timedOut = await timeoutClient.status();
     assert.equal(timedOut.isErr(), true);
+
     if (timedOut.isErr()) assert.equal(timedOut.error.code, "DAEMON_TIMEOUT");
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
@@ -821,6 +911,7 @@ test("a response for another request is invalid", async (t) => {
   const invalidStateDir = join(root, "invalid-response-state");
   await mkdir(invalidStateDir, { recursive: true });
   const invalidPaths = localAgentDaemonPaths(invalidStateDir);
+
   const invalidServer = await listenFakeDaemon(invalidPaths.endpoint, (_request, socket) => {
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: "wrong_request_id",
@@ -829,6 +920,7 @@ test("a response for another request is invalid", async (t) => {
       result: {},
     }));
   });
+
   try {
     const invalidClient = new LocalAgentClient({
       stateDir: invalidStateDir,
@@ -837,8 +929,10 @@ test("a response for another request is invalid", async (t) => {
       requestTimeoutMs: 50,
       spawnDaemon: () => { throw new Error("existing daemon should be used"); },
     });
+
     const invalid = await invalidClient.ensureReady();
     assert.equal(invalid.isErr(), true);
+
     if (invalid.isErr()) assert.equal(invalid.error.code, "DAEMON_INVALID_RESPONSE");
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
@@ -860,14 +954,17 @@ async function listenFakeDaemon(
     socket.on("data", (chunk: string | Buffer) => {
       buffer += chunk.toString();
       const newline = buffer.indexOf("\n");
+
       if (newline === -1) return;
       respond(JSON.parse(buffer.slice(0, newline)) as RawDaemonRequest, socket);
     });
   });
+
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
     server.listen(endpoint, resolveListen);
   });
+
   return server;
 }
 
@@ -899,6 +996,7 @@ function protocolMismatch(request: RawDaemonRequest, protocolVersion: number): s
 
 function unwrap<T, E>(result: import("better-result").Result<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }
 
@@ -930,15 +1028,18 @@ test("a request that is never sent times out and releases its connection", async
   const { socketDaemon } = await startSocketDaemon(t);
   const timedOutRequest = await sendRawRequest(socketDaemon.paths.endpoint);
   assert.equal(timedOutRequest.ok, false);
+
   if (!timedOutRequest.ok) {
     assert.equal(timedOutRequest.error.code, "DAEMON_TIMEOUT");
     assert.equal(timedOutRequest.error.retryable, true);
   }
+
   await waitFor(() => socketDaemon.status().clientConnections === 0);
 });
 
 test("a request with the wrong secret is unauthorized", async (t) => {
   const { socketDaemon } = await startSocketDaemon(t);
+
   const unauthorized = await sendRawRequest(socketDaemon.paths.endpoint, JSON.stringify({
     requestId: "unauthorized",
     protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -947,7 +1048,9 @@ test("a request with the wrong secret is unauthorized", async (t) => {
     params: {},
     configRevision: CONFIG_REVISION,
   }) + "\n");
+
   assert.equal(unauthorized.ok, false);
+
   if (!unauthorized.ok) assert.equal(unauthorized.error.code, "DAEMON_UNAUTHORIZED");
 });
 
@@ -955,16 +1058,19 @@ test("malformed and oversized requests are invalid", async (t) => {
   const { socketDaemon } = await startSocketDaemon(t);
   const malformed = await sendRawRequest(socketDaemon.paths.endpoint, "{not-json}\n");
   assert.equal(malformed.ok, false);
+
   if (!malformed.ok) assert.equal(malformed.error.code, "DAEMON_INVALID_REQUEST");
 
   const oversized = await sendRawRequest(socketDaemon.paths.endpoint, "x".repeat(512 * 1024 + 1));
   assert.equal(oversized.ok, false);
+
   if (!oversized.ok) assert.equal(oversized.error.code, "DAEMON_INVALID_REQUEST");
 });
 
 test("shutdown destroys idle client sockets before closing the server", async (t) => {
   const { socketDaemon } = await startSocketDaemon(t);
   const shutdownSocket = createConnection(socketDaemon.paths.endpoint);
+
   try {
     await onceSocket(shutdownSocket, "connect");
     const shutdownSocketClosed = onceSocket(shutdownSocket, "close");
@@ -982,6 +1088,7 @@ async function startSocketDaemon(t: TestContext) {
   const socketStateDir = join(root, "socket-state");
   const socketManager = new FakeManager();
   socketManager.activeTurnCount = 0;
+
   const socketDaemon = new LocalAgentDaemon({
     stateDir: socketStateDir,
     configRevision: CONFIG_REVISION,
@@ -990,8 +1097,10 @@ async function startSocketDaemon(t: TestContext) {
     shutdownTimeoutMs: 100,
     idleShutdownMs: 60_000,
   });
+
   onCleanup(() => socketDaemon.close());
   await socketDaemon.start();
+
   return { socketManager, socketDaemon };
 }
 
@@ -1004,14 +1113,17 @@ async function fixture(t: TestContext) {
     for (const cleanup of cleanups) await cleanup();
     await rm(root, { recursive: true, force: true });
   });
+
   return { root, onCleanup: (cleanup: () => unknown) => { cleanups.push(cleanup); } };
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
+
   while (!check() && Date.now() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+
   assert.equal(check(), true, "condition did not become true before timeout");
 }
 
@@ -1023,8 +1135,10 @@ async function sendRawRequest(
   socket.setEncoding("utf8");
   const connected = onceSocket(socket, "connect");
   let buffer = "";
+
   const response = new Promise<RawDaemonResponse>((resolveResponse, rejectResponse) => {
     let settled = false;
+
     const cleanup = () => {
       clearTimeout(timeout);
       socket.off("data", onData);
@@ -1032,16 +1146,20 @@ async function sendRawRequest(
       socket.off("close", onClose);
       socket.off("end", onEnd);
     };
+
     const settle = (action: () => void) => {
       if (settled) return;
       settled = true;
       cleanup();
       action();
     };
+
     const onData = (chunk: string | Buffer) => {
       buffer += chunk.toString();
       const newline = buffer.indexOf("\n");
+
       if (newline === -1) return;
+
       try {
         const parsed = JSON.parse(buffer.slice(0, newline)) as RawDaemonResponse;
         settle(() => resolveResponse(parsed));
@@ -1049,16 +1167,21 @@ async function sendRawRequest(
         settle(() => rejectResponse(error));
       }
     };
+
     const onError = (error: Error) => settle(() => rejectResponse(error));
+
     const onClose = () => settle(() => rejectResponse(
       new Error("Daemon closed the connection before returning a response."),
     ));
+
     const onEnd = () => settle(() => rejectResponse(
       new Error("Daemon ended the connection before returning a response."),
     ));
+
     const timeout = setTimeout(() => settle(() => rejectResponse(
       new Error("Daemon did not return a response within 2000ms."),
     )), 2_000);
+
     timeout.unref();
 
     socket.on("data", onData);
@@ -1066,8 +1189,11 @@ async function sendRawRequest(
     socket.once("close", onClose);
     socket.once("end", onEnd);
   });
+
   await connected;
+
   if (payload !== undefined) socket.write(payload);
+
   try {
     return await response;
   } finally {
@@ -1089,14 +1215,17 @@ function onceSocket(
       cleanup();
       resolve();
     };
+
     const onError = (error: Error) => {
       cleanup();
       reject(error);
     };
+
     const timeout = setTimeout(() => {
       cleanup();
       reject(new Error(`Socket did not emit ${event} within ${timeoutMs}ms.`));
     }, timeoutMs);
+
     timeout.unref();
 
     const cleanup = () => {

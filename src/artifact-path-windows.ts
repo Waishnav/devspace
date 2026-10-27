@@ -24,18 +24,25 @@ export function parseSafeWindowsArtifactRelativePath(
   ) return undefined;
 
   const rawParts = value.split(/[\\/]+/u);
+
   if (rawParts.includes("..") || rawParts.at(-1) === ".") return undefined;
   const parts = rawParts.filter((part) => part !== "" && part !== ".");
+
   if (parts.length === 0 || parts.some(isUnsafeWindowsPathPart)) return undefined;
   const name = parts.at(-1);
+
   if (!name) return undefined;
+
   return { path: parts.join("/"), parts, name };
 }
 
 function isUnsafeWindowsPathPart(part: string): boolean {
   if (!part || part === "." || part === "..") return true;
+
   if (part.endsWith(".") || part.endsWith(" ")) return true;
+
   if (WINDOWS_INVALID_NAME_CHARS.test(part)) return true;
   const deviceBase = (part.split(".", 1)[0] ?? part).trimEnd();
+
   return WINDOWS_DEVICE_NAME.test(deviceBase);
 }

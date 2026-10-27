@@ -42,6 +42,7 @@ export type LocalAgentTarget =
 const WRITE_MODES: readonly LocalAgentWriteMode[] = ["read_only", "allowed", "full_access"];
 const VALUE_OPTIONS = ["--model", "--effort", "--write-mode", "--request-id", "--branch", "--timeout"] as const;
 const RUN_ONLY_OPTIONS: readonly string[] = ["--request-id", "--branch"];
+
 type ValueOption = typeof VALUE_OPTIONS[number];
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
@@ -58,6 +59,7 @@ export function parseLocalAgentContinueArgs(args: string[]): ParsedLocalAgentCon
     'Usage: devspace agents continue <id> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--wait [--timeout <seconds>]] "<prompt>"',
     false,
   );
+
   return { agentId: target, ...parsed };
 }
 
@@ -67,6 +69,7 @@ function parseAgentPromptArgs(
   isRun: boolean,
 ): ParsedLocalAgentRunArgs {
   const [target, ...rest] = args;
+
   if (!target) {
     throw new Error(usage);
   }
@@ -76,26 +79,34 @@ function parseAgentPromptArgs(
   let worktree = false;
   const promptParts: string[] = [];
   let optionsEnded = false;
+
   for (let index = 0; index < rest.length; index += 1) {
     const part = rest[index]!;
+
     if (!optionsEnded && part === "--") {
       optionsEnded = true;
       continue;
     }
+
     if (optionsEnded || !part.startsWith("-")) {
       promptParts.push(part);
       continue;
     }
+
     if (part === "--wait") {
       wait = true;
       continue;
     }
+
     if (isRun && part === "--worktree") {
       worktree = true;
       continue;
     }
+
     const option = VALUE_OPTIONS.find((name) => part === name || part.startsWith(`${name}=`));
+
     if (!option || (!isRun && RUN_ONLY_OPTIONS.includes(option))) throw unknownOptionError(part);
+
     if (part === option) {
       values[option] = parseOptionValue(rest[index + 1], option);
       index += 1;
@@ -105,10 +116,13 @@ function parseAgentPromptArgs(
   }
 
   const prompt = promptParts.join(" ").trim();
+
   if (!prompt) {
     throw new Error(usage);
   }
+
   if (values["--timeout"] !== undefined && !wait) throw new Error("--timeout requires --wait.");
+
   if (values["--branch"] !== undefined && !worktree) throw new Error("--branch requires --worktree.");
 
   return {
@@ -127,7 +141,9 @@ function parseAgentPromptArgs(
 function parseWriteMode(value: string | undefined): LocalAgentWriteMode | undefined {
   if (value === undefined) return undefined;
   const mode = WRITE_MODES.find((candidate) => candidate === value);
+
   if (!mode) throw new Error(`Invalid --write-mode ${value}. Use ${WRITE_MODES.join(", ")}.`);
+
   return mode;
 }
 
@@ -135,17 +151,23 @@ export function parseAgentWaitTimeout(value: string | undefined): number {
   if (!value || !/^\d+$/.test(value)) {
     throw new Error("Agent wait timeout must be a non-negative integer number of seconds.");
   }
+
   const timeoutMs = Number(value) * 1_000;
+
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs > 2_147_483_647) {
     throw new Error("Agent wait timeout is too large.");
   }
+
   return timeoutMs;
 }
 
 function parseOptionValue(value: string | undefined, option: string): string {
   const trimmed = value?.trim();
+
   if (!trimmed) throw new Error(`Missing value for ${option}.`);
+
   if (trimmed.startsWith("-")) throw unknownOptionError(trimmed);
+
   return trimmed;
 }
 
@@ -161,8 +183,10 @@ export function resolveLocalAgentTarget(
   providerConfigs: readonly SubagentProviderConfig[] = [],
 ): LocalAgentTarget | undefined {
   const profile = profiles.find((candidate) => candidate.name === target);
+
   if (profile) {
     const providerConfig = providerConfigs.find((entry) => entry.id === profile.provider);
+
     return {
       kind: "profile",
       name: profile.name,
@@ -174,6 +198,7 @@ export function resolveLocalAgentTarget(
   }
 
   const providerConfig = providerConfigs.find((entry) => entry.id === target);
+
   if (providerConfig) {
     return {
       kind: "provider",

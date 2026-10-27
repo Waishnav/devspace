@@ -72,17 +72,21 @@ export class OpencodeRuntime implements LocalAgentRuntime {
             message: "OpenCode runtime is not running.",
           });
         }
+
         try {
           await assertOpencodeHealthy(this.client);
+
           const sessionId = input.providerSessionId
             ? requireOpenCodeV1NativeSessionId(input.providerSessionId)
             : await createOpencodeSession(this.client, input);
+
           await callbacks?.onSessionId?.(sessionId);
           const promptResult = await this.prompt(sessionId, input);
           assertOpenCodePromptSucceeded(promptResult);
           const finalResponse = requireFinalResponse(extractOpenCodeFinalResponse(promptResult));
           // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
           callbacks?.onEvent?.({ type: "message", text: finalResponse });
+
           return {
             provider: this.provider,
             providerSessionId: sessionId,
@@ -101,6 +105,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
               message: "OpenCode provider is unavailable.",
             });
           }
+
           throw error;
         }
       },
@@ -119,6 +124,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     if (this.closed) return;
     this.closed = true;
     this.alive = false;
+
     for (const controller of this.promptControllers) controller.abort();
     this.promptControllers.clear();
     this.server.close();
@@ -128,6 +134,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+
     // End the local request only once OpenCode confirms the abort. A failed or
     // stalled abort keeps the turn running, and the manager reports the stop as a conflict.
     const removeAbort = bindLocalAgentAbort(input.signal, async () => {
@@ -135,17 +142,21 @@ export class OpencodeRuntime implements LocalAgentRuntime {
         sessionID: sessionId,
         directory: input.workspaceRoot,
       }, { throwOnError: false });
+
       if (!aborted.error) controller.abort();
     });
+
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.promptTimeoutMs);
+
     try {
       return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
     } catch (error) {
       // A provider timeout after a stop request is still a timeout: the abort was never confirmed.
       if (input.signal?.aborted && !timedOut) throw localAgentCancelledError("opencode", "prompt", error);
+
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -199,11 +210,15 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       run: async (): Promise<LocalAgentRuntime> => {
         // Probe on every runtime creation so an upgraded executable is routed to the matching protocol generation.
         const runtime = await this.probeRuntime();
+
         if (runtime.generation === "v2") {
           const { client, server } = await this.v2Factory(context, this.env);
+
           return new OpencodeV2Runtime(client, server);
         }
+
         const { client, server } = await this.factory(context, this.env);
+
         return new OpencodeRuntime(client, server);
       },
     });
@@ -215,6 +230,7 @@ async function defaultOpencodeFactory(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ client: OpencodeClientLike; server: OpencodeServerLike }> {
   const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+
   const config = {
     agent: {
       devspace_read_only: opencodeAgentConfig("read_only"),
@@ -222,10 +238,12 @@ async function defaultOpencodeFactory(
       devspace_full_access: opencodeAgentConfig("full_access"),
     },
   };
+
   const server = await startOpencodeServer({
     ...env,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
   });
+
   return {
     client: createOpencodeClient({ baseUrl: server.url }),
     server,
@@ -249,6 +267,7 @@ async function createOpencodeSession(
   const result = await client.session.create({
     directory: input.workspaceRoot,
   }, { throwOnError: true });
+
   return requireSessionId(result.data);
 }
 
@@ -264,6 +283,7 @@ export function opencodeAgentFor(writeMode: LocalAgentRunInput["writeMode"]): st
 export function opencodePermissionFor(writeMode: LocalAgentRunInput["writeMode"]): PermissionConfig {
   const allowed = writeMode !== "read_only";
   const unrestricted = writeMode === "full_access";
+
   return {
     read: "allow",
     edit: allowed ? "allow" : "deny",
@@ -287,6 +307,7 @@ async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> 
 function isOpenCodeTransportFailure(error: unknown): boolean {
   if (error instanceof OpencodeHealthError) return true;
   const code = transportErrorCode(error);
+
   return code === "ECONNREFUSED"
     || code === "ECONNRESET"
     || code === "EPIPE"
@@ -298,8 +319,10 @@ function isOpenCodeTransportFailure(error: unknown): boolean {
 function transportErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   const code = (error as NodeJS.ErrnoException).code;
+
   if (typeof code === "string") return code;
   const cause = (error as Error & { cause?: unknown }).cause;
+
   return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
     ? (cause as NodeJS.ErrnoException).code
     : undefined;
@@ -319,6 +342,7 @@ async function promptOpencodeSession(
   signal: AbortSignal,
 ): Promise<unknown> {
   const model = input.model ? parseOpencodeModel(input.model) : undefined;
+
   return client.session.prompt({
     sessionID: sessionId,
     directory: input.workspaceRoot,
@@ -331,6 +355,7 @@ async function promptOpencodeSession(
 
 function parseOpencodeModel(model: string): OpencodeModelRef {
   const separator = model.indexOf("/");
+
   return separator === -1
     ? { providerID: "opencode", modelID: model }
     : { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
@@ -338,6 +363,7 @@ function parseOpencodeModel(model: string): OpencodeModelRef {
 
 function requireSessionId(session: unknown): string {
   const id = asRecord(session)?.id;
+
   if (typeof id !== "string" || !id) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -347,6 +373,7 @@ function requireSessionId(session: unknown): string {
       message: "OpenCode did not return a session id.",
     });
   }
+
   return id;
 }
 
@@ -354,8 +381,10 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
   const result = asRecord(unwrapProviderPayload(value));
   const info = asRecord(result?.info);
   const error = asRecord(info?.error);
+
   if (!error) return;
   const data = asRecord(error.data);
+
   const message = typeof data?.message === "string"
     ? data.message
     : typeof error.message === "string"
@@ -363,6 +392,7 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
       : typeof error.name === "string"
         ? `OpenCode returned ${error.name}.`
         : "OpenCode returned an assistant error.";
+
   throw new AgentProviderExecutionError({
     code: "PROVIDER_EXECUTION_ERROR",
     provider: "opencode",
@@ -376,75 +406,100 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
 export function extractOpenCodeFinalResponse(value: unknown): string {
   const root = unwrapProviderPayload(value);
   const messages = Array.isArray(root) ? root : readArray(root, "messages");
+
   if (messages) return extractLastOpenCodeAssistantMessageText(messages);
+
   return extractOpenCodeAssistantMessageText(root);
 }
 
 function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = asRecord(messages[index]);
+
     if (!message) continue;
     const info = asRecord(message.info);
     const role = typeof info?.role === "string" ? info.role : message.role;
     const type = typeof message.type === "string" ? message.type : undefined;
+
     if (role !== "assistant" && type !== "assistant") continue;
     const text = extractOpenCodeAssistantMessageText(message);
+
     if (text) return text;
   }
+
   return "";
 }
 
 function extractOpenCodeAssistantMessageText(value: unknown): string {
   const message = asRecord(value);
+
   if (!message) return "";
+
   for (const key of ["content", "parts"] as const) {
     const parts = readArray(message, key);
+
     if (!parts) continue;
+
     const text = parts
       .map((part) => {
         const record = asRecord(part);
+
         return record?.type === "text" && typeof record.text === "string" ? record.text : "";
       })
       .filter(Boolean)
       .join("");
+
     if (text.trim()) return text.trim();
   }
+
   const info = asRecord(message.info) ?? message;
+
   return stringifyStructuredMessage(info.structured);
 }
 
 function stringifyStructuredMessage(value: unknown): string {
   if (value === undefined || value === null) return "";
+
   if (typeof value === "string") return value.trim();
+
   return JSON.stringify(value);
 }
 
 function unwrapProviderPayload(value: unknown): unknown {
   let current = value;
+
   for (let depth = 0; depth < 3; depth += 1) {
     const record = asRecord(current);
+
     if (!record) return current;
+
     if (record.data !== undefined) {
       current = record.data;
       continue;
     }
+
     if (record.result !== undefined) {
       current = record.result;
       continue;
     }
+
     return current;
   }
+
   return current;
 }
 
 function readArray(value: unknown, key: string): unknown[] | undefined {
   const result = asRecord(value)?.[key];
+
   return Array.isArray(result) ? result : undefined;
 }
 
 function readNestedString(value: unknown, path: string[]): string | undefined {
   let current: unknown = value;
+
   for (const key of path) current = asRecord(current)?.[key];
+
   return typeof current === "string" ? current : undefined;
 }
 
@@ -456,6 +511,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function requireFinalResponse(response: string): string {
   const trimmed = response.trim();
+
   if (!trimmed) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -465,6 +521,7 @@ function requireFinalResponse(response: string): string {
       message: "OpenCode did not return a final assistant response.",
     });
   }
+
   return trimmed;
 }
 

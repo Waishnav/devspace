@@ -42,6 +42,7 @@ export async function loadLocalAgentProfiles(
     config.devspaceAgentsDir,
     join(workspaceRoot, ".devspace", "agents"),
   ];
+
   const profilesByName = new Map<string, LocalAgentProfile>();
 
   for (const directory of profileDirs) {
@@ -57,6 +58,7 @@ export async function loadLocalAgentProfiles(
 
 async function loadProfilesFromDirectory(directory: string): Promise<LocalAgentProfile[]> {
   const resolvedDirectory = resolve(directory);
+
   if (!existsSync(resolvedDirectory)) return [];
 
   const entries = await readdir(resolvedDirectory, { withFileTypes: true });
@@ -64,9 +66,11 @@ async function loadProfilesFromDirectory(directory: string): Promise<LocalAgentP
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
+
     if (!entry.name.endsWith(".md")) continue;
 
     const filePath = join(resolvedDirectory, entry.name);
+
     try {
       profiles.push(await loadProfileFile(filePath));
     } catch (error) {
@@ -80,12 +84,14 @@ async function loadProfilesFromDirectory(directory: string): Promise<LocalAgentP
 async function loadProfileFile(filePath: string): Promise<LocalAgentProfile> {
   const content = await readFile(filePath, "utf8");
   const parsed = parseFrontmatter(content, filePath);
+
   return profileFromFrontmatter(parsed.frontmatter, parsed.body, filePath);
 }
 
 function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter {
   const normalized = content.replace(/^\uFEFF/, "");
   const lines = normalized.split(/\r?\n/);
+
   if (lines[0]?.trim() !== FRONTMATTER_DELIMITER) {
     throw new Error(`Subagent profile is missing frontmatter: ${filePath}`);
   }
@@ -93,6 +99,7 @@ function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter 
   const endIndex = lines.findIndex(
     (line, index) => index > 0 && line.trim() === FRONTMATTER_DELIMITER,
   );
+
   if (endIndex === -1) {
     throw new Error(`Subagent profile frontmatter is not closed: ${filePath}`);
   }
@@ -105,6 +112,7 @@ function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter 
 
 function parseProfileYaml(source: string, filePath: string): Record<string, unknown> {
   let parsed: unknown;
+
   try {
     parsed = parseYaml(source) ?? {};
   } catch (error) {
@@ -126,6 +134,7 @@ function profileFromFrontmatter(
   const name = readString(frontmatter, "name") ?? basename(filePath, ".md");
   const description = readString(frontmatter, "description");
   const provider = readProvider(frontmatter, filePath);
+
   if (!description) {
     throw new Error(`Subagent profile is missing description: ${filePath}`);
   }
@@ -144,16 +153,20 @@ function profileFromFrontmatter(
 
 function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProviderInstanceId {
   const provider = readString(frontmatter, "provider");
+
   if (!provider) {
     throw new Error(`Subagent profile is missing provider: ${filePath}`);
   }
+
   return provider;
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {
   const value = frontmatter[key];
+
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
+
   return trimmed || undefined;
 }
 

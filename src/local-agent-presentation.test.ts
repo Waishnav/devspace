@@ -68,6 +68,7 @@ test("observations carry the response or a structured error", () => {
     status: "idle",
     latestResponse: "Found one issue.",
   });
+
   assert.deepEqual(completed, {
     id: "agt_test",
     status: "completed",
@@ -82,6 +83,7 @@ test("observations carry the response or a structured error", () => {
     errorCode: "PROVIDER_EXECUTION_ERROR",
     errorRetryable: true,
   });
+
   assert.deepEqual(failed, {
     id: "agt_test",
     status: "failed",
@@ -104,6 +106,7 @@ test("the turn id and the provider's own error cause are visible in fragments", 
     errorRetryable: false,
     errorDetail: "Claude returned an error result: rate <limited>",
   });
+
   assert.equal(
     formatAgentObservation(failedWithCause),
     '<agent id="agt_test" status="failed" turn="trn_12345678" code="PROVIDER_EXECUTION_ERROR" retryable="false">Claude agent turn failed.<cause>Claude returned an error result: rate &lt;limited&gt;</cause></agent>',
@@ -143,6 +146,7 @@ test("target catalogs list usable targets and explain unavailable providers", ()
       effort: "high",
     }],
   };
+
   const targetCatalog = presentAgentTargetCatalog(catalog);
   assert.deepEqual(targetCatalog, {
     enabled: true,

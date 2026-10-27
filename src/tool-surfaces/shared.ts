@@ -62,6 +62,7 @@ export async function runLoggedToolOperation<T>(
       success: resultMetadata?.success ?? true,
       durationMs: Math.round(performance.now() - startedAt),
     });
+
     return result;
   } catch (error) {
     logToolCall(config, {
@@ -85,7 +86,9 @@ export function contentText(content: ToolContent[]): string {
 
 function toolErrorPreview(content: ToolContent[]): string | undefined {
   const text = contentText(content).replace(/\s+/g, " ").trim();
+
   if (!text) return undefined;
+
   return text.length > 240 ? `${text.slice(0, 237)}...` : text;
 }
 
@@ -115,6 +118,7 @@ export function countDiffStats(diff: string | undefined): DiffStats {
 
   for (const line of diff.split("\n")) {
     if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+
     if (line.startsWith("-") && !line.startsWith("---")) removals++;
   }
 

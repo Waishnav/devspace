@@ -43,6 +43,7 @@ export const scenariosDir = new URL("./scenarios/", import.meta.url);
 
 export async function listScenarioNames(): Promise<string[]> {
   const entries = await readdir(scenariosDir);
+
   return entries
     .filter((entry) => entry.endsWith(".json"))
     .map((entry) => basename(entry, ".json"))
@@ -53,7 +54,9 @@ export async function loadScenario(nameOrPath: string): Promise<Scenario> {
   const path = nameOrPath.endsWith(".json")
     ? nameOrPath
     : join(scenariosDir.pathname, `${nameOrPath}.json`);
+
   const scenario = JSON.parse(await readFile(path, "utf8")) as Omit<Scenario, "name"> & { name?: string };
+
   return { ...scenario, name: scenario.name ?? basename(path, ".json") };
 }
 
@@ -61,15 +64,20 @@ export function resolveTemplates(value: unknown, variables: Record<string, strin
   if (typeof value === "string") {
     return value.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
       const resolved = variables[key];
+
       if (resolved === undefined) throw new Error(`Scenario references ${match} before it is available.`);
+
       return resolved;
     });
   }
+
   if (Array.isArray(value)) return value.map((item) => resolveTemplates(item, variables));
+
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, resolveTemplates(item, variables)]),
     );
   }
+
   return value;
 }

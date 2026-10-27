@@ -7,6 +7,7 @@ test("workflow output must be bare JSON that matches the schema", () => {
     type: "object", properties: { summary: { type: "string" }, count: { type: "integer", minimum: 0 } },
     required: ["summary", "count"], additionalProperties: false,
   });
+
   assert.deepEqual(parseWorkflowOutput('{"summary":"ok","count":2}', validate), { summary: "ok", count: 2 });
   assert.throws(() => parseWorkflowOutput('```json\n{}\n```', validate), /not JSON/);
   assert.throws(() => parseWorkflowOutput('{"summary":"ok","count":-1}', validate), /JSON output/);

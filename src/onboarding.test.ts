@@ -13,6 +13,7 @@ test("onboarding usage resolves from the selected uses and requires at least one
   ] as const) {
     assert.equal(resolveOnboardingUsage(selections), expected);
   }
+
   assert.throws(() => resolveOnboardingUsage([]), /Choose ChatGPT, Coding Agents, or both/);
 });
 
@@ -51,6 +52,7 @@ test("onboarding toggles existing providers and preserves their settings", () =>
       { id: "codex-work", driver: "codex" as const, enabled: true, model: "gpt-work" },
     ],
   };
+
   assert.deepEqual(
     updateOnboardingSubagentsConfig(configured, ["claude", "codex-work"]),
     {

@@ -29,13 +29,16 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   async next(): Promise<IteratorResult<unknown>> {
     if (this.pending.length > 0) return { done: false, value: this.pending.shift() };
     const next = await this.iterator.next();
+
     if (next.done) return { done: true, value: undefined };
+
     if (next.value.message.content === "use tools") {
       this.pending.push(
         { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] } },
         { type: "assistant", message: { content: [{ type: "text", text: "The tests fail." }] } },
         { type: "result", session_id: "claude_session_1", result: "done" },
       );
+
       return {
         done: false,
         value: {
@@ -44,6 +47,7 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
         },
       };
     }
+
     return {
       done: false,
       value: {
@@ -89,12 +93,15 @@ function claudeDriverFixture() {
     lastOptions: undefined as Record<string, unknown> | undefined,
     query: undefined as FakeClaudeQuery | undefined,
   };
+
   const driver = new ClaudeLocalAgentDriver(({ prompt, options }) => {
     state.factoryCalls += 1;
     state.lastOptions = options;
     state.query = new FakeClaudeQuery(prompt);
+
     return state.query;
   }, { PATH: "/usr/bin" });
+
   return { driver, state };
 }
 
@@ -133,6 +140,7 @@ function configuredClaudeDriver(onOptions: (options: Record<string, unknown>) =>
     }),
     claudeQueryFactory: ({ prompt, options }) => {
       onOptions(options);
+
       return new FakeClaudeQuery(prompt);
     },
   }).find((driver) => driver.provider === "claude");
@@ -151,9 +159,11 @@ test("successive turns reuse one Claude query and apply each turn's authority", 
   const { driver, state } = claudeDriverFixture();
   const runtimeResult = await driver.createRuntime(context);
   assert.equal(runtimeResult.isOk(), true);
+
   if (runtimeResult.isErr()) throw runtimeResult.error;
   const runtime = runtimeResult.value;
   const sessionIds: string[] = [];
+
   const firstResult = await runtime.run({
     prompt: "first",
     workspaceRoot: "/tmp/project",
@@ -163,24 +173,31 @@ test("successive turns reuse one Claude query and apply each turn's authority", 
   }, {
     onSessionId: (sessionId) => { sessionIds.push(sessionId); },
   });
+
   assert.equal(firstResult.isOk(), true);
+
   if (firstResult.isErr()) throw firstResult.error;
   const first = firstResult.value;
+
   const secondResult = await runtime.run({
     prompt: "second",
     workspaceRoot: "/tmp/project",
     effort: "low",
     writeMode: "allowed",
   });
+
   assert.equal(secondResult.isOk(), true);
+
   if (secondResult.isErr()) throw secondResult.error;
   const second = secondResult.value;
+
   const third = await runtime.run({
     prompt: "third",
     workspaceRoot: "/tmp/project",
     effort: "high",
     writeMode: "full_access",
   });
+
   assert.equal(third.isOk(), true);
   assert.equal(state.factoryCalls, 1, "successive turns reuse one Claude query");
   assert.equal(first.providerSessionId, "claude_session_1");
@@ -255,13 +272,17 @@ test("a cold runtime resumes its provider session", async () => {
 
 test("CLAUDE_COMMAND overrides the Claude Code executable", async () => {
   let lastOptions: Record<string, unknown> | undefined;
+
   const customCommandDriver = new ClaudeLocalAgentDriver(({ prompt, options }) => {
     lastOptions = options;
+
     return new FakeClaudeQuery(prompt);
   }, { CLAUDE_COMMAND: "/opt/claude" });
+
   const customCommandRuntime = await customCommandDriver.createRuntime(context);
   assert.equal(customCommandRuntime.isOk(), true);
   assert.equal(lastOptions?.pathToClaudeCodeExecutable, "/opt/claude");
+
   if (customCommandRuntime.isOk()) await customCommandRuntime.value.close();
 });
 
@@ -269,7 +290,9 @@ test("an aborted SDK start is a cancelled error", async () => {
   const cancelled = await new ClaudeLocalAgentDriver(async () => {
     throw new DOMException("cancelled", "AbortError");
   }).createRuntime(context);
+
   assert.equal(cancelled.isErr(), true);
+
   if (cancelled.isErr()) assert.equal(cancelled.error.code, "PROVIDER_CANCELLED");
 });
 
@@ -277,16 +300,20 @@ test("an SDK start failure is an execution error", async () => {
   const execution = await new ClaudeLocalAgentDriver(async () => {
     throw new Error("sdk failed");
   }).createRuntime(context);
+
   assert.equal(execution.isErr(), true);
+
   if (execution.isErr()) assert.equal(execution.error.code, "PROVIDER_EXECUTION_ERROR");
 });
 
 test("a refused connection mid-stream is a retryable unavailable error", async () => {
   const brokenStreamRuntimeResult = await new ClaudeLocalAgentDriver(async () => brokenStreamQuery).createRuntime(context);
   assert.equal(brokenStreamRuntimeResult.isOk(), true);
+
   if (brokenStreamRuntimeResult.isErr()) throw brokenStreamRuntimeResult.error;
   const brokenStream = await brokenStreamRuntimeResult.value.run({ prompt: "fail", workspaceRoot: "/tmp/project" });
   assert.equal(brokenStream.isErr(), true);
+
   if (brokenStream.isErr()) {
     assert.equal(brokenStream.error.code, "PROVIDER_UNAVAILABLE");
     assert.equal(brokenStream.error.retryable, true);
@@ -304,7 +331,9 @@ test("a missing Claude Code native binary is unavailable", async () => {
       };
     },
   };
+
   const missingExecutableRuntime = await new ClaudeLocalAgentDriver(async () => missingExecutableQuery).createRuntime(context);
+
   if (missingExecutableRuntime.isErr()) throw missingExecutableRuntime.error;
   const missingExecutable = await missingExecutableRuntime.value.run({ prompt: "fail", workspaceRoot: "/tmp/project" });
   assert.equal(missingExecutable.isErr() && missingExecutable.error.code, "PROVIDER_UNAVAILABLE");
@@ -326,6 +355,7 @@ test("a configured provider command and env reach the Claude SDK", async () => {
   assert.ok(configuredDriver);
   const configuredRuntime = await configuredDriver.createRuntime(context);
   assert.equal(configuredRuntime.isOk(), true);
+
   if (configuredRuntime.isErr()) throw configuredRuntime.error;
   assert.equal(configuredOptions?.pathToClaudeCodeExecutable, "/opt/bin/claude-wrapper");
   assert.deepEqual(configuredOptions?.env, {
@@ -343,12 +373,15 @@ test("complete SDK messages map onto tool and message events", async () => {
   const configuredDriver = configuredClaudeDriver(() => {});
   assert.ok(configuredDriver);
   const configuredRuntime = await configuredDriver.createRuntime(context);
+
   if (configuredRuntime.isErr()) throw configuredRuntime.error;
   assert.equal(configuredDriver.capabilities.turns.streaming, true);
   const claudeEvents: unknown[] = [];
+
   const streamed = await configuredRuntime.value.run({ prompt: "use tools", workspaceRoot: "/tmp/project" }, {
     onEvent: (event) => { claudeEvents.push(event); },
   });
+
   assert.equal(streamed.isOk() && streamed.value.finalResponse, "done");
   assert.deepEqual(claudeEvents, [
     { type: "tool_started", tool: "Bash", summary: "pnpm test" },

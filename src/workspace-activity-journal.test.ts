@@ -66,6 +66,7 @@ test("open_workspace is recorded once its workspace exists, and failed opens lea
     meta: { "openai/session": "conversation-1" },
     result: () => {
       workspaces.createSession({ id: "ws_opened", root: "/tmp/project" });
+
       return { structuredContent: { workspace_id: "ws_opened" } };
     },
   });
@@ -109,6 +110,7 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
 
 test("journal redacts credentials in commands and outputs", () => {
   const redacted = (value: string): string => JSON.parse(journalJson(value)) as string;
+
   const secrets = [
     "API_KEY=abc123def",
     "export GITHUB_TOKEN=ghx_notavendorshape",
@@ -124,6 +126,7 @@ test("journal redacts credentials in commands and outputs", () => {
     "git clone https://user:pass@github.com/acme/repo.git",
     "postgres://app:s3cret@db.internal:5432/app",
   ];
+
   for (const secret of secrets) {
     const output = redacted(`run: ${secret}`);
     assert.match(output, /\[redacted\]/, secret);
@@ -150,6 +153,7 @@ test("journal leaves ordinary prose and code alone", () => {
     "open http://localhost:3000/@user",
     "curl https://example.com:8080/path",
   ];
+
   for (const text of unchanged) {
     assert.equal(JSON.parse(journalJson(text)), text);
   }
@@ -161,6 +165,7 @@ test("journal failures never replace the tool result", async (t) => {
   });
 
   activity.close();
+
   const result = await journal.capture({
     toolName: "read",
     arguments: { workspace_id: "ws_closed" },
@@ -179,6 +184,7 @@ async function journalFixture(
 ) {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-activity-journal-test-"));
   const workspaces = new SqliteWorkspaceStore(stateDir);
+
   for (const id of workspaceIds) workspaces.createSession({ id, root: "/tmp/project" });
   const activity = new WorkspaceActivityStore(stateDir, maxTurns);
   const journal = new WorkspaceActivityJournal(activity, onError);
@@ -188,9 +194,11 @@ async function journalFixture(
     } catch {
       // Some tests close the store early.
     }
+
     workspaces.close();
     await rm(stateDir, { recursive: true, force: true });
   });
+
   return { journal, activity, workspaces };
 }
 
@@ -206,6 +214,7 @@ function call(
     extra: { _meta: options.meta, requestId: 7 },
     operation: async () => {
       if (options.error) throw options.error;
+
       return typeof options.result === "function" ? (options.result as () => unknown)() : options.result ?? {};
     },
   });

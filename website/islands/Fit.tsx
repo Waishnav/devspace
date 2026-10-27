@@ -14,10 +14,12 @@ export default function Fit({ width, children }: { width: number; children: Reac
       setScale(Math.min(1, outer.current!.clientWidth / width));
       setHeight(inner.current!.offsetHeight);
     };
+
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(outer.current!);
     observer.observe(inner.current!);
+
     return () => observer.disconnect();
   }, [width]);
 

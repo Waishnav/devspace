@@ -10,15 +10,18 @@ export function removeDevspaceNodeModulesBinFromPath(pathValue: string): string 
 
 function isDevspaceNodeModulesBin(pathEntry: string): boolean {
   const resolvedEntry = resolve(pathEntry);
+
   if (!resolvedEntry.endsWith(`${sep}node_modules${sep}.bin`)) {
     return false;
   }
 
   const packageJson = resolve(resolvedEntry, "..", "..", "package.json");
+
   if (!existsSync(packageJson)) return false;
 
   try {
     const packageInfo = JSON.parse(readFileSync(packageJson, "utf8")) as { name?: unknown };
+
     return packageInfo.name === "@waishnav/devspace";
   } catch {
     return false;

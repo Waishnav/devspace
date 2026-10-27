@@ -35,12 +35,14 @@ const provider = providerDefinition(requiredEnv("PROVIDER"));
 const scenario = requiredEnv("SCENARIO");
 const transcriptBase = requiredEnv("TRANSCRIPT");
 const runDir = requiredEnv("RUN_DIR");
+
 const context: ScrubContext = {
   workspace: requiredEnv("WORKSPACE"),
   worktree: findWorktree(env[`${SHIM_ENV_PREFIX}WORKTREE_ROOT`]),
   home: homedir(),
   tmp: tmpdir(),
 };
+
 const args = process.argv.slice(2);
 const http = provider.http === true && serveArgs(args) !== undefined;
 
@@ -58,13 +60,17 @@ function record(path: string): void {
   const command = provider.realCommand();
   const append = startTranscript(path, command);
   const childEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith(SHIM_ENV_PREFIX)));
+
   if (http) {
     void recordHttp({ command, args, env: childEnv, append, fail });
+
     return;
   }
+
   const appendLine = (dir: "in" | "out", line: string) => {
     if (line.trim()) append(dir, parseFrame(line));
   };
+
   const child = spawn(command, args, { env: childEnv, stdio: ["pipe", "pipe", "inherit"] });
   child.on("error", (error) => fail(`Could not start ${command}: ${error.message}`));
   // Bytes pass through unchanged; the transcript gets a parsed copy of each line.
@@ -74,9 +80,11 @@ function record(path: string): void {
   child.stdout.on("data", (chunk) => process.stdout.write(chunk));
   createInterface({ input: process.stdin }).on("line", (line) => appendLine("in", line));
   createInterface({ input: child.stdout }).on("line", (line) => appendLine("out", line));
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => child.kill(signal));
   }
+
   child.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 : 1)));
 }
 
@@ -85,6 +93,7 @@ function startTranscript(path: string, command: string): (dir: "in" | "out", fra
   mkdirSync(dirname(path), { recursive: true });
   const startedAt = Date.now();
   const version = spawnSync(command, ["--version"], { encoding: "utf8", timeout: 10_000 }).stdout?.trim();
+
   const meta: TranscriptMeta = {
     type: "meta",
     provider: provider.id,
@@ -94,9 +103,12 @@ function startTranscript(path: string, command: string): (dir: "in" | "out", fra
     ...(version ? { version } : {}),
     recordedAt: new Date().toISOString(),
   };
+
   writeFileSync(path, `${JSON.stringify(meta)}\n`);
+
   return (dir, parsed) => {
     const frame = dir === "out" && provider.redactFrame && isRecord(parsed) ? provider.redactFrame(parsed) : parsed;
+
     if (frame === undefined) return;
     const entry = { dir, ms: Date.now() - startedAt, frame: scrub(frame, context) };
     appendFileSync(path, `${JSON.stringify(entry)}\n`);
@@ -108,6 +120,7 @@ function replay(path: string): void {
   const transcript = readTranscript(path);
   const recordedArgs = normalizeArgs(transcript.meta.args);
   const liveArgs = normalizeArgs(scrub(args, context) as string[]);
+
   if (JSON.stringify(recordedArgs) !== JSON.stringify(liveArgs)) {
     fail([
       `${provider.id} was launched with different arguments than recorded in ${path}:`,
@@ -115,11 +128,15 @@ function replay(path: string): void {
       `  actual:   ${JSON.stringify(liveArgs)}`,
     ].join("\n"));
   }
+
   const liveCwd = scrub(process.cwd(), context) as string;
+
   if (transcript.meta.cwd !== undefined && transcript.meta.cwd !== liveCwd) {
     fail(`${provider.id} was started in a different directory than recorded in ${path}:\n  expected: ${transcript.meta.cwd}\n  actual:   ${liveCwd}`);
   }
+
   let respond = (frame: unknown) => { process.stdout.write(`${JSON.stringify(frame)}\n`); };
+
   const replayer = new Replayer({
     transcript,
     protocol: provider.protocol,
@@ -130,6 +147,7 @@ function replay(path: string): void {
     },
     fail: (report) => fail(`${path}\n${report}`),
   });
+
   if (http) {
     respond = replayHttp({
       args,
@@ -139,8 +157,10 @@ function replay(path: string): void {
       },
     }).respond;
     replayer.start();
+
     return;
   }
+
   createInterface({ input: process.stdin })
     .on("line", (line) => {
       if (!line.trim()) return;
@@ -165,8 +185,10 @@ function printVersion(): void {
     const result = spawnSync(provider.realCommand(), ["--version"], { stdio: "inherit" });
     process.exit(result.status ?? 1);
   }
+
   const path = `${transcriptBase}.jsonl`;
   const version = existsSync(path) ? readTranscript(path).meta.version : undefined;
+
   if (!version) fail(`${path} has no recorded --version output.`);
   process.stdout.write(`${version}\n`);
   process.exit(0);
@@ -175,6 +197,7 @@ function printVersion(): void {
 /** Each provider process in a scenario gets its own transcript, in spawn order. */
 function claimTranscript(): string {
   mkdirSync(runDir, { recursive: true });
+
   for (let index = 1; ; index += 1) {
     try {
       closeSync(openSync(join(runDir, `spawn-${index}`), "wx"));
@@ -182,6 +205,7 @@ function claimTranscript(): string {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
       throw error;
     }
+
     return index === 1 ? `${transcriptBase}.jsonl` : `${transcriptBase}.${index}.jsonl`;
   }
 }
@@ -189,6 +213,7 @@ function claimTranscript(): string {
 function findWorktree(root: string | undefined): string | undefined {
   if (!root || !existsSync(root)) return undefined;
   const [entry] = readdirSync(root);
+
   return entry ? join(root, entry) : undefined;
 }
 
@@ -203,16 +228,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function requiredEnv(name: string): string {
   const value = env[`${SHIM_ENV_PREFIX}${name}`];
+
   if (!value) fail(`${SHIM_ENV_PREFIX}${name} is not set.`);
+
   return value!;
 }
 
 function fail(message: string): never {
   process.stderr.write(`agents-replay: ${message}\n`);
+
   try {
     appendFileSync(join(env[`${SHIM_ENV_PREFIX}RUN_DIR`] ?? tmpdir(), "replay-failures.log"), `${message}\n\n`);
   } catch {
     // The report file is best effort; stderr already has the message.
   }
+
   process.exit(MISMATCH_EXIT_CODE);
 }
