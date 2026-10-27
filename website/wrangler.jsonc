@@ -9,6 +9,9 @@
     "directory": "./dist",
     "not_found_handling": "404-page"
   },
+  // Workers Builds runs `wrangler preview` for non-production branches, which
+  // requires this block (assets and compatibility settings stay top level).
+  "previews": {},
   "routes": [{ "pattern": "devspace.run", "custom_domain": true }],
   "env": {
     // Manual staging deploy (`npx wrangler deploy --env staging`) of a build
