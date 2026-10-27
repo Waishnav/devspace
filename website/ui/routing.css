@@ -42,7 +42,7 @@
 
 .dm__core {
   text-align: center; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--dm-chip);
-  padding: 22px 6px; display: grid; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
+  padding: 22px 6px; display: grid; justify-items: center; gap: 4px; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
 }
 .dm__core b { font-size: 15px; }
 
