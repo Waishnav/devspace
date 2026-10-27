@@ -11,167 +11,29 @@ import {
 } from "./local-agent-adapters.js";
 import { parseSubagentsConfig } from "./local-agent-config.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
-assert.deepEqual(
-  resolveAcpModelConfigUpdate({
-    sessionId: "session_model_1",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "model",
-          category: "model",
-          options: [
-            { value: "claude-sonnet-4.5", name: "Sonnet" },
-            { value: "gpt-5.4", name: "GPT 5.4" },
-          ],
-        },
-      ],
-    },
-  }, "gpt-5.4", "cursor"),
-  { sessionId: "session_model_1", configId: "model", value: "gpt-5.4" },
-);
-
-assert.deepEqual(
-  resolveAcpModelConfigUpdate({
-    sessionId: "session_model_2",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "model_config",
-          category: "model",
-          options: [
-            {
-              group: "claude",
-              name: "Claude",
-              options: [
-                { value: "claude-sonnet-4.5", name: "Sonnet" },
-                { value: "claude-opus-4.5", name: "Opus" },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  }, "claude-opus-4.5", "copilot"),
-  { sessionId: "session_model_2", configId: "model_config", value: "claude-opus-4.5" },
-);
-
-assert.throws(
-  () => resolveAcpModelConfigUpdate({
-    sessionId: "session_model_3",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "model",
-          category: "model",
-          options: [{ value: "gpt-5.4", name: "GPT 5.4" }],
-        },
-      ],
-    },
-  }, "unknown-model", "cursor"),
-  /Available values: gpt-5\.4/,
-);
-
-assert.throws(
-  () => resolveAcpModelConfigUpdate(undefined, "gpt-5.4", "cursor"),
-  /session metadata/,
-);
-
-assert.throws(
-  () => resolveAcpModelConfigUpdate({ newSessionResponse: { configOptions: [] } }, "gpt-5.4", "cursor"),
-  /session id/,
-);
-
-assert.throws(
-  () => resolveAcpModelConfigUpdate({
-    sessionId: "session_model_4",
-    newSessionResponse: { configOptions: [] },
-  }, "gpt-5.4", "cursor"),
-  /does not expose a model/,
-);
-
-assert.deepEqual(
-  resolveAcpEffortConfigUpdate({
+// Model and effort share one resolver shape: find the config option by category, flat or grouped.
+for (const { resolve, category, flavor, missing } of [
+  { resolve: resolveAcpModelConfigUpdate, category: "model", flavor: "cursor" as const, missing: /does not expose a model/ },
+  { resolve: resolveAcpEffortConfigUpdate, category: "thought_level", flavor: "copilot" as const, missing: /does not expose a reasoning effort option/ },
+]) {
+  const session = (options: unknown[]) => ({
     sessionId: "session_1",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "effort",
-          category: "thought_level",
-          options: [
-            { value: "low", name: "Low" },
-            { value: "high", name: "High" },
-          ],
-        },
-      ],
-    },
-  }, "high", "cursor"),
-  { sessionId: "session_1", configId: "effort", value: "high" },
-);
+    newSessionResponse: { configOptions: [{ type: "select", id: "option_id", category, options }] },
+  });
 
-assert.deepEqual(
-  resolveAcpEffortConfigUpdate({
-    sessionId: "session_2",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "thoughts",
-          category: "thought_level",
-          options: [
-            {
-              group: "reasoning",
-              name: "Reasoning",
-              options: [
-                { value: "medium", name: "Medium" },
-                { value: "xhigh", name: "X High" },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  }, "xhigh", "copilot"),
-  { sessionId: "session_2", configId: "thoughts", value: "xhigh" },
-);
-
-assert.throws(
-  () => resolveAcpEffortConfigUpdate({
-    sessionId: "session_3",
-    newSessionResponse: {
-      configOptions: [
-        {
-          type: "select",
-          id: "thoughts",
-          category: "thought_level",
-          options: [{ value: "low", name: "Low" }],
-        },
-      ],
-    },
-  }, "max", "cursor"),
-  /Available values: low/,
-);
-
-assert.throws(
-  () => resolveAcpEffortConfigUpdate(undefined, "high", "copilot"),
-  /session metadata/,
-);
-
-assert.throws(
-  () => resolveAcpEffortConfigUpdate({ newSessionResponse: { configOptions: [] } }, "high", "copilot"),
-  /session id/,
-);
-
-assert.throws(
-  () => resolveAcpEffortConfigUpdate({
-    sessionId: "session_4",
-    newSessionResponse: { configOptions: [] },
-  }, "high", "copilot"),
-  /does not expose a reasoning effort option/,
-);
+  assert.deepEqual(
+    resolve(session([{ value: "a", name: "A" }, { value: "b", name: "B" }]), "b", flavor),
+    { sessionId: "session_1", configId: "option_id", value: "b" },
+  );
+  assert.deepEqual(
+    resolve(session([{ group: "g", name: "G", options: [{ value: "a", name: "A" }, { value: "c", name: "C" }] }]), "c", flavor),
+    { sessionId: "session_1", configId: "option_id", value: "c" },
+  );
+  assert.throws(() => resolve(session([{ value: "a", name: "A" }]), "unknown", flavor), /Available values: a/);
+  assert.throws(() => resolve(undefined, "a", flavor), /session metadata/);
+  assert.throws(() => resolve({ newSessionResponse: { configOptions: [] } }, "a", flavor), /session id/);
+  assert.throws(() => resolve({ sessionId: "session_1", newSessionResponse: { configOptions: [] } }, "a", flavor), missing);
+}
 
 {
   const env = claudeCommandEnvironment({
