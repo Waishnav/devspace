@@ -359,3 +359,15 @@ test("agent calls past maxOutstanding fail", async () => {
     (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_OUTSTANDING_LIMIT",
   );
 });
+
+test("non-finite numbers in agent results are rejected instead of becoming null", async () => {
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      runWorkflowScript({
+        source: `return await agent("go", { target: "worker" });`,
+        onAgent: () => ({ value }),
+      }),
+      (error: WireInput) => error instanceof WorkflowError && error.code === "WORKFLOW_INVALID_JSON",
+    );
+  }
+});

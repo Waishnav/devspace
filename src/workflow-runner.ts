@@ -1,5 +1,5 @@
 import { unsafeNarrow } from "./unsafe-narrow.js";
-import { isJsonString, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, jsonKind } from "./json-value.js";
+import { isJsonString, isNumberValue, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, jsonKind } from "./json-value.js";
 import type { WireInput, JsonObject, JsonValue } from "./json-value.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -277,7 +277,7 @@ export function validateJson(value: WireInput, label: string, maxBytes: number):
 
   try {
     encoded = JSON.stringify(value, (_key, current: WireInput) => {
-      if (isJsonNumber(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
+      if (isNumberValue(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
 
       if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
         throw new TypeError(`unsupported ${jsonKind(current)}`);

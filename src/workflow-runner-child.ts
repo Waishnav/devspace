@@ -1,5 +1,5 @@
 import { unsafeNarrow } from "./unsafe-narrow.js";
-import { isJsonString, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, optionalFields, jsonKind } from "./json-value.js";
+import { isJsonString, isNumberValue, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, optionalFields, jsonKind } from "./json-value.js";
 import type { WireInput, JsonObject } from "./json-value.js";
 import {
   getQuickJS,
@@ -428,7 +428,7 @@ function encodeJson(value: WireInput, label: string): string {
 
   try {
     encoded = JSON.stringify(value, (_key, current: WireInput) => {
-      if (isJsonNumber(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
+      if (isNumberValue(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
 
       if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
         throw new TypeError(`unsupported ${jsonKind(current)}`);

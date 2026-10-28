@@ -1,5 +1,5 @@
 import { unsafeNarrow } from "./unsafe-narrow.js";
-import { isJsonBoolean, isJsonNumber, isBigintValue, isFunctionValue, isSymbolValue, isJsonString, isObjectValue } from "./json-value.js";
+import { isJsonBoolean, isJsonNumber, isNumberValue, isBigintValue, isFunctionValue, isSymbolValue, isJsonString, isObjectValue } from "./json-value.js";
 import type { WireInput, JsonObject } from "./json-value.js";
 import { basename, isAbsolute } from "node:path";
 import { Readable } from "node:stream";
@@ -267,7 +267,7 @@ export function describeIncomingArtifactValue(
 
     if (isJsonBoolean(current)) return { type: "boolean" };
 
-    if (isJsonNumber(current)) return { type: "number", finite: Number.isFinite(current) };
+    if (isNumberValue(current)) return { type: "number", finite: Number.isFinite(current) };
 
     if (isBigintValue(current)) return { type: "bigint" };
 

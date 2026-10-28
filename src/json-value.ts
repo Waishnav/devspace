@@ -45,6 +45,11 @@ export function isJsonNumber<T>(value: T): value is T & number {
   return z.number().safeParse(value).success;
 }
 
+/** Any JavaScript number, including the NaN and ±Infinity values that `isJsonNumber` rejects. */
+export function isNumberValue<T>(value: T): value is T & number {
+  return isJsonNumber(value) || Number.isNaN(value) || value === Infinity || value === -Infinity;
+}
+
 export function isJsonBoolean<T>(value: T): value is T & boolean {
   return z.boolean().safeParse(value).success;
 }
@@ -67,7 +72,7 @@ export function jsonKind(value: WireInput): string {
 
   if (isJsonString(value)) return "string";
 
-  if (isJsonNumber(value)) return "number";
+  if (isNumberValue(value)) return "number";
 
   if (isJsonBoolean(value)) return "boolean";
 
