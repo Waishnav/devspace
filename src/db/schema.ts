@@ -167,12 +167,21 @@ export const localAgentSessions = sqliteTable(
 );
 
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
+
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
+
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
+
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+
 export type WorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferSelect;
+
 export type NewWorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferInsert;
+
 export type WorkspaceTurnRow = typeof workspaceTurns.$inferSelect;
+
 export type WorkspaceTurnToolCallRow = typeof workspaceTurnToolCalls.$inferSelect;
+
 export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
+
 export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;

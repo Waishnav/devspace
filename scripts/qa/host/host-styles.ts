@@ -2,7 +2,9 @@ import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 // ext-apps' package root re-exports its spec types extensionlessly, which NodeNext cannot follow.
 type HostContext = NonNullable<NonNullable<ConstructorParameters<typeof AppBridge>[3]>["hostContext"]>;
+
 type McpUiTheme = NonNullable<HostContext["theme"]>;
+
 type McpUiHostStyles = NonNullable<HostContext["styles"]>;
 
 // Representative host palettes using the spec's style variable names. Real
@@ -37,6 +39,7 @@ const palettes: Record<McpUiTheme, Record<string, string>> = {
 
 export function hostStyles(theme: McpUiTheme): McpUiHostStyles {
   return {
+    // SAFETY: The surrounding checks or construction already match this type.
     variables: {
       ...palettes[theme],
       "--font-sans": "ui-sans-serif, system-ui, sans-serif",

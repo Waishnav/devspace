@@ -13,10 +13,12 @@ import { pierrePrettyScrollbarCss } from "./scrollbar.js";
 // Styles live in review-diff.css.
 
 export type ReviewThemeType = "light" | "dark";
+
 export type ReviewFileMetadata = NonNullable<ToolResultCard["files"]>;
 
 export function parseReviewFiles(patch: string | undefined): FileDiffMetadata[] {
   if (!patch) return [];
+
   return parsePatchFiles(patch, "review", true).flatMap((parsedPatch) => parsedPatch.files);
 }
 
@@ -56,11 +58,13 @@ export function ReviewDiffFile({
   id?: string;
 }) {
   const stats = diffStats(fileDiff);
+
   const changeKind = getRenderedFileChangeKind(
     files,
     { path: fileDiff.name, previousPath: fileDiff.prevName, type: fileDiff.type },
     index,
   );
+
   const pathDisplay = getRenderedFileChangePathDisplay(
     files,
     { path: fileDiff.name, previousPath: fileDiff.prevName },

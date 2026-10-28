@@ -7,6 +7,7 @@ export const LOCAL_AGENT_DRIVER_KINDS = [
 ] as const;
 
 export const LEGACY_ACP_DRIVER_KINDS = ["cursor", "copilot", "grok"] as const;
+
 export const LOCAL_AGENT_DEFAULT_PROVIDER_IDS = [
   "codex",
   "claude",
@@ -33,6 +34,8 @@ export function isLegacyAcpDriverKind(value: string): value is typeof LEGACY_ACP
 
 export function defaultDriverForProviderId(value: string): LocalAgentDriverKind | undefined {
   if (isLocalAgentDriverKind(value)) return value;
+
   if (isLegacyAcpDriverKind(value)) return "acp";
+
   return undefined;
 }

@@ -90,6 +90,7 @@ async function codexFixture(t: TestContext) {
     await rm(root, { recursive: true, force: true });
   });
   await runtime.initialize();
+
   return runtime;
 }
 
@@ -129,6 +130,7 @@ test("command resolution skips candidates whose version probe exits non-zero", s
 test("a new thread is reported, resumed, and released", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
   let callbackSessionId: string | undefined;
+
   const firstResult = await runtime.run({
     prompt: "first",
     workspaceRoot: "/tmp/project",
@@ -136,15 +138,20 @@ test("a new thread is reported, resumed, and released", skipOnWindows, async (t)
     model: "gpt-5.4",
     effort: "high",
   }, { onSessionId: (id) => { callbackSessionId = id; } });
+
   assert.equal(firstResult.isOk(), true);
+
   if (firstResult.isErr()) throw firstResult.error;
   const first = firstResult.value;
+
   const resumedResult = await runtime.run({
     prompt: "resumed",
     workspaceRoot: "/tmp/project",
     providerSessionId: first.providerSessionId ?? undefined,
   });
+
   assert.equal(resumedResult.isOk(), true);
+
   if (resumedResult.isErr()) throw resumedResult.error;
   const resumed = resumedResult.value;
   assert.equal(first.providerSessionId, "thread_new");
@@ -157,12 +164,15 @@ test("a new thread is reported, resumed, and released", skipOnWindows, async (t)
 
 test("a failed turn is a non-retryable provider execution error", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
+
   const failed = await runtime.run({
     prompt: "fail",
     workspaceRoot: "/tmp/project",
     providerSessionId: "thread_new",
   });
+
   assert.equal(failed.isErr(), true);
+
   if (failed.isErr()) {
     assert.equal(failed.error.code, "PROVIDER_EXECUTION_ERROR");
     assert.equal(failed.error.provider, "codex");
@@ -174,11 +184,13 @@ test("a failed turn is a non-retryable provider execution error", skipOnWindows,
 test("command items stream as tool events before the final message", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
   const codexEvents: unknown[] = [];
+
   const tools = await runtime.run({
     prompt: "tools",
     workspaceRoot: "/tmp/project",
     providerSessionId: "thread_new",
   }, { onEvent: (event) => { codexEvents.push(event); } });
+
   assert.equal(tools.isOk() && tools.value.finalResponse, "Tests fail.");
   assert.deepEqual(codexEvents, [
     { type: "tool_started", tool: "shell", summary: "pnpm test" },
@@ -189,12 +201,15 @@ test("command items stream as tool events before the final message", skipOnWindo
 
 test("a turn without a final message is a protocol error that keeps its cause internal", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
+
   const protocolFailure = await runtime.run({
     prompt: "empty",
     workspaceRoot: "/tmp/project",
     providerSessionId: "thread_new",
   });
+
   assert.equal(protocolFailure.isErr(), true);
+
   if (protocolFailure.isErr()) {
     assert.equal(protocolFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
     assert.equal(protocolFailure.error.provider, "codex");
@@ -206,25 +221,31 @@ test("a turn without a final message is a protocol error that keeps its cause in
 
 test("empty turn items fall back to item/completed stream items", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
+
   const notLoaded = await runtime.run({
     prompt: "notLoaded",
     workspaceRoot: "/tmp/project",
     providerSessionId: "thread_new",
   });
+
   assert.equal(notLoaded.isOk(), true, "empty turn.items must fall back to item/completed stream items");
+
   if (notLoaded.isErr()) throw notLoaded.error;
   assert.equal(notLoaded.value.finalResponse, "CODEXOK");
 });
 
 test("allowed mode sends a workspace-write sandbox policy with network access", skipOnWindows, async (t) => {
   const runtime = await codexFixture(t);
+
   const policy = await runtime.run({
     prompt: "policy",
     workspaceRoot: "/tmp/project",
     writeMode: "allowed",
     providerSessionId: "thread_new",
   });
+
   assert.equal(policy.isOk(), true);
+
   if (policy.isErr()) throw policy.error;
   assert.deepEqual(JSON.parse(policy.value.finalResponse), { type: "workspaceWrite", networkAccess: true });
 });
@@ -232,6 +253,7 @@ test("allowed mode sends a workspace-write sandbox policy with network access", 
 test("a driver without a resolvable command is unavailable", async () => {
   const unavailable = await new CodexLocalAgentDriver({}, () => undefined).createRuntime(cachedContext);
   assert.equal(unavailable.isErr(), true);
+
   if (unavailable.isErr()) {
     assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
     assert.equal(unavailable.error.retryable, false);

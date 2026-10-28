@@ -16,10 +16,12 @@ export async function pruneStaleManagedWorktrees(
   now = new Date(),
 ): Promise<BetterResult<ManagedWorktreeCleanupResult, WorkspaceStoreError>> {
   const opened = createWorkspaceStoreResult(config.stateDir);
+
   if (opened.isErr()) return opened;
 
   let result!: BetterResult<ManagedWorktreeCleanupResult, WorkspaceStoreError>;
   let closed!: BetterResult<void, WorkspaceStoreError>;
+
   try {
     result = await cleanupManagedWorktrees({
       store: opened.value,
@@ -30,7 +32,10 @@ export async function pruneStaleManagedWorktrees(
   } finally {
     closed = closeWorkspaceStoreResult(opened.value);
   }
+
   if (result.isErr()) return result;
+
   if (closed.isErr()) return closed;
+
   return result;
 }

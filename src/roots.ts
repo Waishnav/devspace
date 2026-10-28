@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { homedir } from "node:os";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -11,6 +14,7 @@ export class AccessDeniedError extends Error {
 
 export function expandHomePath(path: string): string {
   if (path === "~") return homedir();
+
   if (path.startsWith("~/") || path.startsWith("~\\")) {
     return resolve(homedir(), path.slice(2));
   }
@@ -34,6 +38,7 @@ export function isPathInsideRoot(path: string, root: string): boolean {
 
 export function assertAllowedPath(path: string, allowedRoots: string[]): string {
   const resolvedPath = resolve(expandHomePath(path));
+
   if (allowedRoots.some((root) => isPathInsideRoot(resolvedPath, root))) {
     return resolvedPath;
   }
@@ -43,6 +48,7 @@ export function assertAllowedPath(path: string, allowedRoots: string[]): string 
 
 export function resolveAllowedPath(inputPath: string, cwd: string, allowedRoots: string[]): string {
   const absolutePath = resolve(cwd, expandHomePath(inputPath));
+
   return assertAllowedPath(absolutePath, allowedRoots);
 }
 
@@ -56,12 +62,14 @@ export async function resolveCanonicalAllowedPath(
 
   for (const root of allowedRoots) {
     let canonicalRoot: string;
+
     try {
       canonicalRoot = await realpath(resolve(expandHomePath(root)));
     } catch (error) {
       if (isMissingPathError(error)) continue;
       throw error;
     }
+
     if (isPathInsideRoot(canonicalPath, canonicalRoot)) return canonicalPath;
   }
 
@@ -76,6 +84,7 @@ export async function resolvePathInsideCanonicalRoot(
 ): Promise<string> {
   const absolutePath = resolveAllowedPath(inputPath, cwd, [logicalRoot]);
   const canonicalPath = await canonicalizePath(absolutePath);
+
   if (isPathInsideRoot(canonicalPath, canonicalRoot)) return canonicalPath;
   throw new AccessDeniedError(`Path is outside allowed roots: ${inputPath}`);
 }
@@ -88,12 +97,14 @@ async function canonicalizePath(path: string): Promise<string> {
     try {
       const boundaryPath = await realpath(candidate);
       const suffix = relative(candidate, absolutePath);
+
       return suffix ? resolve(boundaryPath, suffix) : boundaryPath;
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
 
       try {
         const stats = await lstat(candidate);
+
         if (stats.isSymbolicLink()) {
           throw new AccessDeniedError(`Cannot resolve symbolic link: ${path}`);
         }
@@ -102,18 +113,20 @@ async function canonicalizePath(path: string): Promise<string> {
       }
 
       const parent = dirname(candidate);
+
       if (parent === candidate) throw error;
       candidate = parent;
     }
   }
 }
 
-function isMissingPathError(error: unknown): boolean {
+function isMissingPathError(error: WireInput): boolean {
   return Boolean(
-    typeof error === "object" &&
+    isObjectValue(error) &&
       error &&
       "code" in error &&
-      ((error as NodeJS.ErrnoException).code === "ENOENT" ||
-        (error as NodeJS.ErrnoException).code === "ENOTDIR"),
+      // SAFETY: The surrounding checks or construction already match this type.
+      (unsafeNarrow<NodeJS.ErrnoException>(error).code === "ENOENT" ||
+        unsafeNarrow<NodeJS.ErrnoException>(error).code === "ENOTDIR"),
   );
 }

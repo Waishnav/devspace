@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import type { JsonObject } from "./json-value.js";
 import { loadAgentConfig } from "./config.js";
 import { createLocalAgentDrivers } from "./local-agent-adapters.js";
 import { localAgentProviderAvailability } from "./local-agent-availability.js";
@@ -20,12 +21,15 @@ import { WorkflowStore } from "./workflow-store.js";
 const config = loadAgentConfig();
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 const paths = localAgentDaemonPaths(config.stateDir);
+
 const log = (
   level: "info" | "warn" | "error",
   event: string,
-  fields: Record<string, unknown>,
+  fields: JsonObject,
 ) => writeLocalAgentDaemonLog(paths, level, event, fields);
+
 const store = new LocalAgentStore(paths.stateDir);
+
 const manager = new LocalAgentManager({
   store,
   drivers: createLocalAgentDrivers({ subagents: config.subagents }),
@@ -41,6 +45,7 @@ const manager = new LocalAgentManager({
     ? (workspaceRoot, workspaceId) => isManagedWorkflowWorkspace(config, workspaceRoot, workspaceId)
     : undefined,
 });
+
 // Hidden in v1.1: without the flag the daemon has no workflow manager and rejects workflow requests.
 const workflows = workflowsEnabled()
   ? new WorkflowManager({
@@ -52,6 +57,7 @@ const workflows = workflowsEnabled()
     config,
   })
   : undefined;
+
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
@@ -59,6 +65,7 @@ const daemon = new LocalAgentDaemon({
   configRevision: localAgentProviderConfigRevision(config.subagents),
   onLockAcquired: () => {
     const reconciled = manager.reconcileActiveRuns();
+
     if (reconciled.isErr()) throw reconciled.error;
     workflows?.reconcile();
   },
@@ -67,9 +74,11 @@ const daemon = new LocalAgentDaemon({
 });
 
 let shuttingDown = false;
+
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+
   const forceTimer = setTimeout(() => {
     log("error", "daemon_forced_shutdown", {
       activeTurns: manager.activeTurnCount,
@@ -80,10 +89,13 @@ const shutdown = () => {
     // reconciles them to error while preserving provider continuation data.
     process.exit(1);
   }, parseShutdownTimeoutMs(process.env.DEVSPACE_AGENTD_SHUTDOWN_TIMEOUT_MS));
+
   forceTimer.unref();
   void daemon.close().finally(() => process.exit(0));
 };
+
 process.once("SIGINT", shutdown);
+
 process.once("SIGTERM", shutdown);
 
 try {
@@ -94,6 +106,7 @@ try {
     await manager.close();
     process.exit(0);
   }
+
   log("error", "daemon_start_failed", { error: error instanceof Error ? error.message : String(error) });
   await workflows?.close();
   await manager.close();
@@ -104,17 +117,21 @@ try {
 function parseIdleShutdownMs(value: string | undefined): number {
   if (value === undefined || value.trim() === "") return 30_000;
   const parsed = Number(value);
+
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error("DEVSPACE_AGENTD_IDLE_TIMEOUT_MS must be a non-negative duration.");
   }
+
   return parsed;
 }
 
 function parseShutdownTimeoutMs(value: string | undefined): number {
   if (value === undefined || value.trim() === "") return DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
   const parsed = Number(value);
+
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error("DEVSPACE_AGENTD_SHUTDOWN_TIMEOUT_MS must be a non-negative duration.");
   }
+
   return parsed;
 }

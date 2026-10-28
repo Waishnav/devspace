@@ -1,8 +1,9 @@
+import { optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import {
   defaultDriverForProviderId,
-  isLocalAgentDriverKind,
   isLegacyAcpDriverKind,
   LEGACY_ACP_DRIVER_KINDS,
   LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
@@ -16,7 +17,7 @@ const environmentSchema = z.record(
   z.string(),
 );
 
-const providerShape = {
+const providerFields = {
   enabled: z.boolean(),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
@@ -39,21 +40,24 @@ const inputDriverKinds = [...LOCAL_AGENT_DRIVER_KINDS, ...LEGACY_ACP_DRIVER_KIND
 const providerSchema = z.object({
   id: z.string().trim().min(1),
   driver: z.enum(inputDriverKinds).optional(),
-  ...providerShape,
+  ...providerFields,
   command: commandSchema,
   config: acpConfigSchema.optional(),
 }).strict().superRefine((provider, context) => {
   const driver = provider.driver
     ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
     : defaultDriverForProviderId(provider.id);
+
   if (!driver) {
     context.addIssue({
       code: "custom",
       path: ["driver"],
       message: `Subagent provider instance ${provider.id} must declare a driver.`,
     });
+
     return;
   }
+
   if (driver !== "acp" && provider.config !== undefined) {
     context.addIssue({
       code: "custom",
@@ -61,9 +65,11 @@ const providerSchema = z.object({
       message: `${driver} does not support ACP config.`,
     });
   }
+
   const flavor = provider.config?.flavor
     ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
     ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+
   if (driver === "acp" && flavor && provider.config?.args !== undefined) {
     context.addIssue({
       code: "custom",
@@ -71,6 +77,7 @@ const providerSchema = z.object({
       message: `${flavor} sets its own ACP arguments for each write mode; config.args applies only to generic ACP providers.`,
     });
   }
+
   if (driver === "acp" && !provider.command && !isLegacyAcpDriverKind(provider.id)) {
     context.addIssue({
       code: "custom",
@@ -86,6 +93,7 @@ export const subagentsConfigSchema = z.object({
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
   const seen = new Set<LocalAgentProviderInstanceId>();
+
   for (const [index, provider] of value.providers.entries()) {
     if (seen.has(provider.id)) {
       context.addIssue({
@@ -94,6 +102,7 @@ export const subagentsConfigSchema = z.object({
         message: `Duplicate subagent provider: ${provider.id}`,
       });
     }
+
     seen.add(provider.id);
   }
 });
@@ -104,6 +113,7 @@ export const storedSubagentsConfigSchema = z.union([
 ]);
 
 type ParsedSubagentProviderConfig = z.infer<typeof providerSchema>;
+
 type ParsedSubagentsConfig = z.infer<typeof subagentsConfigSchema>;
 
 export interface SubagentProviderConfig extends Omit<ParsedSubagentProviderConfig, "driver"> {
@@ -123,14 +133,16 @@ export function resolveSubagentsConfig(config: ParsedSubagentsConfig): Subagents
       const driver = provider.driver
         ? (isLegacyAcpDriverKind(provider.driver) ? "acp" : provider.driver)
         : defaultDriverForProviderId(provider.id)!;
+
       // `driver: "cursor"` (or a built-in id) predates generic ACP; keep it as the ACP flavor.
       const flavor = provider.config?.flavor
         ?? (provider.driver && isLegacyAcpDriverKind(provider.driver) ? provider.driver : undefined)
         ?? (isLegacyAcpDriverKind(provider.id) ? provider.id : undefined);
+
       return {
         ...provider,
         driver,
-        ...(driver === "acp" && flavor ? { config: { ...provider.config, flavor } } : {}),
+        ...optionalFields(driver === "acp" && flavor ? { config: { ...provider.config, flavor } } : undefined),
       };
     }),
   };
@@ -165,7 +177,7 @@ export function implicitSubagentsConfig(): SubagentsConfig {
   };
 }
 
-export function parseSubagentsConfig(value: unknown): SubagentsConfig {
+export function parseSubagentsConfig(value: WireInput): SubagentsConfig {
   return resolveSubagentsConfig(subagentsConfigSchema.parse(value));
 }
 
@@ -192,14 +204,16 @@ export function localAgentProviderEnvironment(
   const env = { ...inherited, ...providerConfig?.env };
   const commandVariable = providerConfig ? providerCommandVariable(providerConfig.driver) : undefined;
   const command = providerConfig?.command;
+
   if (commandVariable && command) env[commandVariable] = command;
+
   return env;
 }
 
 export function localAgentProviderEnvironmentOverrides(
   config: SubagentsConfig,
   providerInstanceId: LocalAgentProviderInstanceId,
-): Record<string, string> {
+) {
   return { ...subagentProviderConfig(config, providerInstanceId)?.env };
 }
 
@@ -221,18 +235,17 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
       id: provider.id,
       driver: provider.driver,
       enabled: provider.enabled,
-      ...(provider.model ? { model: provider.model } : {}),
-      ...(provider.effort ? { effort: provider.effort } : {}),
-      ...("command" in provider && provider.command ? { command: provider.command } : {}),
-      ...(provider.env && Object.keys(provider.env).length > 0
-        ? {
+      ...optionalFields(provider.model ? { model: provider.model } : undefined),
+      ...optionalFields(provider.effort ? { effort: provider.effort } : undefined),
+      ...optionalFields("command" in provider && provider.command ? { command: provider.command } : undefined),
+      ...optionalFields(provider.env && Object.keys(provider.env).length > 0 ? {
             env: Object.fromEntries(
               Object.entries(provider.env).sort(([left], [right]) => left.localeCompare(right)),
             ),
-          }
-        : {}),
-      ...(provider.config ? { config: provider.config } : {}),
+          } : undefined),
+      ...optionalFields(provider.config ? { config: provider.config } : undefined),
     }));
+
   return createHash("sha256")
     .update(JSON.stringify({ enabled: config.enabled, providers }))
     .digest("hex");

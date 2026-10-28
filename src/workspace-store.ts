@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import { and, eq, lt } from "drizzle-orm";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
@@ -9,7 +10,9 @@ import {
 } from "./db/schema.js";
 
 export type WorkspaceMode = "checkout" | "worktree";
+
 export type WorkspaceStatus = "active" | "inactive" | "pruned";
+
 export type WorkspaceRecoveryKind = "head" | "stash";
 
 export class WorkspaceStoreError extends TaggedError("WorkspaceStoreError")<{
@@ -101,6 +104,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
     managed?: boolean;
   }): WorkspaceSession {
     const now = new Date().toISOString();
+
     const session: WorkspaceSession = {
       id: input.id,
       root: input.root,
@@ -197,6 +201,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
           ),
         )
         .run();
+
       return result.changes > 0;
     }, id);
   }
@@ -213,6 +218,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
           ),
         )
         .run();
+
       return result.changes > 0;
     }, id);
   }
@@ -250,6 +256,7 @@ export class SqliteWorkspaceStore implements WorkspaceStore {
     workspaceSessionId: string;
   }): WorkspaceConversationBinding {
     const now = new Date().toISOString();
+
     const row = this.database.db
       .insert(workspaceConversationBindings)
       .values({
@@ -371,11 +378,12 @@ function workspaceStoreResult<T>(
     return Result.ok(run());
   } catch (cause) {
     if (isProgrammerDefect(cause)) throw cause;
+
     return Result.err(new WorkspaceStoreError(operation, cause, workspaceId));
   }
 }
 
-function isProgrammerDefect(error: unknown): boolean {
+function isProgrammerDefect(error: WireInput): boolean {
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError

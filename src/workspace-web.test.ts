@@ -1,3 +1,4 @@
+import { isJsonString } from "./json-value.js";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { request, type IncomingMessage } from "node:http";
@@ -47,6 +48,7 @@ test("workspace pages require an owner session", async (t) => {
   const listed = await fetch(`${baseUrl}/web/api/workspaces`, { headers: { Cookie: session } });
   assert.equal(listed.status, 200);
   assert.equal(listed.headers.get("cache-control"), "no-store");
+  // SAFETY: The surrounding checks or construction already match this type.
   const body = await listed.json() as { workspaces: Array<{ workspaceId: string; root: string }> };
   assert.deepEqual(body.workspaces.map((workspace) => workspace.workspaceId), ["ws_web"]);
   assert.equal(body.workspaces[0]?.root, root);
@@ -59,6 +61,7 @@ test("workspace pages require an owner session", async (t) => {
     headers: { ...sameOrigin, Cookie: session },
     redirect: "manual",
   });
+
   assert.equal(logout.status, 303);
   const afterLogout = await fetch(`${baseUrl}/web/api/workspaces`, { headers: { Cookie: session } });
   assert.equal(afterLogout.status, 401);
@@ -66,10 +69,12 @@ test("workspace pages require an owner session", async (t) => {
 
 test("workspace pages reject hosts outside the allowed hosts", async (t) => {
   const { baseUrl } = await startServer(t);
+
   // fetch cannot override Host, so use a raw request like a DNS-rebinding page would send.
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     request(`${baseUrl}/web/login`, { headers: { Host: "attacker.example" } }, resolve).on("error", reject).end();
   });
+
   response.resume();
   assert.equal(response.statusCode, 403);
 });
@@ -77,11 +82,13 @@ test("workspace pages reject hosts outside the allowed hosts", async (t) => {
 async function startServer(t: TestContext): Promise<{ baseUrl: string; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "devspace-web-test-"));
   const stateDir = join(root, "state");
+
   const config = loadConfig(writeTestDevspaceConfig(join(root, "config"), {
     storage: { stateDir },
     workspaces: { allowedRoots: [root] },
     logging: { level: "silent" },
   }));
+
   const workspaces = new SqliteWorkspaceStore(stateDir);
   workspaces.createSession({ id: "ws_web", root });
   workspaces.close();
@@ -96,7 +103,8 @@ async function startServer(t: TestContext): Promise<{ baseUrl: string; root: str
   });
   await once(listener, "listening");
   const address = listener.address();
-  assert.ok(address && typeof address !== "string");
+  assert.ok(address && !isJsonString(address));
+
   return { baseUrl: `http://127.0.0.1:${address.port}`, root };
 }
 

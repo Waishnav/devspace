@@ -47,11 +47,13 @@ export interface ServerConfig extends AgentConfig {
 export function loadAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   const files = loadDevspaceFiles(env);
   const { subagents } = files.config;
+
   return agentConfig(files, env, subagents ? resolveSubagentsConfig(subagents) : implicitSubagentsConfig());
 }
 
 function agentConfig(files: DevspaceFiles, env: NodeJS.ProcessEnv, subagents: SubagentsConfig): AgentConfig {
   const stored = files.config;
+
   return {
     configDir: files.dir,
     allowedRoots: normalizePaths(stored.workspaces.allowedRoots, [process.cwd()]),
@@ -69,9 +71,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const stored = files.config;
   const host = stored.server.host;
   const port = stored.server.port;
+
   const publicBaseUrl = parsePublicBaseUrl(
     stored.server.publicBaseUrl ?? localPublicBaseUrl(host, port),
   );
+
   const derivedAllowedHosts = [
     "localhost",
     "127.0.0.1",
@@ -124,17 +128,25 @@ function normalizePath(path: string): string {
 
 function normalizeAllowedHosts(hosts: string[]): string[] {
   if (hosts.includes("*")) return ["*"];
-  return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)));
+
+  return Array.from(new Set(hosts.flatMap((host) => {
+    const trimmed = host.trim();
+
+    return trimmed ? [trimmed] : [];
+  })));
 }
 
 function parseRequiredSecret(value: string | undefined): string {
   const secret = value?.trim();
+
   if (!secret) {
     throw new Error("OAuth owner token is required. Run: devspace init");
   }
+
   if (secret.length < 16) {
     throw new Error("OAuth owner token must be at least 16 characters long.");
   }
+
   return secret;
 }
 
@@ -143,13 +155,16 @@ function parsePublicBaseUrl(value: string): string {
   parsed.hash = "";
   parsed.search = "";
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+
   return parsed.toString().replace(/\/$/, "");
 }
 
 function localPublicBaseUrl(host: string, port: number): string {
   const publicHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+
   const formattedHost = publicHost.includes(":") && !publicHost.startsWith("[")
     ? `[${publicHost}]`
     : publicHost;
+
   return `http://${formattedHost}:${port}`;
 }

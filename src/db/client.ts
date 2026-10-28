@@ -6,6 +6,7 @@ import * as schema from "./schema.js";
 import { migrateDatabase } from "./migrations.js";
 
 export type SqliteDatabase = Database.Database;
+
 export type AppDatabase = ReturnType<typeof createDrizzleDatabase>;
 
 export interface DatabaseHandle {

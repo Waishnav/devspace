@@ -30,22 +30,27 @@ export function buildDiffTree(files: ReadonlyArray<DiffTreeFile>): DiffTreeNode[
   for (const file of files) {
     const segments = file.path.split("/").filter(Boolean);
     const name = segments.pop();
+
     if (!name) continue;
 
     const ancestors = [root];
     let current = root;
+
     for (const segment of segments) {
       const path = current.path ? `${current.path}/${segment}` : segment;
       let next = current.directories.get(segment);
+
       if (!next) {
         next = directory(segment, path);
         current.directories.set(segment, next);
       }
+
       current = next;
       ancestors.push(current);
     }
 
     current.files.push({ kind: "file", name, path: file.path, additions: file.additions, removals: file.removals });
+
     for (const ancestor of ancestors) {
       ancestor.additions += file.additions;
       ancestor.removals += file.removals;
@@ -70,15 +75,19 @@ function toNodes(parent: MutableDirectory): DiffTreeNode[] {
       removals: child.removals,
       children: toNodes(child),
     }));
+
   const files = [...parent.files].sort((left, right) => collator.compare(left.name, right.name));
+
   return [...directories, ...files];
 }
 
 function compact(node: Extract<DiffTreeNode, { kind: "directory" }>): DiffTreeNode {
   let current = node;
+
   while (current.children.length === 1 && current.children[0]?.kind === "directory") {
     const only = current.children[0];
     current = { ...only, name: `${current.name}/${only.name}` };
   }
+
   return current;
 }

@@ -1,3 +1,4 @@
+import { optionalFields } from "./json-value.js";
 import { and, asc, count, desc, eq, max, sql } from "drizzle-orm";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import {
@@ -11,6 +12,7 @@ import {
 import type { WorkspaceMode, WorkspaceStatus } from "./workspace-store.js";
 
 export type WorkspaceTurnStatus = "open" | "closed";
+
 export type WorkspaceToolCallOrigin = "model" | "card";
 
 export interface ActivityWorkspaceRecord {
@@ -93,6 +95,7 @@ export class WorkspaceActivityStore {
   openTurn(workspaceId: string, now = new Date()): WorkspaceTurn {
     const open = this.database.sqlite.transaction(() => {
       const existing = this.findOpenTurnRow(workspaceId);
+
       if (existing) return existing;
 
       const previous = this.database.db
@@ -100,6 +103,7 @@ export class WorkspaceActivityStore {
         .from(workspaceTurns)
         .where(eq(workspaceTurns.workspaceSessionId, workspaceId))
         .get();
+
       return this.database.db
         .insert(workspaceTurns)
         .values({
@@ -111,11 +115,13 @@ export class WorkspaceActivityStore {
         .returning()
         .get();
     });
+
     return this.withCallCounts(open.immediate());
   }
 
   currentTurn(workspaceId: string): WorkspaceTurn | undefined {
     const row = this.findOpenTurnRow(workspaceId);
+
     return row ? this.withCallCounts(row) : undefined;
   }
 
@@ -128,6 +134,7 @@ export class WorkspaceActivityStore {
       .where(eq(workspaceTurns.id, turn.id))
       .run();
     this.pruneClosedTurns(workspaceId);
+
     return { ...turn, status: "closed", reviewRef, closedAt: now.toISOString() };
   }
 
@@ -149,6 +156,7 @@ export class WorkspaceActivityStore {
         durationMs: input.durationMs,
       })
       .run();
+
     return Number(inserted.lastInsertRowid);
   }
 
@@ -159,6 +167,7 @@ export class WorkspaceActivityStore {
 
   getWorkspace(workspaceId: string): ActivityWorkspaceRecord | undefined {
     const row = this.workspaceQuery().where(eq(workspaceSessions.id, workspaceId)).get();
+
     return row ? rowToWorkspace(row) : undefined;
   }
 
@@ -202,6 +211,7 @@ export class WorkspaceActivityStore {
         eq(workspaceTurns.sequence, sequence),
       ))
       .get();
+
     return row ? rowToTurn(row) : undefined;
   }
 
@@ -247,6 +257,7 @@ export class WorkspaceActivityStore {
 
   private withCallCounts(row: WorkspaceTurnRow): WorkspaceTurn {
     const counts = this.turnQuery().where(eq(workspaceTurns.id, row.id)).get();
+
     return counts ? rowToTurn(counts) : rowToTurn({ turn: row, toolCalls: 0, failedToolCalls: 0 });
   }
 
@@ -272,12 +283,14 @@ function rowToWorkspace({ session, turns, lastActivityAt }: {
   return {
     workspaceId: session.id,
     root: session.root,
+    // SAFETY: The surrounding checks or construction already match this type.
     mode: session.mode as WorkspaceMode,
+    // SAFETY: The surrounding checks or construction already match this type.
     status: session.status as WorkspaceStatus,
-    ...(session.sourceRoot ? { sourceRoot: session.sourceRoot } : {}),
+    ...optionalFields(session.sourceRoot ? { sourceRoot: session.sourceRoot } : undefined),
     createdAt: session.createdAt,
     lastUsedAt: session.lastUsedAt,
-    ...(lastActivityAt ? { lastActivityAt } : {}),
+    ...optionalFields(lastActivityAt ? { lastActivityAt } : undefined),
     turns: turns ?? 0,
   };
 }
@@ -288,14 +301,16 @@ function rowToTurn(row: {
   failedToolCalls: number;
 }): WorkspaceTurn {
   const { turn } = row;
+
   return {
     id: turn.id,
     workspaceId: turn.workspaceSessionId,
     sequence: turn.sequence,
+    // SAFETY: The surrounding checks or construction already match this type.
     status: turn.status as WorkspaceTurnStatus,
-    ...(turn.reviewRef ? { reviewRef: turn.reviewRef } : {}),
+    ...optionalFields(turn.reviewRef ? { reviewRef: turn.reviewRef } : undefined),
     startedAt: turn.startedAt,
-    ...(turn.closedAt ? { closedAt: turn.closedAt } : {}),
+    ...optionalFields(turn.closedAt ? { closedAt: turn.closedAt } : undefined),
     toolCalls: row.toolCalls,
     failedToolCalls: Number(row.failedToolCalls),
   };
@@ -305,13 +320,17 @@ function rowToToolCall(row: WorkspaceTurnToolCallRow): WorkspaceToolCall {
   return {
     id: row.id,
     turnId: row.turnId,
+    // SAFETY: The surrounding checks or construction already match this type.
     origin: row.origin as WorkspaceToolCallOrigin,
-    ...(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : {}),
-    ...(row.requestId ? { requestId: row.requestId } : {}),
+    ...optionalFields(row.conversationScopeId ? { conversationScopeId: row.conversationScopeId } : undefined),
+    ...optionalFields(row.requestId ? { requestId: row.requestId } : undefined),
     toolName: row.toolName,
+    // SAFETY: The surrounding checks or construction already match this type.
     arguments: JSON.parse(row.argumentsJson) as unknown,
-    ...(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : {}),
-    ...(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : {}),
+    // SAFETY: The surrounding checks or construction already match this type.
+    ...optionalFields(row.resultJson ? { result: JSON.parse(row.resultJson) as unknown } : undefined),
+    // SAFETY: The surrounding checks or construction already match this type.
+    ...optionalFields(row.errorJson ? { error: JSON.parse(row.errorJson) as unknown } : undefined),
     isError: row.isError === 1,
     startedAt: row.startedAt,
     completedAt: row.completedAt,

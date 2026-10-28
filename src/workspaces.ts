@@ -1,3 +1,5 @@
+import { isJsonString } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { randomBytes } from "node:crypto";
 import type { Stats } from "node:fs";
 import { Result, type Result as BetterResult } from "better-result";
@@ -8,7 +10,7 @@ import type {
   WorkspaceStore,
 } from "./workspace-store.js";
 import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import {
@@ -101,9 +103,10 @@ export interface OpenWorkspaceOptions {
 }
 
 type PathStats = Stats;
+
 type DirectoryOps = {
   stat: (path: string) => Promise<PathStats>;
-  mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
+  mkdir: (path: string, options: { recursive: true }) => Promise<WireInput>;
 };
 
 const MAX_CACHED_WORKSPACES = 32;
@@ -125,16 +128,19 @@ export class WorkspaceRegistry {
     input: string | OpenWorkspaceInput,
     openOptions: OpenWorkspaceOptions = {},
   ): Promise<WorkspaceContext> {
-    const workspaceInput = typeof input === "string" ? { path: input } : input;
+    const workspaceInput = isJsonString(input) ? { path: input } : input;
     const conversationScopeId = openOptions.conversationScopeId;
+
     if (!conversationScopeId || !this.store) {
       return this.openNewWorkspace(workspaceInput);
     }
 
     const projectKey = await this.conversationProjectKey(workspaceInput);
     const mode = workspaceInput.mode ?? "checkout";
+
     if (mode === "worktree") {
       const context = await this.openWorktreeWorkspace(workspaceInput.path, workspaceInput.baseRef);
+
       return {
         ...context,
         // A new worktree always has its own workspace-specific context.
@@ -145,8 +151,10 @@ export class WorkspaceRegistry {
     const targetKey = this.conversationCheckoutTargetKey(projectKey);
     const operationKey = JSON.stringify([conversationScopeId, targetKey]);
     const pending = this.pendingCheckoutOpens.get(operationKey);
+
     if (pending) {
       const context = await pending;
+
       return {
         ...context,
         workspaceReused: true,
@@ -159,6 +167,7 @@ export class WorkspaceRegistry {
       conversationScopeId,
       targetKey,
     );
+
     this.pendingCheckoutOpens.set(operationKey, open);
 
     try {
@@ -186,12 +195,14 @@ export class WorkspaceRegistry {
     targetKey: string,
   ): Promise<WorkspaceContext> {
     const binding = this.store?.getConversationBinding(conversationScopeId, targetKey);
+
     if (binding) {
       const reusableWorkspace = await this.findReusableCheckoutWorkspace(binding);
 
       if (reusableWorkspace) {
         const context = await this.reusedWorkspaceContext(reusableWorkspace);
         this.store?.touchConversationBinding(conversationScopeId, targetKey);
+
         return {
           ...context,
           includeBootstrapContext: false,
@@ -208,6 +219,7 @@ export class WorkspaceRegistry {
       targetKey,
       workspaceSessionId: context.workspace.id,
     });
+
     return {
       ...context,
       includeBootstrapContext: true,
@@ -218,15 +230,18 @@ export class WorkspaceRegistry {
     binding: WorkspaceConversationBinding,
   ): Promise<Workspace | undefined> {
     const session = this.store?.getSession(binding.workspaceSessionId);
+
     if (!session || session.status !== "active" || session.mode !== "checkout") {
       return undefined;
     }
 
     let root: string;
+
     try {
       root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
       await this.resolveCanonicalWorkspaceRoot(root, session.mode, session.sourceRoot);
       const rootStats = await stat(root);
+
       if (!rootStats.isDirectory()) return undefined;
     } catch (error) {
       if (
@@ -240,7 +255,9 @@ export class WorkspaceRegistry {
     }
 
     const workspace = await this.getWorkspace(binding.workspaceSessionId);
+
     if (workspace.mode !== "checkout" || workspace.root !== root) return undefined;
+
     return workspace;
   }
 
@@ -268,56 +285,75 @@ export class WorkspaceRegistry {
 
   async getWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = this.workspaces.get(workspaceId);
+
     if (workspace) {
       if (!this.store) {
         await this.assertWorkspaceRootUnchanged(workspace);
         this.workspaces.delete(workspaceId);
         this.workspaces.set(workspaceId, workspace);
+
         return workspace;
       }
 
       const cachedSession = this.store.getSessionResult(workspaceId);
+
       if (cachedSession.isErr()) throw cachedSession.error;
+
       if (cachedSession.value?.status === "active") {
         await this.assertWorkspaceRootUnchanged(workspace);
         const touched = this.store.touchSession(workspaceId);
+
         if (touched.isErr()) throw touched.error;
+
         if (!touched.value) throw unavailableWorkspaceError(workspaceId);
         this.workspaces.delete(workspaceId);
         this.workspaces.set(workspaceId, workspace);
+
         return workspace;
       }
+
       this.workspaces.delete(workspaceId);
     }
 
     let session: WorkspaceSession | undefined;
+
     if (this.store) {
       const sessionLookup = this.store.getSessionResult(workspaceId);
+
       if (sessionLookup.isErr()) throw sessionLookup.error;
       session = sessionLookup.value;
     }
+
     if (session?.status === "pruned") {
       const restored = await this.ensurePrunedWorkspaceRestored(session);
+
       if (restored.isErr()) throw restored.error;
+
       if (this.store) {
         const restoredLookup = this.store.getSessionResult(workspaceId);
+
         if (restoredLookup.isErr()) throw restoredLookup.error;
         session = restoredLookup.value;
       }
     }
+
     if (!session || session.status !== "active") {
       throw unavailableWorkspaceError(workspaceId);
     }
 
     const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+
     const canonicalRoot = await this.resolveCanonicalWorkspaceRoot(
       root,
       session.mode,
       session.sourceRoot,
     );
+
     if (this.store) {
       const touched = this.store.touchSession(workspaceId);
+
       if (touched.isErr()) throw touched.error;
+
       if (!touched.value) throw unavailableWorkspaceError(workspaceId);
     }
 
@@ -341,6 +377,7 @@ export class WorkspaceRegistry {
       ...this.loadSkillsForWorkspace(root),
       agentProfiles: [],
     };
+
     this.rememberWorkspace(restoredWorkspace);
 
     return restoredWorkspace;
@@ -350,10 +387,12 @@ export class WorkspaceRegistry {
     session: WorkspaceSession,
   ): Promise<BetterResult<void, ManagedWorktreeFeatureError>> {
     const pending = this.pendingRestores.get(session.id);
+
     if (pending) return pending;
 
     const restore = this.restorePrunedWorkspace(session);
     this.pendingRestores.set(session.id, restore);
+
     try {
       return await restore;
     } finally {
@@ -380,15 +419,18 @@ export class WorkspaceRegistry {
       worktreeRoot: this.config.worktreeRoot,
       allowedRoots: this.config.allowedRoots,
     });
+
     if (restored.isErr()) return restored;
 
     const reactivated = this.store.reactivateSession(session.id);
+
     if (reactivated.isErr() || !reactivated.value) {
       const discarded = await discardRestoredManagedWorktree({
         session,
         worktreeRoot: this.config.worktreeRoot,
         allowedRoots: this.config.allowedRoots,
       });
+
       if (discarded.isErr()) {
         return Result.err(new ManagedWorktreeError({
           code: "WORKTREE_RESTORE_FAILED",
@@ -401,7 +443,9 @@ export class WorkspaceRegistry {
           },
         }));
       }
+
       if (reactivated.isErr()) return reactivated;
+
       return Result.err(new ManagedWorktreeError({
         code: "WORKTREE_RESTORE_FAILED",
         workspaceId: session.id,
@@ -432,6 +476,7 @@ export class WorkspaceRegistry {
         workspace.skills,
         inputPath,
       );
+
       if (!skillRead) throw workspaceError;
 
       return {
@@ -451,12 +496,15 @@ export class WorkspaceRegistry {
 
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
     const root = assertAllowedPath(path, this.config.allowedRoots);
+
     const canonicalRoot = await resolveCanonicalAllowedPath(
       root,
       process.cwd(),
       this.config.allowedRoots,
     );
+
     const rootStats = await ensureCheckoutWorkspaceRoot(root);
+
     if (!rootStats.isDirectory()) {
       throw new Error(`Workspace root must be a directory: ${path}`);
     }
@@ -470,11 +518,13 @@ export class WorkspaceRegistry {
       baseRef,
       config: this.config,
     });
+
     await resolveCanonicalAllowedPath(
       worktree.sourceRoot,
       process.cwd(),
       this.config.allowedRoots,
     );
+
     const canonicalRoot = await resolveCanonicalAllowedPath(
       worktree.path,
       process.cwd(),
@@ -541,6 +591,7 @@ export class WorkspaceRegistry {
       this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
       const agentsFiles = await this.loadInitialAgentsFiles(session.root);
       const availableAgentsFiles = await this.findAvailableAgentsFiles(session.root, agentsFiles);
+
       return {
         available: true,
         agentsFiles: agentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
@@ -559,8 +610,11 @@ export class WorkspaceRegistry {
     this.workspaces.set(workspace.id, workspace);
 
     if (!this.store) return;
+
     while (this.workspaces.size > MAX_CACHED_WORKSPACES) {
+      // SAFETY: The surrounding checks or construction already match this type.
       const oldestWorkspaceId = this.workspaces.keys().next().value as string | undefined;
+
       if (!oldestWorkspaceId) break;
       this.workspaces.delete(oldestWorkspaceId);
     }
@@ -568,6 +622,7 @@ export class WorkspaceRegistry {
 
   private loadSkillsForWorkspace(root: string): Pick<Workspace, "skills" | "skillDiagnostics"> {
     const result = loadWorkspaceSkills(this.config, root);
+
     return {
       skills: result.skills,
       skillDiagnostics: result.diagnostics,
@@ -579,7 +634,9 @@ export class WorkspaceRegistry {
       if (!sourceRoot) {
         throw new Error(`Stored worktree workspace is missing sourceRoot: ${root}`);
       }
+
       assertAllowedPath(sourceRoot, this.config.allowedRoots);
+
       return assertAllowedPath(root, [this.config.worktreeRoot]);
     }
 
@@ -595,7 +652,9 @@ export class WorkspaceRegistry {
       if (!sourceRoot) {
         throw new Error(`Stored worktree workspace is missing sourceRoot: ${root}`);
       }
+
       await resolveCanonicalAllowedPath(sourceRoot, process.cwd(), this.config.allowedRoots);
+
       return resolveCanonicalAllowedPath(root, process.cwd(), [this.config.worktreeRoot]);
     }
 
@@ -604,11 +663,13 @@ export class WorkspaceRegistry {
 
   private async assertWorkspaceRootUnchanged(workspace: Workspace): Promise<void> {
     let currentRoot: string;
+
     try {
       currentRoot = await realpath(workspace.root);
     } catch {
       throw new AccessDeniedError(`Workspace root is no longer accessible: ${workspace.root}`);
     }
+
     if (currentRoot !== workspace.canonicalRoot) {
       throw new AccessDeniedError(`Workspace root changed after it was opened: ${workspace.root}`);
     }
@@ -622,13 +683,16 @@ export class WorkspaceRegistry {
     for (const file of loadProjectContextFiles({ cwd: root, agentDir })) {
       const path = resolve(file.path);
       const source = initialAgentsFileSource(path, root, agentDir);
+
       if (!source) continue;
+
       const content = await readResolvedContextFile(
         path,
         file.content,
         source,
         resolvedRoot,
       );
+
       if (content === undefined) continue;
 
       loadedFiles.push({
@@ -646,17 +710,23 @@ export class WorkspaceRegistry {
   ): Promise<AvailableAgentsFile[]> {
     const loadedPaths = new Set(loadedFiles.map((file) => resolve(file.path)));
     const loadedRealPaths = new Set<string>();
+
     for (const file of loadedFiles) {
       const realPath = await tryRealpath(file.path);
+
       if (realPath) loadedRealPaths.add(realPath);
     }
+
     const discovered: AvailableAgentsFile[] = [];
 
     await walkWorkspace(root, async (path, entry) => {
       if (!entry.isFile()) return;
+
       if (!CONTEXT_FILE_NAMES.has(entry.name)) return;
+
       if (loadedPaths.has(path)) return;
       const realPath = await tryRealpath(path);
+
       if (realPath && loadedRealPaths.has(realPath)) return;
 
       discovered.push({ path });
@@ -685,10 +755,12 @@ export async function ensureCheckoutWorkspaceRoot(
   }
 
   await ops.mkdir(path, { recursive: true });
+
   return await ops.stat(path);
 }
 
 const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
+
 const SKIPPED_CONTEXT_DIRS = new Set([
   ".git",
   ".hg",
@@ -706,6 +778,7 @@ export function formatAgentsPath(path: string, workspaceRoot: string | undefined
   if (!workspaceRoot) return path.split(sep).join("/");
 
   const relationship = relative(workspaceRoot, path);
+
   if (
     relationship === "" ||
     relationship.startsWith("..") ||
@@ -724,7 +797,9 @@ function initialAgentsFileSource(
   agentDir: string,
 ): InitialAgentsFileSource | undefined {
   if (isPathInsideRoot(path, agentDir)) return "global";
+
   if (isPathInsideRoot(path, root) && dirname(path) === root) return "workspace";
+
   return undefined;
 }
 
@@ -736,12 +811,14 @@ async function readResolvedContextFile(
 ): Promise<string | undefined> {
   try {
     const resolvedPath = await realpath(path);
+
     if (
       source === "workspace" &&
       (!isPathInsideRoot(resolvedPath, root) || dirname(resolvedPath) !== root)
     ) {
       return undefined;
     }
+
     return await readFile(resolvedPath, "utf8");
   } catch {
     return fallbackContent;
@@ -761,6 +838,7 @@ async function walkWorkspace(
   visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
 ): Promise<void> {
   let entries;
+
   try {
     entries = await opendir(directory);
   } catch {
@@ -769,10 +847,12 @@ async function walkWorkspace(
 
   for await (const entry of entries) {
     const path = join(directory, entry.name);
+
     if (entry.isDirectory()) {
       if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
         await walkWorkspace(path, visit);
       }
+
       continue;
     }
 

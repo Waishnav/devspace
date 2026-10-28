@@ -67,20 +67,24 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
     async initializeWorkspace({ workspaceId, root }) {
       const existingState = states.get(workspaceId);
       assertWorkspaceRoot(existingState, workspaceId, root);
+
       if (existingState?.root === root && existingState.gitRoot !== undefined) {
         return reviewAvailability(existingState);
       }
 
       const pending = initializations.get(workspaceId);
+
       if (pending) {
         await pending;
         const initializedState = states.get(workspaceId);
         assertWorkspaceRoot(initializedState, workspaceId, root);
+
         return reviewAvailability(initializedState);
       }
 
       const initialize = initializeWorkspaceState(states, workspaceId, root);
       initializations.set(workspaceId, initialize);
+
       try {
         await initialize;
       } finally {
@@ -88,16 +92,19 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
           initializations.delete(workspaceId);
         }
       }
+
       return reviewAvailability(states.get(workspaceId));
     },
 
     async reviewChanges({ workspaceId, root, since = "last_shown", markReviewed = true }) {
       let state = states.get(workspaceId);
       assertWorkspaceRoot(state, workspaceId, root);
+
       if (!isReadyState(state)) {
         await this.initializeWorkspace({ workspaceId, root });
         state = states.get(workspaceId);
       }
+
       assertWorkspaceRoot(state, workspaceId, root);
 
       if (!state?.gitRoot) {
@@ -106,10 +113,12 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
 
       let effectiveSince = since;
       let usedWorkspaceOpenFallback = false;
+
       if (since === "last_shown" && !state.baselineRefAvailable) {
         if (!state.openRefAvailable) {
           throw new Error("Review checkpoints are missing; show_changes cannot reconstruct that history safely.");
         }
+
         effectiveSince = "workspace_open";
         usedWorkspaceOpenFallback = true;
       } else if (since === "workspace_open" && !state.openRefAvailable) {
@@ -135,6 +144,7 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       const fallbackNote = usedWorkspaceOpenFallback
         ? ` The last-shown checkpoint was missing, so changes were compared from workspace open${markReviewed ? " and the baseline was re-established" : ""}.`
         : "";
+
       return {
         reviewRef: current,
         result: `${
@@ -149,10 +159,12 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
     async reviewByRef({ workspaceId, root, reviewRef }) {
       let state = states.get(workspaceId);
       assertWorkspaceRoot(state, workspaceId, root);
+
       if (!isReadyState(state)) {
         await this.initializeWorkspace({ workspaceId, root });
         state = states.get(workspaceId);
       }
+
       assertWorkspaceRoot(state, workspaceId, root);
 
       if (!state?.gitRoot) {
@@ -164,12 +176,14 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
         commitForRef(state.gitRoot, state.baselineRef),
         resolveReviewCommitOrUndefined(state.gitRoot, reviewRef),
       ]);
+
       if (
         reviewCommit
         && await commitForRef(state.gitRoot, `${state.checkpointRefPrefix}/${reviewCommit}`) === reviewCommit
       ) {
         return readReviewCommit(state.gitRoot, reviewCommit);
       }
+
       if (
         !openCommit
         || !baselineCommit
@@ -183,6 +197,7 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
         isAncestor(state.gitRoot, openCommit, reviewCommit),
         isAncestor(state.gitRoot, reviewCommit, baselineCommit),
       ]);
+
       if (!isAfterOpen || !isBeforeBaseline) {
         throw new Error(`Unknown review reference for workspace ${workspaceId}: ${reviewRef}`);
       }
@@ -194,14 +209,17 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
 
 export async function readReviewRef(root: string, reviewRef: string): Promise<ReviewChangesResult> {
   const eligibility = await getGitEligibility(root);
+
   if (!eligibility.ok || !eligibility.gitRoot) {
     throw new Error(eligibility.message ?? "show-changes requires a Git workspace.");
   }
 
   const commit = await resolveReviewCommit(eligibility.gitRoot, reviewRef);
+
   if (!await isKnownReviewCommit(eligibility.gitRoot, commit)) {
     throw new Error(`Unknown DevSpace review reference: ${reviewRef}`);
   }
+
   return readReviewCommit(eligibility.gitRoot, commit);
 }
 
@@ -221,6 +239,7 @@ async function initializeWorkspaceState(
   root: string,
 ): Promise<void> {
   const refs = reviewRefs(workspaceId);
+
   const state: WorkspaceReviewState = {
     root,
     ...refs,
@@ -230,8 +249,10 @@ async function initializeWorkspaceState(
 
   try {
     const eligibility = await getGitEligibility(root);
+
     if (!eligibility.ok || !eligibility.gitRoot) {
       state.diagnostic = eligibility.message ?? "show_changes requires a Git workspace in this version.";
+
       return;
     }
 
@@ -244,6 +265,7 @@ async function initializeWorkspaceState(
       const head = eligibility.hasHead
         ? (await git(eligibility.gitRoot, ["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim()
         : undefined;
+
       const initialCommit = await createWorkingTreeSnapshot(eligibility.gitRoot, head);
       await git(eligibility.gitRoot, ["update-ref", state.openRef, initialCommit]);
       await git(eligibility.gitRoot, ["update-ref", state.baselineRef, initialCommit]);
@@ -287,6 +309,7 @@ function reviewRefs(
   workspaceId: string,
 ): Pick<WorkspaceReviewState, "openRef" | "baselineRef" | "checkpointRefPrefix"> {
   const segment = safeWorkspaceRefSegment(workspaceId);
+
   return {
     openRef: `${REVIEW_REF_PREFIX}/${segment}/open`,
     baselineRef: `${REVIEW_REF_PREFIX}/${segment}/baseline`,
@@ -304,8 +327,10 @@ async function createWorkingTreeSnapshot(gitRoot: string, parent?: string): Prom
     await git(gitRoot, ["add", "-A", "--", "."], { env });
     const tree = (await git(gitRoot, ["write-tree"], { env })).stdout.trim();
     const commitArgs = ["commit-tree", tree];
+
     if (parent) commitArgs.push("-p", parent);
     commitArgs.push("-m", "DevSpace review snapshot");
+
     return (await git(gitRoot, commitArgs, { env })).stdout.trim();
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -315,6 +340,7 @@ async function createWorkingTreeSnapshot(gitRoot: string, parent?: string): Prom
 async function readReviewCommit(gitRoot: string, reviewRef: string): Promise<ReviewChangesResult> {
   const parent = (await git(gitRoot, ["rev-parse", "--verify", `${reviewRef}^1`])).stdout.trim();
   const review = await readReviewBetween(gitRoot, parent, reviewRef);
+
   return {
     reviewRef,
     result: review.summary.files === 0 ? "No changes in this review." : formatChangedFiles(review.summary),
@@ -330,15 +356,19 @@ async function readReviewBetween(
   const patch = (await git(gitRoot, ["diff", "--binary", "--no-color", before, after], {
     maxBuffer: 50 * 1024 * 1024,
   })).stdout;
+
   const numstat = (await git(gitRoot, ["diff", "--numstat", "-z", before, after], {
     maxBuffer: 50 * 1024 * 1024,
   })).stdout;
+
   // Line counts can't tell a new file from an append (or a deletion from a truncation),
   // so the change type comes from git's own status for the same diff.
   const nameStatus = (await git(gitRoot, ["diff", "--name-status", "-z", before, after], {
     maxBuffer: 50 * 1024 * 1024,
   })).stdout;
+
   const files = parseNumstat(numstat, parseNameStatus(nameStatus));
+
   return {
     summary: summarizeFiles(files),
     files,
@@ -350,6 +380,7 @@ async function resolveReviewCommit(gitRoot: string, reviewRef: string): Promise<
   if (!isReviewRef(reviewRef)) {
     throw new Error(`Invalid review reference: ${reviewRef}`);
   }
+
   return (await git(gitRoot, ["rev-parse", "--verify", `${reviewRef}^{commit}`])).stdout.trim();
 }
 
@@ -367,6 +398,7 @@ async function resolveReviewCommitOrUndefined(
 async function isAncestor(gitRoot: string, ancestor: string, descendant: string): Promise<boolean> {
   try {
     await git(gitRoot, ["merge-base", "--is-ancestor", ancestor, descendant]);
+
     return true;
   } catch {
     return false;
@@ -379,20 +411,27 @@ async function isKnownReviewCommit(gitRoot: string, reviewCommit: string): Promi
     "--format=%(refname)\t%(objectname)",
     REVIEW_REF_PREFIX,
   ])).stdout.trim();
+
   if (!refs) return false;
 
   const histories = new Map<string, { open?: string; baseline?: string }>();
+
   for (const line of refs.split("\n")) {
     const [ref, commit] = line.split("\t");
+
     if (!ref || !commit) continue;
+
     if (commit === reviewCommit && ref.endsWith(`/checkpoints/${reviewCommit}`)) return true;
 
     const match = ref.match(/^refs\/devspace\/review\/(.+)\/(open|baseline)$/);
+
     if (!match) continue;
     const [, workspace, kind] = match;
+
     if (!workspace || !kind) continue;
 
     const history = histories.get(workspace) ?? {};
+    // SAFETY: The surrounding checks or construction already match this type.
     history[kind as "open" | "baseline"] = commit;
     histories.set(workspace, history);
   }
@@ -400,13 +439,16 @@ async function isKnownReviewCommit(gitRoot: string, reviewCommit: string): Promi
   const memberships = await Promise.all(
     [...histories.values()].map(async ({ open, baseline }) => {
       if (!open || !baseline || reviewCommit === open) return false;
+
       const [isAfterOpen, isBeforeBaseline] = await Promise.all([
         isAncestor(gitRoot, open, reviewCommit),
         isAncestor(gitRoot, reviewCommit, baseline),
       ]);
+
       return isAfterOpen && isBeforeBaseline;
     }),
   );
+
   return memberships.some(Boolean);
 }
 
@@ -440,6 +482,7 @@ function parseNumstat(output: string, types: Map<string, ReviewFile["type"]>): R
 
     // With -z, a rename header ends in an empty path and is followed by the old and new paths.
     const path = parts[2];
+
     if (path) {
       files.push({ path, type: types.get(path) ?? "change", additions, removals });
       continue;
@@ -447,6 +490,7 @@ function parseNumstat(output: string, types: Map<string, ReviewFile["type"]>): R
 
     const previousPath = fields[index++];
     const newPath = fields[index++];
+
     if (!newPath) continue;
 
     files.push({
@@ -464,6 +508,7 @@ function parseNumstat(output: string, types: Map<string, ReviewFile["type"]>): R
 function parseStatNumber(value: string | undefined): number {
   if (!value || value === "-") return 0;
   const parsed = Number(value);
+
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -475,16 +520,20 @@ function parseNameStatus(output: string): Map<string, ReviewFile["type"]> {
   for (let index = 0; index < fields.length;) {
     const status = fields[index++] ?? "";
     const kind = status[0];
+
     if (kind === "R" || kind === "C") {
       index++; // source path
       const path = fields[index++];
+
       if (!path) continue;
+
       if (kind === "R") types.set(path, status === "R100" ? "rename-pure" : "rename-changed");
       else types.set(path, "new");
       continue;
     }
 
     const path = fields[index++];
+
     if (!path) continue;
     types.set(path, kind === "A" ? "new" : kind === "D" ? "deleted" : "change");
   }

@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import {
   matchError,
   Result,
@@ -236,9 +239,11 @@ export function agentErrorFromPayload(payload: {
   target?: string;
 }): LocalAgentError | undefined {
   const retryable = payload.retryable ?? false;
+
   const provider = payload.provider && isLocalAgentDriverKind(payload.provider)
     ? payload.provider
     : undefined;
+
   switch (payload.code) {
     case "UNKNOWN_TARGET":
     case "AGENT_NOT_FOUND":
@@ -280,6 +285,7 @@ export function agentErrorFromPayload(payload: {
     case "PROVIDER_PROTOCOL_ERROR":
     case "PROVIDER_EXECUTION_ERROR": {
       if (!provider) return undefined;
+
       const fields = {
         provider,
         agentId: payload.agentId,
@@ -287,17 +293,22 @@ export function agentErrorFromPayload(payload: {
         retryable,
         message: payload.message,
       };
+
       if (payload.code === "PROVIDER_UNAVAILABLE") {
         return new AgentProviderUnavailableError({ code: payload.code, ...fields });
       }
+
       if (payload.code === "PROVIDER_CANCELLED") {
         return new AgentProviderCancelledError({ code: payload.code, ...fields });
       }
+
       if (payload.code === "PROVIDER_PROTOCOL_ERROR") {
         return new AgentProviderProtocolError({ code: payload.code, ...fields });
       }
+
       return new AgentProviderExecutionError({ code: payload.code, ...fields });
     }
+
     case "AGENT_STORE_ERROR":
       return new AgentStoreError(payload.operation ?? "request", undefined, payload.message);
     case "DAEMON_UNAVAILABLE":
@@ -372,11 +383,13 @@ export function providerErrorFromCause(input: {
   provider: LocalAgentDriverKind;
   agentId?: string;
   operation: string;
-  cause: unknown;
+  cause: WireInput;
 }): AgentProviderError | undefined {
   if (isAgentProviderError(input.cause)) return input.cause;
+
   if (isLocalAgentError(input.cause)) return undefined;
   const unavailable = unavailableCauseKind(input.cause);
+
   if (unavailable) {
     return new AgentProviderUnavailableError({
       code: "PROVIDER_UNAVAILABLE",
@@ -388,7 +401,9 @@ export function providerErrorFromCause(input: {
       message: `${displayProvider(input.provider)} provider is unavailable.`,
     });
   }
+
   if (isProgrammerDefect(input.cause)) return undefined;
+
   if (isAbortError(input.cause)) {
     return new AgentProviderCancelledError({
       code: "PROVIDER_CANCELLED",
@@ -400,6 +415,7 @@ export function providerErrorFromCause(input: {
       message: `${displayProvider(input.provider)} agent turn was cancelled.`,
     });
   }
+
   return new AgentProviderExecutionError({
     code: "PROVIDER_EXECUTION_ERROR",
     provider: input.provider,
@@ -426,13 +442,16 @@ export async function captureAgentProviderResult<T>(input: {
       operation: input.operation,
       cause,
     });
+
     if (!error) throw cause;
+
     return Result.err(error);
   }
 }
 
-export function isProgrammerDefect(error: unknown): boolean {
+export function isProgrammerDefect(error: WireInput): boolean {
   if (unavailableCauseKind(error)) return false;
+
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError
@@ -440,25 +459,32 @@ export function isProgrammerDefect(error: unknown): boolean {
     || (error instanceof Error && error.name === "AssertionError");
 }
 
-function isAbortError(error: unknown): boolean {
+function isAbortError(error: WireInput): boolean {
   return Boolean(
     error
-      && typeof error === "object"
+      && isObjectValue(error)
       && "name" in error
-      && String((error as { name?: unknown }).name) === "AbortError",
+      // SAFETY: The surrounding checks or construction already match this type.
+      && String(unsafeNarrow<{ name?: WireInput }>(error).name) === "AbortError",
   );
 }
 
-function unavailableCauseKind(error: unknown): "permanent" | "transient" | undefined {
+function unavailableCauseKind(error: WireInput): "permanent" | "transient" | undefined {
   const seen = new Set<object>();
   let current = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+
+  while (current && isObjectValue(current) && !seen.has(current)) {
     seen.add(current);
+    // SAFETY: The surrounding checks or construction already match this type.
     const code = "code" in current ? String((current as { code?: unknown }).code) : "";
+
     if (code === "ENOENT") return "permanent";
+
     if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
+    // SAFETY: The surrounding checks or construction already match this type.
     current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
   }
+
   return undefined;
 }
 
@@ -478,8 +504,8 @@ function targetErrorPayload(error: AgentTargetError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     target: error.target,
-    ...(error.provider ? { provider: error.provider } : {}),
-    ...(error.operation ? { operation: error.operation } : {}),
+    ...optionalFields(error.provider ? { provider: error.provider } : undefined),
+    ...optionalFields(error.operation ? { operation: error.operation } : undefined),
   };
 }
 
@@ -489,7 +515,7 @@ function conflictErrorPayload(error: AgentConflictError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
   };
 }
 
@@ -499,8 +525,8 @@ function scopeErrorPayload(error: AgentScopeError): AgentErrorPayload {
     message: error.message,
     retryable: error.retryable,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
-    ...(error.workspaceId ? { workspaceId: error.workspaceId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
+    ...optionalFields(error.workspaceId ? { workspaceId: error.workspaceId } : undefined),
   };
 }
 
@@ -511,7 +537,7 @@ function providerErrorPayload(error: AgentProviderError): AgentErrorPayload {
     retryable: error.retryable,
     provider: error.provider,
     operation: error.operation,
-    ...(error.agentId ? { agentId: error.agentId } : {}),
+    ...optionalFields(error.agentId ? { agentId: error.agentId } : undefined),
   };
 }
 

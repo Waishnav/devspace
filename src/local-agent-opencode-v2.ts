@@ -1,3 +1,5 @@
+import { isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { randomBytes } from "node:crypto";
 import {
   ClientError,
@@ -65,25 +67,31 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
             message: "OpenCode runtime is not running.",
           });
         }
+
         try {
           await this.client.server.info();
           const continuing = input.providerSessionId !== undefined;
+
           const nativeSessionId = input.providerSessionId
             ? requireOpenCodeV2NativeSessionId(input.providerSessionId)
             : await this.createSession(input);
+
           const providerSessionId = encodeOpenCodeV2SessionId(nativeSessionId);
           await callbacks?.onSessionId?.(providerSessionId);
+
           if (continuing) await this.configureSession(nativeSessionId, input);
           const { promptedAt, messages } = await this.prompt(nativeSessionId, input);
           // On a continued session the latest assistant message may predate this
           // prompt when the new turn failed before producing output.
           const fresh = messages.data.filter((message) => message.time.created >= promptedAt);
+
           if (fresh.length === 0) await this.assertTurnNotFailed(nativeSessionId);
           const assistant = requireLatestAssistant(fresh);
           assertOpenCodeV2AssistantSucceeded(assistant);
           const finalResponse = requireOpenCodeV2FinalResponse(assistant);
           // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
           callbacks?.onEvent?.({ type: "message", text: finalResponse });
+
           return {
             provider: this.provider,
             providerSessionId,
@@ -102,6 +110,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
               message: "OpenCode provider is unavailable.",
             });
           }
+
           throw error;
         }
       },
@@ -120,6 +129,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
     if (this.closed) return;
     this.closed = true;
     this.alive = false;
+
     for (const controller of this.promptControllers) controller.abort();
     this.promptControllers.clear();
     this.server.close();
@@ -131,12 +141,15 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
    */
   private async assertTurnNotFailed(sessionId: string): Promise<void> {
     const recent = await this.client.message.list({ sessionID: sessionId, limit: 5, order: "desc" });
+
+    // SAFETY: The surrounding checks or construction already match this type.
     const idle = recent.data.find((message) => (
       message !== null
-      && typeof message === "object"
+      && isObjectValue(message)
       && "type" in message
       && message.type === "idle"
     )) as { outcome?: string; error?: { type?: string; message?: string } } | undefined;
+
     if (idle?.outcome !== "failed") return;
     throw new AgentProviderExecutionError({
       code: "PROVIDER_EXECUTION_ERROR",
@@ -150,11 +163,13 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
 
   private async createSession(input: LocalAgentRunInput): Promise<string> {
     const model = await resolveOpenCodeV2Model(this.client, input);
+
     const session = await this.client.session.create({
       location: { directory: input.workspaceRoot },
       permissions: opencodeV2Permissions(input.writeMode),
-      ...(model ? { model } : {}),
+      ...optionalFields(model ? { model } : undefined),
     });
+
     if (!session.id) {
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -164,6 +179,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
         message: "OpenCode did not return a session id.",
       });
     }
+
     return session.id;
   }
 
@@ -172,9 +188,11 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
       sessionID: sessionId,
       permissions: opencodeV2Permissions(input.writeMode),
     });
+
     if (!input.model && !input.effort) return;
     const current = await this.client.session.get({ sessionID: sessionId });
     const model = await resolveOpenCodeV2Model(this.client, input, current.model);
+
     if (!model) return;
     await this.client.session.switchModel({ sessionID: sessionId, model });
   }
@@ -183,6 +201,7 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+
     // End the local request only once OpenCode confirms the interrupt (`interrupted: false`
     // means the session was already idle). A failed or stalled interrupt keeps the turn
     // running, and the manager reports the stop as a conflict.
@@ -190,26 +209,32 @@ export class OpencodeV2Runtime implements LocalAgentRuntime {
       await this.client.session.interrupt({ sessionID: sessionId });
       controller.abort();
     });
+
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.promptTimeoutMs);
+
     try {
       const prompted = await this.client.session.prompt({
         sessionID: sessionId,
         text: input.prompt,
       }, { signal: controller.signal });
+
       await this.client.session.wait({ sessionID: sessionId }, { signal: controller.signal });
+
       const messages = await this.client.message.list({
         sessionID: sessionId,
         limit: 1,
         order: "desc",
         type: "assistant",
       }, { signal: controller.signal });
+
       return { promptedAt: prompted.time.created, messages };
     } catch (error) {
       // A provider timeout after a stop request is still a timeout: the interrupt was never confirmed.
       if (input.signal?.aborted && !timedOut) throw localAgentCancelledError("opencode", "prompt", error);
+
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -234,6 +259,7 @@ export async function defaultOpencodeV2Factory(
   const password = randomBytes(32).toString("base64url");
   const server = await startOpencodeServer(opencodeV2ServerEnvironment(env, password));
   const authorization = `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`;
+
   return {
     client: OpenCode.make({
       baseUrl: server.url,
@@ -252,6 +278,7 @@ export function opencodeV2ServerEnvironment(
     OPENCODE_SERVER_PASSWORD: _legacyPassword,
     ...rest
   } = env;
+
   return { ...rest, OPENCODE_PASSWORD: password };
 }
 
@@ -263,15 +290,18 @@ export function opencodeV2Permissions(
     { action: "subagent", resource: "*", effect: "deny" },
     { action: "question", resource: "*", effect: "deny" },
   ];
+
   if (writeMode !== "full_access") {
     rules.push({ action: "external_directory", resource: "*", effect: "deny" });
   }
+
   if (writeMode === "read_only") {
     rules.push(
       { action: "edit", resource: "*", effect: "deny" },
       { action: "shell", resource: "*", effect: "deny" },
     );
   }
+
   return rules;
 }
 
@@ -281,11 +311,15 @@ async function resolveOpenCodeV2Model(
   current?: ModelRef,
 ): Promise<ModelRef | undefined> {
   if (input.model) return parseOpenCodeV2Model(input.model, input.effort);
+
   if (!input.effort) return undefined;
+
   if (current) return { ...current, variant: input.effort };
+
   const fallback = await client.model.default({
     location: { directory: input.workspaceRoot },
   });
+
   if (!fallback.data) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -295,6 +329,7 @@ async function resolveOpenCodeV2Model(
       message: "OpenCode has no default model to apply the requested effort variant to.",
     });
   }
+
   return {
     id: fallback.data.id,
     providerID: fallback.data.providerID,
@@ -304,10 +339,11 @@ async function resolveOpenCodeV2Model(
 
 export function parseOpenCodeV2Model(model: string, effort?: string): ModelRef {
   const separator = model.indexOf("/");
+
   return {
     providerID: separator === -1 ? "opencode" : model.slice(0, separator),
     id: separator === -1 ? model : model.slice(separator + 1),
-    ...(effort ? { variant: effort } : {}),
+    ...optionalFields(effort ? { variant: effort } : undefined),
   };
 }
 
@@ -321,6 +357,7 @@ export function extractOpenCodeV2FinalResponse(message: SessionMessageAssistant)
 
 function requireOpenCodeV2FinalResponse(message: SessionMessageAssistant): string {
   const response = extractOpenCodeV2FinalResponse(message);
+
   if (!response) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -330,16 +367,18 @@ function requireOpenCodeV2FinalResponse(message: SessionMessageAssistant): strin
       message: "OpenCode did not return a final assistant response.",
     });
   }
+
   return response;
 }
 
-function requireLatestAssistant(messages: unknown[]): SessionMessageAssistant {
+function requireLatestAssistant(messages: WireInput[]): SessionMessageAssistant {
   const assistant = messages.find((message) => (
     message !== null
-    && typeof message === "object"
+    && isObjectValue(message)
     && "type" in message
     && message.type === "assistant"
   ));
+
   if (!assistant) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -349,6 +388,8 @@ function requireLatestAssistant(messages: unknown[]): SessionMessageAssistant {
       message: "OpenCode did not return an assistant message after the prompt completed.",
     });
   }
+
+  // SAFETY: The surrounding checks or construction already match this type.
   return assistant as SessionMessageAssistant;
 }
 
@@ -365,6 +406,6 @@ function assertOpenCodeV2AssistantSucceeded(message: SessionMessageAssistant): v
 }
 
 /** @opencode/client wraps every connection failure, whatever its errno, in a Transport ClientError. */
-function isOpenCodeTransportFailure(error: unknown): boolean {
+function isOpenCodeTransportFailure(error: WireInput): boolean {
   return error instanceof ClientError && error.reason === "Transport";
 }

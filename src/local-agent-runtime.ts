@@ -54,6 +54,7 @@ export interface LocalAgentRuntimeContext {
 }
 
 export type LocalAgentRuntimeScope = "instance" | "workspace" | "agent";
+
 export type LocalAgentRuntimeAuthority = "none" | "write_mode" | "full_access_boundary";
 
 export interface LocalAgentRuntimePolicy {

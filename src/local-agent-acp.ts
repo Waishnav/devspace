@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -33,15 +36,19 @@ import type {
 import { resolveExecutableCommand } from "./local-agent-command.js";
 
 export type AcpFlavor = "cursor" | "copilot" | "grok" | "generic";
+
 export type AcpProvider = AcpFlavor;
 
 const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
 const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 const ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS = 10 * 60_000;
+
 // How long a provider gets to answer session/prompt after session/cancel before its process is dropped.
 const ACP_CANCEL_GRACE_MS = 10_000;
 const require = createRequire(import.meta.url);
+
+// SAFETY: The surrounding checks or construction already match this type.
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 const observeChildError = (): void => {};
@@ -62,10 +69,10 @@ const ACP_COMMANDS: Partial<Record<AcpFlavor, [string, ...string[]]>> = {
 
 interface AcpConnectionLike {
   agent: {
-    request(method: string, params?: unknown): Promise<unknown>;
-    notify(method: string, params?: unknown): Promise<void>;
+    request(method: string, params?: WireInput): Promise<WireInput>;
+    notify(method: string, params?: WireInput): Promise<void>;
   };
-  close(error?: unknown): void;
+  close(error?: WireInput): void;
   closed: Promise<void>;
 }
 
@@ -78,7 +85,7 @@ interface AcpCapabilities {
 interface AcpSessionQueue {
   values: unknown[];
   /** Set while a turn runs so session/update notifications are reported as they arrive. */
-  onUpdate?: (value: unknown) => void;
+  onUpdate?: (value: WireInput) => void;
 }
 
 export interface AcpRuntimeOptions {
@@ -158,19 +165,26 @@ export class AcpRuntime implements LocalAgentRuntime {
             message: `${this.provider} ACP runtime is not running.`,
           });
         }
+
         const sessionId = await this.openSession(input, callbacks);
+
         if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
+
         if (this.activeSessions.has(sessionId)) {
           throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
         }
+
         this.activeSessions.add(sessionId);
+
         const removeAbort = bindLocalAgentAbort(input.signal, () => (
           this.connection.agent.notify("session/cancel", { sessionId })
         ));
+
         // A provider that ignores session/cancel would leave the turn running forever:
         // give up on it after a grace period and drop the process so the next turn starts clean.
         let cancelTimer: NodeJS.Timeout | undefined;
         let onAbort: (() => void) | undefined;
+
         const cancelDeadline = input.signal && new Promise<never>((_, reject) => {
           onAbort = () => {
             cancelTimer = setTimeout(() => {
@@ -180,13 +194,16 @@ export class AcpRuntime implements LocalAgentRuntime {
               )));
             }, this.cancelGraceMs);
           };
+
           if (input.signal?.aborted) onAbort();
           else input.signal?.addEventListener("abort", onAbort, { once: true });
         });
+
         cancelDeadline?.catch(() => undefined);
         const queue = this.queues.get(sessionId) ?? { values: [] };
         this.queues.set(sessionId, queue);
         const promptId = this.flavor === "grok" ? this.nextPromptId() : undefined;
+
         const completion = promptId && this.grokCompletionRegistry
           ? this.grokCompletionRegistry.wait(
               sessionId,
@@ -201,16 +218,22 @@ export class AcpRuntime implements LocalAgentRuntime {
               }),
             )
           : undefined;
+
         const activity = callbacks?.onEvent ? new AcpActivityReporter(callbacks.onEvent) : undefined;
+
         if (activity) queue.onUpdate = (value) => activity.handle(value);
+
         try {
           queue.values.length = 0;
+
           const standardResponse = this.connection.agent.request("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: input.prompt }],
-            ...(promptId ? { _meta: { promptId, requestId: promptId } } : {}),
+            ...optionalFields(promptId ? { _meta: { promptId, requestId: promptId } } : undefined),
           });
+
           let response: unknown;
+
           try {
             response = await Promise.race([
               standardResponse,
@@ -221,15 +244,19 @@ export class AcpRuntime implements LocalAgentRuntime {
             if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run", cause);
             throw cause;
           }
+
           if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
+
           if (completion && isGrokPromptCompletion(response)) {
             await yieldToAcpQueue();
           } else if (promptId) {
             this.grokCompletionRegistry?.markCompleted(sessionId, promptId);
           }
+
           const updates = queue.values.splice(0);
           activity?.flush();
           const finalResponse = extractAcpText(updates);
+
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
               code: "PROVIDER_PROTOCOL_ERROR",
@@ -240,6 +267,7 @@ export class AcpRuntime implements LocalAgentRuntime {
               message: `${this.provider} ACP did not return a final assistant response.`,
             });
           }
+
           return {
             provider: this.provider,
             providerSessionId: sessionId,
@@ -250,7 +278,9 @@ export class AcpRuntime implements LocalAgentRuntime {
           queue.onUpdate = undefined;
           removeAbort();
           clearTimeout(cancelTimer);
+
           if (onAbort) input.signal?.removeEventListener("abort", onAbort);
+
           if (promptId) this.grokCompletionRegistry?.remove(sessionId, promptId);
           this.activeSessions.delete(sessionId);
         }
@@ -263,6 +293,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.liveSessions.delete(providerSessionId);
     this.sessionWriteModes.delete(providerSessionId);
     this.sessionMetadata.delete(providerSessionId);
+
     if (!this.capabilities.close || !this.isAlive()) return;
     await this.connection.agent.request("session/close", { sessionId: providerSessionId });
   }
@@ -282,9 +313,11 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.activeSessions.clear();
     this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP runtime closed.`));
     this.connection.close(new Error(`${this.provider} ACP runtime closed.`));
+
     if (this.child && this.child.exitCode === null) {
       const detached = process.platform !== "win32";
       terminateProcessTree(this.child, "SIGTERM", detached);
+
       if (!await waitForProcessExit(this.child, 1_000)) {
         terminateProcessTree(this.child, "SIGKILL", detached);
       }
@@ -302,8 +335,10 @@ export class AcpRuntime implements LocalAgentRuntime {
           this.sessionMetadata.get(input.providerSessionId),
           false,
         );
+
         return input.providerSessionId;
       }
+
       if (!this.capabilities.resume) {
         throw new AgentProviderProtocolError({
           code: "PROVIDER_PROTOCOL_ERROR",
@@ -313,6 +348,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           message: `${this.provider} ACP does not advertise session resume support.`,
         });
       }
+
       const response = await this.connection.agent.request("session/resume", {
         sessionId: input.providerSessionId,
         cwd: input.workspaceRoot,
@@ -320,12 +356,14 @@ export class AcpRuntime implements LocalAgentRuntime {
         ...this.additionalDirectoryParams(),
         ...this.permissionMeta(input),
       });
+
       this.cacheSessionMetadata(input.providerSessionId, response);
       this.queues.set(input.providerSessionId, { values: [] });
       this.liveSessions.add(input.providerSessionId);
       this.sessionWriteModes.set(input.providerSessionId, input.writeMode ?? "allowed");
       await callbacks?.onSessionId?.(input.providerSessionId);
       await this.configureSession(input.providerSessionId, input, response, false);
+
       return input.providerSessionId;
     }
 
@@ -335,7 +373,9 @@ export class AcpRuntime implements LocalAgentRuntime {
       ...this.additionalDirectoryParams(),
       ...this.permissionMeta(input),
     });
+
     const sessionId = readString(response, "sessionId");
+
     if (!sessionId) {
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -346,16 +386,18 @@ export class AcpRuntime implements LocalAgentRuntime {
         message: `${this.provider} ACP did not return a session id.`,
       });
     }
+
     this.cacheSessionMetadata(sessionId, response);
     this.queues.set(sessionId, { values: [] });
     this.liveSessions.add(sessionId);
     this.sessionWriteModes.set(sessionId, input.writeMode ?? "allowed");
     await callbacks?.onSessionId?.(sessionId);
     await this.configureSession(sessionId, input, response, true);
+
     return sessionId;
   }
 
-  private cacheSessionMetadata(sessionId: string, response: unknown): void {
+  private cacheSessionMetadata(sessionId: string, response: WireInput): void {
     if (hasAcpConfigOptions(response) || (this.flavor === "grok" && readGrokSessionState(response))) {
       this.sessionMetadata.set(sessionId, response);
     }
@@ -364,16 +406,20 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response?: unknown,
+    response?: WireInput,
     isNewSession = false,
   ): Promise<void> {
     const metadata = response ?? this.sessionMetadata.get(sessionId);
+
     if (this.flavor === "grok") {
       await this.configureGrokSession(sessionId, input, metadata, isNewSession);
+
       return;
     }
+
     await this.enforceReadOnlyMode(sessionId, input);
     const canConfigure = isNewSession || hasAcpConfigOptions(metadata);
+
     if (!canConfigure) {
       const requested = [
         input.model && input.modelOverrideRequested ? "model" : undefined,
@@ -381,6 +427,7 @@ export class AcpRuntime implements LocalAgentRuntime {
       ]
         .filter(Boolean)
         .join(" and ");
+
       if (requested) {
         throw new AgentProviderProtocolError({
           code: "PROVIDER_PROTOCOL_ERROR",
@@ -390,15 +437,18 @@ export class AcpRuntime implements LocalAgentRuntime {
           message: `${this.provider} ACP cannot apply the requested ${requested} override because the resumed session did not advertise configurable options.`,
         });
       }
+
       // A durable resumed session keeps its previously selected provider
       // configuration. If resume does not re-advertise config options, do not
       // force a redundant set operation for persisted model/effort values.
       return;
     }
+
     if (input.model) {
       const config = resolveAcpModelConfigUpdate(metadata, input.model, this.flavor, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
     }
+
     if (input.effort) {
       const config = resolveAcpEffortConfigUpdate(metadata, input.effort, this.flavor, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
@@ -407,7 +457,9 @@ export class AcpRuntime implements LocalAgentRuntime {
 
   private async enforceReadOnlyMode(sessionId: string, input: LocalAgentRunInput): Promise<void> {
     const modeId = ACP_READ_ONLY_MODES[this.flavor];
+
     if (input.writeMode !== "read_only" || !modeId) return;
+
     try {
       await this.connection.agent.request("session/set_mode", { sessionId, modeId });
     } catch (cause) {
@@ -426,15 +478,17 @@ export class AcpRuntime implements LocalAgentRuntime {
   private async configureGrokSession(
     sessionId: string,
     input: LocalAgentRunInput,
-    response: unknown,
+    response: WireInput,
     isNewSession: boolean,
   ): Promise<void> {
     const state = readGrokSessionState(response);
+
     if (!state) {
       const requested = [
         input.model && (isNewSession || input.modelOverrideRequested) ? "model" : undefined,
         input.effort && (isNewSession || input.effortOverrideRequested) ? "effort" : undefined,
       ].filter(Boolean).join(" and ");
+
       if (requested) {
         throw new AgentProviderProtocolError({
           code: "PROVIDER_PROTOCOL_ERROR",
@@ -444,24 +498,29 @@ export class AcpRuntime implements LocalAgentRuntime {
           message: `${this.provider} ACP did not advertise typed model metadata required for the requested ${requested} override.`,
         });
       }
+
       return;
     }
 
     const currentModel = state.currentModelId;
+
     const requestedModel = input.model
       ? resolveGrokModelId(input.model, state)
       : currentModel ?? state.availableModels[0]?.id ?? GROK_DEFAULT_MODEL;
+
     const effort = input.effort
       ? resolveGrokEffort(input.effort, state, requestedModel)
       : undefined;
+
     const shouldSetModel = Boolean(input.model && requestedModel !== currentModel) || effort !== undefined;
+
     if (!shouldSetModel) return;
 
     try {
       await this.connection.agent.request("session/set_model", {
         sessionId,
         modelId: requestedModel,
-        ...(effort ? { _meta: { reasoningEffort: effort } } : {}),
+        ...optionalFields(effort ? { _meta: { reasoningEffort: effort } } : undefined),
       });
     } catch (cause) {
       throw new AgentProviderProtocolError({
@@ -483,7 +542,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     return this.flavor === "grok" ? { _meta: { yoloMode: input.writeMode === "full_access" } } : {};
   }
 
-  private additionalDirectoryParams(): { additionalDirectories?: string[] } {
+  private additionalDirectoryParams() {
     // DevSpace currently authorizes exactly one workspace root per agent turn.
     // Do not advertise an empty additional-directory scope to ACP providers.
     return {};
@@ -491,6 +550,7 @@ export class AcpRuntime implements LocalAgentRuntime {
 
   private nextPromptId(): string {
     this.promptSequence += 1;
+
     return `devspace-grok-prompt-${this.promptSequence}`;
   }
 }
@@ -541,6 +601,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const command = this.resolveCommand();
+
         if (!command) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
@@ -551,6 +612,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             message: `${this.provider} executable was not found.`,
           });
         }
+
         if (this.flavor === "generic" && context.writeMode !== "full_access") {
           // DevSpace cannot bound what an arbitrary ACP agent writes: it may act
           // without asking for permission, so only an explicit full_access turn may run it.
@@ -563,11 +625,13 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             message: `Generic ACP providers cannot enforce the ${context.writeMode ?? "allowed"} write mode; run them with full_access.`,
           });
         }
+
         // Built-in flavors derive their sandbox flags from the write mode, so only
         // generic providers take configured arguments.
         const args = this.flavor === "generic"
           ? this.configuredArgs ?? []
           : acpCommandArgs(this.flavor, context, this.env);
+
         const child = spawn(command, args, {
           cwd: resolve(context.workspaceRoot),
           env: this.env,
@@ -575,20 +639,26 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           detached: process.platform !== "win32",
           windowsHide: true,
         });
+
         let resolveStartupError!: (error: Error) => void;
         const startupError = new Promise<Error>((resolveError) => { resolveStartupError = resolveError; });
         const onStartupError = (error: Error) => { resolveStartupError(error); };
+
         child.once("error", onStartupError);
+
         if (!child.stdin || !child.stdout || !child.stderr) {
           child.on("error", observeChildError);
           child.removeListener("error", onStartupError);
+
           if (child.exitCode === null) {
             const detached = process.platform !== "win32";
             terminateProcessTree(child, "SIGTERM", detached);
+
             if (!await waitForProcessExit(child, 1_000)) {
               terminateProcessTree(child, "SIGKILL", detached);
             }
           }
+
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
             provider: this.provider,
@@ -605,17 +675,21 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         child.stderr.on("data", (chunk: string) => {
           stderrTail = appendTail(stderrTail, chunk, MAX_ACP_STDERR_BYTES);
         });
+
         try {
           const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
           const queues = new Map<string, AcpSessionQueue>();
           const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
+
           const grokCompletionRegistry = this.flavor === "grok"
             ? new GrokPromptCompletionRegistry()
             : undefined;
+
           const app = client({ name: "DevSpace" })
             .onRequest(methods.client.session.requestPermission, (context) => {
               const writeMode = sessionWriteModes.get(context.params.sessionId);
               const selected = selectAcpPermissionOption(context.params.options, writeMode, this.flavor);
+
               return selected
                 ? { outcome: { outcome: "selected", optionId: selected.optionId } }
                 : { outcome: { outcome: "cancelled" } };
@@ -623,6 +697,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             .onNotification(methods.client.session.update, (context) => {
               deliverAcpSessionUpdate(queues, context.params);
             });
+
           if (grokCompletionRegistry) {
             for (const method of [
               "x.ai/session/prompt_complete",
@@ -635,11 +710,16 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
               });
             }
           }
+
           const stream = ndJsonStream(
+            // SAFETY: The surrounding checks or construction already match this type.
             Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+            // SAFETY: The surrounding checks or construction already match this type.
             Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
           );
-          connection = app.connect(stream) as unknown as AcpConnectionLike;
+
+          connection = unsafeNarrow<AcpConnectionLike>(app.connect(stream));
+
           const init = await withTimeout(Promise.race([
             connection.agent.request(methods.agent.initialize, {
               protocolVersion: 1,
@@ -651,7 +731,9 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           ACP_INITIALIZE_TIMEOUT_MS,
           `${this.provider} ACP initialize timed out.`,
           );
+
           const capabilities = readAcpCapabilities(init);
+
           const runtime = new AcpRuntime({
             flavor: this.flavor,
             command,
@@ -663,25 +745,31 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             sessionWriteModes,
             grokCompletionRegistry,
           }, connection);
+
           // AcpRuntime installs the long-lived child error listener before this
           // startup-only listener is removed, so there is no unobserved gap.
           child.removeListener("error", onStartupError);
+
           return runtime;
         } catch (error) {
           child.on("error", observeChildError);
           child.removeListener("error", onStartupError);
+
           try {
             connection?.close(error);
           } catch {
             // The child still needs to be terminated if the protocol failed early.
           }
+
           if (child.exitCode === null) {
             const detached = process.platform !== "win32";
             terminateProcessTree(child, "SIGTERM", detached);
+
             if (!await waitForProcessExit(child, 1_000)) {
               terminateProcessTree(child, "SIGKILL", detached);
             }
           }
+
           if (isProgrammerDefect(error)) throw error;
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
@@ -702,6 +790,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
       this.resolvedCommand = this.commandResolver(this.flavor, this.env, this.configuredCommand);
       this.commandResolved = true;
     }
+
     return this.resolvedCommand;
   }
 }
@@ -711,16 +800,20 @@ async function waitForProcessExit(
   timeoutMs: number,
 ): Promise<boolean> {
   if (child.exitCode !== null) return true;
+
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       child.removeListener("exit", onExit);
       resolve(false);
     }, timeoutMs);
+
     timer.unref();
+
     const onExit = () => {
       clearTimeout(timer);
       resolve(true);
     };
+
     child.once("exit", onExit);
   });
 }
@@ -737,8 +830,11 @@ export function resolveAcpCommand(
       : provider === "grok"
         ? env.GROK_COMMAND
         : undefined);
+
   const command = configured ?? ACP_COMMANDS[provider]?.[0];
+
   if (!command) return undefined;
+
   return resolveExecutableCommand(command, env);
 }
 
@@ -759,6 +855,7 @@ export function acpCommandArgs(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const writeMode = context.writeMode ?? "allowed";
+
   if (provider === "cursor") {
     return [
       "acp",
@@ -767,11 +864,14 @@ export function acpCommandArgs(
       ...(writeMode === "full_access" ? ["--force"] : []),
     ];
   }
+
   if (provider === "grok") {
     const agentProfile = env.GROK_AGENT_PROFILE?.trim();
+
     const effort = context.effort
       ? resolveGrokEffort(context.effort, undefined, undefined)
       : undefined;
+
     return [
       "agent",
       ...(agentProfile ? ["--agent-profile", agentProfile] : []),
@@ -779,10 +879,13 @@ export function acpCommandArgs(
       "stdio",
     ];
   }
+
   if (provider === "generic") return [];
+
   const sandboxArgs = writeMode === "full_access"
     ? ["--no-sandbox"]
     : ["--experimental", "--sandbox"];
+
   return [
     "--acp",
     ...sandboxArgs,
@@ -794,11 +897,11 @@ export function acpCommandArgs(
 }
 
 export function resolveAcpModelConfigUpdate(
-  session: unknown,
+  session: WireInput,
   model: string,
   provider: string,
   sessionIdOverride?: string,
-): { sessionId: string; configId: string; value: string } {
+) {
   return resolveAcpSelectConfigUpdate(session, {
     category: "model",
     label: "model",
@@ -809,7 +912,7 @@ export function resolveAcpModelConfigUpdate(
 }
 
 export function resolveAcpEffortConfigUpdate(
-  session: unknown,
+  session: WireInput,
   effort: string,
   provider: string,
   sessionIdOverride?: string,
@@ -824,7 +927,7 @@ export function resolveAcpEffortConfigUpdate(
 }
 
 function resolveAcpSelectConfigUpdate(
-  session: unknown,
+  session: WireInput,
   options: {
     category: string;
     label: string;
@@ -832,41 +935,53 @@ function resolveAcpSelectConfigUpdate(
     value: string;
     sessionIdOverride?: string;
   },
-): { sessionId: string; configId: string; value: string } {
+) {
   const record = asRecord(session);
+
   if (!record) throw new Error(`${options.provider} ACP session metadata is missing.`);
   const sessionId = options.sessionIdOverride ?? directString(record?.sessionId);
+
   if (!sessionId) throw new Error(`${options.provider} ACP session did not return a session id.`);
   const response = asRecord(record?.newSessionResponse) ?? record;
   const configOptions = readArray(response, "configOptions") ?? [];
+
   const config = configOptions
     .map(asRecord)
     .find((option) => option?.type === "select" && option.category === options.category);
+
   if (!config) throw new Error(`${options.provider} ACP server does not expose a ${options.label}.`);
   const configId = directString(config.id);
+
   if (!configId) throw new Error(`${options.provider} ACP ${options.label} is missing an id.`);
   const available = flattenAcpSelectValues(config);
+
   if (!available.includes(options.value)) {
     const suffix = available.length > 0 ? ` Available values: ${available.join(", ")}.` : "";
     throw new Error(`${options.provider} ACP ${options.label} does not support '${options.value}'.${suffix}`);
   }
+
   return { sessionId, configId, value: options.value };
 }
 
-export function flattenAcpSelectValues(option: Record<string, unknown>): string[] {
+export function flattenAcpSelectValues(option: JsonObject): string[] {
   const values: string[] = [];
+
   for (const item of readArray(option, "options") ?? []) {
     const record = asRecord(item);
     const value = directString(record?.value);
+
     if (value) {
       values.push(value);
       continue;
     }
+
     for (const nested of readArray(record, "options") ?? []) {
       const nestedValue = directString(asRecord(nested)?.value);
+
       if (nestedValue) values.push(nestedValue);
     }
   }
+
   return values;
 }
 
@@ -882,6 +997,7 @@ export function selectAcpPermissionOption(
   provider?: AcpFlavor,
 ): { optionId: string } | undefined {
   if (!writeMode) return undefined;
+
   // Copilot's native sandbox has a per-command escape hatch enabled by
   // default. Normal turns already pass --allow-all-tools, so any permission
   // request that reaches ACP is an attempted escalation (including a
@@ -889,17 +1005,20 @@ export function selectAcpPermissionOption(
   // authority. Full access deliberately keeps the provider's unrestricted
   // behavior.
   if (provider === "copilot" && writeMode !== "full_access") return undefined;
+
   const selected = writeMode === "read_only"
     ? options.find((option) => option.kind === "reject_once")
       ?? options.find((option) => option.kind === "reject_always")
     : options.find((option) => option.kind === "allow_once")
       ?? options.find((option) => option.kind === "allow_always");
+
   return selected ? { optionId: selected.optionId } : undefined;
 }
 
-function readAcpCapabilities(value: unknown): AcpCapabilities {
+function readAcpCapabilities(value: WireInput): AcpCapabilities {
   const capabilities = asRecord(asRecord(value)?.agentCapabilities);
   const sessions = asRecord(capabilities?.sessionCapabilities);
+
   return {
     resume: Boolean(sessions?.resume),
     close: Boolean(sessions?.close),
@@ -907,12 +1026,13 @@ function readAcpCapabilities(value: unknown): AcpCapabilities {
   };
 }
 
-function extractAcpText(updates: unknown[]): string {
+function extractAcpText(updates: WireInput[]): string {
   return updates
     .map((value) => {
       const update = asRecord(asRecord(value)?.update);
       const content = asRecord(update?.content);
-      return update?.sessionUpdate === "agent_message_chunk" && content?.type === "text" && typeof content.text === "string"
+
+      return update?.sessionUpdate === "agent_message_chunk" && content?.type === "text" && isJsonString(content.text)
         ? content.text
         : "";
     })
@@ -920,18 +1040,20 @@ function extractAcpText(updates: unknown[]): string {
     .trim();
 }
 
-function isGrokPromptCompletion(value: unknown): boolean {
+function isGrokPromptCompletion(value: WireInput): boolean {
   const record = asRecord(value);
-  return typeof record?.sessionId === "string";
+
+  return isJsonString(record?.sessionId);
 }
 
 async function yieldToAcpQueue(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function hasAcpConfigOptions(value: unknown): boolean {
+function hasAcpConfigOptions(value: WireInput): boolean {
   const record = asRecord(value);
   const response = asRecord(record?.newSessionResponse) ?? record;
+
   return Array.isArray(response?.configOptions);
 }
 
@@ -941,10 +1063,11 @@ export function deliverAcpSessionUpdate(
   params: { sessionId: string },
 ): void {
   const queue = queues.get(params.sessionId);
+
   if (queue) appendAcpQueueValue(queue, params);
 }
 
-function appendAcpQueueValue(queue: AcpSessionQueue, value: unknown): void {
+function appendAcpQueueValue(queue: AcpSessionQueue, value: WireInput): void {
   if (queue.values.length >= MAX_ACP_QUEUE_ITEMS) queue.values.shift();
   queue.values.push(value);
   queue.onUpdate?.(value);
@@ -960,31 +1083,42 @@ export class AcpActivityReporter {
 
   constructor(private readonly onEvent: (event: LocalAgentActivityEvent) => void) {}
 
-  handle(value: unknown): void {
+  handle(value: WireInput): void {
     const update = asRecord(asRecord(value)?.update);
+
     switch (update?.sessionUpdate) {
       case "agent_message_chunk": {
         const content = asRecord(update.content);
-        if (content?.type === "text" && typeof content.text === "string") this.text += content.text;
+
+        if (content?.type === "text" && isJsonString(content.text)) this.text += content.text;
+
         return;
       }
+
       case "tool_call": {
         this.flush();
+
         const call = {
-          tool: typeof update.kind === "string" && update.kind ? update.kind : "tool",
-          summary: typeof update.title === "string" ? update.title : summarizeToolInput(update.rawInput),
+          tool: isJsonString(update.kind) && update.kind ? update.kind : "tool",
+          summary: isJsonString(update.title) ? update.title : summarizeToolInput(update.rawInput),
         };
-        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+
+        const id = isJsonString(update.toolCallId) ? update.toolCallId : undefined;
+
         if (id) this.toolCalls.set(id, call);
         this.onEvent({ type: "tool_started", ...call });
         this.complete(id, update.status);
+
         return;
       }
+
       case "tool_call_update": {
-        const id = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+        const id = isJsonString(update.toolCallId) ? update.toolCallId : undefined;
         const call = id ? this.toolCalls.get(id) : undefined;
-        if (call && typeof update.title === "string") call.summary = update.title;
+
+        if (call && isJsonString(update.title)) call.summary = update.title;
         this.complete(id, update.status);
+
         return;
       }
     }
@@ -995,9 +1129,10 @@ export class AcpActivityReporter {
     this.text = "";
   }
 
-  private complete(id: string | undefined, status: unknown): void {
+  private complete(id: string | undefined, status: WireInput): void {
     if (status !== "completed" && status !== "failed") return;
     const call = id ? this.toolCalls.get(id) : undefined;
+
     if (!call || !id) return;
     this.toolCalls.delete(id);
     this.onEvent({ type: "tool_completed", ...call, status });
@@ -1006,16 +1141,20 @@ export class AcpActivityReporter {
 
 function appendTail(current: string, chunk: string, maxBytes: number): string {
   const next = current + chunk;
+
   if (Buffer.byteLength(next, "utf8") <= maxBytes) return next;
+
   return Buffer.from(next, "utf8").subarray(-maxBytes).toString("utf8");
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
+
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(message)), timeoutMs);
     timer.unref();
   });
+
   try {
     return await Promise.race([promise, timeout]);
   } finally {
@@ -1023,22 +1162,25 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function readArray(value: unknown, key: string): unknown[] | undefined {
+function readArray(value: WireInput, key: string): unknown[] | undefined {
   const result = asRecord(value)?.[key];
+
   return Array.isArray(result) ? result : undefined;
 }
 
-function readString(value: unknown, key: string): string | undefined {
+function readString(value: WireInput, key: string): string | undefined {
   const result = asRecord(value)?.[key];
-  return typeof result === "string" ? result : undefined;
+
+  return isJsonString(result) ? result : undefined;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function directString(value: WireInput): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }

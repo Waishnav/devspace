@@ -96,6 +96,7 @@ import Logo from "../../logos/Logo.astro";
 
 <script>
   const root = document.querySelector<HTMLElement>("[data-term]");
+
   if (root) {
     const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-scene]")];
     const panels = [...root.querySelectorAll<HTMLElement>("[data-panel]")];
@@ -109,6 +110,7 @@ import Logo from "../../logos/Logo.astro";
       tabs.forEach((t, j) => t.setAttribute("aria-selected", String(i === j)));
       panels.forEach((p, j) => {
         p.classList.remove("is-active");
+
         if (i === j) {
           void p.offsetWidth; // restart the staggered reveal
           p.classList.add("is-active");
@@ -116,13 +118,17 @@ import Logo from "../../logos/Logo.astro";
       });
       title.textContent = titles[i]!;
     };
+
     const autoplay = () => {
       clearInterval(timer);
+
       if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       timer = setInterval(() => show((current + 1) % panels.length), 10000);
     };
+
     tabs.forEach((t, i) => t.addEventListener("click", () => { show(i); autoplay(); }));
     const initial = Number(new URLSearchParams(location.search).get("scene"));
+
     if (initial > 0 && initial < panels.length) show(initial);
     autoplay();
   }

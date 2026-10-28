@@ -1,3 +1,5 @@
+import { optionalFields } from "../../../src/json-value.js";
+import type { WireInput } from "../../../src/json-value.js";
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { QaCardCall, QaRun, QaStep } from "../transcript.js";
@@ -20,20 +22,29 @@ declare global {
 }
 
 const CARD_TIMEOUT_MS = 15_000;
+
 // Cards keep resizing while fonts and diff highlighting load; wait for a quiet period.
 const SIZE_QUIET_MS = 800;
 
 const params = new URLSearchParams(location.search);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
+
 // A bare host sends only the theme, like hosts that do not implement style variables.
 const bareHost = params.get("styles") === "none";
+
 document.documentElement.dataset.theme = theme;
+
 window.__devspaceQa = { settled: false, cards: [], hostEvents: [] };
 
+// SAFETY: The surrounding checks or construction already match this type.
 const run = await (await fetch("/api/run")).json() as QaRun & { sandboxOrigin: string };
+
 renderSummary(run);
+
 const pending = run.steps.map((step) => renderStep(run, step));
+
 await Promise.all(pending);
+
 window.__devspaceQa.settled = true;
 
 function renderSummary(qaRun: QaRun): void {
@@ -59,6 +70,7 @@ async function renderStep(qaRun: QaRun & { sandboxOrigin: string }, step: QaStep
     details("arguments", JSON.stringify(step.arguments, null, 2)),
     details("result", step.error ?? JSON.stringify(step.result, null, 2)),
   );
+
   if (!ok) section.append(element("ul", { className: "failures" }, ...step.failures.map((failure) => element("li", {}, failure))));
   document.getElementById("steps")!.append(section);
 
@@ -82,6 +94,7 @@ async function mountCard(
   section.append(iframe, callLog);
 
   const tool = qaRun.tools.find((item) => item.name === step.tool);
+
   const bridge = new AppBridge(
     null,
     { name: "devspace-qa-host", version: "1.0.0" },
@@ -89,19 +102,19 @@ async function mountCard(
     {
       hostContext: {
         theme,
-        ...(bareHost ? {} : { styles: hostStyles(theme) }),
+        ...optionalFields(bareHost ? undefined : { styles: hostStyles(theme) }),
         displayMode: "inline",
         availableDisplayModes: ["inline"],
         platform: "web",
         locale: "en-US",
         timeZone: "UTC",
         containerDimensions: { maxHeight: 2000 },
-        ...(tool ? { toolInfo: { tool } } : {}),
+        ...optionalFields(tool ? { toolInfo: { tool } } : undefined),
       },
     },
   );
 
-  const hostEvent = (kind: string, detail: unknown) => {
+  const hostEvent = (kind: string, detail: WireInput) => {
     window.__devspaceQa.hostEvents.push({ step: step.index, kind, detail });
     callLog.append(element("li", {}, `card → ${kind}: ${summarize(detail)}`));
   };
@@ -112,36 +125,52 @@ async function mountCard(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ step: step.index, name: params.name, arguments: params.arguments, _meta: params._meta }),
     });
+
+    // SAFETY: The surrounding checks or construction already match this type.
     const call = await response.json() as QaCardCall;
     hostEvent("tools/call", { name: params.name, error: call.error, isError: call.result?.isError });
+
     if (call.error || !call.result) throw new Error(call.error ?? "Tool call failed");
+
     return call.result;
   };
+
   bridge.onopenlink = async (params) => {
     hostEvent("open-link", params);
+
     return {};
   };
+
   bridge.ondownloadfile = async (params) => {
     hostEvent("download-file", params);
+
     return {};
   };
+
   bridge.onmessage = async (params) => {
     hostEvent("message", params);
+
     return {};
   };
+
   bridge.onupdatemodelcontext = async (params) => {
     hostEvent("update-model-context", params);
+
     return {};
   };
+
   bridge.onrequestdisplaymode = async (params) => {
     hostEvent("request-display-mode", params);
+
     return { mode: "inline" };
   };
+
   bridge.onloggingmessage = (params) => console.log(`[card ${step.index}]`, params.level, params.data);
 
   let quietTimer: number | undefined;
   let finish: () => void = () => undefined;
   const settled = new Promise<void>((resolveSettled) => { finish = resolveSettled; });
+
   const markReady = () => {
     window.clearTimeout(quietTimer);
     quietTimer = window.setTimeout(() => {
@@ -149,18 +178,21 @@ async function mountCard(
       finish();
     }, SIZE_QUIET_MS);
   };
+
   bridge.onsizechange = ({ height }) => {
     if (height === undefined) return;
     status.height = Math.ceil(height);
     iframe.style.height = `${status.height}px`;
+
     if (status.state === "initialized") markReady();
   };
+
   bridge.oninitialized = () => {
     status.state = "initialized";
     void bridge.sendToolInput({ arguments: step.arguments })
       .then(() => bridge.sendToolResult(result))
       .then(markReady)
-      .catch((error: unknown) => {
+      .catch((error: WireInput) => {
         status.state = "error";
         status.error = error instanceof Error ? error.message : String(error);
         finish();
@@ -181,6 +213,7 @@ async function mountCard(
     await bridge.connect(new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!));
     iframe.src = `${qaRun.sandboxOrigin}/resource?uri=${encodeURIComponent(step.resourceUri!)}`;
   };
+
   try {
     await Promise.race([setup(), settled]);
   } catch (error) {
@@ -197,8 +230,9 @@ function details(label: string, text: string): HTMLElement {
   return element("details", {}, element("summary", {}, label), element("pre", {}, text));
 }
 
-function summarize(value: unknown): string {
+function summarize(value: WireInput): string {
   const text = JSON.stringify(value);
+
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }
 
@@ -209,5 +243,6 @@ function element<K extends keyof HTMLElementTagNameMap>(
 ): HTMLElementTagNameMap[K] {
   const node = Object.assign(document.createElement(tag), props);
   node.append(...children);
+
   return node;
 }

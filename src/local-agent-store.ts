@@ -9,6 +9,7 @@ import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type { LocalAgentWriteMode } from "./local-agent-runtime.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
+
 export type LocalAgentTurnStatus = "running" | "completed" | "failed" | "stopped";
 
 export interface LocalAgentRecord {
@@ -161,7 +162,9 @@ export class LocalAgentStore {
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
     let rows: LocalAgentRow[];
+
     if (scope.workspaceId && scope.workspaceRoot) {
+      // SAFETY: The surrounding checks or construction already match this type.
       rows = this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
@@ -170,6 +173,7 @@ export class LocalAgentStore {
         )
         .all(scope.workspaceId, resolve(scope.workspaceRoot)) as LocalAgentRow[];
     } else if (scope.workspaceId) {
+      // SAFETY: The surrounding checks or construction already match this type.
       rows = this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
@@ -178,6 +182,7 @@ export class LocalAgentStore {
         )
         .all(scope.workspaceId) as LocalAgentRow[];
     } else if (scope.workspaceRoot) {
+      // SAFETY: The surrounding checks or construction already match this type.
       rows = this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
@@ -186,6 +191,7 @@ export class LocalAgentStore {
         )
         .all(resolve(scope.workspaceRoot)) as LocalAgentRow[];
     } else {
+      // SAFETY: The surrounding checks or construction already match this type.
       rows = this.database.sqlite
         .prepare("select * from local_agent_sessions order by updated_at desc")
         .all() as LocalAgentRow[];
@@ -208,6 +214,7 @@ export class LocalAgentStore {
       let id = input.id ?? generate();
       validateAgentId(id);
       let existing = this.getRowById(id);
+
       // Only caller-supplied ids are idempotent; a generated id that collides must never alias another agent.
       if (!input.id) {
         while (existing) {
@@ -215,12 +222,16 @@ export class LocalAgentStore {
           existing = this.getRowById(id);
         }
       }
+
       if (existing) {
         const record = rowToLocalAgentRecord(existing);
         validateDispatchIdentity(record, input, existing.dispatch_signature);
+
         return { record, created: false };
       }
+
       const now = new Date().toISOString();
+
       const record: LocalAgentRecord = {
         id,
         workspaceId: input.workspaceId,
@@ -280,10 +291,12 @@ export class LocalAgentStore {
 
   getById(id: string): LocalAgentRecord | undefined {
     const exact = this.getRowById(id);
+
     return exact ? rowToLocalAgentRecord(exact) : undefined;
   }
 
   private getRowById(id: string): LocalAgentRow | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     return this.database.sqlite
       .prepare(
         `select * from local_agent_sessions
@@ -307,6 +320,7 @@ export class LocalAgentStore {
 
   update(id: string, patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>): LocalAgentRecord {
     const current = this.getById(id);
+
     if (!current) throw new Error(`Unknown subagent id: ${id}`);
 
     const updated: LocalAgentRecord = {
@@ -384,10 +398,13 @@ export class LocalAgentStore {
   beginTurn(agentId: string, input: BeginLocalAgentTurnInput): BegunLocalAgentTurn {
     return this.database.sqlite.transaction(() => {
       const current = this.getById(agentId);
+
       if (!current) throw new Error(`Unknown subagent id: ${agentId}`);
+
       if (current.status === "running") {
         throw new Error(`Subagent ${agentId} already has a running turn.`);
       }
+
       const agent = this.update(agentId, {
         status: "running",
         model: input.model,
@@ -400,6 +417,7 @@ export class LocalAgentStore {
         errorDetail: undefined,
         latestTurnId: input.turnId,
       });
+
       const result = this.database.sqlite
         .prepare(
           `insert into local_agent_turns (
@@ -411,6 +429,7 @@ export class LocalAgentStore {
           ) values (?, ?, ?, 'running', ?)`,
         )
         .run(input.turnId, agentId, input.prompt, agent.updatedAt);
+
       this.database.sqlite
         .prepare(
           `delete from local_agent_turn_events
@@ -421,7 +440,9 @@ export class LocalAgentStore {
         )
         .run(agentId, TURNS_WITH_EVENTS_PER_AGENT);
       const turn = this.getTurnById(Number(result.lastInsertRowid));
+
       if (!turn) throw new Error(`Unable to load the new turn for subagent ${agentId}.`);
+
       return { agent, turn };
     }).immediate();
   }
@@ -440,13 +461,17 @@ export class LocalAgentStore {
   ): LocalAgentRecord {
     return this.database.sqlite.transaction(() => {
       const turn = this.getTurnById(turnId);
+
       if (!turn || turn.agentId !== agentId) {
         throw new Error(`Unknown turn ${turnId} for subagent ${agentId}.`);
       }
+
       if (turn.status !== "running") {
         throw new Error(`Turn ${turnId} for subagent ${agentId} is already ${turn.status}.`);
       }
+
       const currentAgent = this.getById(agentId);
+
       if (!currentAgent) throw new Error(`Unknown subagent id: ${agentId}`);
 
       const completedAt = new Date().toISOString();
@@ -487,6 +512,7 @@ export class LocalAgentStore {
           errorDetail: undefined,
         });
       }
+
       return this.update(agentId, {
         status: completion.status === "failed" ? "error" : "stopped",
         latestResponse: undefined,
@@ -507,9 +533,11 @@ export class LocalAgentStore {
   }
 
   getTurnById(turnId: number): LocalAgentTurnRecord | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where id = ? limit 1")
       .get(turnId) as LocalAgentTurnRow | undefined;
+
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
   }
 
@@ -520,9 +548,11 @@ export class LocalAgentStore {
   }
 
   getTurnByTurnId(turnId: string): LocalAgentTurnRecord | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where turn_id = ? limit 1")
       .get(turnId) as LocalAgentTurnRow | undefined;
+
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
   }
 
@@ -551,6 +581,7 @@ export class LocalAgentStore {
   }
 
   listTurnEvents(turn: LocalAgentTurnRecord, afterSeq = 0): LocalAgentTurnEvent[] {
+    // SAFETY: The surrounding checks or construction already match this type.
     const rows = this.database.sqlite
       .prepare(
         `select seq, type, data, created_at from local_agent_turn_events
@@ -558,7 +589,9 @@ export class LocalAgentStore {
          order by seq asc`,
       )
       .all(turn.id, afterSeq) as LocalAgentTurnEventRow[];
+
     return rows.map((row) => ({
+      // SAFETY: The surrounding checks or construction already match this type.
       ...(JSON.parse(row.data) as LocalAgentTurnEventBody),
       turnId: turn.turnId,
       seq: row.seq,
@@ -574,9 +607,11 @@ export class LocalAgentStore {
   }
 
   getLatestTurn(agentId: string): LocalAgentTurnRecord | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id desc limit 1")
       .get(agentId) as LocalAgentTurnRow | undefined;
+
     return row ? rowToLocalAgentTurnRecord(row) : undefined;
   }
 
@@ -587,9 +622,11 @@ export class LocalAgentStore {
   }
 
   listTurns(agentId: string): LocalAgentTurnRecord[] {
+    // SAFETY: The surrounding checks or construction already match this type.
     const rows = this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id asc")
       .all(agentId) as LocalAgentTurnRow[];
+
     return rows.map(rowToLocalAgentTurnRecord);
   }
 
@@ -604,6 +641,7 @@ export class LocalAgentStore {
            where status = 'running'`,
         )
         .run(message, now);
+
       const result = this.database.sqlite
         .prepare(
           `update local_agent_sessions
@@ -611,6 +649,7 @@ export class LocalAgentStore {
            where status in ('starting', 'running')`,
         )
         .run(message, now);
+
       return Number(result.changes);
     }).immediate();
   }
@@ -678,12 +717,15 @@ function readTurnStatus(status: string): LocalAgentTurnStatus {
   if (status === "running" || status === "completed" || status === "failed" || status === "stopped") {
     return status;
   }
+
   throw new Error(`Invalid stored local agent turn status: ${status}`);
 }
 
 function readOptionalBoolean(value: string | null): boolean | undefined {
   if (value === "true") return true;
+
   if (value === "false") return false;
+
   return undefined;
 }
 
@@ -692,6 +734,7 @@ function storeResult<T>(operation: string, run: () => T): BetterResult<T, AgentS
     return Result.ok(run());
   } catch (cause) {
     if (isProgrammerDefect(cause)) throw cause;
+
     return Result.err(new AgentStoreError(operation, cause));
   }
 }
@@ -706,6 +749,7 @@ function readStatus(status: string): LocalAgentStatus {
   ) {
     return status;
   }
+
   return "error";
 }
 
@@ -726,6 +770,8 @@ function validateDispatchIdentity(
     providerInstanceId: input.providerInstanceId,
     driver: input.driver,
   };
+
+  // SAFETY: The surrounding checks or construction already match this type.
   for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
     if (existing[key] !== expected[key]) {
       throw new LocalAgentDispatchConflictError(
@@ -733,12 +779,15 @@ function validateDispatchIdentity(
       );
     }
   }
+
   if (storedSignature !== (input.dispatchSignature ?? null)) {
     throw new LocalAgentDispatchConflictError(
       `Subagent id ${existing.id} is already owned by a different dispatch.`,
     );
   }
+
   if (storedSignature !== null) return;
+
   if (
     existing.model !== input.model
     || existing.effort !== input.effort

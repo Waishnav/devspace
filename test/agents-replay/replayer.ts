@@ -1,3 +1,5 @@
+import { isObjectValue, isJsonString, isJsonNumber, isJsonBoolean, jsonKind } from "../../src/json-value.js";
+import type { WireInput, JsonObject } from "../../src/json-value.js";
 import type { ReplayProtocol } from "./providers.js";
 import { restore, scrub, type ScrubContext, type Transcript, type TranscriptFrame } from "./transcript.js";
 
@@ -5,7 +7,7 @@ export interface ReplayerOptions {
   transcript: Transcript;
   protocol: ReplayProtocol;
   context: ScrubContext;
-  emit(frame: unknown): void;
+  emit(frame: WireInput): void;
   fail(report: string): void;
   /** Upper bound for a recorded gap between provider frames. */
   maxGapMs?: number;
@@ -36,17 +38,21 @@ export class Replayer {
     this.queueProviderFrames();
   }
 
-  receive(live: unknown): void {
+  receive(live: WireInput): void {
     if (this.failed) return;
     const { protocol } = this.options;
     const actual = scrub(live, this.options.context);
     const kind = frameKind(protocol, actual);
+
     if (protocol.elasticKinds.has(kind)) {
       this.answerElastic(kind, actual);
+
       return;
     }
+
     const next = this.options.transcript.frames[this.cursor];
     const nextKind = next ? frameKind(protocol, next.frame) : undefined;
+
     if (!next || nextKind !== kind) {
       this.reportFailure(
         next
@@ -56,14 +62,19 @@ export class Replayer {
         next?.frame,
         actual,
       );
+
       return;
     }
+
     this.flush();
     const differences = diff(next.frame, actual, protocol.volatileKeys);
+
     if (differences.length > 0) {
       this.reportFailure(`Driver frame #${this.cursor} (${kind}) does not match the recording:`, differences, next.frame, actual);
+
       return;
     }
+
     this.bind(next.frame, actual);
     this.lastMs = next.ms;
     this.cursor += 1;
@@ -81,8 +92,10 @@ export class Replayer {
   private queueProviderFrames(): void {
     const { frames } = this.options.transcript;
     const { protocol } = this.options;
+
     for (;;) {
       const next = frames[this.cursor];
+
       if (next?.dir === "out") {
         this.pending.push(next);
       } else if (next && protocol.elasticKinds.has(frameKind(protocol, next.frame))) {
@@ -90,8 +103,10 @@ export class Replayer {
       } else {
         break;
       }
+
       this.cursor += 1;
     }
+
     this.schedule();
   }
 
@@ -109,49 +124,61 @@ export class Replayer {
   private flush(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+
     for (const frame of this.pending.splice(0)) this.emitPending(frame);
   }
 
   private emitPending(entry: TranscriptFrame): void {
     this.lastMs = entry.ms;
     const answers = this.options.protocol.responseTo(asRecord(entry.frame));
+
     if (answers !== undefined && this.skipped.has(JSON.stringify(answers))) return;
     this.emit(entry.frame);
   }
 
-  private emit(frame: unknown, extra?: Map<string, unknown>): void {
+  private emit(frame: WireInput, extra?: Map<string, WireInput>): void {
     const { volatileKeys } = this.options.protocol;
+
     const bound = rewriteVolatile(frame, volatileKeys, (value) => {
       const key = JSON.stringify(value);
+
       if (extra?.has(key)) return extra.get(key);
+
       return this.bindings.has(key) ? this.bindings.get(key) : value;
     });
+
     this.options.emit(restore(bound, this.options.context));
   }
 
   /** Answers a timing-dependent request with the closest recorded response of the same kind. */
-  private answerElastic(kind: string, actual: unknown): void {
+  private answerElastic(kind: string, actual: WireInput): void {
     const { frames } = this.options.transcript;
     const { protocol } = this.options;
+
     const candidates = frames
       .map((entry, index) => ({ entry, index }))
       .filter(({ entry }) => entry.dir === "in" && frameKind(protocol, entry.frame) === kind)
       .sort((left, right) => Math.abs(left.index - this.cursor) - Math.abs(right.index - this.cursor));
+
     for (const { entry } of candidates) {
       const recordedId = protocol.requestId(asRecord(entry.frame));
+
       const response = frames.find((candidate) => (
         candidate.dir === "out"
         && JSON.stringify(protocol.responseTo(asRecord(candidate.frame))) === JSON.stringify(recordedId)
       ));
+
       if (!response) continue;
       const liveId = protocol.requestId(asRecord(actual));
       this.emit(response.frame, new Map([[JSON.stringify(recordedId), liveId]]));
+
       return;
     }
+
     this.reportFailure(`Driver sent ${kind} but the recording has no response to replay for it:`, [], undefined, actual);
   }
 
-  private bind(recorded: unknown, actual: unknown): void {
+  private bind(recorded: WireInput, actual: WireInput): void {
     const { volatileKeys } = this.options.protocol;
     walkPairs(recorded, actual, (key, left, right) => {
       if (volatileKeys.has(key) && left !== right && isPrimitive(left)) {
@@ -160,55 +187,65 @@ export class Replayer {
     });
   }
 
-  private reportFailure(headline: string, differences: string[], expected: unknown, actual: unknown): void {
+  private reportFailure(headline: string, differences: string[], expected: WireInput, actual: WireInput): void {
     this.failed = true;
     this.flush();
+
     const lines = [
       headline,
       ...differences.map((line) => `  ${line}`),
       ...(expected === undefined ? [] : [`  expected: ${JSON.stringify(expected)}`]),
       `  actual:   ${JSON.stringify(actual)}`,
     ];
+
     this.options.fail(lines.join("\n"));
   }
 }
 
-function frameKind(protocol: ReplayProtocol, frame: unknown): string {
+function frameKind(protocol: ReplayProtocol, frame: WireInput): string {
   return protocol.kind(asRecord(frame));
 }
 
 /** Readable structural differences; volatile keys only need matching types. */
-export function diff(expected: unknown, actual: unknown, volatileKeys: ReadonlySet<string>, path = "$"): string[] {
+export function diff(expected: WireInput, actual: WireInput, volatileKeys: ReadonlySet<string>, path = "$"): string[] {
   const key = path.slice(path.lastIndexOf(".") + 1);
+
   if (volatileKeys.has(key)) {
     return typeOf(expected) === typeOf(actual)
       ? []
       : [`${path}: expected a ${typeOf(expected)}, got ${JSON.stringify(actual)}`];
   }
+
   if (Array.isArray(expected) && Array.isArray(actual)) {
     const lines = expected.length === actual.length
       ? []
       : [`${path}: expected ${expected.length} items, got ${actual.length}`];
+
     for (let index = 0; index < Math.min(expected.length, actual.length); index += 1) {
       lines.push(...diff(expected[index], actual[index], volatileKeys, `${path}[${index}]`));
     }
+
     return lines;
   }
+
   if (isObject(expected) && isObject(actual)) {
     const lines: string[] = [];
+
     for (const name of new Set([...Object.keys(expected), ...Object.keys(actual)])) {
       if (!(name in actual)) lines.push(`${path}.${name}: missing`);
       else if (!(name in expected)) lines.push(`${path}.${name}: unexpected ${JSON.stringify(actual[name])}`);
       else lines.push(...diff(expected[name], actual[name], volatileKeys, `${path}.${name}`));
     }
+
     return lines;
   }
+
   return expected === actual
     ? []
     : [`${path}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`];
 }
 
-function walkPairs(left: unknown, right: unknown, visit: (key: string, left: unknown, right: unknown) => void): void {
+function walkPairs(left: WireInput, right: WireInput, visit: (key: string, left: WireInput, right: WireInput) => void): void {
   if (Array.isArray(left) && Array.isArray(right)) {
     left.forEach((entry, index) => walkPairs(entry, right[index], visit));
   } else if (isObject(left) && isObject(right)) {
@@ -219,27 +256,33 @@ function walkPairs(left: unknown, right: unknown, visit: (key: string, left: unk
   }
 }
 
-function rewriteVolatile(value: unknown, keys: ReadonlySet<string>, rewrite: (value: unknown) => unknown): unknown {
+function rewriteVolatile(value: WireInput, keys: ReadonlySet<string>, rewrite: (value: WireInput) => WireInput): WireInput {
   if (Array.isArray(value)) return value.map((entry) => rewriteVolatile(entry, keys, rewrite));
+
   if (!isObject(value)) return value;
+
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
     keys.has(key) && isPrimitive(entry) ? rewrite(entry) : rewriteVolatile(entry, keys, rewrite),
   ]));
 }
 
-function typeOf(value: unknown): string {
-  return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+function typeOf(value: WireInput): string {
+  if (value === null) return "null";
+
+  if (Array.isArray(value)) return "array";
+
+  return jsonKind(value);
 }
 
-function isPrimitive(value: unknown): boolean {
-  return value === null || ["string", "number", "boolean"].includes(typeof value);
+function isPrimitive(value: WireInput): boolean {
+  return value === null || isJsonString(value) || isJsonNumber(value) || isJsonBoolean(value);
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isObject(value: WireInput): value is JsonObject {
+  return value !== null && isObjectValue(value) && !Array.isArray(value);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+function asRecord(value: WireInput): JsonObject {
   return isObject(value) ? value : {};
 }

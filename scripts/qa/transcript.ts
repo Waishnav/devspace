@@ -1,3 +1,4 @@
+import type { JsonObject } from "../../src/json-value.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 /** Everything one scenario replay produced; written to transcript.json and served to the QA host. */
@@ -17,7 +18,7 @@ export interface QaStep {
   index: number;
   label?: string;
   tool: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
   result?: CallToolResult;
   error?: string;
   durationMs: number;
@@ -29,13 +30,13 @@ export interface QaStep {
 export interface QaResource {
   mimeType?: string;
   html: string;
-  meta: Record<string, unknown>;
+  meta: JsonObject;
 }
 
 export interface QaCardCall {
   step: number;
   name: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
   result?: CallToolResult;
   error?: string;
 }

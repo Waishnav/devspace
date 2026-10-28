@@ -26,6 +26,7 @@ export default function DelegationDiagram() {
   useEffect(() => {
     if (reduced) return;
     const timer = setInterval(() => setTick((t) => t + 1), TICK_MS);
+
     return () => clearInterval(timer);
   }, [reduced]);
 
@@ -40,6 +41,7 @@ export default function DelegationDiagram() {
   // each row keeps its DOM node and slides as `step` advances.
   const hostRows = [-2, -1, 0, 1, 2].map((offset) => {
     const idx = step + offset;
+
     return { idx, offset, host: HOSTS[wrap(idx, HOSTS.length)]! };
   });
 
@@ -47,6 +49,7 @@ export default function DelegationDiagram() {
     if (k < 2 + i) return [];
     const id = `agt_${AGENT_IDS[(step * 2 + i) % AGENT_IDS.length]}`;
     const done = phase === "completed";
+
     return [
       { kind: "cmd" as const, text: `devspace agents run ${PROVIDERS[t]!.id} "…"` },
       { kind: "out" as const, text: `<agent id="${id}" status="${done ? "completed" : "running"}"/>`, done },
@@ -89,6 +92,7 @@ export default function DelegationDiagram() {
             {PROVIDERS.map((p, i) => {
               const active = routed && targets.includes(i);
               const status: Phase = active ? phase : "idle";
+
               return (
                 <li key={p.id} className={active ? "on" : ""}>
                   <Logo id={p.logo} size={20} />

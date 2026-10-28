@@ -42,6 +42,7 @@ test("~ paths outside allowed roots are denied", () => {
   assert.throws(
     () => {
       const workspace = resolve(home, "workspace");
+
       return resolveAllowedPath("~/file.txt", workspace, [workspace]);
     },
     /Path is outside allowed roots/,

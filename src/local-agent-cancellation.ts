@@ -1,3 +1,4 @@
+import { optionalFields } from "./json-value.js";
 import { AgentProviderCancelledError } from "./local-agent-errors.js";
 import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 
@@ -11,7 +12,7 @@ export function localAgentCancelledError(
     provider,
     operation,
     retryable: false,
-    ...(cause === undefined ? {} : { cause }),
+    ...optionalFields(cause === undefined ? undefined : { cause }),
     message: `${provider} agent turn was stopped.`,
   });
 }
@@ -22,7 +23,9 @@ export function bindLocalAgentAbort(
 ): () => void {
   if (!signal) return () => undefined;
   const onAbort = () => { void Promise.resolve(interrupt()).catch(() => undefined); };
+
   if (signal.aborted) onAbort();
   else signal.addEventListener("abort", onAbort, { once: true });
+
   return () => signal.removeEventListener("abort", onAbort);
 }

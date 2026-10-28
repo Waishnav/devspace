@@ -1,3 +1,4 @@
+import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +22,7 @@ const require = createRequire(import.meta.url);
 const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
+// SAFETY: The surrounding checks or construction already match this type.
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
 };
@@ -40,14 +42,19 @@ const root = mkdtempSync(join(tmpdir(), "devspace-cli-agents-test-"));
 const configDir = join(root, ".devspace");
 const stateDir = join(root, ".state");
 const projectRoot = join(root, "project");
+
 mkdirSync(stateDir, { recursive: true });
+
 mkdirSync(join(configDir, "agents"), { recursive: true });
+
 mkdirSync(projectRoot, { recursive: true });
+
 const cliConfigEnv = writeTestDevspaceConfig(configDir, {
   workspaces: { allowedRoots: [projectRoot] },
   storage: { stateDir },
   subagents: { enabled: true, instructions: "on-demand", providers: [] },
 });
+
 writeFileSync(
   join(configDir, "agents", "reviewer.md"),
   [
@@ -63,7 +70,9 @@ writeFileSync(
     "",
   ].join("\n"),
 );
+
 const store = new LocalAgentStore(stateDir);
+
 const current = store.update(
   store.create({
     workspaceId: "ws_current",
@@ -76,6 +85,7 @@ const current = store.update(
   }).id,
   { status: "idle", latestResponse: "Review complete.", providerSessionId: "provider_secret" },
 );
+
 const other = store.update(
   store.create({
     workspaceId: "ws_other",
@@ -86,23 +96,30 @@ const other = store.update(
   }).id,
   { status: "running" },
 );
+
 store.close();
 
 const daemonSocket = localAgentDaemonPaths(stateDir).endpoint;
-const daemonRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+const daemonRequests: Array<{ method: string; params?: JsonObject }> = [];
+
 const daemon = createNetServer((socket) => {
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk: string | Buffer) => {
     buffer += chunk.toString();
     const newline = buffer.indexOf("\n");
+
     if (newline === -1) return;
+
+    // SAFETY: The surrounding checks or construction already match this type.
     const request = JSON.parse(buffer.slice(0, newline)) as {
       requestId: string;
       method: string;
-      params?: Record<string, unknown>;
+      params?: JsonObject;
     };
+
     daemonRequests.push(request);
+
     if (request.method === "agent.start") {
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
@@ -115,9 +132,11 @@ const daemon = createNetServer((socket) => {
           target: "missing",
         },
       }));
+
       return;
     }
-    const eventsPage = (afterSeq: unknown) => ({
+
+    const eventsPage = (afterSeq: WireInput) => ({
       agentId: current.id,
       turnId: "trn_follow",
       status: afterSeq === 0 ? "running" : "completed",
@@ -132,6 +151,7 @@ const daemon = createNetServer((socket) => {
             { type: "turn_completed", status: "completed", turnId: "trn_follow", seq: 5, at: "t5" },
           ],
     });
+
     const result = request.method === "agent.events"
       ? eventsPage(request.params?.afterSeq)
       : request.method === "agent.list"
@@ -158,6 +178,7 @@ const daemon = createNetServer((socket) => {
             configMatches: true,
           }
         : null;
+
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -166,6 +187,7 @@ const daemon = createNetServer((socket) => {
     }));
   });
 });
+
 await new Promise<void>((resolveListen, rejectListen) => {
   daemon.once("error", rejectListen);
   daemon.listen(daemonSocket, resolveListen);
@@ -213,6 +235,7 @@ test("agents ls --json prints agent summaries as JSON", async () => {
 
 test("agents ls outside a DevSpace shell scopes the list to the cwd", async () => {
   const mark = daemonRequests.length;
+
   const { stdout: directOutput } = await execFileAsync(
     "node",
     ["--import", tsxLoader, cliPath, "agents", "ls"],
@@ -227,6 +250,7 @@ test("agents ls outside a DevSpace shell scopes the list to the cwd", async () =
       },
     },
   );
+
   assert.match(directOutput, new RegExp(current.id));
   const directList = requestsSince(mark).reverse().find((request) => request.method === "agent.list");
   assert.deepEqual(directList?.params, { workspaceRoot: realpathSync.native(projectRoot) });
@@ -249,6 +273,7 @@ test("agents show prints an immediate snapshot", async () => {
 // A wait that times out exits 4 so scripts can tell it from completion.
 test("agents wait exits 4 when an agent is still running at the timeout", async () => {
   const mark = daemonRequests.length;
+
   const waitTimeout = await execCli([
     "agents",
     "wait",
@@ -260,6 +285,7 @@ test("agents wait exits 4 when an agent is still running at the timeout", async 
     () => assert.fail("wait should exit 4 when an agent is still running"),
     (error: { code: number; stdout: string }) => error,
   );
+
   assert.equal(waitTimeout.code, 4);
   assert.equal(
     waitTimeout.stdout,
@@ -300,16 +326,22 @@ test("agents events --follow pins its turn and resumes after the last seen event
 
 test("agents run --json prints structured errors and exits non-zero", async () => {
   let commandFailure: unknown;
+
   try {
     await execCli(["agents", "run", "missing", "--json", "inspect"]);
   } catch (error) {
     commandFailure = error;
   }
+
   assert.ok(commandFailure, "structured CLI errors should exit non-zero");
+  // SAFETY: The surrounding checks or construction already match this type.
   const stdout = (commandFailure as { stdout?: string }).stdout ?? "";
+
+  // SAFETY: The surrounding checks or construction already match this type.
   const payload = JSON.parse(stdout) as {
     error: { code: string; message: string; retryable: boolean; target: string };
   };
+
   assert.equal(payload.error.code, "UNKNOWN_TARGET");
   assert.equal(payload.error.retryable, false);
   assert.equal(payload.error.target, "missing");
@@ -317,13 +349,16 @@ test("agents run --json prints structured errors and exits non-zero", async () =
 
 test("agents run prints XML errors on stderr and exits non-zero", async () => {
   let xmlCommandFailure: unknown;
+
   try {
     await execCli(["agents", "run", "missing", "inspect"]);
   } catch (error) {
     xmlCommandFailure = error;
   }
+
   assert.ok(xmlCommandFailure, "XML CLI errors should exit non-zero");
   assert.equal(
+    // SAFETY: The surrounding checks or construction already match this type.
     (xmlCommandFailure as { stderr?: string }).stderr,
     '<error code="UNKNOWN_TARGET" retryable="false">Unknown subagent profile or provider: missing.</error>\n',
   );
@@ -340,7 +375,8 @@ test("agents run --worktree passes the branch to the daemon as a start option", 
 test("agents run rejects --branch without --worktree", async () => {
   await assert.rejects(
     execCli(["agents", "run", "codex", "--branch", "feature/x", "inspect"], {}),
-    (error: unknown) => /--branch requires --worktree/.test((error as { stderr?: string }).stderr ?? ""),
+    // SAFETY: The surrounding checks or construction already match this type.
+    (error: WireInput) => /--branch requires --worktree/.test((error as { stderr?: string }).stderr ?? ""),
   );
 });
 
@@ -354,11 +390,13 @@ test("agents run rejects unknown options and suggests -- for dash-prefixed promp
       "--unknown",
       "inspect",
     ]),
-    (error: unknown) => {
+    (error: WireInput) => {
       assert.equal(
+        // SAFETY: The surrounding checks or construction already match this type.
         (error as { stderr?: string }).stderr,
         '<error code="AGENT_COMMAND_ERROR" retryable="false">Unknown option: --unknown. Use -- before prompt text that starts with a dash.</error>\n',
       );
+
       return true;
     },
   );

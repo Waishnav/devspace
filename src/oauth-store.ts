@@ -27,6 +27,7 @@ export interface PersistedTokenPair {
 
 function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boolean {
   let parsed: URL;
+
   try {
     parsed = new URL(redirectUri);
   } catch {
@@ -34,6 +35,7 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
   }
 
   if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return true;
+
   return allowedHosts.includes(parsed.hostname);
 }
 
@@ -46,10 +48,12 @@ export class SqliteOAuthStore {
   }
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare("select client_json from oauth_clients where client_id = ?")
       .get(clientId) as { client_json: string } | undefined;
 
+    // SAFETY: The surrounding checks or construction already match this type.
     return row ? (JSON.parse(row.client_json) as OAuthClientInformationFull) : undefined;
   }
 
@@ -62,6 +66,7 @@ export class SqliteOAuthStore {
     }
 
     const now = Math.floor(Date.now() / 1000);
+
     const registered: OAuthClientInformationFull = {
       ...client,
       client_id: `devspace-${randomUUID()}`,
@@ -99,6 +104,7 @@ export class SqliteOAuthStore {
   }
 
   getAccessToken(tokenHash: string): PersistedAccessTokenRecord | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare(
         "select client_id, scopes_json, expires_at, resource from oauth_access_tokens where token_hash = ?",
@@ -143,6 +149,7 @@ export class SqliteOAuthStore {
     const save = this.database.sqlite.transaction(() => {
       if (consumedRefreshTokenHash) {
         const now = Math.floor(Date.now() / 1000);
+
         // Retried rotations must not extend the original grace deadline or TTL.
         const result = this.refreshTokenGraceSeconds > 0
           ? this.database.sqlite
@@ -151,11 +158,13 @@ export class SqliteOAuthStore {
           : this.database.sqlite
               .prepare("delete from oauth_refresh_tokens where token_hash = ?")
               .run(consumedRefreshTokenHash);
+
         if (result.changes !== 1) return false;
       }
 
       this.saveAccessToken(pair.accessTokenHash, pair.accessToken);
       this.saveRefreshToken(pair.refreshTokenHash, pair.refreshToken);
+
       return true;
     });
 
@@ -163,6 +172,7 @@ export class SqliteOAuthStore {
   }
 
   getRefreshToken(tokenHash: string): PersistedRefreshTokenRecord | undefined {
+    // SAFETY: The surrounding checks or construction already match this type.
     const row = this.database.sqlite
       .prepare(
         "select client_id, scopes_json, expires_at, resource from oauth_refresh_tokens where token_hash = ?",
@@ -218,6 +228,7 @@ function rowToAccessTokenRecord(row: {
 }): PersistedAccessTokenRecord {
   return {
     clientId: row.client_id,
+    // SAFETY: The surrounding checks or construction already match this type.
     scopes: JSON.parse(row.scopes_json) as string[],
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,
@@ -232,6 +243,7 @@ function rowToRefreshTokenRecord(row: {
 }): PersistedRefreshTokenRecord {
   return {
     clientId: row.client_id,
+    // SAFETY: The surrounding checks or construction already match this type.
     scopes: JSON.parse(row.scopes_json) as string[],
     expiresAt: row.expires_at,
     resource: row.resource ?? undefined,

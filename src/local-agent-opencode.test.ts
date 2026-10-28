@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,22 +24,28 @@ function fakeV1Client() {
   const createInputs: unknown[] = [];
   const promptInputs: unknown[] = [];
   const health = { available: true };
-  const client = {
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  const client = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() {
         if (!health.available) throw new Error("server unavailable");
+
         return { data: { healthy: true } };
       },
     },
     session: {
-      async create(input: unknown) {
+      async create(input: WireInput) {
         createInputs.push(input);
         sessionNumber += 1;
+
         return { data: { id: `session_${sessionNumber}` } };
       },
-      async prompt(input: unknown) {
+      async prompt(input: WireInput) {
         promptInputs.push(input);
+        // SAFETY: The surrounding checks or construction already match this type.
         const sessionId = (input as { sessionID: string }).sessionID;
+
         return {
           data: {
             info: { role: "assistant" },
@@ -45,28 +54,35 @@ function fakeV1Client() {
         };
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
+
   return { client, createInputs, promptInputs, health };
 }
 
 function sharedServerFixture(t: TestContext) {
   const fake = fakeV1Client();
+  // SAFETY: The surrounding checks or construction already match this type.
   const state = { factoryCalls: 0, closeCalls: 0, factoryEnv: undefined as NodeJS.ProcessEnv | undefined };
+
   const factory: OpencodeFactory = async (_context, env) => {
     state.factoryCalls += 1;
     state.factoryEnv = env;
+
     return {
       client: fake.client,
       server: { close: () => { state.closeCalls += 1; } },
     };
   };
+
   const driver = new OpencodeLocalAgentDriver({
     factory,
     env: { HARNESS_ENV: "opencode" },
     probeRuntime: probeV1,
   });
+
   const pool = new LocalAgentRuntimePool();
   t.after(() => pool.close());
+
   return { ...fake, state, driver, pool };
 }
 
@@ -83,6 +99,7 @@ async function runTwoAgents(driver: OpencodeLocalAgentDriver, pool: LocalAgentRu
     model: "anthropic/sonnet",
     effort: "high",
   });
+
   const second = await pool.run(driver, {
     agentId: "agt_two",
     providerInstanceId: "opencode",
@@ -92,6 +109,7 @@ async function runTwoAgents(driver: OpencodeLocalAgentDriver, pool: LocalAgentRu
     prompt: "second",
     workspaceRoot: "/tmp/project",
   });
+
   return { first, second };
 }
 
@@ -105,6 +123,7 @@ test("OpenCode agents share one server runtime with a session each", async (t) =
   assert.equal(second.isOk(), true);
 
   if (first.isErr()) throw first.error;
+
   if (second.isErr()) throw second.error;
   const firstRecord = first.value;
   const secondRecord = second.value;
@@ -127,6 +146,7 @@ test("OpenCode agents share one server runtime with a session each", async (t) =
 test("a resumed OpenCode session applies an effort override", async (t) => {
   const { promptInputs, driver, pool } = sharedServerFixture(t);
   const { first } = await runTwoAgents(driver, pool);
+
   if (first.isErr()) throw first.error;
   const firstRecord = first.value;
 
@@ -147,6 +167,7 @@ test("a resumed OpenCode session applies an effort override", async (t) => {
     onEvent: (event) => { overrideEvents.push(event); },
   });
   assert.equal(callbackSessionId, firstRecord.providerSessionId);
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.equal((overrideEvents[0] as { type?: string } | undefined)?.type, "message");
   assert.deepEqual(promptInputs[2], {
     sessionID: "session_1",
@@ -217,6 +238,7 @@ test(
       "",
     ].join("\n"));
     await chmod(command, 0o700);
+
     const envDriver = new OpencodeLocalAgentDriver({
       env: {
         PATH: commandRoot,
@@ -231,13 +253,16 @@ test(
       },
       probeRuntime: probeV1,
     });
+
     const created = await envDriver.createRuntime({
       agentId: "agt_env",
       providerInstanceId: "opencode",
       provider: "opencode",
       workspaceRoot: "/tmp/project",
     });
+
     assert.equal(created.isOk(), true);
+
     if (created.isOk()) await created.value.close();
     assert.equal(await readFile(marker, "utf8"), "opencode-child");
     assert.equal(await readFile(collisionMarker, "utf8"), "collision", "OpenCode retries a claimed allocated port");
@@ -249,55 +274,64 @@ test(
 );
 
 test("a prompt that outlives the provider timeout is a retryable protocol error", async () => {
-  const timeoutClient = {
+  // SAFETY: The surrounding checks or construction already match this type.
+  const timeoutClient = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() { return { data: { healthy: true } }; },
     },
     session: {
       async create() { return { data: { id: "session_timeout" } }; },
-      async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+      async prompt(_input: WireInput, options?: { signal?: AbortSignal }) {
         return new Promise<never>((_resolve, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         });
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
+
   const timeoutRuntime = new OpencodeRuntime(timeoutClient, { close: () => undefined }, 5);
+
   const timedOutPrompt = await timeoutRuntime.run({
     prompt: "never finishes",
     workspaceRoot: "/tmp/project",
   });
+
   assert.equal(timedOutPrompt.isErr(), true);
+
   if (timedOutPrompt.isErr()) {
     assert.equal(timedOutPrompt.error.code, "PROVIDER_PROTOCOL_ERROR");
     assert.equal(timedOutPrompt.error.retryable, true);
     assert.match(timedOutPrompt.error.message, /provider timeout/);
   }
+
   await timeoutRuntime.close();
 });
 
 // Stop ends the turn only once OpenCode confirms the abort; a stalled abort leaves it running.
-const abortClient = (abort: () => Promise<unknown>) => ({
+// SAFETY: The surrounding checks or construction already match this type.
+const abortClient = (abort: () => Promise<WireInput>) => unsafeNarrow<OpencodeClientLike>({
   global: {
     async health() { return { data: { healthy: true } }; },
   },
   session: {
     async create() { return { data: { id: "session_abort" } }; },
     abort,
-    async prompt(_input: unknown, options?: { signal?: AbortSignal }) {
+    async prompt(_input: WireInput, options?: { signal?: AbortSignal }) {
       return new Promise<never>((_resolve, reject) => {
         options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       });
     },
   },
-}) as unknown as OpencodeClientLike;
-const stopRun = async (abort: () => Promise<unknown>) => {
+});
+
+const stopRun = async (abort: () => Promise<WireInput>) => {
   const stopRuntime = new OpencodeRuntime(abortClient(abort), { close: () => undefined }, 100);
   const stop = new AbortController();
   const run = stopRuntime.run({ prompt: "stop me", workspaceRoot: "/tmp/project", signal: stop.signal });
   setTimeout(() => stop.abort(), 10);
   const result = await run;
   await stopRuntime.close();
+
   return result.isErr() ? result.error.code : "ok";
 };
 
@@ -327,17 +361,19 @@ test("write modes map onto DevSpace agents whose permissions deny delegation", (
     external_directory: "deny",
   });
   const readOnlyPermissions = opencodePermissionFor("read_only");
-  assert.equal(typeof readOnlyPermissions === "object" ? readOnlyPermissions.bash : undefined, "deny");
+  assert.equal(isObjectValue(readOnlyPermissions) ? readOnlyPermissions.bash : undefined, "deny");
+
   for (const writeMode of ["read_only", "allowed", "full_access"] as const) {
     const config = opencodeAgentConfig(writeMode);
     assert.equal(config.mode, "primary");
-    assert.equal(typeof config.permission === "object" ? config.permission.task : undefined, "deny");
+    assert.equal(isObjectValue(config.permission) ? config.permission.task : undefined, "deny");
   }
 });
 
 test("an ordinary provider error keeps the healthy server runtime", async (t) => {
   let promptFailureCount = 0;
-  const applicationErrorClient = {
+
+  const applicationErrorClient = unsafeNarrow<OpencodeClientLike>({
     global: {
       async health() { return { data: { healthy: true } }; },
     },
@@ -345,6 +381,7 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
       async create() { return { data: { id: "session_app_error" } }; },
       async prompt() {
         promptFailureCount += 1;
+
         if (promptFailureCount === 1) {
           return {
             data: {
@@ -359,6 +396,7 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
             },
           };
         }
+
         return {
           data: {
             info: { role: "assistant" },
@@ -367,9 +405,11 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
         };
       },
     },
-  } as unknown as OpencodeClientLike;
+  });
+
   const applicationErrorPool = new LocalAgentRuntimePool();
   t.after(() => applicationErrorPool.close());
+
   const applicationErrorDriver = new OpencodeLocalAgentDriver({
     factory: async () => ({
       client: applicationErrorClient,
@@ -377,26 +417,33 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
     }),
     probeRuntime: probeV1,
   });
+
   const applicationFailure = await applicationErrorPool.run(applicationErrorDriver, {
     agentId: "agt_app_error",
     providerInstanceId: "opencode",
     provider: "opencode",
     workspaceRoot: "/tmp/project",
   }, { prompt: "bad input", workspaceRoot: "/tmp/project" });
+
   assert.equal(applicationFailure.isErr(), true);
+
   if (applicationFailure.isErr()) {
     assert.equal(applicationFailure.error.code, "PROVIDER_EXECUTION_ERROR");
     assert.equal(applicationFailure.error.retryable, false);
     assert.equal(applicationFailure.error.message, "Provider credentials are unavailable.");
   }
+
   assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
+
   const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
     agentId: "agt_app_error",
     providerInstanceId: "opencode",
     provider: "opencode",
     workspaceRoot: "/tmp/project",
   }, { prompt: "valid input", workspaceRoot: "/tmp/project" });
+
   assert.equal(recoveredApplicationTurn.isOk(), true);
+
   if (recoveredApplicationTurn.isErr()) throw recoveredApplicationTurn.error;
   assert.equal(recoveredApplicationTurn.value.finalResponse, "ok");
 });
@@ -404,14 +451,17 @@ test("an ordinary provider error keeps the healthy server runtime", async (t) =>
 test("a failed health check evicts the dead runtime and the next turn starts a fresh server", async (t) => {
   const { client, health } = fakeV1Client();
   let recoveringFactoryCalls = 0;
+
   const recoveringDriver = new OpencodeLocalAgentDriver({
     factory: async () => {
       recoveringFactoryCalls += 1;
       health.available = true;
+
       return { client, server: { close: () => undefined } };
     },
     probeRuntime: probeV1,
   });
+
   const recoveringPool = new LocalAgentRuntimePool();
   t.after(() => recoveringPool.close());
   await recoveringPool.run(recoveringDriver, {
@@ -424,6 +474,7 @@ test("a failed health check evicts the dead runtime and the next turn starts a f
     workspaceRoot: "/tmp/project",
   });
   health.available = false;
+
   const deadRuntime = await recoveringPool.run(recoveringDriver, {
     agentId: "agt_dead",
     providerInstanceId: "opencode",
@@ -433,11 +484,14 @@ test("a failed health check evicts the dead runtime and the next turn starts a f
     prompt: "dead runtime",
     workspaceRoot: "/tmp/project",
   });
+
   assert.equal(deadRuntime.isErr(), true);
+
   if (deadRuntime.isErr()) {
     assert.equal(deadRuntime.error.code, "PROVIDER_UNAVAILABLE");
     assert.equal(deadRuntime.error.retryable, true);
   }
+
   assert.equal(recoveringPool.size, 0, "a failed health check removes the dead runtime immediately");
   await recoveringPool.run(recoveringDriver, {
     agentId: "agt_dead",

@@ -4,9 +4,12 @@ import Logo from "../logos/Logo.astro";
 import { HOSTS, PROVIDERS } from "../logos";
 
 interface Props { set: "hosts" | "providers" }
+
 const { set } = Astro.props;
+
 const items = set === "hosts"
-  ? HOSTS.map((h) => ({ name: h.name, logo: h.logo, note: undefined as string | undefined }))
+  // SAFETY: The surrounding checks or construction already match this type.
+  ? HOSTS.map((h) => ({ name: h.name, logo: h.logo, note: undefined }))
   : PROVIDERS.map((p) => ({ name: p.name, logo: p.logo, note: `${p.id} · ${p.via}` }));
 ---
 

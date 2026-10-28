@@ -1,3 +1,5 @@
+import { isJsonString } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -65,24 +67,32 @@ export function createWorkspaceWebRouter(options: WorkspaceWebOptions): Router {
   router.get("/login", (req, res) => {
     if (sessions.isValid(sessionCookie(req))) {
       res.redirect(303, safeNextPath(req.query.next));
+
       return;
     }
+
     sendLoginPage(res, 200, safeNextPath(req.query.next));
   });
 
   router.post("/login", express.urlencoded({ extended: false, limit: "8kb" }), (req, res) => {
     const next = safeNextPath(req.body?.next);
+
     if (!isSameOriginRequest(req, config)) {
       res.status(403).type("text/plain").send("Cross-origin login is not allowed.");
+
       return;
     }
+
     if (failedLogins.isLocked()) {
       sendLoginPage(res, 429, next, "Too many failed attempts. Try again in a few minutes.");
+
       return;
     }
+
     if (!tokenMatches(String(req.body?.owner_token ?? ""), config.oauth.ownerToken)) {
       failedLogins.record();
       sendLoginPage(res, 401, next, "The owner password was not accepted.");
+
       return;
     }
 
@@ -99,8 +109,10 @@ export function createWorkspaceWebRouter(options: WorkspaceWebOptions): Router {
   router.post("/logout", (req, res) => {
     if (!isSameOriginRequest(req, config)) {
       res.status(403).type("text/plain").send("Cross-origin logout is not allowed.");
+
       return;
     }
+
     sessions.revoke(sessionCookie(req));
     res.clearCookie(SESSION_COOKIE, { path: WORKSPACE_WEB_PATH });
     res.redirect(303, `${WORKSPACE_WEB_PATH}/login`);
@@ -109,12 +121,16 @@ export function createWorkspaceWebRouter(options: WorkspaceWebOptions): Router {
   router.use((req, res, next) => {
     if (sessions.isValid(sessionCookie(req))) {
       next();
+
       return;
     }
+
     if (req.path.startsWith("/api/")) {
       res.status(401).json({ error: "Sign in to view workspaces." });
+
       return;
     }
+
     res.redirect(303, `${WORKSPACE_WEB_PATH}/login?next=${encodeURIComponent(req.originalUrl)}`);
   });
 
@@ -125,10 +141,13 @@ export function createWorkspaceWebRouter(options: WorkspaceWebOptions): Router {
   router.get("/api/workspaces/:workspaceId", asyncRoute(async (req, res) => {
     const workspaceId = String(req.params.workspaceId);
     const workspace = await getActivityWorkspace(activity, workspaceId);
+
     if (!workspace) {
       res.status(404).json({ error: "Workspace not found." });
+
       return;
     }
+
     res.json({
       workspace,
       context: await workspaces.describeWorkspace(workspace),
@@ -140,10 +159,13 @@ export function createWorkspaceWebRouter(options: WorkspaceWebOptions): Router {
     const workspaceId = String(req.params.workspaceId);
     const sequence = Number(req.params.sequence);
     const turn = Number.isSafeInteger(sequence) ? activity.getTurn(workspaceId, sequence) : undefined;
+
     if (!turn) {
       res.status(404).json({ error: "Turn not found." });
+
       return;
     }
+
     const toolCalls = listTurnToolCalls(activity, workspaceId, sequence) ?? [];
     const diff = await readTurnDiff(activity, workspaceId, sequence);
     res.json({ turn, toolCalls, diff });
@@ -167,6 +189,7 @@ class WebSessions {
   create(): string {
     const token = randomBytes(32).toString("base64url");
     this.expiresAt.set(digest(token), Date.now() + SESSION_TTL_MS);
+
     return token;
   }
 
@@ -174,9 +197,12 @@ class WebSessions {
     if (!token) return false;
     const key = digest(token);
     const expiresAt = this.expiresAt.get(key);
+
     if (expiresAt === undefined) return false;
+
     if (expiresAt > Date.now()) return true;
     this.expiresAt.delete(key);
+
     return false;
   }
 
@@ -191,6 +217,7 @@ class FailedLoginWindow {
 
   isLocked(): boolean {
     this.prune();
+
     return this.failures.length >= MAX_FAILED_LOGINS;
   }
 
@@ -216,11 +243,14 @@ function digest(value: string): string {
 function sessionCookie(req: Request): string | undefined {
   for (const part of (req.get("cookie") ?? "").split(";")) {
     const separator = part.indexOf("=");
+
     if (separator === -1) continue;
+
     if (part.slice(0, separator).trim() === SESSION_COOKIE) {
       return decodeURIComponent(part.slice(separator + 1).trim());
     }
   }
+
   return undefined;
 }
 
@@ -230,11 +260,15 @@ function sessionCookie(req: Request): string | undefined {
  */
 function isSameOriginRequest(req: Request, config: ServerConfig): boolean {
   const fetchSite = req.get("sec-fetch-site");
+
   if (fetchSite) return fetchSite === "same-origin";
 
   const origin = req.get("origin");
+
   if (!origin) return false;
+
   if (origin === new URL(config.publicBaseUrl).origin) return true;
+
   try {
     return new URL(origin).host === req.get("host");
   } catch {
@@ -246,12 +280,15 @@ function isHttpsRequest(req: Request): boolean {
   return req.secure || req.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
 }
 
-function safeNextPath(value: unknown): string {
+function safeNextPath(value: WireInput): string {
   const fallback = `${WORKSPACE_WEB_PATH}/`;
-  if (typeof value !== "string") return fallback;
+
+  if (!isJsonString(value)) return fallback;
+
   if (!value.startsWith(`${WORKSPACE_WEB_PATH}/`) || value.startsWith("//") || value.includes("\\")) {
     return fallback;
   }
+
   return value.startsWith(`${WORKSPACE_WEB_PATH}/login`) ? fallback : value;
 }
 

@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isObjectValue, isJsonString, isJsonNumber, optionalFields } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
@@ -113,13 +116,14 @@ export function configureHttpServer(httpServer: HttpServer): void {
 type TrackToolActivity = <T>(operation: () => Promise<T>) => Promise<T>;
 
 class ToolActivityTracker {
-  private readonly active = new Set<Promise<unknown>>();
+  private readonly active = new Set<Promise<WireInput>>();
 
   readonly track: TrackToolActivity = <T>(operation: () => Promise<T>): Promise<T> => {
     const promise = operation();
     this.active.add(promise);
     const remove = () => this.active.delete(promise);
     void promise.then(remove, remove);
+
     return promise;
   };
 
@@ -145,15 +149,19 @@ function serverInstructions(
   if (config.experimentalCodeMode) {
     return "Call open_workspace once per project or worktree, then use the returned Code Mode tool signatures to call workspace primitives through execute. Await relevant operations; use poll_execution for long-running scripts and cancel_execution when no longer needed. Call show_changes after file modifications.";
   }
+
   const artifactInstruction =
     config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
       ? " When the user provides an attached or generated file that needs to be added to the workspace, pass the provided file directly to download_artifact with the existing workspace_id and a suitable relative destination path. Do not reconstruct attached files manually."
       : "";
+
   const showChangesInstruction =
     " If files are modified, call show_changes once after the final related change and before the final response.";
+
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned skill path before proceeding. `
     : "";
+
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
   const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
 
@@ -168,6 +176,7 @@ function formatVisibleAgent(agent: {
 }): string {
   const model = agent.model ? `, model ${agent.model}` : "";
   const effort = agent.effort ? `, effort ${agent.effort}` : "";
+
   return `${agent.name} (${agent.provider}${model}${effort})`;
 }
 
@@ -182,6 +191,7 @@ function formatAvailableAgentProvider(provider: {
     provider.effort ? `effort ${provider.effort}` : undefined,
     provider.note,
   ].filter(Boolean).join(", ");
+
   return `${provider.id}${details ? ` (${details})` : ""}`;
 }
 
@@ -231,25 +241,35 @@ function sendJsonRpcError(
 
 // ChatGPT may retain the pre-snake_case workspace argument in cached tool calls.
 // Normalize only that known alias at the HTTP edge; the public schema remains canonical.
-function normalizeCachedWorkspaceArgument(body: unknown): boolean {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return true;
-  const request = body as Record<string, unknown>;
+function normalizeCachedWorkspaceArgument(body: WireInput): boolean {
+  if (!body || !isObjectValue(body) || Array.isArray(body)) return true;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const request = body as JsonObject;
+
   if (request.method !== "tools/call") return true;
   const params = request.params;
-  if (!params || typeof params !== "object" || Array.isArray(params)) return true;
-  const args = (params as Record<string, unknown>).arguments;
-  if (!args || typeof args !== "object" || Array.isArray(args)) return true;
-  const values = args as Record<string, unknown>;
+
+  if (!params || !isObjectValue(params) || Array.isArray(params)) return true;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const args = (params as JsonObject).arguments;
+
+  if (!args || !isObjectValue(args) || Array.isArray(args)) return true;
+  // SAFETY: The surrounding checks or construction already match this type.
+  const values = args as JsonObject;
+
   if (!Object.hasOwn(values, "workspaceId")) return true;
+
   if (Object.hasOwn(values, "workspace_id") && values.workspace_id !== values.workspaceId) {
     return false;
   }
+
   if (!Object.hasOwn(values, "workspace_id")) values.workspace_id = values.workspaceId;
   delete values.workspaceId;
+
   return true;
 }
 
-function requestLogFields(req: Request, config: ServerConfig): Record<string, unknown> {
+function requestLogFields(req: Request, config: ServerConfig): JsonObject {
   return {
     ip: requestIp(req, config.logging.trustProxy),
     host: req.header("host"),
@@ -260,9 +280,11 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
   };
 }
 
-function rpcRequestLogFields(body: unknown): Record<string, unknown> {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+function rpcRequestLogFields(body: WireInput): JsonObject {
+  if (!body || !isObjectValue(body) || Array.isArray(body)) return {};
+  // SAFETY: The surrounding checks or construction already match this type.
   const request = body as { id?: unknown; method?: unknown };
+
   return {
     rpcId: request.id,
     rpcMethod: request.method,
@@ -295,6 +317,7 @@ function uiManifestUrl(): URL {
 }
 
 function readWorkspaceAppManifest(): WorkspaceAppManifest {
+  // SAFETY: The surrounding checks or construction already match this type.
   return JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
 }
 
@@ -316,6 +339,7 @@ function assetUrl(baseUrl: string, assetPath: string): string {
 function workspaceAppHtml(config: ServerConfig): string {
   const baseUrl = assetBaseUrl(config);
   const entry = getWorkspaceAppManifestEntry();
+
   const stylesheets = (entry.css ?? [])
     .map(
       (stylesheet) =>
@@ -340,11 +364,9 @@ ${stylesheets}
 </html>`;
 }
 
-function appCsp(config: ServerConfig): {
-  resourceDomains: string[];
-  connectDomains: string[];
-} {
+function appCsp(config: ServerConfig) {
   const publicBaseUrl = config.publicBaseUrl.replace(/\/+$/, "");
+
   return {
     resourceDomains: [publicBaseUrl],
     connectDomains: [publicBaseUrl],
@@ -364,6 +386,7 @@ function setAssetHeaders(res: Response): void {
 
 async function assertWorkspaceAppAssets(): Promise<void> {
   const entry = getWorkspaceAppManifestEntry();
+
   const candidates = [entry.file, ...(entry.css ?? [])].map(
     (assetPath) => new URL(`../dist/ui/${assetPath}`, import.meta.url),
   );
@@ -385,6 +408,7 @@ export function createMcpServer(
   workspaceActivityJournal?: WorkspaceActivityJournal,
 ): McpServer {
   const toolSurface = getToolSurface(config.experimentalCodeMode ? "codex" : surface);
+
   const server = new McpServer(
     mcpServerInfo(),
     {
@@ -408,6 +432,7 @@ export function createMcpServer(
     codeModeExecutions,
     workspaceActivityJournal,
   );
+
   if (codeModeExecutions) {
     // Scripts and the commands they start must not outlive the MCP server that ran them.
     const close = server.close.bind(server);
@@ -415,12 +440,14 @@ export function createMcpServer(
       await codeModeExecutions.shutdown();
       await close();
     };
+
     const onclose = server.server.onclose;
     server.server.onclose = () => {
       onclose?.();
       void codeModeExecutions.shutdown();
     };
   }
+
   return server;
 }
 
@@ -441,6 +468,7 @@ function registerMcpSurface(
   const registrationTarget = trackToolActivity || workspaceActivityJournal
     ? withObservedToolHandlers(server, { trackToolActivity, workspaceActivityJournal })
     : server;
+
   const internalTarget = codeModeRegistry?.registrationTarget ?? registrationTarget;
 
   registerAppResource(
@@ -457,6 +485,7 @@ function registerMcpSurface(
     },
     async () => {
       await assertWorkspaceAppAssets();
+
       return {
         contents: [
           {
@@ -527,12 +556,12 @@ function registerMcpSurface(
           }),
         ]),
         instruction: z.string(),
-        ...(codeModeRegistry ? {
+        ...optionalFields(codeModeRegistry ? {
           code_mode: z.object({
             language: z.literal("javascript"),
             tool_signatures: z.string(),
           }),
-        } : {}),
+        } : undefined),
       },
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
@@ -540,6 +569,7 @@ function registerMcpSurface(
     async ({ path, mode, base_ref }, { _meta }) => {
       const startedAt = performance.now();
       const baseRef = base_ref;
+
       const {
         workspace,
         agentsFiles,
@@ -550,16 +580,21 @@ function registerMcpSurface(
         { path, mode, baseRef },
         { conversationScopeId: conversationScopeIdFromRequestMeta(_meta) },
       );
+
       const review = await reviewCheckpoints.initializeWorkspace({
         workspaceId: workspace.id,
         root: workspace.root,
       });
+
       const preloadSubagents = config.subagents.enabled
         && config.subagents.instructions === "preload";
+
       const subagentsSkill = workspace.skills.find((skill) => skill.name === "subagents");
+
       const preloadedSubagentInstructions = preloadSubagents && subagentsSkill
         ? readFileSync(subagentsSkill.filePath, "utf8")
         : undefined;
+
       const cardSkills = workspace.skills
         .filter((skill) => !skill.disableModelInvocation)
         .filter((skill) => !(preloadSubagents && skill.name === "subagents"))
@@ -568,11 +603,13 @@ function registerMcpSurface(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
+
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
         workspace.agentProfiles,
         resolveLocalAgentProviders(),
       );
+
       const cardAgentProviders = agentCatalog.providers
         .filter((provider) => provider.usable)
         .map((provider) => ({
@@ -581,22 +618,28 @@ function registerMcpSurface(
           effort: provider.effort,
           note: provider.note,
         }));
+
       const cardAgents = agentCatalog.profiles;
+
       const cardAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
       }));
+
       const cardAvailableAgentsFiles = availableAgentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
       }));
+
       const visibleSkills = includeBootstrapContext ? cardSkills : [];
       const visibleAgentProviders = includeBootstrapContext ? cardAgentProviders : [];
       const visibleAgents = includeBootstrapContext ? cardAgents : [];
       const loadedAgentsFiles = includeBootstrapContext ? cardAgentsFiles : [];
       const availableAgentsFileOutputs = includeBootstrapContext ? cardAvailableAgentsFiles : [];
+
       const cardInstruction = config.skillsEnabled
         ? "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file. When a task matches an available skill in skills, read its path before proceeding."
         : "Use this workspace_id for subsequent work in this project. Keep reusing it while working in this project. Follow loaded agents_files instructions. Before working under a path listed in available_agents_files, read that instruction file.";
+
       const workspaceInstruction = workspaceReused
         ? [
             `Workspace already open as ${workspace.id}.`,
@@ -606,6 +649,7 @@ function registerMcpSurface(
         : workspace.mode === "worktree"
           ? "Use this workspace_id for subsequent work in this isolated worktree. Keep reusing it while working in this worktree. Follow the project instructions, nested instruction files, skills, agent profiles, and diagnostics returned for it."
           : cardInstruction;
+
       const instruction = preloadedSubagentInstructions && includeBootstrapContext
         ? [
             workspaceInstruction,
@@ -613,9 +657,11 @@ function registerMcpSurface(
             preloadedSubagentInstructions,
           ].join("\n\n")
         : workspaceInstruction;
+
       const codeMode = codeModeRegistry
         ? { language: "javascript" as const, tool_signatures: codeModeRegistry.signatures() }
         : undefined;
+
       const resultContent: ToolContent[] = [
         {
           type: "text" as const,
@@ -653,6 +699,7 @@ function registerMcpSurface(
           ].filter(Boolean).join("\n"),
         },
       ];
+
       logToolCall(config, {
         tool: "open_workspace",
         workspaceId: workspace.id,
@@ -706,18 +753,16 @@ function registerMcpSurface(
               }
             : undefined,
           review,
-          ...(includeBootstrapContext
-            ? {
+          ...optionalFields(includeBootstrapContext ? {
                 agents_files: loadedAgentsFiles,
                 available_agents_files: availableAgentsFileOutputs,
                 skills: visibleSkills,
                 agent_providers: visibleAgentProviders,
                 agents: visibleAgents,
                 skill_diagnostics: workspace.skillDiagnostics,
-              }
-            : {}),
+              } : undefined),
           instruction,
-          ...(codeMode ? { code_mode: codeMode } : {}),
+          ...optionalFields(codeMode ? { code_mode: codeMode } : undefined),
         },
       };
     },
@@ -769,6 +814,7 @@ function registerMcpSurface(
       const workspaceId = workspace_id;
       const workspace = await workspaces.getWorkspace(workspaceId);
       const readPath = await workspaces.resolveReadPath(workspace, input.path);
+
       const response = await readFileTool(
         { ...input, path: readPath.absolutePath },
         { cwd: workspace.root },
@@ -780,6 +826,7 @@ function registerMcpSurface(
           workspaceId,
           path: input.path,
         }, response.content, startedAt);
+
         return response;
       }
 
@@ -806,6 +853,7 @@ function registerMcpSurface(
     workspaces,
     processSessions,
   });
+
   if (codeModeExecutions) {
     registerCodeModeTools(registrationTarget, workspaces, codeModeExecutions);
   }
@@ -831,9 +879,11 @@ function registerMcpSurface(
       const startedAt = performance.now();
       const workspaceId = workspace_id;
       const workspace = await workspaces.getWorkspace(workspaceId);
-      const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
+
+      const reviewRef = isJsonString(_meta?.["devspace/reviewRef"])
         ? _meta["devspace/reviewRef"]
         : undefined;
+
       const review = reviewRef
         ? await reviewCheckpoints.reviewByRef({
             workspaceId,
@@ -890,6 +940,7 @@ function executionResponse(snapshot: ExecutionSnapshot) {
     status,
     duration_ms: Math.round(durationMs),
   }));
+
   const structured = {
     ...snapshot,
     calls,
@@ -897,6 +948,7 @@ function executionResponse(snapshot: ExecutionSnapshot) {
     result: snapshot.result ?? null,
     output: snapshot.output ?? [],
   };
+
   return {
     content: [textBlock(JSON.stringify(structured))],
     structuredContent: { ...structured, result: JSON.stringify(structured.result) },
@@ -909,6 +961,7 @@ function registerCodeModeTools(
   executions: CodeModeExecutions,
 ): void {
   const yieldSchema = z.number().int().min(0).max(MAX_CODE_MODE_YIELD_MS).optional();
+
   const outputSchema = resultOutputSchema({
     execution_id: z.string(),
     running: z.boolean(),
@@ -922,6 +975,7 @@ function registerCodeModeTools(
       duration_ms: z.number(),
     })).optional(),
   });
+
   target.registerTool("execute", {
     title: "Execute JavaScript",
     description: "Execute confined JavaScript using tools declared by open_workspace. If still running after the yield window, returns execution_id for poll_execution.",
@@ -933,6 +987,7 @@ function registerCodeModeTools(
     outputSchema,
   }, async ({ workspace_id, code, yield_time_ms }) => {
     await workspaces.getWorkspace(workspace_id);
+
     return executionResponse(await executions.start(workspace_id, code, yield_time_ms));
   });
   target.registerTool("poll_execution", {
@@ -947,6 +1002,7 @@ function registerCodeModeTools(
     annotations: { readOnlyHint: true },
   }, async ({ workspace_id, execution_id, yield_time_ms }) => {
     await workspaces.getWorkspace(workspace_id);
+
     return executionResponse(await executions.poll(workspace_id, execution_id, yield_time_ms));
   });
   target.registerTool("cancel_execution", {
@@ -956,6 +1012,7 @@ function registerCodeModeTools(
     outputSchema,
   }, async ({ workspace_id, execution_id }) => {
     await workspaces.getWorkspace(workspace_id);
+
     return executionResponse(await executions.cancel(workspace_id, execution_id));
   });
 }
@@ -968,21 +1025,27 @@ function withObservedToolHandlers(
   },
 ): McpRegistrationTarget {
   return {
-    registerTool: ((...args: unknown[]) => {
-      const toolName = args[0] as string;
-      const handler = args.at(-1) as (...handlerArgs: unknown[]) => unknown;
-      return (server.registerTool as (...callArgs: unknown[]) => unknown)(
+    // SAFETY: The surrounding checks or construction already match this type.
+    registerTool: ((...args: WireInput[]) => {
+      // SAFETY: The surrounding checks or construction already match this type.
+      const toolName = unsafeNarrow<string>(args[0]);
+      const handler = unsafeNarrow<(...handlerArgs: WireInput[]) => WireInput>(args.at(-1));
+
+      return unsafeNarrow<(...callArgs: WireInput[]) => WireInput>(server.registerTool.bind(server))(
         ...args.slice(0, -1),
-        (...handlerArgs: unknown[]) => {
+        (...handlerArgs: WireInput[]) => {
           const operation = () => Promise.resolve(handler(...handlerArgs));
+
           const observedOperation = options.workspaceActivityJournal
             ? () => options.workspaceActivityJournal!.capture({
                 toolName,
                 arguments: handlerArgs[0],
-                extra: (handlerArgs[1] ?? {}) as Record<string, unknown>,
+                // SAFETY: The surrounding checks or construction already match this type.
+                extra: (handlerArgs[1] ?? {}) as JsonObject,
                 operation,
               })
             : operation;
+
           return options.trackToolActivity
             ? options.trackToolActivity(observedOperation)
             : observedOperation();
@@ -1003,21 +1066,26 @@ export function createServer(
 ): RunningServer {
   const incomingArtifactAdapters = options.incomingArtifactAdapters
     ?? [createOpenAIIncomingArtifactAdapter()];
+
   const allowedHosts = config.allowedHosts.includes("*")
     ? undefined
     : Array.from(new Set([config.host, ...config.allowedHosts]));
+
   const app = createMcpExpressApp({
     host: config.host,
-    ...(allowedHosts ? { allowedHosts } : {}),
+    ...optionalFields(allowedHosts ? { allowedHosts } : undefined),
   });
+
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
+
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
+
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
@@ -1026,6 +1094,7 @@ export function createServer(
   const codeModeExecutions = codeModeRegistry ? new CodeModeExecutions(codeModeRegistry, processSessions) : undefined;
   const toolActivities = new ToolActivityTracker();
   const workspaceActivity = new WorkspaceActivityStore(config.stateDir, config.activity.maxTurns);
+
   const workspaceActivityJournal = config.activity.enabled
     ? new WorkspaceActivityJournal(workspaceActivity, (error) => {
       logEvent(config.logging, "warn", "workspace_activity_journal_error", {
@@ -1033,16 +1102,20 @@ export function createServer(
       });
     })
     : undefined;
+
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
+
   const resolveLocalAgentProviders = () => buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
+
   const compileModernSurface = (name: ToolSurfaceName) => {
     const toolSurface = getToolSurface(config.experimentalCodeMode ? "codex" : name);
+
     const bind = compileMcpRegistrationSurface((target) => {
       registerMcpSurface(
         target,
@@ -1059,18 +1132,22 @@ export function createServer(
         workspaceActivityJournal,
       );
     });
+
     return { toolSurface, bind };
   };
+
   const modernSurfaces = {
     codex: compileModernSurface("codex"),
     claude: compileModernSurface("claude"),
-  } satisfies Record<ToolSurfaceName, unknown>;
+  } satisfies Record<ToolSurfaceName, ReturnType<typeof compileModernSurface>>;
+
   const logMcpHandlerError = (error: Error) => logEvent(
     config.logging,
     "error",
     "mcp_handler_error",
     modernMcpAdapterErrorLogFields(error),
   );
+
   // An explicit tools.mode wins so existing setups keep their tools. Otherwise
   // the registered OAuth client identifies the connector, so a host keeps the
   // same tool list across requests. The User-Agent only fills in when the
@@ -1079,21 +1156,26 @@ export function createServer(
     const client = authInfo
       ? await oauthProvider.clientsStore.getClient(authInfo.clientId)
       : undefined;
+
     const { toolSurface, bind } = modernSurfaces[config.toolSurfaceOverride ?? detectToolSurface({
       clientName: client?.client_name,
       redirectUris: client?.redirect_uris.map(String),
       userAgent: requestInfo?.headers.get("user-agent") ?? undefined,
     })];
+
     const adapter = createModernMcpServerAdapter(
       mcpServerInfo(),
       { instructions: serverInstructions(config, toolSurface) },
     );
+
     bind(adapter.registrationTarget);
+
     return adapter.server;
   }, {
     legacy: "stateless",
     onerror: logMcpHandlerError,
   });
+
   const mcpNodeHandler = toNodeHandler({
     fetch: async (request, options) => nodeMcpResponse(await mcpHandler.fetch(request, options)),
   }, {
@@ -1108,8 +1190,10 @@ export function createServer(
     const requestId = randomUUID();
     const startedAt = performance.now();
     const path = requestPath(req);
+
     const shouldLogRequest = config.logging.requests
       && (config.logging.assets || !path.startsWith("/mcp-app-assets"));
+
     let finished = false;
     res.locals.requestId = requestId;
 
@@ -1119,12 +1203,13 @@ export function createServer(
         method: req.method,
         path,
         ...requestLogFields(req, config),
-        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
+        ...optionalFields(path === "/mcp" ? rpcRequestLogFields(req.body) : undefined),
       });
     }
 
     res.on("finish", () => {
       finished = true;
+
       if (!shouldLogRequest) return;
 
       logEvent(config.logging, "info", "http_request", {
@@ -1134,7 +1219,7 @@ export function createServer(
         status: res.statusCode,
         durationMs: Math.round(performance.now() - startedAt),
         ...requestLogFields(req, config),
-        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
+        ...optionalFields(path === "/mcp" ? rpcRequestLogFields(req.body) : undefined),
       });
     });
 
@@ -1145,10 +1230,10 @@ export function createServer(
         method: req.method,
         path,
         headersSent: res.headersSent,
-        ...(res.headersSent ? { status: res.statusCode } : {}),
+        ...optionalFields(res.headersSent ? { status: res.statusCode } : undefined),
         durationMs: Math.round(performance.now() - startedAt),
         ...requestLogFields(req, config),
-        ...(path === "/mcp" ? rpcRequestLogFields(req.body) : {}),
+        ...optionalFields(path === "/mcp" ? rpcRequestLogFields(req.body) : undefined),
       });
     });
 
@@ -1192,16 +1277,18 @@ export function createServer(
   });
 
   app.all("/mcp", async (req, res) => {
+    // SAFETY: The surrounding checks or construction already match this type.
     const requestId = res.locals.requestId as string | undefined;
 
     await new Promise<void>((resolve, reject) => {
       res.once("finish", resolve);
       res.once("close", resolve);
-      bearerAuth(req, res, (error?: unknown) => {
+      bearerAuth(req, res, (error?: WireInput) => {
         if (error) reject(error);
         else resolve();
       });
     });
+
     // A client that disconnected mid-auth has nothing left to answer.
     if (res.headersSent || res.destroyed) return;
 
@@ -1214,6 +1301,7 @@ export function createServer(
         ...requestLogFields(req, config),
       });
       sendJsonRpcError(res, 401, -32001, "Unauthorized");
+
       return;
     }
 
@@ -1227,13 +1315,18 @@ export function createServer(
     });
 
     if (!normalizeCachedWorkspaceArgument(req.body)) {
-      const body = req.body as Record<string, unknown>;
+      // SAFETY: The surrounding checks or construction already match this type.
+      const body = req.body as JsonObject;
+
       if (!Object.hasOwn(body, "id")) {
         res.status(202).end();
+
         return;
       }
-      const id = typeof body.id === "string" || typeof body.id === "number" ? body.id : null;
+
+      const id = isJsonString(body.id) || isJsonNumber(body.id) ? body.id : null;
       sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments", id);
+
       return;
     }
 
@@ -1244,6 +1337,7 @@ export function createServer(
         requestId,
         error: error instanceof Error ? error.message : String(error),
       });
+
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
@@ -1251,6 +1345,7 @@ export function createServer(
   });
 
   let closePromise: Promise<void> | undefined;
+
   return {
     app,
     config,
@@ -1264,6 +1359,7 @@ export function createServer(
             error: error instanceof Error ? error.message : String(error),
           });
         }
+
         await codeModeExecutions?.shutdown();
         await toolActivities.waitForIdle();
         workspaceActivity.close();
@@ -1271,6 +1367,7 @@ export function createServer(
         oauthProvider.close();
         workspaceStore.close?.();
       })();
+
       return closePromise;
     },
   };
@@ -1281,11 +1378,13 @@ async function isMainModule(): Promise<boolean> {
 
   const modulePath = await realpath(fileURLToPath(import.meta.url));
   const entrypointPath = await realpath(process.argv[1]);
+
   return modulePath === entrypointPath;
 }
 
 if (await isMainModule()) {
   const { app, config, close, localAgentProviders } = createServer();
+
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(
       `devspace listening on http://${config.host}:${config.port}/mcp`,
@@ -1297,29 +1396,35 @@ if (await isMainModule()) {
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy === true ? "enabled" : config.logging.trustProxy || "disabled"}`);
+
     const artifactDownloadStatus = !config.artifactsEnabled
       ? "disabled"
       : isArtifactDownloadSupportedPlatform()
         ? "enabled"
         : `unsupported on ${process.platform}`;
+
     console.log(`native artifact download: ${artifactDownloadStatus}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
+
   configureHttpServer(httpServer);
 
   let shuttingDown = false;
+
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     await shutdownHttpServer(httpServer, close);
     process.exit(0);
   };
+
   const handleShutdown = () => {
     void shutdown().catch((error) => {
       console.error("devspace shutdown failed", error);
       process.exit(1);
     });
   };
+
   process.once("SIGINT", handleShutdown);
   process.once("SIGTERM", handleShutdown);
 }

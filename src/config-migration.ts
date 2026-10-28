@@ -1,3 +1,5 @@
+import { isJsonBoolean } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import * as z from "zod/v4";
 import {
   DEVSPACE_CONFIG_VERSION,
@@ -45,9 +47,10 @@ const LEGACY_CONFIG_KEYS = new Set([
   "ui",
 ]);
 
-export function migrateLegacyConfig(value: unknown): DevspaceConfig {
+export function migrateLegacyConfig(value: WireInput): DevspaceConfig {
   const legacy = legacyConfigSchema.parse(value);
   const unsupportedKeys = Object.keys(legacy).filter((key) => !LEGACY_CONFIG_KEYS.has(key));
+
   if (unsupportedKeys.length > 0) {
     throw new Error(
       `Unsupported legacy configuration keys: ${unsupportedKeys.sort().join(", ")}`,
@@ -78,7 +81,8 @@ export function migrateLegacyConfig(value: unknown): DevspaceConfig {
   });
 }
 
-function definedEntries<T extends Record<string, unknown>>(value: T): Partial<T> {
+function definedEntries<T extends JsonObject>(value: T): Partial<T> {
+  // SAFETY: The surrounding checks or construction already match this type.
   return Object.fromEntries(
     Object.entries(value).filter((entry) => entry[1] !== undefined),
   ) as Partial<T>;
@@ -86,9 +90,11 @@ function definedEntries<T extends Record<string, unknown>>(value: T): Partial<T>
 
 function migrateLegacySubagents(
   value: z.infer<typeof storedSubagentsConfigSchema> | undefined,
-): unknown {
+): WireInput {
   if (value === undefined) return undefined;
-  if (typeof value !== "boolean") return value;
+
+  if (!isJsonBoolean(value)) return value;
+
   return {
     enabled: value,
     providers: value

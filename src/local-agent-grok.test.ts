@@ -62,6 +62,7 @@ test("prompt completions are parsed from responses and turn_completed updates on
     }),
     { sessionId: "grok_session_1", promptId: "prompt_2", stopReason: "end_turn" },
   );
+
   for (const incomplete of [
     { sessionId: "grok_session_1", promptId: "task-completed-123" },
     { sessionId: "grok_session_1", update: { sessionUpdate: "agent_message_chunk" } },

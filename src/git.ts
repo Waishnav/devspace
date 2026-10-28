@@ -43,10 +43,12 @@ export async function getGitEligibility(cwd: string): Promise<GitEligibility> {
   }
 
   const gitRoot = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
+
   try {
     await git(gitRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
   } catch (error) {
     let headRef: string;
+
     try {
       headRef = (await git(gitRoot, ["symbolic-ref", "--quiet", "HEAD"])).stdout.trim();
     } catch {
@@ -59,6 +61,7 @@ export async function getGitEligibility(cwd: string): Promise<GitEligibility> {
       "--count=1",
       headRef,
     ])).stdout.trim();
+
     if (existingHeadRef) throw error;
 
     return {
@@ -73,5 +76,6 @@ export async function getGitEligibility(cwd: string): Promise<GitEligibility> {
 
 export function safeWorkspaceRefSegment(workspaceId: string): string {
   const safe = workspaceId.replace(/[^A-Za-z0-9._-]/g, "-");
+
   return safe.length > 0 ? safe : createHash("sha256").update(workspaceId).digest("hex").slice(0, 16);
 }

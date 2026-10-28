@@ -54,11 +54,13 @@ test("provider config is trimmed, gains its driver, and reports enablement", () 
 
 test("the provider environment overlays configured values without mutating the inherited environment", () => {
   const config = parseCodexAndClaudeConfig();
+
   const inherited = {
     CODEX_COMMAND: "/usr/bin/codex",
     OPENAI_API_KEY: "inherited",
     UNCHANGED: "yes",
   };
+
   assert.deepEqual(localAgentProviderEnvironment(config, "codex", inherited), {
     CODEX_COMMAND: "/opt/bin/codex-wrapper",
     OPENAI_API_KEY: "configured",
@@ -125,6 +127,7 @@ test("a named provider instance keeps its declared driver", () => {
     enabled: true,
     providers: [{ id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" }],
   });
+
   assert.deepEqual(namedInstance.providers[0], {
     id: "codex-work",
     driver: "codex",
@@ -145,6 +148,7 @@ test("a generic ACP provider keeps its custom args", () => {
       config: { args: ["acp"] },
     }],
   });
+
   assert.deepEqual(genericAcp.providers[0], {
     id: "kiro",
     driver: "acp",
@@ -169,8 +173,10 @@ test("legacy ACP drivers normalize to the acp driver with a flavor", () => {
     enabled: true,
     providers: [{ id: "cursor", driver: "cursor", enabled: true }],
   });
+
   assert.equal(legacyAcp.providers[0]?.driver, "acp");
   assert.deepEqual(legacyAcp.providers[0]?.config, { flavor: "cursor" });
+
   const namedLegacyAcp = parseSubagentsConfig({
     enabled: true,
     providers: [
@@ -178,6 +184,7 @@ test("legacy ACP drivers normalize to the acp driver with a flavor", () => {
       { id: "grok", driver: "codex", enabled: true },
     ],
   });
+
   assert.equal(namedLegacyAcp.providers[0]?.driver, "acp");
   assert.deepEqual(namedLegacyAcp.providers[0]?.config, { flavor: "cursor" }, "a named legacy-driver instance keeps its flavor");
   assert.equal(namedLegacyAcp.providers[1]?.config, undefined, "a built-in id with another driver is not an ACP provider");
@@ -213,16 +220,21 @@ test("embedded providers receive configured environment and command overrides", 
       enabled: true,
       providers: [{ id, enabled: true, env: { HARNESS_ENV: id } }],
     });
+
     assert.equal(localAgentProviderEnvironment(embedded, id, {}).HARNESS_ENV, id);
   }
+
   const opencodeCommand = parseSubagentsConfig({
     enabled: true,
     providers: [{ id: "opencode", enabled: true, command: "/opt/bin/opencode" }],
   });
+
   assert.equal(localAgentProviderEnvironment(opencodeCommand, "opencode", {}).OPENCODE_COMMAND, "/opt/bin/opencode");
+
   const piCommand = parseSubagentsConfig({
     enabled: true,
     providers: [{ id: "pi", enabled: true, command: "/opt/bin/pi" }],
   });
+
   assert.equal(localAgentProviderEnvironment(piCommand, "pi", {}).PI_COMMAND, "/opt/bin/pi");
 });

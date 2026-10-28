@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -16,20 +17,23 @@ import {
   type PiSandboxModeRef,
 } from "./local-agent-pi-sandbox.js";
 
-type PiTool = { execute: (...args: any[]) => Promise<unknown> };
+type PiTool = { execute: (...args: any[]) => Promise<WireInput> };
 
 function registerTools(workspace: string, modeRef: PiSandboxModeRef, env?: NodeJS.ProcessEnv): Map<string, PiTool> {
   const tools = new Map<string, PiTool>();
+  // SAFETY: The surrounding checks or construction already match this type.
   createPiSandboxExtension(workspace, modeRef, env)({
-    registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<unknown> }) =>
+    registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<WireInput> }) =>
       tools.set(tool.name, tool),
   } as never);
+
   return tools;
 }
 
 const dependencies = await SandboxManager.checkDependenciesAsync();
 const sandboxRequired = process.env.DEVSPACE_REQUIRE_PI_SANDBOX === "1";
 const sandboxAvailable = SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0;
+
 // When this lane requires the sandbox the integration tests run and fail on missing dependencies instead of skipping.
 const sandboxSkip = sandboxAvailable || sandboxRequired
   ? false
@@ -40,6 +44,7 @@ async function sandboxFixture(t: TestContext) {
     assert.equal(SandboxManager.isSupportedPlatform(), true, "Pi sandbox integration is required on this CI lane");
     assert.deepEqual(dependencies.errors, [], "Pi sandbox dependencies must be available on this CI lane");
   }
+
   const root = await mkdtemp(join(tmpdir(), "devspace-pi-sandbox-test-"));
   const workspace = join(root, "workspace");
   mkdirSync(workspace);
@@ -52,6 +57,7 @@ async function sandboxFixture(t: TestContext) {
   });
   const tools = registerTools(workspace, modeRef);
   await registerPiSandboxSession(session, workspace, modeRef, "allowed");
+
   return { root, workspace, outside, modeRef, tools };
 }
 
@@ -59,6 +65,7 @@ async function outsideDirectoryFixture(root: string): Promise<string> {
   const outsideDirectory = join(root, "outside-directory");
   mkdirSync(outsideDirectory);
   await writeFile(join(outsideDirectory, "secret.txt"), "secret");
+
   return outsideDirectory;
 }
 
@@ -66,15 +73,20 @@ test("full-access bash receives the provider env", async (t) => {
   const workspace = await mkdtemp(join(tmpdir(), "devspace-pi-env-test-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const modeRef = createPiSandboxModeRef("full_access");
+
   const tools = registerTools(workspace, modeRef, {
     ...process.env,
     DEVSPACE_PI_ENV_TEST: "provider-env",
   });
+
   const bash = tools.get("bash");
   assert.ok(bash);
+
+  // SAFETY: The surrounding checks or construction already match this type.
   const result = await bash.execute("provider-env-test", { command: "printf %s \"$DEVSPACE_PI_ENV_TEST\"" }) as {
     content: Array<{ type: string; text?: string }>;
   };
+
   assert.equal(result.content[0]?.text, "provider-env");
 });
 
@@ -180,6 +192,7 @@ test("a workspace symlink retargeted outside cannot redirect sandboxed bash", { 
   await rm(workspaceAlias, { recursive: true, force: true });
   await symlink(outsideDirectory, workspaceAlias, process.platform === "win32" ? "junction" : "dir");
   const escapedBashFile = join(outsideDirectory, "bash-escaped.txt");
+
   try {
     const retargetedBash = retargetedTools.get("bash");
     assert.ok(retargetedBash);

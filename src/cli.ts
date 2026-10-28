@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { isJsonString, optionalFields } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
@@ -79,6 +81,7 @@ type Command =
   | "show-changes"
   | "help"
   | "version";
+
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -92,41 +95,53 @@ async function main(argv: string[]): Promise<void> {
     case "serve":
       await ensureConfigured();
       await serve();
+
       return;
     case "init":
       await runInit({ force: args.includes("--force") });
+
       return;
     case "doctor":
       await runDoctor();
+
       return;
     case "config":
       runConfigCommand(args);
+
       return;
     case "worktrees":
       await runWorktreesCommand(args);
+
       return;
     case "agents":
       await runAgentsCommand(args);
+
       return;
     case "workflow": {
       const { args: commandArgs, json } = extractJsonOption(args);
       await runWorkflowCommand(commandArgs, json);
+
       return;
     }
+
     case "show-changes":
       await runShowChanges(args);
+
       return;
     case "help":
       printHelp();
+
       return;
     case "version":
       printVersion();
+
       return;
   }
 }
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
+
   if (
     command === "init"
     || command === "doctor"
@@ -135,18 +150,24 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "agents"
     || command === "show-changes"
   ) return command;
+
   if (command === "workflow" && workflowsEnabled()) return command;
+
   if (command === "help" || command === "--help" || command === "-h") return "help";
+
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
 }
 
 async function ensureConfigured(): Promise<void> {
   const files = loadDevspaceFiles();
+
   if (files.migratedLegacyConfig) {
     console.log(`Migrated legacy configuration to ${files.configPath}`);
   }
+
   if (files.configExists && files.authExists) return;
+
   if (process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
 
   if (!input.isTTY || !output.isTTY) {
@@ -167,9 +188,11 @@ async function ensureConfigured(): Promise<void> {
 
 async function runInit({ force }: { force: boolean }): Promise<void> {
   const files = loadDevspaceFiles();
+
   if (!force && files.configExists && files.authExists) {
     prompts.log.info(`DevSpace is already configured at ${files.dir}`);
     prompts.log.info("Run `devspace init --force` to update it.");
+
     return;
   }
 
@@ -193,20 +216,25 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       initialValues: files.config.server.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
       required: true,
     });
+
     if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
+    // SAFETY: The surrounding checks or construction already match this type.
     const usage = resolveOnboardingUsage(destinationAnswer as OnboardingDestination[]);
     const useChatGpt = usesChatGpt(usage);
     const useCodingAgents = usesCodingAgents(usage);
 
     let allowedRoots: string[] | undefined;
+
     if (useChatGpt) {
       const defaultRoots = files.config.workspaces.allowedRoots.join(", ") || process.cwd();
+
       const rootsAnswer = await textPrompt({
         message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
         placeholder: defaultRoots,
         defaultValue: defaultRoots,
         validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
       });
+
       allowedRoots = rootsAnswer
         .split(",")
         .map((root) => resolve(expandHomePath(root.trim())))
@@ -216,6 +244,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     const port = files.config.server.port;
 
     let publicBaseUrl: string | null = null;
+
     if (useChatGpt) {
       prompts.note(
         [
@@ -237,21 +266,26 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     }
 
     const currentSubagents = resolveSubagentsConfig(files.config.subagents ?? disabledSubagentsConfig());
+
     const availability = getLocalAgentProviderAvailabilitySnapshot(
       process.env,
       currentSubagents,
     );
+
     const configuredProviders = currentSubagents.providers
       .filter((provider) => provider.enabled)
       .map((provider) => provider.id);
+
     const initialValues = configuredProviders.length > 0
       ? configuredProviders
       : availability
           .filter((provider) => provider.available)
           .map((provider) => provider.name);
+
     prompts.log.info(
       "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
     );
+
     const providerAnswer = await prompts.multiselect({
       message: "Which agents can DevSpace use as subagents?",
       options: availability.map((provider) => ({
@@ -264,8 +298,11 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       initialValues,
       required: true,
     });
+
     if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+    // SAFETY: The surrounding checks or construction already match this type.
     const selectedProviders = providerAnswer as string[];
+
     const subagents = updateOnboardingSubagentsConfig(
       currentSubagents,
       selectedProviders,
@@ -292,7 +329,9 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       `Subagents: ${selectedProviders.join(", ")}`,
       ...(publicBaseUrl ? [`ChatGPT connection URL: ${publicBaseUrl}/mcp`] : []),
     ];
+
     prompts.note(lines.join("\n"), "DevSpace is ready");
+
     if (useChatGpt) {
       prompts.note(
         [
@@ -302,6 +341,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         "Owner password",
       );
     }
+
     if (useCodingAgents) {
       prompts.note(
         [
@@ -312,22 +352,27 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         "Install the Subagents skill",
       );
     }
+
     const nextSteps = [
       useChatGpt ? "Run `devspace serve`, then connect ChatGPT." : undefined,
       useCodingAgents ? "Run the skill command above before delegating from your Coding Agents." : undefined,
     ].filter(Boolean).join(" ");
+
     prompts.outro(nextSteps);
   } catch (error) {
     if (error instanceof SetupCancelledError) {
       prompts.cancel("Setup cancelled");
+
       return;
     }
+
     throw error;
   }
 }
 
 async function serve(): Promise<void> {
   const sqliteStatus = checkSqliteNative();
+
   if (sqliteStatus !== "ok") {
     throw new Error(
       [
@@ -345,34 +390,41 @@ async function serve(): Promise<void> {
   const { configureHttpServer, createServer } = await import("./server.js");
   const { workspaceWebUrl } = await import("./workspace-web.js");
   const { app, close, localAgentProviders } = createServer(config);
+
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(`devspace listening on http://${config.host}:${config.port}/mcp`);
     console.log(`public base url: ${config.publicBaseUrl}`);
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
+
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because server.allowedHosts contains '*'");
     }
+
     console.log("auth: Owner password approval required");
     console.log(`workspace pages: ${workspaceWebUrl(config)} (sign in with the owner password)`);
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
+
   configureHttpServer(httpServer);
 
   let shuttingDown = false;
+
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     await shutdownHttpServer(httpServer, close);
     process.exit(0);
   };
+
   const handleShutdown = () => {
     void shutdown().catch((error) => {
       console.error("devspace shutdown failed", error);
       process.exit(1);
     });
   };
+
   process.once("SIGINT", handleShutdown);
   process.once("SIGTERM", handleShutdown);
 }
@@ -380,16 +432,19 @@ async function serve(): Promise<void> {
 async function runStartupWorktreeCleanup(config: ServerConfig): Promise<void> {
   try {
     const cleanup = await pruneStaleManagedWorktrees(config);
+
     if (cleanup.isErr()) {
       logEvent(config.logging, "warn", "managed_worktree_cleanup_failed", {
         error: cleanup.error.message,
         operation: cleanup.error.operation,
       });
+
       return;
     }
 
     const result = cleanup.value;
     const preserved = result.removed.filter((entry) => entry.recoveryRef).length;
+
     if (result.removed.length > 0 || result.missing.length > 0 || result.skipped.length > 0) {
       logEvent(config.logging, "info", "managed_worktree_cleanup", {
         removed: result.removed.length,
@@ -398,6 +453,7 @@ async function runStartupWorktreeCleanup(config: ServerConfig): Promise<void> {
         skippedUntracked: result.skipped.length,
       });
     }
+
     for (const failure of result.failed) {
       logEvent(config.logging, "warn", "managed_worktree_cleanup_failed", {
         workspaceId: failure.workspaceId,
@@ -430,10 +486,12 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+
     const providers = buildLocalAgentProviderStatuses(
       config.subagents,
       getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
     );
+
     console.log(`Subagents: ${config.subagents.enabled ? "enabled" : "disabled"}`);
     console.log(`Subagent providers: ${formatLocalAgentProviderStatusSummary(providers)}`);
   } catch (error) {
@@ -447,17 +505,20 @@ function runConfigCommand(args: string[]): void {
 
   if (!subcommand || subcommand === "get") {
     console.log(JSON.stringify(files.config, null, 2));
+
     return;
   }
 
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
+
   if (key !== "publicBaseUrl") {
     throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
   }
 
   const value = rest.join(" ").trim();
+
   if (!value) {
     throw new Error("Missing publicBaseUrl value.");
   }
@@ -472,30 +533,38 @@ function runConfigCommand(args: string[]): void {
 
 async function runWorktreesCommand(args: string[]): Promise<void> {
   const [subcommand, ...extra] = args;
+
   if (subcommand !== "prune" || extra.length > 0) {
     throw new Error("Usage: devspace worktrees prune");
   }
 
   const cleanup = await pruneStaleManagedWorktrees(loadConfig());
+
   if (cleanup.isErr()) {
     console.warn(`Failed to prune managed worktrees: ${cleanup.error.message}`);
     process.exitCode = 1;
+
     return;
   }
 
   const result = cleanup.value;
   const preserved = result.removed.filter((entry) => entry.recoveryRef).length;
   console.log(`Pruned ${result.removed.length} stale managed worktree${result.removed.length === 1 ? "" : "s"}.`);
+
   if (preserved > 0) console.log(`Preserved ${preserved} recovery ref${preserved === 1 ? "" : "s"}.`);
+
   if (result.missing.length > 0) {
     console.log(`Cleared ${result.missing.length} missing worktree session${result.missing.length === 1 ? "" : "s"}.`);
   }
+
   if (result.skipped.length > 0) {
     console.log(`Skipped ${result.skipped.length} worktree${result.skipped.length === 1 ? "" : "s"} with untracked files.`);
   }
+
   for (const failure of result.failed) {
     console.warn(`Failed to prune ${failure.workspaceId}: ${failure.error.message}`);
   }
+
   if (result.failed.length > 0) process.exitCode = 1;
 }
 
@@ -536,6 +605,7 @@ function printHelp(): void {
 async function runShowChanges(args: string[]): Promise<void> {
   const { args: commandArgs, json } = extractJsonOption(args);
   const [reviewRef, ...extra] = commandArgs;
+
   if (!reviewRef || extra.length > 0) {
     throw new Error("Usage: devspace show-changes <review-ref> [--json]");
   }
@@ -543,10 +613,13 @@ async function runShowChanges(args: string[]): Promise<void> {
   const config = loadConfig();
   const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const review = await readReviewRef(scope.workspaceRoot, reviewRef);
+
   if (json) {
     printJson(review);
+
     return;
   }
+
   console.log(review.patch || review.result);
 }
 
@@ -555,48 +628,63 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   // Agents call `--help` on every subcommand; answer with the usage instead of a parse error.
   const terminator = rest.indexOf("--");
   const optionArgs = terminator === -1 ? rest : rest.slice(0, terminator);
+
   if (subcommand !== undefined && optionArgs.some((arg) => arg === "--help" || arg === "-h")) {
     printAgentsHelp();
+
     return;
   }
+
   const { args: commandArgs, json } = extractJsonOption(rest);
+
   switch (subcommand) {
     case "ls":
     case "list":
       await runAgentWorkflowCommand(json, () => runAgentsList(commandArgs, json));
+
       return;
     case "run":
       await runAgentWorkflowCommand(json, () => runAgentsRun(commandArgs, json));
+
       return;
     case "continue":
       await runAgentWorkflowCommand(json, () => runAgentsContinue(commandArgs, json));
+
       return;
     case "show":
       await runAgentWorkflowCommand(json, () => runAgentsShow(commandArgs, json));
+
       return;
     case "wait":
       await runAgentWorkflowCommand(json, () => runAgentsWait(commandArgs, json));
+
       return;
     case "stop":
       await runAgentWorkflowCommand(json, () => runAgentsStop(commandArgs, json));
+
       return;
     case "events":
       await runAgentWorkflowCommand(json, () => runAgentsEvents(commandArgs, json));
+
       return;
     case "targets":
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
+
       return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
+
       return;
     case "skill":
       await runAgentWorkflowCommand(json, async () => runAgentsSkill(commandArgs));
+
       return;
     case undefined:
     case "help":
     case "--help":
     case "-h":
       printAgentsHelp();
+
       return;
     default:
       writeAgentWorkflowError(`Unknown agents command: ${subcommand}`, json);
@@ -617,12 +705,15 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
   const config = loadAgentConfig();
   const scope = resolveAgentCliWorkspaceContext(config);
   const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
+
   const providers = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
+
   const catalog = buildLocalAgentCatalog(config.subagents, profiles, providers);
   const output = presentAgentTargetCatalog(catalog);
+
   if (json) printJson(output);
   else printAgentXml(formatAgentTargetCatalog(output));
 }
@@ -633,11 +724,14 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
   const client = createLocalAgentClient(config);
   const result = await client.list(resolveAgentCliWorkspaceContext(config));
   const agents = presentAgentWorkflowResult(result, json);
+
   if (!agents) return;
 
   const summaries = agents.map(presentAgentSummary);
+
   if (json) {
     printJson(summaries);
+
     return;
   }
 
@@ -649,6 +743,7 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   const config = loadAgentConfig();
   const scope = resolveAgentCliWorkspaceContext(config);
   const client = createLocalAgentClient(config);
+
   const result = await client.start({
     agentId: parsed.requestId,
     target: parsed.target,
@@ -660,17 +755,25 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
     writeMode: parsed.writeMode,
     worktree: parsed.worktree,
   });
+
   const record = presentAgentWorkflowResult(result, json);
+
   if (!record) return;
+
   if (parsed.wait) {
     await waitForStartedAgent(client, record.id, scope, parsed.timeoutMs, json);
+
     return;
   }
+
   const receipt = presentAgentReceipt(record);
+
   if (json) {
     printJson(receipt);
+
     return;
   }
+
   printAgentXml(formatAgentReceipt(receipt));
 }
 
@@ -679,27 +782,37 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
+
   const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     effort: parsed.effort,
     writeMode: parsed.writeMode,
   }, scope);
+
   const record = presentAgentWorkflowResult(result, json);
+
   if (!record) return;
+
   if (parsed.wait) {
     await waitForStartedAgent(client, record.id, scope, parsed.timeoutMs, json);
+
     return;
   }
+
   const receipt = presentAgentReceipt(record);
+
   if (json) {
     printJson(receipt);
+
     return;
   }
+
   printAgentXml(formatAgentReceipt(receipt));
 }
 
 async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
+
   if (!id || extra.length > 0) throw new Error("Usage: devspace agents show <id> [--json]");
 
   const config = loadAgentConfig();
@@ -707,9 +820,11 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const scope = resolveAgentCliWorkspaceContext(config);
   const initial = await client.get(id, scope);
   const record = presentAgentWorkflowResult(initial, json);
+
   if (!record) return;
 
   const observation = presentAgentObservation(record);
+
   if (json) printJson(observation);
   else printAgentXml(formatAgentObservation(observation));
 }
@@ -720,7 +835,9 @@ async function runAgentsWait(args: string[], json: boolean): Promise<void> {
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const results = presentAgentWorkflowResult(await client.wait(ids, scope, timeoutMs), json);
+
   if (!results) return;
+
   if (json) printJson(results);
   else printAgentXml(results.map(formatAgentObservation).join("\n"));
   process.exitCode = agentObservationExitCode(results);
@@ -736,7 +853,9 @@ async function waitForStartedAgent(
 ): Promise<void> {
   const results = presentAgentWorkflowResult(await client.wait([id], scope, timeoutMs), json);
   const observation = results?.[0];
+
   if (!observation) return;
+
   if (json) printJson(observation);
   else printAgentXml(formatAgentObservation(observation));
   process.exitCode = agentObservationExitCode([observation]);
@@ -744,13 +863,16 @@ async function waitForStartedAgent(
 
 async function runAgentsStop(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
+
   if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
   const record = presentAgentWorkflowResult(await client.stopAgent(id, scope), json);
+
   if (!record) return;
   const observation = presentAgentObservation(record);
+
   if (json) printJson(observation);
   else printAgentXml(formatAgentObservation(observation));
 }
@@ -765,20 +887,27 @@ async function runAgentsEvents(args: string[], json: boolean): Promise<void> {
   const scope = resolveAgentCliWorkspaceContext(config);
   let turnId = parsed.turnId;
   let afterSeq = 0;
+
   for (;;) {
     const page = presentAgentWorkflowResult(await client.events(parsed.id, scope, { turnId, afterSeq }), json);
+
     if (!page) return;
+
     if (json && !parsed.follow) {
       printJson(page);
+
       return;
     }
+
     let completed = false;
+
     for (const event of page.events) {
       if (json) printJson(event);
       else printAgentXml(formatAgentTurnEvent(event));
       afterSeq = event.seq;
       completed ||= event.type === "turn_completed";
     }
+
     if (!parsed.follow || completed || page.status !== "running") return;
     // Stay on the turn being followed even if the agent is continued meanwhile.
     turnId = page.turnId;
@@ -786,21 +915,31 @@ async function runAgentsEvents(args: string[], json: boolean): Promise<void> {
   }
 }
 
-function parseAgentsEventsArgs(args: string[]): { id: string; turnId?: string; follow: boolean } {
+interface AgentsEventsArgs {
+  id: string;
+  follow: boolean;
+  turnId?: string;
+}
+
+function parseAgentsEventsArgs(args: string[]): AgentsEventsArgs {
   const usage = "Usage: devspace agents events <id> [--turn <turn-id>] [--follow] [--json]";
   const positional: string[] = [];
   let turnId: string | undefined;
   let follow = false;
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
+
     if (argument === "--follow" || argument === "-f") {
       follow = true;
     } else if (argument === "--turn") {
       turnId = args[index + 1];
       index += 1;
+
       if (!turnId) throw new Error(usage);
     } else if (argument.startsWith("--turn=")) {
       turnId = argument.slice("--turn=".length) || undefined;
+
       if (!turnId) throw new Error(usage);
     } else if (argument.startsWith("-")) {
       throw new Error(`Unknown option: ${argument}.`);
@@ -808,101 +947,137 @@ function parseAgentsEventsArgs(args: string[]): { id: string; turnId?: string; f
       positional.push(argument);
     }
   }
+
   if (positional.length !== 1) throw new Error(usage);
-  return { id: positional[0]!, follow, ...(turnId ? { turnId } : {}) };
+
+  return { id: positional[0]!, follow, ...optionalFields(turnId ? { turnId } : undefined) };
 }
 
-function parseAgentsWaitArgs(args: string[]): { ids: string[]; timeoutMs?: number } {
+interface AgentsWaitArgs {
+  ids: string[];
+  timeoutMs?: number;
+}
+
+function parseAgentsWaitArgs(args: string[]): AgentsWaitArgs {
   const ids: string[] = [];
   let timeoutMs: number | undefined;
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
+
     if (argument === "--timeout") {
       timeoutMs = parseAgentWaitTimeout(args[index + 1]);
       index += 1;
       continue;
     }
+
     if (argument.startsWith("--timeout=")) {
       timeoutMs = parseAgentWaitTimeout(argument.slice("--timeout=".length));
       continue;
     }
+
     if (argument.startsWith("-")) throw new Error(`Unknown option: ${argument}.`);
     ids.push(argument);
   }
+
   if (ids.length === 0) {
     throw new Error("Usage: devspace agents wait <id>... [--timeout <seconds>] [--json]");
   }
-  return { ids, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
+
+  return { ids, ...optionalFields(timeoutMs === undefined ? undefined : { timeoutMs }) };
 }
 
 function runAgentsSkill(args: string[]): void {
   const usage = `Usage: devspace agents skill [--install <${AGENT_SKILL_INSTALL_TARGETS.join("|")}> [--project]]`;
   let target: string | undefined;
   let project = false;
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
+
     if (argument === "--project") project = true;
     else if (argument === "--install") target = args[++index];
     else if (argument.startsWith("--install=")) target = argument.slice("--install=".length);
     else throw new Error(usage);
   }
+
   if (target === undefined) {
     if (project) throw new Error(usage);
     process.stdout.write(renderAgentsSkill());
+
     return;
   }
+
   const installTarget = AGENT_SKILL_INSTALL_TARGETS.find((candidate) => candidate === target);
+
   if (!installTarget) throw new Error(usage);
   console.log(`Installed ${installAgentsSkill(installTarget, { project })}`);
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand, ...extra] = args;
+
   if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
+
   switch (subcommand) {
     case "status": {
       const status = presentAgentResult(await client.status(), json);
+
       if (!status) return;
       printJson(status);
+
       return;
     }
+
     case "stop": {
       const status = presentAgentResult(await client.stop(), json);
+
       if (!status) return;
+
       if (json) printJson(status);
       else console.log("Local agent daemon stop requested.");
+
       return;
     }
+
     case "logs": {
       const logs = presentAgentResult(await client.logs(), json);
+
       if (logs === undefined) return;
+
       if (json) printJson({ logs });
       else console.log(logs || "No local agent daemon logs found.");
+
       return;
     }
+
     default:
       throw new Error("Usage: devspace agents daemon <status|stop|logs>");
   }
 }
 
-function extractJsonOption(args: string[]): { args: string[]; json: boolean } {
+function extractJsonOption(args: string[]) {
   const commandArgs: string[] = [];
   let json = false;
   let optionsEnded = false;
+
   for (const argument of args) {
     if (!optionsEnded && argument === "--") {
       optionsEnded = true;
       commandArgs.push(argument);
       continue;
     }
+
     if (!optionsEnded && argument === "--json") {
       json = true;
       continue;
     }
+
     commandArgs.push(argument);
   }
+
   return { args: commandArgs, json };
 }
 
@@ -911,11 +1086,14 @@ function presentAgentResult<T, E extends LocalAgentError>(
   json: boolean,
 ): T | undefined {
   if (result.isOk()) return result.value;
+
   if (json) {
     printJson({ error: toAgentErrorPayload(result.error) });
     process.exitCode = 1;
+
     return undefined;
   }
+
   throw new Error(result.error.message);
 }
 
@@ -925,9 +1103,11 @@ function presentAgentWorkflowResult<T, E extends LocalAgentError>(
 ): T | undefined {
   if (result.isOk()) return result.value;
   const error = toAgentErrorPayload(result.error);
+
   if (json) printJson({ error });
   else console.error(formatAgentCommandError(error));
   process.exitCode = 1;
+
   return undefined;
 }
 
@@ -941,6 +1121,7 @@ async function runAgentWorkflowCommand(json: boolean, command: () => Promise<voi
 
 function writeAgentWorkflowError(message: string, json: boolean): void {
   const error = { code: "AGENT_COMMAND_ERROR", message, retryable: false };
+
   if (json) printJson({ error });
   else console.error(formatAgentCommandError(error));
   process.exitCode = 1;
@@ -950,7 +1131,7 @@ function printAgentXml(fragment: string): void {
   if (fragment) console.log(fragment);
 }
 
-function printJson(value: unknown): void {
+function printJson(value: WireInput): void {
   console.log(JSON.stringify(value));
 }
 
@@ -981,8 +1162,10 @@ function printAgentsHelp(): void {
 }
 
 function printVersion(): void {
+  // SAFETY: The surrounding checks or construction already match this type.
   const packageJson = require("../package.json") as { version?: unknown };
-  if (typeof packageJson.version !== "string") {
+
+  if (!isJsonString(packageJson.version)) {
     throw new Error("Unable to read DevSpace package version.");
   }
 
@@ -991,6 +1174,7 @@ function printVersion(): void {
 
 function normalizeOptionalPublicBaseUrl(value: string): string | null {
   const trimmed = value.trim();
+
   if (!trimmed || trimmed === "null" || trimmed === "none") return null;
 
   return normalizePublicBaseUrl(trimmed);
@@ -1002,6 +1186,7 @@ function normalizePublicBaseUrl(value: string): string {
   parsed.hash = "";
   parsed.search = "";
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+
   return parsed.toString().replace(/\/$/, "");
 }
 
@@ -1015,21 +1200,27 @@ async function textPrompt(options: TextPromptOptions): Promise<string> {
     ...options,
     validate: (value) => options.validate?.(value?.trim() ? value : options.defaultValue),
   });
+
   if (prompts.isCancel(result)) throw new SetupCancelledError();
   const value = String(result).trim();
+
   return value || options.defaultValue;
 }
 
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim() ?? "";
+
   if (!trimmed) return "Enter the public URL from your tunnel or reverse proxy.";
+
   if (trimmed.endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
+
   return validatePublicBaseUrl(trimmed);
 }
 
 function validatePublicBaseUrl(value: string): string | undefined {
   try {
     const parsed = new URL(value);
+
     return parsed.protocol === "http:" || parsed.protocol === "https:"
       ? undefined
       : "Use an http or https URL.";
@@ -1061,9 +1252,11 @@ class SetupCancelledError extends Error {}
 
 function checkSqliteNative(): string {
   try {
+    // SAFETY: The surrounding checks or construction already match this type.
     const Database = require("better-sqlite3") as typeof import("better-sqlite3");
     const db = new Database(":memory:");
     db.close();
+
     return "ok";
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
@@ -1072,10 +1265,13 @@ function checkSqliteNative(): string {
 
 function checkGitAvailable(): string {
   try {
+    // SAFETY: The surrounding checks or construction already match this type.
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+
     return execFileSync("git", ["--version"], { encoding: "utf8" }).trim();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
     return `unavailable (${message})`;
   }
 }
@@ -1083,9 +1279,11 @@ function checkGitAvailable(): string {
 function checkBashShell(): string {
   try {
     const { shell, args } = getShellConfig();
+
     return `${shell} ${args.join(" ")}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
     return `unavailable (${message})`;
   }
 }

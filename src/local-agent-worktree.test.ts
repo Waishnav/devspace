@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +24,7 @@ class FakeRuntime implements LocalAgentRuntime {
   constructor(private readonly workspaceRoot: string, private readonly runRoots: string[]) {}
   async run(_input: LocalAgentRunInput): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.runRoots.push(this.workspaceRoot);
+
     return Result.ok({ provider: "codex", finalResponse: "done", providerSessionId: "session", items: [] });
   }
   async releaseSession(): Promise<void> {}
@@ -34,10 +36,12 @@ class FakeRuntime implements LocalAgentRuntime {
 
 function unwrap<T, E>(result: BetterResult<T, E>): T {
   if (result.isErr()) throw result.error;
+
   return result.value;
 }
 
-function code(result: BetterResult<unknown, unknown>): string | undefined {
+function code(result: BetterResult<WireInput, WireInput>): string | undefined {
+  // SAFETY: The surrounding checks or construction already match this type.
   return result.isErr() ? (result.error as { code?: string }).code : undefined;
 }
 
@@ -104,6 +108,7 @@ test("a failed worktree creation leaves no record so the request id can be retri
 
   const taken = await start({ agentId: "job-3", worktree: { branch: "feature/probe" } });
   assert.equal(code(taken), "WORKTREE_CREATE_FAILED");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((taken as { error: Error }).error.message, /already exists/);
   assert.equal(store.getById("job-3"), undefined);
   assert.equal(unwrap(await start({ agentId: "job-3", worktree: { branch: "feature/other" } })).branch, "feature/other");
@@ -114,7 +119,9 @@ test("a worktree agent outside a git repository fails with a typed error", async
   const { store, notGit, start } = fixture(t);
   const outside = await start({ worktree: {}, workspaceRoot: notGit });
   assert.equal(code(outside), "WORKTREE_NOT_GIT_REPOSITORY");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.equal((outside as { error: { agentId?: string } }).error.agentId, undefined, "the rolled-back id is not reported");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((outside as { error: Error }).error.message, /needs a git repository/);
   assert.deepEqual(store.list({ workspaceRoot: notGit }), []);
 });
@@ -127,6 +134,7 @@ test("a removed worktree fails the follow-up clearly instead of running in the s
   git(source, "worktree", "remove", "--force", named.worktreePath!);
   const missing = await manager.continue("job-2", "again", {}, scope);
   assert.equal(code(missing), "WORKTREE_MISSING");
+  // SAFETY: The surrounding checks or construction already match this type.
   assert.match((missing as { error: Error }).error.message, /git worktree add/);
 });
 
@@ -161,6 +169,7 @@ function fixture(t: TestContext) {
 
   /** The workspace root each run was given, to prove where the provider actually works. */
   const runRoots: string[] = [];
+
   const driver: LocalAgentDriver = {
     providerInstanceId: "codex",
     provider: "codex",
@@ -176,6 +185,7 @@ function fixture(t: TestContext) {
   };
 
   const store = new LocalAgentStore(join(temp, "state"));
+
   const manager = new LocalAgentManager({
     store,
     drivers: [driver],
@@ -184,12 +194,14 @@ function fixture(t: TestContext) {
     worktreeRoot,
     subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", driver: "codex", enabled: true }] },
   });
+
   t.after(async () => {
     await manager.close();
     rmSync(temp, { recursive: true, force: true });
   });
 
   const scope = { workspaceRoot: source };
+
   const start = (extra: { agentId?: string; worktree?: { branch?: string }; workspaceRoot?: string }) =>
     manager.start({ target: "codex", prompt: "go", workspaceRoot: source, writeMode: "full_access", ...extra });
 

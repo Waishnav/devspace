@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import {
   subagentAcpFlavor,
   type SubagentProviderConfig,
@@ -5,7 +6,6 @@ import {
 } from "./local-agent-config.js";
 import {
   LOCAL_AGENT_DEFAULT_PROVIDER_IDS,
-  LOCAL_AGENT_DRIVER_KINDS,
 } from "./local-agent-provider.js";
 import {
   AcpLocalAgentDriver,
@@ -47,12 +47,15 @@ export function createLocalAgentDrivers(
   options: LocalAgentDriverOptions = {},
 ): LocalAgentDriver[] {
   const env = options.env ?? process.env;
+
   const instances = options.subagents?.providers ?? LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => ({
     id,
     driver: id === "cursor" || id === "copilot" || id === "grok" ? "acp" : id,
     enabled: true,
   } satisfies SubagentProviderConfig));
+
   const registry = createLocalAgentProviderRegistry(options);
+
   return instances.map((instance) => registry.create(instance, options.subagents, env));
 }
 
@@ -72,7 +75,7 @@ export function createLocalAgentProviderRegistry(
     }));
 }
 
-export function extractLocalAgentResponseText(value: unknown): string {
+export function extractLocalAgentResponseText(value: WireInput): string {
   return extractOpenCodeFinalResponse(value) || extractPiFinalResponse(value);
 }
 

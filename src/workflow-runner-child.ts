@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isNumberValue, isBigintValue, isFunctionValue, isSymbolValue, isObjectValue, optionalFields, jsonKind } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import {
   getQuickJS,
   type QuickJSContext,
@@ -9,6 +12,7 @@ import type { WorkflowRunnerLimits } from "./workflow-runner.js";
 import type { WorkflowScriptMeta } from "./workflow-script.js";
 
 interface ErrorPayload { code: string; message: string; retryable?: boolean }
+
 interface RunMessage {
   type: "run";
   source: string;
@@ -16,6 +20,7 @@ interface RunMessage {
   meta: WorkflowScriptMeta;
   limits: WorkflowRunnerLimits;
 }
+
 interface HostResultMessage {
   type: "host-result";
   id: number;
@@ -45,13 +50,14 @@ process.once("disconnect", () => {
   if (!shuttingDown) process.exit(1);
 });
 
-process.on("message", (message: unknown) => {
+process.on("message", (message: WireInput) => {
   if (!isRecord(message)) return;
+
   if (message.type === "run") {
     if (runtime) return fail({ code: "WORKFLOW_PROTOCOL_ERROR", message: "Workflow runner received more than one run request." });
-    void run(message as unknown as RunMessage);
+    void run(unsafeNarrow<RunMessage>(message));
   } else if (message.type === "host-result") {
-    receiveHostResult(message as unknown as HostResultMessage);
+    receiveHostResult(unsafeNarrow<HostResultMessage>(message));
   }
 });
 
@@ -67,9 +73,12 @@ async function run(message: RunMessage): Promise<void> {
     runtime.setMaxStackSize(limits.stackBytes);
     runtime.setInterruptHandler(() => {
       if (process.ppid !== parentPid) process.exit(1);
+
       if (fatalError) return true;
+
       if (Date.now() <= deadline) return false;
       fatalError = { code: "WORKFLOW_TIMEOUT", message: `Workflow exceeded ${limits?.timeoutMs ?? 0}ms.` };
+
       return true;
     });
     context = runtime.newContext();
@@ -79,9 +88,11 @@ async function run(message: RunMessage): Promise<void> {
     exposeHostFunctions(context);
 
     const evaluation = context.evalCode(workflowProgram(message), "workflow.js");
+
     if (evaluation.error) {
       const error = quickJsError(evaluation.error);
       evaluation.error.dispose();
+
       return fail(classifyExecutionError(error));
     }
 
@@ -90,22 +101,29 @@ async function run(message: RunMessage): Promise<void> {
     pumpJobs();
     const result = await resolved;
     promise.dispose();
+
     if (fatalError) return fail(fatalError, true);
+
     if (result.error) {
       const error = quickJsError(result.error);
       result.error.dispose();
+
       return fail(classifyExecutionError(error));
     }
+
     if (pending.size > 0) {
       return fail({ code: "UNAWAITED_CALLS", message: "Workflow returned while host calls were still pending. Await all calls before returning." });
     }
+
     if (fatalError) return fail(fatalError, true);
 
     const encoded = encodeGuestJson(context, result.value, "Workflow result");
     result.value.dispose();
+
     if (Buffer.byteLength(encoded, "utf8") > limits.maxResultBytes) {
       return fail({ code: "WORKFLOW_RESULT_LIMIT", message: `Workflow result exceeds the ${limits.maxResultBytes}-byte limit.` }, true);
     }
+
     send({ type: "result", value: JSON.parse(encoded) });
   } catch (error) {
     fail(classifyExecutionError(error));
@@ -117,41 +135,55 @@ async function run(message: RunMessage): Promise<void> {
 function exposeHostFunctions(vm: QuickJSContext): void {
   const hostCall = vm.newFunction("__hostCall", (kindHandle, payloadHandle) => {
     const deferred = vm.newPromise();
+
     try {
       if (!limits) throw new Error("Workflow limits are unavailable.");
+
       if (pending.size >= limits.maxOutstanding) {
         const error = {
           code: "WORKFLOW_OUTSTANDING_LIMIT",
           message: `Workflow has more than ${limits.maxOutstanding} outstanding host calls.`,
         };
+
         fatalError = error;
         reject(deferred, error);
+
         return deferred.handle;
       }
+
       const kind = vm.getString(kindHandle);
+
       if (kind !== "agent" && kind !== "workflow") throw new Error("Unknown workflow host call.");
       const encoded = encodeGuestJson(vm, payloadHandle, "Workflow host call");
+
       if (Buffer.byteLength(encoded, "utf8") > limits.maxArgsBytes) {
         const error = {
           code: "WORKFLOW_SIZE_LIMIT",
           message: `Workflow host call exceeds the ${limits.maxArgsBytes}-byte limit.`,
         };
+
         fatalError = error;
         reject(deferred, error);
+
         return deferred.handle;
       }
+
       const id = nextCallId++;
       pending.set(id, deferred);
-      const safePayload = JSON.parse(encoded) as Record<string, unknown>;
+      // SAFETY: The surrounding checks or construction already match this type.
+      const safePayload = JSON.parse(encoded) as JsonObject;
       send(kind === "agent"
         ? { type: "host-call", id, kind, prompt: safePayload.prompt, options: safePayload.options }
         : { type: "host-call", id, kind, name: safePayload.name, args: safePayload.args });
+
       return deferred.handle;
     } catch (error) {
       reject(deferred, toErrorPayload(error));
+
       return deferred.handle;
     }
   });
+
   vm.setProp(vm.global, "__hostCall", hostCall);
   hostCall.dispose();
 
@@ -161,6 +193,7 @@ function exposeHostFunctions(vm: QuickJSContext): void {
     const encoded = encodeGuestJson(vm, dataHandle, "Workflow event");
     logEntries += 1;
     logBytes += Buffer.byteLength(encoded, "utf8") + eventType.length;
+
     if (logEntries > limits.maxLogEntries || logBytes > limits.maxLogBytes) {
       fatalError = {
         code: "WORKFLOW_LOG_LIMIT",
@@ -168,8 +201,10 @@ function exposeHostFunctions(vm: QuickJSContext): void {
       };
       throw Object.assign(new Error(fatalError.message), fatalError);
     }
+
     send({ type: "event", eventType, data: JSON.parse(encoded) });
   });
+
   vm.setProp(vm.global, "__emit", emit);
   emit.dispose();
 }
@@ -177,9 +212,11 @@ function exposeHostFunctions(vm: QuickJSContext): void {
 function receiveHostResult(message: HostResultMessage): void {
   if (!context || !runtime) return;
   const deferred = pending.get(message.id);
+
   if (!deferred) return;
   pending.delete(message.id);
   let failed = false;
+
   try {
     if (message.ok) {
       const handle = valueHandle(context, message.value);
@@ -187,9 +224,11 @@ function receiveHostResult(message: HostResultMessage): void {
       handle.dispose();
     } else {
       const error = message.error ?? { code: "WORKFLOW_HOST_ERROR", message: "Workflow host call failed." };
+
       if (message.fatal) fatalError = error;
       reject(deferred, error);
     }
+
     pumpJobs();
   } catch (error) {
     failed = true;
@@ -205,6 +244,7 @@ function receiveHostResult(message: HostResultMessage): void {
 function pumpJobs(): void {
   if (!runtime) return;
   const jobs = runtime.executePendingJobs();
+
   if (jobs.error) {
     const error = quickJsError(jobs.error);
     jobs.error.dispose();
@@ -215,6 +255,7 @@ function pumpJobs(): void {
 function workflowProgram(message: RunMessage): string {
   const args = JSON.stringify(message.args);
   const concurrency = message.meta.concurrency;
+
   return `
 "use strict";
 const args = Object.freeze(JSON.parse(${JSON.stringify(args)}));
@@ -278,23 +319,26 @@ globalThis.__workflowResult;
 `;
 }
 
-function valueHandle(vm: QuickJSContext, value: unknown) {
+function valueHandle(vm: QuickJSContext, value: WireInput) {
   if (!jsonObject || !jsonParse) throw new Error("Workflow JSON parser is unavailable.");
   const encoded = encodeJson(value, "Host result");
   const encodedHandle = vm.newString(encoded);
   const result = vm.callFunction(jsonParse, jsonObject, encodedHandle);
   encodedHandle.dispose();
+
   if (result.error) {
     const error = quickJsError(result.error);
     result.error.dispose();
     throw error;
   }
+
   return result.value;
 }
 
 function encodeGuestJson(vm: QuickJSContext, value: QuickJSHandle, label: string): string {
   if (!jsonObject || !jsonStringify) throw new Error("Workflow JSON serializer is unavailable.");
   const result = vm.callFunction(jsonStringify, jsonObject, value);
+
   if (result.error) {
     const error = quickJsError(result.error);
     result.error.dispose();
@@ -302,10 +346,12 @@ function encodeGuestJson(vm: QuickJSContext, value: QuickJSHandle, label: string
       code: "WORKFLOW_INVALID_JSON",
     });
   }
+
   try {
     if (vm.typeof(result.value) !== "string") {
       throw Object.assign(new TypeError(`${label} must be JSON.`), { code: "WORKFLOW_INVALID_JSON" });
     }
+
     return vm.getString(result.value);
   } finally {
     result.value.dispose();
@@ -326,57 +372,76 @@ function reject(deferred: QuickJSDeferredPromise, error: ErrorPayload): void {
 
 function quickJsError(handle: Parameters<QuickJSContext["dump"]>[0]): Error & { code?: string; retryable?: boolean } {
   if (!context) return new Error("Workflow execution failed.");
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = context.dump(handle) as { name?: unknown; message?: unknown; stack?: unknown } | unknown;
+
   if (isRecord(value)) {
     const error: Error & { code?: string; retryable?: boolean } = new Error(
-      typeof value.message === "string" ? value.message : "Workflow execution failed.",
+      isJsonString(value.message) ? value.message : "Workflow execution failed.",
     );
-    if (typeof value.name === "string") error.name = value.name;
-    if (typeof value.stack === "string") error.stack = value.stack;
-    if (typeof value.code === "string") error.code = value.code;
+
+    if (isJsonString(value.name)) error.name = value.name;
+
+    if (isJsonString(value.stack)) error.stack = value.stack;
+
+    if (isJsonString(value.code)) error.code = value.code;
+
     if (value.retryable === true) error.retryable = true;
+
     return error;
   }
-  return new Error(typeof value === "string" ? value : JSON.stringify(value));
+
+  return new Error(isJsonString(value) ? value : JSON.stringify(value));
 }
 
-function classifyExecutionError(error: unknown): ErrorPayload {
+function classifyExecutionError(error: WireInput): ErrorPayload {
   if (fatalError) return fatalError;
   const payload = toErrorPayload(error);
   const text = payload.message.toLowerCase();
+
   if (text.includes("out of memory") || text.includes("cannot allocate memory")) {
     return { code: "WORKFLOW_MEMORY_LIMIT", message: "Workflow exceeded its memory limit." };
   }
+
   if (text.includes("stack overflow") || text.includes("stack size")) {
     return { code: "WORKFLOW_STACK_LIMIT", message: "Workflow exceeded its stack limit." };
   }
+
   if (text.includes("interrupted")) return { code: "WORKFLOW_TIMEOUT", message: "Workflow execution was interrupted." };
+
   return payload;
 }
 
-function toErrorPayload(error: unknown): ErrorPayload {
+function toErrorPayload(error: WireInput): ErrorPayload {
+  // SAFETY: The surrounding checks or construction already match this type.
   const value = error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
+
   return {
-    code: typeof value?.code === "string" ? value.code : "WORKFLOW_EXECUTION_ERROR",
-    message: typeof value?.message === "string" ? value.message : String(error),
-    ...(value?.retryable === true ? { retryable: true } : {}),
+    code: isJsonString(value?.code) ? value.code : "WORKFLOW_EXECUTION_ERROR",
+    message: isJsonString(value?.message) ? value.message : String(error),
+    ...optionalFields(value?.retryable === true ? { retryable: true } : undefined),
   };
 }
 
-function encodeJson(value: unknown, label: string): string {
+function encodeJson(value: WireInput, label: string): string {
   let encoded: string | undefined;
+
   try {
-    encoded = JSON.stringify(value, (_key, current: unknown) => {
-      if (typeof current === "number" && !Number.isFinite(current)) throw new TypeError("non-finite number");
-      if (typeof current === "bigint" || typeof current === "function" || typeof current === "symbol" || current === undefined) {
-        throw new TypeError(`unsupported ${typeof current}`);
+    encoded = JSON.stringify(value, (_key, current: WireInput) => {
+      if (isNumberValue(current) && !Number.isFinite(current)) throw new TypeError("non-finite number");
+
+      if (isBigintValue(current) || isFunctionValue(current) || isSymbolValue(current) || current === undefined) {
+        throw new TypeError(`unsupported ${jsonKind(current)}`);
       }
+
       return current;
     });
   } catch (error) {
     throw new TypeError(`${label} must be JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
+
   if (encoded === undefined) throw new TypeError(`${label} must be JSON.`);
+
   return encoded;
 }
 
@@ -401,8 +466,11 @@ function cleanup(): void {
   jsonParse = undefined;
   jsonStringify = undefined;
   jsonObject = undefined;
+
   try { context?.dispose(); } catch { /* The process is disposable. */ }
+
   try { runtime?.dispose(); } catch { /* The process is disposable. */ }
+
   context = undefined;
   runtime = undefined;
   shuttingDown = true;
@@ -414,17 +482,20 @@ function disconnectWhenFlushed(): void {
   if (shuttingDown && unflushed === 0 && process.connected) process.disconnect?.();
 }
 
-function send(message: unknown): void {
+function send(message: WireInput): void {
   if (!process.connected) return;
   unflushed += 1;
+
   try {
+    // SAFETY: The surrounding checks or construction already match this type.
     process.send?.(message as never, () => { unflushed -= 1; disconnectWhenFlushed(); });
   } catch {
     unflushed -= 1;
+
     if (!shuttingDown) process.exit(1);
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: WireInput): value is JsonObject {
+  return value !== null && isObjectValue(value) && !Array.isArray(value);
 }

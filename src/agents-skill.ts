@@ -8,6 +8,7 @@ import { findGitRoot } from "./cli-workspace.js";
 const STANDALONE_NAME = "devspace-agents";
 
 export const AGENT_SKILL_INSTALL_TARGETS = ["claude-code", "codex", "cursor", "opencode", "agents"] as const;
+
 export type AgentSkillInstallTarget = typeof AGENT_SKILL_INSTALL_TARGETS[number];
 
 interface SkillSource {
@@ -23,16 +24,20 @@ function bundledSkill(): SkillSource {
 export function parseSkillSource(source: string): SkillSource {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(source.replace(/\r\n/g, "\n"));
   const description = match?.[1]?.match(/^description:\s*(.+)$/m)?.[1];
+
   if (!match || !description) throw new Error("Bundled subagents skill is missing its frontmatter.");
+
   return { description, body: match[2]! };
 }
 
 /** `skill` is a SKILL.md for agents with Agent Skills; `cursor-rule` is a Cursor `.mdc` rule. */
 export function renderAgentsSkill(format: "skill" | "cursor-rule" = "skill"): string {
   const { description, body } = bundledSkill();
+
   const frontmatter = format === "skill"
     ? `name: ${STANDALONE_NAME}\ndescription: ${description}`
     : `description: ${description}\nalwaysApply: false`;
+
   return `---\n${frontmatter}\n---\n${body}`;
 }
 
@@ -51,6 +56,7 @@ export function installAgentsSkill(
   const projectRoot = findGitRoot(cwd) ?? cwd;
   const skillFile = (base: string) => join(base, STANDALONE_NAME, "SKILL.md");
   let path: string;
+
   switch (target) {
     case "claude-code":
       path = skillFile(join(project ? projectRoot : home, ".claude", "skills"));
@@ -75,9 +81,12 @@ export function installAgentsSkill(
       mkdirSync(join(projectRoot, ".cursor", "rules"), { recursive: true });
       path = join(projectRoot, ".cursor", "rules", `${STANDALONE_NAME}.mdc`);
       writeFileSync(path, renderAgentsSkill("cursor-rule"));
+
       return path;
   }
+
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, renderAgentsSkill("skill"));
+
   return path;
 }

@@ -28,10 +28,12 @@ export function getLocalAgentProviderAvailabilitySnapshot(
 ): LocalAgentProviderAvailability[] {
   const configured = new Map(config?.providers.map((provider) => [provider.id, provider]) ?? []);
   const defaultIds = new Set<string>(LOCAL_AGENT_DEFAULT_PROVIDER_IDS);
+
   const instances = [
     ...LOCAL_AGENT_DEFAULT_PROVIDER_IDS.map((id) => configured.get(id) ?? { id, driver: defaultDriverForProviderId(id)! }),
     ...(config?.providers.filter((provider) => !defaultIds.has(provider.id)) ?? []),
   ];
+
   return instances.map((instance) => checkLocalAgentProviderAvailability(
     instance.id,
     instance.driver,
@@ -47,6 +49,7 @@ function checkLocalAgentProviderAvailability(
   config?: SubagentsConfig,
 ): LocalAgentProviderAvailability {
   const providerEnv = config ? localAgentProviderEnvironment(config, providerInstanceId, env) : env;
+
   switch (driver) {
     case "codex":
       return codexAvailability(providerInstanceId, providerEnv);
@@ -60,6 +63,7 @@ function checkLocalAgentProviderAvailability(
       // Same resolution as the runtime: PI_COMMAND, then `pi` on PATH, then the bundled package.
       try {
         resolvePiCommand(providerEnv);
+
         return { name: providerInstanceId, available: true };
       } catch (cause) {
         return {
@@ -68,13 +72,16 @@ function checkLocalAgentProviderAvailability(
           reason: cause instanceof Error ? cause.message : "Pi executable not found",
         };
       }
+
     case "acp": {
       // Resolve exactly as the driver does, so preflight and startup agree on the executable.
       const configured = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
       const flavor = subagentAcpFlavor({ id: providerInstanceId, config: configured?.config });
+
       if (resolveAcpCommand(flavor ?? "generic", providerEnv, configured?.command)) {
         return { name: providerInstanceId, available: true };
       }
+
       return {
         name: providerInstanceId,
         available: false,
@@ -95,9 +102,12 @@ export function localAgentProviderAvailability(
   config?: SubagentsConfig,
 ): LocalAgentProviderAvailability {
   const provider = config ? subagentProviderConfig(config, providerInstanceId) : undefined;
+
   const driver = provider?.driver
     ?? defaultDriverForProviderId(providerInstanceId);
+
   if (!driver) return { name: providerInstanceId, available: false, reason: "provider is not configured" };
+
   return checkLocalAgentProviderAvailability(providerInstanceId, driver, env, config);
 }
 
@@ -107,6 +117,7 @@ function packageAvailability(
 ): LocalAgentProviderAvailability {
   try {
     import.meta.resolve(packageName);
+
     return { name: providerInstanceId, available: true };
   } catch {
     return {
@@ -122,6 +133,7 @@ function codexAvailability(
   env: NodeJS.ProcessEnv,
 ): LocalAgentProviderAvailability {
   const availability = commandAvailability(providerInstanceId, env.CODEX_COMMAND ?? "codex", env);
+
   return availability.available
     ? {
         ...availability,
@@ -136,6 +148,7 @@ function commandAvailability(
   env: NodeJS.ProcessEnv,
 ): LocalAgentProviderAvailability {
   if (resolveExecutableCommand(command, env)) return { name: providerInstanceId, available: true };
+
   return {
     name: providerInstanceId,
     available: false,

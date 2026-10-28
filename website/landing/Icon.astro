@@ -9,6 +9,7 @@ const PATHS = {
 } as const;
 
 interface Props { name: keyof typeof PATHS; size?: number }
+
 const { name, size = 18 } = Astro.props;
 ---
 

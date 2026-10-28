@@ -1,3 +1,6 @@
+import { isJsonString, isObjectValue, isJsonNumber, optionalFields, jsonKind } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
 import type {
   WorkspaceActivityStore,
@@ -6,14 +9,20 @@ import type {
 } from "./workspace-activity-store.js";
 
 type ToolHandlerExtra = {
-  _meta?: Record<string, unknown>;
-  requestId?: unknown;
+  _meta?: JsonObject;
+  requestId?: WireInput;
 };
+
+interface SerializedError {
+  name: string;
+  message: string;
+}
 
 const MAX_STRING_LENGTH = 8 * 1024;
 const MAX_RECORD_LENGTH = 64 * 1024;
 const REDACTED = "[redacted]";
 const SECRET_KEY_PATTERN = /(token|secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
+
 // Value patterns are deliberately shape- or context-bound (an Authorization
 // header, an env-var name, a credential flag) so ordinary prose and source code
 // such as "Basic functionality" or `MAX_TOKENS=4096` survive intact. A pattern's
@@ -48,24 +57,26 @@ const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
 export class WorkspaceActivityJournal {
   constructor(
     private readonly store: WorkspaceActivityStore,
-    private readonly onError: (error: unknown) => void = () => {},
+    private readonly onError: (error: WireInput) => void = () => {},
   ) {}
 
   async capture<T>(input: {
     toolName: string;
-    arguments: unknown;
+    arguments: WireInput;
     extra: ToolHandlerExtra;
     operation: () => Promise<T>;
   }): Promise<T> {
     const startedAt = new Date();
     const startedAtMs = performance.now();
     const argumentWorkspaceId = workspaceIdFromValue(input.arguments);
+
     // Calls belong to the turn that was open when they started.
     const turnId = argumentWorkspaceId
       ? this.safely(() => this.openTurnId(argumentWorkspaceId, startedAt))
       : undefined;
 
     let result: T;
+
     try {
       result = await input.operation();
     } catch (error) {
@@ -86,6 +97,7 @@ export class WorkspaceActivityJournal {
       startedAtMs,
       result,
     }));
+
     return result;
   }
 
@@ -105,13 +117,13 @@ export class WorkspaceActivityJournal {
   }
 
   private record(
-    input: { toolName: string; arguments: unknown; extra: ToolHandlerExtra },
+    input: { toolName: string; arguments: WireInput; extra: ToolHandlerExtra },
     outcome: {
       workspaceId?: string;
       turnId?: number;
       startedAt: Date;
       startedAtMs: number;
-      result?: unknown;
+      result?: WireInput;
       error?: { name: string; message: string };
     },
   ): void {
@@ -119,12 +131,15 @@ export class WorkspaceActivityJournal {
 
     const completedAt = new Date();
     const origin = toolCallOrigin(input.extra._meta);
+
     const reviewRef = origin === "model" && input.toolName === "show_changes" && !outcome.error
       ? reviewRefFromValue(outcome.result)
       : undefined;
+
     const turnId = reviewRef
       ? this.store.closeTurn(outcome.workspaceId, reviewRef, completedAt).id
       : outcome.turnId ?? this.store.openTurn(outcome.workspaceId, completedAt).id;
+
     const resultSummary = outcome.result === undefined ? undefined : summarizeResult(outcome.result);
 
     this.store.recordToolCall({
@@ -134,8 +149,8 @@ export class WorkspaceActivityJournal {
       requestId: requestIdFromExtra(input.extra.requestId),
       toolName: input.toolName,
       argumentsJson: journalJson(input.arguments ?? {}),
-      ...(resultSummary === undefined ? {} : { resultJson: journalJson(resultSummary) }),
-      ...(outcome.error ? { errorJson: journalJson(outcome.error) } : {}),
+      ...optionalFields(resultSummary === undefined ? undefined : { resultJson: journalJson(resultSummary) }),
+      ...optionalFields(outcome.error ? { errorJson: journalJson(outcome.error) } : undefined),
       isError: outcome.error !== undefined || asRecord(outcome.result)?.isError === true,
       startedAt: outcome.startedAt.toISOString(),
       completedAt: completedAt.toISOString(),
@@ -152,15 +167,18 @@ export class WorkspaceActivityJournal {
       } catch {
         // Error reporting must not affect the tool call either.
       }
+
       return undefined;
     }
   }
 }
 
 /** Serializes a value for the journal with secrets redacted and size capped. */
-export function journalJson(value: unknown): string {
+export function journalJson(value: WireInput): string {
   const json = JSON.stringify(redact(value, 0)) ?? "null";
+
   if (json.length <= MAX_RECORD_LENGTH) return json;
+
   return JSON.stringify({
     truncated: true,
     length: json.length,
@@ -173,32 +191,38 @@ export function journalJson(value: unknown): string {
  * content, and error flag. Card metadata (`_meta`) is dropped because it
  * duplicates large payloads such as full review patches.
  */
-function summarizeResult(result: unknown): unknown {
+function summarizeResult(result: WireInput): WireInput {
   const record = asRecord(result);
+
   if (!record || !Array.isArray(record.content)) return result;
 
   const text = record.content
     .map((block) => asRecord(block))
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
-    .map((block) => block!.text as string)
+    .filter((block) => block?.type === "text" && isJsonString(block.text))
+    .map((block) => unsafeNarrow<string>(block!.text))
     .join("\n");
+
   return {
-    ...(text ? { text } : {}),
-    ...(record.structuredContent !== undefined ? { structuredContent: record.structuredContent } : {}),
-    ...(record.isError === true ? { isError: true } : {}),
+    ...optionalFields(text ? { text } : undefined),
+    ...optionalFields(record.structuredContent !== undefined ? { structuredContent: record.structuredContent } : undefined),
+    ...optionalFields(record.isError === true ? { isError: true } : undefined),
   };
 }
 
-function redact(value: unknown, depth: number): unknown {
-  if (typeof value === "string") return redactString(value);
-  if (value === null || typeof value !== "object") return value;
+function redact(value: WireInput, depth: number): WireInput {
+  if (isJsonString(value)) return redactString(value);
+
+  if (value === null || !isObjectValue(value)) return value;
+
   if (depth > 8) return "[nested]";
+
   if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
 
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+    // SAFETY: The surrounding checks or construction already match this type.
+    Object.entries(value as JsonObject).map(([key, item]) => [
       key,
-      SECRET_KEY_PATTERN.test(key) && typeof item === "string" && item !== ""
+      SECRET_KEY_PATTERN.test(key) && isJsonString(item) && item !== ""
         ? REDACTED
         : redact(item, depth + 1),
     ]),
@@ -207,48 +231,55 @@ function redact(value: unknown, depth: number): unknown {
 
 function redactString(value: string): string {
   let redacted = value;
+
   for (const [pattern, replacement] of SECRET_VALUE_PATTERNS) {
     redacted = redacted.replace(pattern, replacement);
   }
+
   return redacted.length > MAX_STRING_LENGTH
     ? `${redacted.slice(0, MAX_STRING_LENGTH)}… [truncated ${redacted.length - MAX_STRING_LENGTH} chars]`
     : redacted;
 }
 
 /** The workspace card replays historical reviews through show_changes with this marker. */
-function toolCallOrigin(meta: Record<string, unknown> | undefined): WorkspaceToolCallOrigin {
-  return typeof meta?.["devspace/reviewRef"] === "string" ? "card" : "model";
+function toolCallOrigin(meta: JsonObject | undefined): WorkspaceToolCallOrigin {
+  return isJsonString(meta?.["devspace/reviewRef"]) ? "card" : "model";
 }
 
-function workspaceIdFromValue(value: unknown): string | undefined {
+function workspaceIdFromValue(value: WireInput): string | undefined {
   const record = asRecord(value);
   const direct = record?.workspace_id;
-  if (typeof direct === "string" && direct.length > 0) return direct;
+
+  if (isJsonString(direct) && direct.length > 0) return direct;
 
   const structured = asRecord(record?.structuredContent);
   const nested = structured?.workspace_id;
-  return typeof nested === "string" && nested.length > 0 ? nested : undefined;
+
+  return isJsonString(nested) && nested.length > 0 ? nested : undefined;
 }
 
-function reviewRefFromValue(value: unknown): string | undefined {
+function reviewRefFromValue(value: WireInput): string | undefined {
   const structured = asRecord(asRecord(value)?.structuredContent);
   const reviewRef = structured?.review_ref;
-  return typeof reviewRef === "string" && reviewRef.length > 0 ? reviewRef : undefined;
+
+  return isJsonString(reviewRef) && reviewRef.length > 0 ? reviewRef : undefined;
 }
 
-function requestIdFromExtra(value: unknown): string | undefined {
-  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+function requestIdFromExtra(value: WireInput): string | undefined {
+  return isJsonString(value) || isJsonNumber(value) ? String(value) : undefined;
 }
 
-function serializeError(error: unknown): { name: string; message: string } {
+function serializeError(error: WireInput): SerializedError {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
   }
-  return { name: typeof error, message: String(error) };
+
+  return { name: jsonKind(error), message: String(error) };
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }

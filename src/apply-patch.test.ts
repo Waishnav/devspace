@@ -17,10 +17,12 @@ test("replacing a file on Windows overwrites the existing destination", async (t
 
 test("patch files are the same only when their paths share a file identity", async () => {
   const sameIdentity = async (): Promise<{ dev: number; ino: number }> => ({ dev: 1, ino: 2 });
+
   const differentIdentity = async (path: string): Promise<{ dev: number; ino: number }> => ({
     dev: 1,
     ino: path.endsWith("foo.txt") ? 3 : 2,
   });
+
   assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/Foo.txt"), true);
   assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/foo.txt", sameIdentity), true);
   assert.equal(await isSamePatchFile("/tmp/Foo.txt", "/tmp/bar.txt", sameIdentity), false);
@@ -73,7 +75,9 @@ test("one patch adds, updates LF and CRLF files, and deletes", async (t) => {
 test("a moved file keeps its executable mode and leaves no source behind", async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, "alpha.txt"), "one\nchanged\nthree\n");
+
   if (process.platform !== "win32") await chmod(join(root, "alpha.txt"), 0o755);
+
   const moveResult = await applyPatch(
     root,
     `*** Begin Patch
@@ -85,13 +89,16 @@ test("a moved file keeps its executable mode and leaves no source behind", async
  changed
 *** End Patch`,
   );
+
   assert.deepEqual(moveResult.files, [
     { path: "moved/alpha.txt", previousPath: "alpha.txt", operation: "move" },
   ]);
   assert.equal(await readFile(join(root, "moved/alpha.txt"), "utf8"), "ONE\nchanged\nthree\n");
+
   if (process.platform !== "win32") {
     assert.notEqual((await stat(join(root, "moved/alpha.txt"))).mode & 0o111, 0);
   }
+
   await assert.rejects(readFile(join(root, "alpha.txt"), "utf8"), /ENOENT/);
 });
 
@@ -168,6 +175,7 @@ test("distant hunks in one file produce separate diff hunks", async (t) => {
     join(splitHunkRoot, "long.txt"),
     Array.from({ length: 20 }, (_, index) => String(index + 1)).join("\n") + "\n",
   );
+
   const splitHunkResult = await applyPatch(
     splitHunkRoot,
     `*** Begin Patch
@@ -184,6 +192,7 @@ test("distant hunks in one file produce separate diff hunks", async (t) => {
  19
 *** End Patch`,
   );
+
   assert.equal(splitHunkResult.patch.match(/^@@ /gm)?.length, 2);
   assert.equal(
     await readFile(join(splitHunkRoot, "long.txt"), "utf8"),
@@ -197,6 +206,7 @@ test("distant hunks in one file produce separate diff hunks", async (t) => {
 test("trailing spaces in added lines are preserved", async (t) => {
   const trailingSpaceRoot = await fixture(t, "devspace-apply-patch-trailing-space-");
   await writeFile(join(trailingSpaceRoot, "spaces.txt"), "old\n");
+
   const trailingSpaceResult = await applyPatch(
     trailingSpaceRoot,
     `*** Begin Patch
@@ -206,6 +216,7 @@ test("trailing spaces in added lines are preserved", async (t) => {
 +new${"   "}
 *** End Patch`,
   );
+
   assert.equal(trailingSpaceResult.patch.endsWith("+new   "), true);
   assert.equal(await readFile(join(trailingSpaceRoot, "spaces.txt"), "utf8"), "new   \n");
 });
@@ -222,6 +233,7 @@ test("malformed patches are rejected while parsing", () => {
 test("adding an existing file overwrites it as an update", async (t) => {
   const overwriteRoot = await fixture(t, "devspace-apply-patch-overwrite-");
   await writeFile(join(overwriteRoot, "duplicate.txt"), "old content\n");
+
   const overwriteResult = await applyPatch(
     overwriteRoot,
     `*** Begin Patch
@@ -229,6 +241,7 @@ test("adding an existing file overwrites it as an update", async (t) => {
 +new content
 *** End Patch`,
   );
+
   assert.deepEqual(overwriteResult.files, [
     { path: "duplicate.txt", operation: "update" },
   ]);
@@ -364,6 +377,7 @@ test("binary files cannot be updated", async (t) => {
 async function fixture(t: TestContext, prefix = "devspace-apply-patch-"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   t.after(() => rm(root, { recursive: true, force: true }));
+
   return root;
 }
 
@@ -372,5 +386,6 @@ async function movedAlphaFixture(t: TestContext): Promise<string> {
   const root = await fixture(t);
   await mkdir(join(root, "moved"));
   await writeFile(join(root, "moved/alpha.txt"), "ONE\nchanged\nthree\n");
+
   return root;
 }

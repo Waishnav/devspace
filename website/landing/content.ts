@@ -7,6 +7,7 @@ export const NPM = "https://www.npmjs.com/package/@waishnav/devspace";
 export const DOCS = "/docs";
 
 import type { LogoId } from "../logos";
+
 export { HOSTS, PROVIDERS } from "../logos";
 
 // The model-per-task matrix people already maintain by hand.

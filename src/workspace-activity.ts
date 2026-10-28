@@ -34,6 +34,7 @@ export async function getActivityWorkspace(
   workspaceId: string,
 ): Promise<ActivityWorkspace | undefined> {
   const workspace = store.getWorkspace(workspaceId);
+
   return workspace ? withBranch(workspace) : undefined;
 }
 
@@ -52,6 +53,7 @@ export function listTurnToolCalls(
   sequence: number,
 ): WorkspaceToolCall[] | undefined {
   const turn = store.getTurn(workspaceId, sequence);
+
   return turn ? store.listToolCalls(turn.id) : undefined;
 }
 
@@ -67,7 +69,9 @@ export async function readTurnDiff(
 ): Promise<TurnDiff | undefined> {
   const workspace = store.getWorkspace(workspaceId);
   const turn = store.getTurn(workspaceId, sequence);
+
   if (!workspace || !turn) return undefined;
+
   if (!turn.reviewRef) return { status: "open" };
 
   try {
@@ -83,6 +87,7 @@ export async function readTurnDiff(
 async function withBranch(workspace: ActivityWorkspaceRecord): Promise<ActivityWorkspace> {
   try {
     const branch = (await git(workspace.root, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
+
     return branch ? { ...workspace, branch } : workspace;
   } catch {
     return workspace;

@@ -9,8 +9,10 @@ import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 test("config set tells users to restart the running server", () => {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-cli-config-test-"));
+
   try {
     const env = { ...process.env, ...writeTestDevspaceConfig(configDir) };
+
     const stdout = execFileSync(
       "node",
       ["--import", "tsx", "src/cli.ts", "config", "set", "publicBaseUrl", "https://example.com"],

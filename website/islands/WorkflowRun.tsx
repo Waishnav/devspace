@@ -6,6 +6,7 @@ type Call = { label: string; target: string; phase: string; start: number; end: 
 // An illustrative `ship` workflow run on a shared clock (ticks). Parallel calls
 // overlap in time, which is the point of the illustration.
 const PHASES = ["Plan", "Build", "Verify"];
+
 const CALLS: Call[] = [
   { label: "plan", target: "codex · xhigh", phase: "Plan", start: 0, end: 5 },
   { label: "implement", target: "claude-implementer", phase: "Build", start: 5, end: 13 },
@@ -13,6 +14,7 @@ const CALLS: Call[] = [
   { label: "qa", target: "codex-qa-tester", phase: "Verify", start: 13, end: 20 },
   { label: "summary", target: "pi-reviewer", phase: "Verify", start: 20, end: 23 },
 ];
+
 const LAST_TICK = 23;
 const TICK_MS = 420;
 
@@ -23,12 +25,15 @@ export default function WorkflowRun() {
     // Reduced motion shows the finished run instead of animating it.
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setTick(LAST_TICK);
+
       return;
     }
+
     const timer = setTimeout(
       () => setTick((t) => (t > LAST_TICK + 6 ? 0 : t + 1)),
       TICK_MS,
     );
+
     return () => clearTimeout(timer);
   }, [tick]);
 
@@ -49,6 +54,7 @@ export default function WorkflowRun() {
           {PHASES.map((phase) => {
             const calls = CALLS.filter((call) => call.phase === phase);
             const done = calls.filter((call) => call.end <= tick).length;
+
             return (
               <div key={phase} className={`ds-wf__phase ${phase === activePhase ? "ds-wf__phase--active" : ""}`}>
                 <span>{phase}</span>
@@ -61,6 +67,7 @@ export default function WorkflowRun() {
           {started.map((call, index) => {
             const progress = Math.min(1, (tick - call.start) / (call.end - call.start));
             const callStatus = progress >= 1 ? "completed" : "running";
+
             return (
               <div key={call.label} className="ds-wf__call">
                 <span className="ds-wf__idx">{index}</span>

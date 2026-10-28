@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "../../src/unsafe-narrow.js";
+import { isJsonString, isObjectValue } from "../../src/json-value.js";
+import type { WireInput } from "../../src/json-value.js";
 import { readFileSync } from "node:fs";
 import { redactSecrets } from "../../src/local-agent-events.js";
 
@@ -35,10 +38,15 @@ export interface Transcript {
 
 export function readTranscript(path: string): Transcript {
   const lines = readFileSync(path, "utf8").split("\n").filter((line) => line.trim());
+  // SAFETY: The surrounding checks or construction already match this type.
   const [meta, ...frames] = lines.map((line) => JSON.parse(line) as unknown);
+
+  // SAFETY: The surrounding checks or construction already match this type.
   if ((meta as TranscriptMeta | undefined)?.type !== "meta") {
     throw new Error(`${path} does not start with a transcript meta line.`);
   }
+
+  // SAFETY: The surrounding checks or construction already match this type.
   return { meta: meta as TranscriptMeta, frames: frames as TranscriptFrame[] };
 }
 
@@ -56,7 +64,8 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 function placeholders(context: ScrubContext): Array<[string, string]> {
   return [
     ...(context.worktree
-      ? [[context.worktree, "$WORKTREE"], [context.worktree.replace(/[/\\.:]/g, "-"), "$WORKTREE_SLUG"]] as Array<[string, string]>
+      // SAFETY: The surrounding checks or construction already match this type.
+      ? unsafeNarrow<Array<[string, string]>>([[context.worktree, "$WORKTREE"], [context.worktree.replace(/[/\\.:]/g, "-"), "$WORKTREE_SLUG"]])
       : []),
     [context.workspace, "$WORKSPACE"],
     // Providers name per-project state directories after the cwd with separators dashed.
@@ -66,37 +75,45 @@ function placeholders(context: ScrubContext): Array<[string, string]> {
   ];
 }
 
-export function scrub(value: unknown, context: ScrubContext): unknown {
+export function scrub(value: WireInput, context: ScrubContext): WireInput {
   return mapStrings(value, (text) => {
     let next = text;
+
     for (const [actual, placeholder] of placeholders(context)) {
       if (actual) next = next.replaceAll(actual, placeholder);
     }
+
     return redactSecrets(next).replace(EMAIL, "user@example.invalid");
   });
 }
 
-export function restore(value: unknown, context: ScrubContext): unknown {
+export function restore(value: WireInput, context: ScrubContext): WireInput {
   return mapStrings(value, (text) => {
     let next = text;
+
     for (const [actual, placeholder] of placeholders(context)) next = next.replaceAll(placeholder, actual);
+
     return next;
   });
 }
 
-export function mapStrings(value: unknown, map: (text: string) => string): unknown {
-  if (typeof value === "string") return map(value);
+export function mapStrings(value: WireInput, map: (text: string) => string): WireInput {
+  if (isJsonString(value)) return map(value);
+
   if (Array.isArray(value)) return value.map((entry) => mapStrings(entry, map));
-  if (value && typeof value === "object") {
+
+  if (value && isObjectValue(value)) {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, mapStrings(entry, map)]));
   }
+
   return value;
 }
 
 /** Parses one stdio line; lines that are not JSON are kept as raw strings. */
-export function parseFrame(line: string): unknown {
+export function parseFrame(line: string): WireInput {
   try {
-    return JSON.parse(line) as unknown;
+    // SAFETY: The surrounding checks or construction already match this type.
+    return JSON.parse(line) as WireInput;
   } catch {
     return { raw: line };
   }

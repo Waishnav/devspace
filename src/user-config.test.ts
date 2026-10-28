@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
@@ -60,6 +61,7 @@ test("concurrent loads migrate a legacy config exactly once", async (t) => {
     migrateInChildProcess(configDir),
     migrateInChildProcess(configDir),
   ]);
+
   assert.equal(results.filter((result) => result.migrated).length, 1);
   assert.equal(results.filter((result) => !result.migrated).length, 1);
   assert.equal(existsSync(join(configDir, "config.json")), false);
@@ -134,15 +136,16 @@ test("migration refuses to overwrite an existing backup", (t) => {
 
   assert.throws(
     () => loadDevspaceFiles(env),
-    (error: unknown) => error instanceof Error
+    (error: WireInput) => error instanceof Error
       && error.message.includes(`backup already exists at ${backupPath}`)
       && error.message.includes(`Move ${backupPath} out of the way, then run DevSpace again.`),
   );
 });
 
-function tempConfigDir(t: TestContext): { configDir: string; env: NodeJS.ProcessEnv } {
+function tempConfigDir(t: TestContext) {
   const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
   t.after(() => rmSync(configDir, { recursive: true, force: true }));
+
   return { configDir, env: { DEVSPACE_CONFIG_DIR: configDir } };
 }
 
@@ -150,6 +153,7 @@ async function migrateInChildProcess(
   configDir: string,
 ): Promise<{ migrated: boolean }> {
   const moduleUrl = new URL("./user-config.ts", import.meta.url).href;
+
   const source = [
     `import { loadDevspaceFiles } from ${JSON.stringify(moduleUrl)};`,
     "const files = loadDevspaceFiles();",
@@ -165,6 +169,7 @@ async function migrateInChildProcess(
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
@@ -177,8 +182,11 @@ async function migrateInChildProcess(
     child.once("close", (code) => {
       if (code !== 0) {
         reject(new Error(`migration child exited with ${code}: ${stderr}`));
+
         return;
       }
+
+      // SAFETY: The surrounding checks or construction already match this type.
       resolve(JSON.parse(stdout) as { migrated: boolean });
     });
   });

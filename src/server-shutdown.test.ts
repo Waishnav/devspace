@@ -34,6 +34,7 @@ test("idle connections close at drain start and remaining connections after clea
   let idleCloseCalls = 0;
   let allCloseCalls = 0;
   let finishIdleAwareHttpClose: (() => void) | undefined;
+
   const idleAwareShutdown = shutdownHttpServer(
     {
       close(callback: (error?: Error) => void) {
@@ -51,6 +52,7 @@ test("idle connections close at drain start and remaining connections after clea
       finishIdleAwareHttpClose?.();
     },
   );
+
   await idleAwareShutdown;
   assert.equal(idleCloseCalls, 2, "idle connections close again after application cleanup");
   assert.equal(allCloseCalls, 1, "remaining connections close only after application cleanup");
@@ -75,6 +77,7 @@ test("shutdown waits for asynchronous application cleanup", async () => {
     immediatelyClosedHttpServer,
     delayedApplicationClose,
   );
+
   void delayedShutdown.then(() => {
     shutdownResolved = true;
   });
@@ -93,6 +96,7 @@ test("shutdown waits for asynchronous application cleanup", async () => {
 test("shutdown waits for active HTTP responses to drain", async () => {
   let finishDelayedHttpClose: (() => void) | undefined;
   let httpDrainResolved = false;
+
   const delayedHttpDrain = shutdownHttpServer(
     {
       close(callback: (error?: Error) => void) {
@@ -101,6 +105,7 @@ test("shutdown waits for active HTTP responses to drain", async () => {
     },
     async () => {},
   );
+
   void delayedHttpDrain.then(() => {
     httpDrainResolved = true;
   });

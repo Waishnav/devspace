@@ -1,6 +1,9 @@
+import { isJsonNumber } from "../json-value.js";
+import type { JsonObject } from "../json-value.js";
 import type { App } from "@modelcontextprotocol/ext-apps";
 
 export type ToolName = "open_workspace" | "show_changes";
+
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
 export type ReviewFileType =
@@ -30,7 +33,7 @@ export interface ToolResultCard {
   review?:
     | { available: true }
     | { available: false; reason: string };
-  summary?: Record<string, unknown>;
+  summary?: JsonObject;
   files?: Array<{
     path?: string;
     previousPath?: string;
@@ -68,11 +71,12 @@ export interface ToolResultCard {
 }
 
 export function summaryNumber(
-  summary: Record<string, unknown> | undefined,
+  summary: JsonObject | undefined,
   key: string,
 ): number | undefined {
   const value = summary?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+  return isJsonNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
 export function isExpandableCard(card: ToolResultCard): boolean {

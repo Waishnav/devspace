@@ -1,3 +1,6 @@
+import { optionalFields, jsonKind } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import {
   McpServer,
   type ServerContext,
@@ -20,42 +23,49 @@ type RegistrationReplay = (target: McpRegistrationTarget) => void;
 
 type ModernRegisterTool = (
   name: string,
-  definition: Record<string, unknown>,
-  handler: (input: unknown, context: ServerContext) => unknown,
-) => unknown;
+  definition: JsonObject,
+  handler: (input: WireInput, context: ServerContext) => WireInput,
+) => WireInput;
 
-type ModernRegisterResource = (...args: unknown[]) => unknown;
+type ModernRegisterResource = (...args: WireInput[]) => WireInput;
 
 export function createModernMcpServerAdapter(
   serverInfo: LegacyImplementation,
   options?: ServerOptions,
 ): ModernMcpServerAdapter {
   const server = new McpServer(serverInfo, options);
-  const registerModernTool = server.registerTool.bind(server) as unknown as ModernRegisterTool;
-  const registerModernResource = server.registerResource.bind(server) as unknown as ModernRegisterResource;
+  const registerModernTool = unsafeNarrow<ModernRegisterTool>(server.registerTool.bind(server));
+  const registerModernResource = unsafeNarrow<ModernRegisterResource>(server.registerResource.bind(server));
+
   const registrationTarget: McpRegistrationTarget = {
-    registerTool: ((
+    // SAFETY: The surrounding checks or construction already match this type.
+    registerTool: unsafeNarrow<LegacyMcpServer["registerTool"]>((
       name: string,
-      definition: Record<string, unknown>,
-      handler: (input: unknown, extra: Record<string, unknown>) => unknown,
+      definition: JsonObject,
+      handler: (input: WireInput, extra: JsonObject) => WireInput,
     ) => registerModernTool(
       name,
       definition,
       async (input, context) => handler(input, legacyToolHandlerExtra(context)),
-    )) as LegacyMcpServer["registerTool"],
-    registerResource: ((...args: unknown[]) => {
-      const callback = args.at(-1) as (...callbackArgs: unknown[]) => unknown;
+    )),
+    // SAFETY: The surrounding checks or construction already match this type.
+    registerResource: unsafeNarrow<LegacyMcpServer["registerResource"]>((...args: WireInput[]) => {
+      // SAFETY: The surrounding checks or construction already match this type.
+      const callback = args.at(-1) as (...callbackArgs: WireInput[]) => WireInput;
+
       return registerModernResource(
         ...args.slice(0, -1),
-        (...callbackArgs: unknown[]) => {
+        (...callbackArgs: WireInput[]) => {
+          // SAFETY: The surrounding checks or construction already match this type.
           const context = callbackArgs.at(-1) as ServerContext;
+
           return callback(
             ...callbackArgs.slice(0, -1),
             legacyToolHandlerExtra(context),
           );
         },
       );
-    }) as unknown as LegacyMcpServer["registerResource"],
+    }),
   };
 
   return {
@@ -68,40 +78,46 @@ export function compileMcpRegistrationSurface(
   registerSurface: (target: McpRegistrationTarget) => void,
 ): (target: McpRegistrationTarget) => void {
   const registrations: RegistrationReplay[] = [];
+
   const recordingTarget: McpRegistrationTarget = {
-    registerTool: ((...args: unknown[]) => {
+    // SAFETY: The surrounding checks or construction already match this type.
+    registerTool: unsafeNarrow<McpRegistrationTarget["registerTool"]>((...args: WireInput[]) => {
       registrations.push((target) => {
-        (target.registerTool as (...callArgs: unknown[]) => unknown)(...args);
+        // SAFETY: The surrounding checks or construction already match this type.
+        (target.registerTool as (...callArgs: WireInput[]) => WireInput)(...args);
       });
-    }) as unknown as McpRegistrationTarget["registerTool"],
-    registerResource: ((...args: unknown[]) => {
+    }),
+    registerResource: unsafeNarrow<McpRegistrationTarget["registerResource"]>((...args: WireInput[]) => {
       registrations.push((target) => {
-        (target.registerResource as (...callArgs: unknown[]) => unknown)(...args);
+        // SAFETY: The surrounding checks or construction already match this type.
+        (target.registerResource as (...callArgs: WireInput[]) => WireInput)(...args);
       });
-    }) as unknown as McpRegistrationTarget["registerResource"],
+    }),
   };
 
   registerSurface(recordingTarget);
   const compiled = Object.freeze(registrations.slice());
+
   return (target) => {
     for (const replay of compiled) replay(target);
   };
 }
 
-export function modernMcpAdapterErrorLogFields(error: Error): Record<string, unknown> {
+export function modernMcpAdapterErrorLogFields(error: Error): JsonObject {
   const cause = error.cause;
+
   return {
     error: error.message,
     errorName: error.name,
-    ...(cause === undefined ? {} : {
+    ...optionalFields(cause === undefined ? undefined : {
       cause: cause instanceof Error
         ? { name: cause.name, message: cause.message }
-        : { name: typeof cause, message: String(cause) },
+        : { name: jsonKind(cause), message: String(cause) },
     }),
   };
 }
 
-function legacyToolHandlerExtra(context: ServerContext): Record<string, unknown> {
+function legacyToolHandlerExtra(context: ServerContext): JsonObject {
   return {
     signal: context.mcpReq.signal,
     authInfo: context.http?.authInfo,

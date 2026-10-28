@@ -26,8 +26,10 @@ if (!hasConfig) {
   child.on("exit", (code, signal) => {
     if (signal) {
       process.kill(process.pid, signal);
+
       return;
     }
+
     process.exitCode = code ?? 1;
   });
 }

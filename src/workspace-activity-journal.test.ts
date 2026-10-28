@@ -1,3 +1,5 @@
+import { isFunctionValue, isJsonObject } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,6 +68,7 @@ test("open_workspace is recorded once its workspace exists, and failed opens lea
     meta: { "openai/session": "conversation-1" },
     result: () => {
       workspaces.createSession({ id: "ws_opened", root: "/tmp/project" });
+
       return { structuredContent: { workspace_id: "ws_opened" } };
     },
   });
@@ -97,7 +100,11 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
   const serialized = JSON.stringify(exec);
   assert.doesNotMatch(serialized, /abcdefghijklmnop|ghp_should/);
   assert.match(serialized, /\[redacted\]/);
-  assert.deepEqual((exec?.arguments as { env: unknown }).env, { GITHUB_TOKEN: "[redacted]", max_output_tokens: 100 });
+  // SAFETY: The surrounding checks or construction already match this type.
+  assert.deepEqual(
+    isJsonObject(exec?.arguments) ? exec.arguments.env : undefined,
+    { GITHUB_TOKEN: "[redacted]", max_output_tokens: 100 },
+  );
   assert.ok(serialized.length < 10_000);
   assert.equal(serialized.includes("_meta"), false);
   assert.deepEqual(
@@ -108,7 +115,9 @@ test("journal redacts secrets, caps payloads, and keeps errors", async (t) => {
 });
 
 test("journal redacts credentials in commands and outputs", () => {
+  // SAFETY: The surrounding checks or construction already match this type.
   const redacted = (value: string): string => JSON.parse(journalJson(value)) as string;
+
   const secrets = [
     "API_KEY=abc123def",
     "export GITHUB_TOKEN=ghx_notavendorshape",
@@ -124,6 +133,7 @@ test("journal redacts credentials in commands and outputs", () => {
     "git clone https://user:pass@github.com/acme/repo.git",
     "postgres://app:s3cret@db.internal:5432/app",
   ];
+
   for (const secret of secrets) {
     const output = redacted(`run: ${secret}`);
     assert.match(output, /\[redacted\]/, secret);
@@ -150,6 +160,7 @@ test("journal leaves ordinary prose and code alone", () => {
     "open http://localhost:3000/@user",
     "curl https://example.com:8080/path",
   ];
+
   for (const text of unchanged) {
     assert.equal(JSON.parse(journalJson(text)), text);
   }
@@ -161,6 +172,7 @@ test("journal failures never replace the tool result", async (t) => {
   });
 
   activity.close();
+
   const result = await journal.capture({
     toolName: "read",
     arguments: { workspace_id: "ws_closed" },
@@ -174,11 +186,12 @@ test("journal failures never replace the tool result", async (t) => {
 async function journalFixture(
   t: TestContext,
   workspaceIds: string[],
-  onError?: (error: unknown) => void,
+  onError?: (error: WireInput) => void,
   maxTurns?: number,
 ) {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-activity-journal-test-"));
   const workspaces = new SqliteWorkspaceStore(stateDir);
+
   for (const id of workspaceIds) workspaces.createSession({ id, root: "/tmp/project" });
   const activity = new WorkspaceActivityStore(stateDir, maxTurns);
   const journal = new WorkspaceActivityJournal(activity, onError);
@@ -188,25 +201,29 @@ async function journalFixture(
     } catch {
       // Some tests close the store early.
     }
+
     workspaces.close();
     await rm(stateDir, { recursive: true, force: true });
   });
+
   return { journal, activity, workspaces };
 }
 
 function call(
   journal: WorkspaceActivityJournal,
   toolName: string,
-  args: Record<string, unknown>,
-  options: { meta?: Record<string, unknown>; result?: unknown; error?: Error } = {},
-): Promise<unknown> {
+  args: JsonObject,
+  options: { meta?: JsonObject; result?: WireInput; error?: Error } = {},
+): Promise<WireInput> {
   return journal.capture({
     toolName,
     arguments: args,
     extra: { _meta: options.meta, requestId: 7 },
     operation: async () => {
       if (options.error) throw options.error;
-      return typeof options.result === "function" ? (options.result as () => unknown)() : options.result ?? {};
+
+      // SAFETY: The surrounding checks or construction already match this type.
+      return isFunctionValue(options.result) ? options.result() : options.result ?? {};
     },
   });
 }

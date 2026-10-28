@@ -33,6 +33,7 @@ export function buildLocalAgentProviderStatuses(
     const live = availability.find((entry) => entry.name === id);
     const enabled = configured?.enabled === true;
     const available = live?.available === true;
+
     return {
       id,
       driver: configured.driver,
@@ -53,24 +54,26 @@ export function buildLocalAgentCatalog(
   providers: readonly LocalAgentProviderStatus[],
 ): LocalAgentCatalog {
   const visibleProviders = providers.filter((provider) => provider.enabled);
+
   const usable = new Map(
-    visibleProviders.filter((provider) => provider.usable).map((provider) => [provider.id, provider]),
+    visibleProviders.flatMap((provider) => (provider.usable ? [[provider.id, provider] as const] : [])),
   );
+
   return {
     enabled: config.enabled,
     providers: visibleProviders,
-    profiles: profiles
-      .filter((profile) => !profile.disabled && usable.has(profile.provider))
-      .map((profile) => {
-        const provider = usable.get(profile.provider)!;
-        return {
-          name: profile.name,
-          description: profile.description,
-          provider: profile.provider,
-          model: profile.model ?? provider.model,
-          effort: profile.effort ?? provider.effort,
-        };
-      }),
+    profiles: profiles.flatMap((profile) => {
+      if (profile.disabled || !usable.has(profile.provider)) return [];
+      const provider = usable.get(profile.provider)!;
+
+      return [{
+        name: profile.name,
+        description: profile.description,
+        provider: profile.provider,
+        model: profile.model ?? provider.model,
+        effort: profile.effort ?? provider.effort,
+      }];
+    }),
   };
 }
 
@@ -85,6 +88,7 @@ export function formatLocalAgentProviderStatusSummary(
         : !provider.available
           ? `unavailable: ${provider.reason ?? "provider preflight failed"}`
           : "subagents disabled";
+
     return `${provider.id} (${state})`;
   }).join(", ");
 }

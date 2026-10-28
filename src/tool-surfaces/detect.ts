@@ -43,6 +43,7 @@ const HOST_SIGNATURES: readonly HostSignature[] = [
  */
 export function detectToolSurface(hints: HostHints): ToolSurfaceName {
   const { clientName, redirectUris = [], userAgent } = hints;
+
   const match = (test: (signature: HostSignature) => boolean) =>
     HOST_SIGNATURES.find(test)?.surface;
 
@@ -56,6 +57,8 @@ export function detectToolSurface(hints: HostHints): ToolSurfaceName {
 
 function redirectDomainMatches(uri: string, domains: readonly string[]): boolean {
   const hostname = URL.parse(uri)?.hostname;
+
   if (!hostname) return false;
+
   return domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }

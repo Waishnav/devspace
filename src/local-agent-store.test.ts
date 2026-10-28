@@ -15,6 +15,7 @@ const stores: LocalAgentStore[] = [];
 try {
   const store = new LocalAgentStore(root);
   stores.push(store);
+
   const created = store.create({
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
@@ -39,8 +40,11 @@ try {
     `${created.id.slice(4)}-0000-4000-8000-000000000000`,
     "bbbbbbbb-0000-4000-8000-000000000000",
   ];
+
+  // SAFETY: The surrounding checks or construction already match this type.
   const uuidMock = mock.method(crypto, "randomUUID", () => uuids.shift() as `${string}-${string}-${string}-${string}-${string}`);
   syncBuiltinESMExports();
+
   try {
     const redrawn = store.create({
       workspaceId: "ws_collision",
@@ -51,6 +55,7 @@ try {
       model: "gpt-5.4",
       effort: "high",
     });
+
     assert.equal(redrawn.id, "agt_bbbbbbbb");
     assert.notEqual(redrawn.id, created.id);
   } finally {
@@ -67,6 +72,7 @@ try {
     driver: "codex",
     writeMode: "read_only",
   });
+
   assert.equal(ownedDispatch.id, "workflow-dispatch-store");
   assert.equal(ownedDispatch.writeMode, "read_only");
   assert.equal(store.create({
@@ -123,6 +129,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     model: updated.model,
     effort: updated.effort,
   });
+
   assert.equal(begun.agent.status, "running");
   assert.equal(begun.turn.agentId, created.id);
   assert.equal(begun.turn.prompt, "Review the current changes.");
@@ -144,6 +151,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     response: "No issues found.",
     providerSessionId: "thread_456",
   });
+
   assert.equal(completed.status, "idle");
   assert.equal(completed.latestResponse, "No issues found.");
   assert.equal(completed.providerSessionId, "thread_456");
@@ -159,6 +167,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     model: completed.model,
     effort: completed.effort,
   });
+
   store.finishTurn(created.id, failing.turn.id, {
     status: "failed",
     error: "Provider disconnected.",
@@ -190,6 +199,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
 
   const otherStore = new LocalAgentStore(root);
   stores.push(otherStore);
+
   const createdFromOtherStore = otherStore.create({
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
@@ -229,14 +239,17 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
       updated_at text not null
     );
   `);
+
   const migration = legacy.prepare(
     "insert into devspace_schema_migrations (version, name, applied_at) values (?, ?, ?)",
   );
+
   // Leave migration 3 unapplied to exercise an interrupted legacy upgrade:
   // it adds an empty effort column before migration 6 copies thinking values.
   for (const [version, name] of [[1, "workspace-state"], [2, "oauth-state"], [4, "workspace-conversation-bindings"]] as const) {
     migration.run(version, name, "2026-08-01T00:00:00.000Z");
   }
+
   legacy.prepare(`
     insert into local_agent_sessions (
       id, workspace_root, profile_name, provider, thinking, status, error, created_at, updated_at
@@ -262,28 +275,35 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(legacyRecord?.providerInstanceId, "cursor");
   assert.equal(legacyRecord?.driver, "acp");
   const inspect = new Database(databasePath(legacyStateDir), { readonly: true });
+
+  // SAFETY: The surrounding checks or construction already match this type.
   const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)
     .find((column) => column.name === "driver");
+
   inspect.close();
   assert.equal(driverColumn?.notnull, 1, "migrated driver column rejects NULL like a fresh schema");
   assert.equal(legacyRecord?.errorCode, undefined);
   assert.equal(legacyRecord?.errorRetryable, undefined);
+
   const upgradedRecord = upgradedStore.update("agt_legacy", {
     errorCode: "DAEMON_TIMEOUT",
     errorRetryable: true,
   });
+
   assert.equal(upgradedRecord.errorCode, "DAEMON_TIMEOUT");
   assert.equal(upgradedRecord.errorRetryable, true);
   const reloadedRecord = upgradedStore.getById("agt_legacy");
   assert.equal(reloadedRecord?.error, "old error");
   assert.equal(reloadedRecord?.errorCode, "DAEMON_TIMEOUT");
   assert.equal(reloadedRecord?.errorRetryable, true);
+
   const legacyTurn = upgradedStore.beginTurn("agt_legacy", {
     turnId: "trn_test4",
     prompt: "Continue after upgrade.",
     model: reloadedRecord?.model,
     effort: reloadedRecord?.effort,
   });
+
   assert.equal(legacyTurn.turn.status, "running");
   assert.equal(legacyTurn.turn.turnId, "trn_test4");
   assert.equal(upgradedStore.getById("agt_legacy")?.latestTurnId, "trn_test4");
@@ -291,5 +311,6 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   for (const store of stores) {
     store.close();
   }
+
   rmSync(root, { recursive: true, force: true });
 }

@@ -17,6 +17,7 @@ const baseConfig: OAuthConfig = {
   allowedResourceUrls: ["https://tunnel.example.com/v1/mcp/tunnel_123"],
   allowedRedirectHosts: ["chatgpt.com"],
 };
+
 const serverUrl = new URL("https://agent.example.com/mcp");
 const resource = new URL(baseConfig.allowedResourceUrls[0]!);
 const otherResource = new URL("https://other.example.com/mcp");
@@ -45,14 +46,17 @@ async function fixture(t: TestContext): Promise<string> {
     Date.now = realDateNow;
     await rm(root, { recursive: true, force: true });
   });
+
   return root;
 }
 
 async function testDefaultAndZeroGrace(root: string): Promise<void> {
   const defaultDir = join(root, "default");
   const zeroDir = join(root, "zero");
+
   for (const [stateDir, config] of [[defaultDir, baseConfig], [zeroDir, { ...baseConfig, refreshTokenGraceSeconds: 0 }]] as const) {
     const provider = new SingleUserOAuthProvider(config, serverUrl, stateDir);
+
     try {
       const { client, tokens } = await issueInitialTokens(provider);
       const rotated = await provider.exchangeRefreshToken(client, tokens.refresh_token);
@@ -69,6 +73,7 @@ async function testConcurrentReuseAndRestartPersistence(root: string): Promise<v
   const config = { ...baseConfig, refreshTokenGraceSeconds: 600 };
   const baseSeconds = 2_000_000_500;
   setNowSeconds(baseSeconds);
+
   try {
     const first = new SingleUserOAuthProvider(config, serverUrl, stateDir);
     const { client, tokens } = await issueInitialTokens(first);
@@ -77,11 +82,13 @@ async function testConcurrentReuseAndRestartPersistence(root: string): Promise<v
     setNowSeconds(baseSeconds + 20);
     const left = new SingleUserOAuthProvider(config, serverUrl, stateDir);
     const right = new SingleUserOAuthProvider(config, serverUrl, stateDir);
+
     try {
       const [leftTokens, rightTokens] = await Promise.all([
         left.exchangeRefreshToken(client, tokens.refresh_token),
         right.exchangeRefreshToken(client, tokens.refresh_token),
       ]);
+
       assert.ok(leftTokens.refresh_token);
       assert.ok(rightTokens.refresh_token);
       assert.notEqual(leftTokens.refresh_token, rightTokens.refresh_token);
@@ -91,6 +98,7 @@ async function testConcurrentReuseAndRestartPersistence(root: string): Promise<v
     }
 
     const reopened = new SingleUserOAuthProvider(config, serverUrl, stateDir);
+
     try {
       assert.equal(readRefreshExpiry(stateDir, tokens.refresh_token), baseSeconds + 20 + 600);
       const retried = await reopened.exchangeRefreshToken(client, tokens.refresh_token);
@@ -118,6 +126,7 @@ async function testGraceExpiryAndOriginalTtl(root: string): Promise<void> {
   const baseSeconds = 2_000_000_000;
   setNowSeconds(baseSeconds);
   const provider = new SingleUserOAuthProvider(config, serverUrl, stateDir);
+
   try {
     const { client, tokens } = await issueInitialTokens(provider);
     const oldExpiry = baseSeconds + 30;
@@ -152,6 +161,7 @@ async function testGraceExpiryAndOriginalTtl(root: string): Promise<void> {
   const shortTtlConfig = { ...baseConfig, refreshTokenGraceSeconds: 10, refreshTokenTtlSeconds: 6 };
   setNowSeconds(baseSeconds);
   const shortTtlProvider = new SingleUserOAuthProvider(shortTtlConfig, serverUrl, shortTtlDir);
+
   try {
     const { client, tokens } = await issueInitialTokens(shortTtlProvider);
     assert.equal(readRefreshExpiry(shortTtlDir, tokens.refresh_token), baseSeconds + 6);
@@ -176,6 +186,7 @@ async function testGraceDoesNotRelaxRefreshPolicy(root: string): Promise<void> {
   const stateDir = join(root, "policy");
   const config = { ...baseConfig, refreshTokenGraceSeconds: 600 };
   const provider = new SingleUserOAuthProvider(config, serverUrl, stateDir);
+
   try {
     const { client, tokens } = await issueInitialTokens(provider);
     const otherClient = await provider.clientsStore.registerClient?.({ redirect_uris: [redirectUri] });
@@ -198,6 +209,7 @@ async function issueInitialTokens(provider: SingleUserOAuthProvider) {
     redirect_uris: [redirectUri],
     client_name: "Test client",
   });
+
   assert.ok(client);
   const code = `test-code-${Math.random()}`;
   provider["codes"].set(code, {
@@ -212,11 +224,13 @@ async function issueInitialTokens(provider: SingleUserOAuthProvider) {
   });
   const tokens = await provider.exchangeAuthorizationCode(client, code, undefined, redirectUri, resource);
   assert.ok(tokens.refresh_token);
+
   return { client, tokens: { ...tokens, refresh_token: tokens.refresh_token } };
 }
 
 function readRefreshExpiry(stateDir: string, token: string): number | undefined {
   const store = new SqliteOAuthStore(stateDir);
+
   try {
     return store.getRefreshToken(hashToken(token))?.expiresAt;
   } finally {

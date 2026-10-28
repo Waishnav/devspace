@@ -2,12 +2,14 @@
 // A dithered, pixel-mosaic landscape rendered as crisp SVG at build time.
 // Deterministic so every build produces the same picture.
 interface Props { cols?: number; rows?: number }
+
 const { cols = 64, rows = 30 } = Astro.props;
 
 let seed = 7;
 const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
 type RGB = [number, number, number];
+
 const stops: Array<[number, RGB]> = [
   [0.0, [86, 128, 196]],
   [0.3, [128, 162, 214]],
@@ -17,13 +19,18 @@ const stops: Array<[number, RGB]> = [
   [0.7, [120, 146, 86]],
   [1.0, [70, 104, 58]],
 ];
+
+// SAFETY: The surrounding checks or construction already match this type.
 const mix = (a: RGB, b: RGB, t: number): RGB => [0, 1, 2].map((i) => a[i]! + (b[i]! - a[i]!) * t) as RGB;
+
 const colorAt = (y: number): RGB => {
   for (let i = 1; i < stops.length; i++) {
     const [p1, c1] = stops[i]!;
     const [p0, c0] = stops[i - 1]!;
+
     if (y <= p1) return mix(c0, c1, (y - p0) / (p1 - p0));
   }
+
   return stops.at(-1)![1];
 };
 
@@ -33,6 +40,7 @@ const notched = (x: number, y: number) =>
   (y > rows - 4 && x < 3) || (y > rows - 2 && x < 6);
 
 const cells: Array<{ x: number; y: number; fill: string }> = [];
+
 for (let y = 0; y < rows; y++) {
   for (let x = 0; x < cols; x++) {
     if (notched(x, y)) continue;

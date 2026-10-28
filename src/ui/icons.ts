@@ -70,7 +70,9 @@ export function getProviderLogo(
   name: string,
   theme: ProviderLogoTheme = "dark",
 ): string | undefined {
+  // SAFETY: The surrounding checks or construction already match this type.
   const normalizedName = name.trim().toLowerCase() as keyof typeof providerLogos;
+
   return providerLogos[normalizedName]?.[theme];
 }
 

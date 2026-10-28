@@ -1,3 +1,4 @@
+import type { WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
@@ -10,8 +11,10 @@ import {
 } from "./incoming-artifacts.js";
 
 test("the incoming artifact registry rejects unclaimed, ambiguous, and invalid adapters", testRegistryFailsClosed);
+
 test("the OpenAI file adapter downloads only safe OpenAI file references", testOpenAIFileAdapter);
-test("incoming artifact log shapes redact values", testLogShapeRedaction);
+
+test("incoming artifact log shapes redact values", testLogValueRedaction);
 
 async function testRegistryFailsClosed(): Promise<void> {
   const registry = new IncomingArtifactAdapterRegistry();
@@ -35,10 +38,12 @@ async function testRegistryFailsClosed(): Promise<void> {
       return { name: "a.bin", stream: Readable.from(["a"]) };
     },
   };
+
   const ambiguousRegistry = new IncomingArtifactAdapterRegistry([
     ambiguous,
     { ...ambiguous, id: "ambiguous-two" },
   ]);
+
   await expectArtifactError(
     ambiguousRegistry.open({ native: true }),
     "ambiguous_incoming_artifact",
@@ -46,20 +51,22 @@ async function testRegistryFailsClosed(): Promise<void> {
 
   assert.throws(
     () => new IncomingArtifactAdapterRegistry([{ ...ambiguous, id: "UPPER" }]),
-    (error: unknown) => error instanceof ArtifactError && error.code === "invalid_incoming_adapter",
+    (error: WireInput) => error instanceof ArtifactError && error.code === "invalid_incoming_adapter",
   );
   assert.throws(
     () => new IncomingArtifactAdapterRegistry([ambiguous, ambiguous]),
-    (error: unknown) => error instanceof ArtifactError && error.code === "duplicate_incoming_adapter",
+    (error: WireInput) => error instanceof ArtifactError && error.code === "duplicate_incoming_adapter",
   );
 }
 
 async function testOpenAIFileAdapter(): Promise<void> {
   const bytes = Buffer.from("chatgpt generated image bytes");
   const requested: string[] = [];
+
   const fetchImpl: typeof fetch = async (input, init) => {
     requested.push(String(input));
     assert.equal(init?.redirect, "manual");
+
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -68,15 +75,18 @@ async function testOpenAIFileAdapter(): Promise<void> {
       },
     });
   };
+
   const registry = new IncomingArtifactAdapterRegistry([
     createOpenAIIncomingArtifactAdapter({ fetch: fetchImpl }),
   ]);
+
   const reference = {
     download_url: "https://files.oaiusercontent.com/file_123/download?sig=secret",
     file_id: "file_123",
     mime_type: "image/png",
     file_name: "generated.png",
   };
+
   const generatedReference = {
     download_url: "https://oaisdmntprcentralindia.blob.core.windows.net/chatgpt-file/generated-image.png?sig=secret",
     file_id: "file-service://generated+opaque/abc123",
@@ -104,6 +114,7 @@ async function testOpenAIFileAdapter(): Promise<void> {
     file_name: null,
     name: null,
   });
+
   assert.equal(fallbackOpened.name, "chatgpt-file.png");
   fallbackOpened.stream.destroy();
 
@@ -159,14 +170,17 @@ async function testOpenAIFileAdapter(): Promise<void> {
             },
           });
         }
+
         return new Response(bytes, { status: 200 });
       },
     }),
   ]);
+
   const redirected = await redirectRegistry.open({
     ...reference,
     download_url: "https://files.oaiusercontent.com/first?sig=initial",
   });
+
   assert.deepEqual(await collect(redirected.stream), bytes);
 
   const unsafeRedirectRegistry = new IncomingArtifactAdapterRegistry([
@@ -177,6 +191,7 @@ async function testOpenAIFileAdapter(): Promise<void> {
       }),
     }),
   ]);
+
   await expectArtifactError(
     unsafeRedirectRegistry.open(reference),
     "unsafe_openai_file_reference",
@@ -187,13 +202,14 @@ async function testOpenAIFileAdapter(): Promise<void> {
       fetch: async () => new Response("nope", { status: 500 }),
     }),
   ]);
+
   await expectArtifactError(
     failedDownloadRegistry.open(reference),
     "openai_file_download_failed",
   );
 }
 
-function testLogShapeRedaction(): void {
+function testLogValueRedaction(): void {
   const value = {
     download_url: "https://files.oaiusercontent.com/file_123/download?sig=super-secret",
     file_id: "file_secret",
@@ -201,6 +217,7 @@ function testLogShapeRedaction(): void {
       arbitrary: "private-value",
     },
   };
+
   const serialized = JSON.stringify(describeIncomingArtifactValue(value));
   assert.equal(serialized.includes("super-secret"), false);
   assert.equal(serialized.includes("file_secret"), false);
@@ -211,15 +228,17 @@ function testLogShapeRedaction(): void {
 
 async function collect(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
+
   for await (const chunk of stream) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
+
   return Buffer.concat(chunks);
 }
 
-async function expectArtifactError(promise: Promise<unknown>, code: string): Promise<void> {
+async function expectArtifactError(promise: Promise<WireInput>, code: string): Promise<void> {
   await assert.rejects(
     promise,
-    (error: unknown) => error instanceof ArtifactError && error.code === code,
+    (error: WireInput) => error instanceof ArtifactError && error.code === code,
   );
 }
