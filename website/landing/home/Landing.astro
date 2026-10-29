@@ -237,7 +237,7 @@ effort: high
   .split p { font-family: "Hanken Grotesk Variable", sans-serif; font-size: 16px; color: #3e3d3a; max-width: 50ch; margin: 0 0 24px; }
   .link { border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
 
-  .split__card { background: #fff; border: 1px solid var(--line); font-size: 13px; }
+  .split__card { min-width: 0; background: #fff; border: 1px solid var(--line); font-size: 13px; }
   .card__head { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
@@ -270,7 +270,7 @@ effort: high
   }
 
   @media (max-width: 1000px) {
-    .hero, .split, .faq, .flow__head { grid-template-columns: 1fr; gap: 32px; }
+    .hero, .split, .faq, .flow__head { grid-template-columns: minmax(0, 1fr); gap: 32px; }
     .pillars { grid-template-columns: 1fr; }
     .pillar + .pillar { border-left: 0; border-top: 1px solid var(--line); }
     .stage { padding: 56px 30px; }
