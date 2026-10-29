@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-logo-light.png" alt="DevSpace logo" width="140">
+    <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-logo.png" alt="DevSpace logo" width="140">
   </picture>
 </p>
 
