@@ -42,9 +42,12 @@
 
 .dm__core {
   text-align: center; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--dm-chip);
-  padding: 22px 6px; display: grid; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
+  padding: 22px 6px; display: grid; justify-items: center; gap: 4px; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);
 }
 .dm__core b { font-size: 15px; }
+/* Transparent mark on light cards; the opaque tile keeps it visible on dark. */
+.dm__logo--dark, [data-theme="dark"] .dm__logo--light { display: none; }
+[data-theme="dark"] .dm__logo--dark { display: block; }
 
 .dm__agents { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
 .dm__agents li {
