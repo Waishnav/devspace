@@ -87,22 +87,26 @@ effort: high
         </p>
         <a class="link" href="/docs/orchestration/profiles">Agent profiles →</a>
       </div>
-      <div class="split__card">
-        <div class="card__head"><span>devspace agents targets</span><span class="dim">5 profiles</span></div>
-        <table>
-          <tbody>
-            {MATRIX.map((row) => (
-              <tr>
-                <td>{row.task}</td>
-                <td><b class="prof"><Logo id={row.logo} size={20} />{row.profile}</b></td>
-                <td class="dim">{row.why}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div class="card__file">
-          <span class="dim">.devspace/agents/reviewer.md</span>
-          <Code code={REVIEWER_PROFILE} lang="yaml" theme={workbenchLightTheme} />
+      <div class="fit" data-fit>
+        <div class="fit__inner">
+          <div class="split__card">
+            <div class="card__head"><span>devspace agents targets</span><span class="dim">5 profiles</span></div>
+            <table>
+              <tbody>
+                {MATRIX.map((row) => (
+                  <tr>
+                    <td>{row.task}</td>
+                    <td><b class="prof"><Logo id={row.logo} size={20} />{row.profile}</b></td>
+                    <td class="dim">{row.why}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div class="card__file">
+              <span class="dim">.devspace/agents/reviewer.md</span>
+              <Code code={REVIEWER_PROFILE} lang="yaml" theme={workbenchLightTheme} />
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -162,6 +166,20 @@ effort: high
     font: 14px/1.6 "IBM Plex Mono", ui-monospace, monospace;
   }
 </style>
+
+<script>
+  const DESIGN_WIDTH = 560;
+  document.querySelectorAll<HTMLElement>("[data-fit]").forEach((fit) => {
+    const inner = fit.firstElementChild as HTMLElement;
+    const update = () => {
+      const scale = Math.min(1, fit.clientWidth / DESIGN_WIDTH);
+      fit.style.setProperty("--scale", String(scale));
+      fit.style.height = `${inner.offsetHeight * scale}px`;
+    };
+    new ResizeObserver(update).observe(fit);
+    new ResizeObserver(update).observe(inner);
+  });
+</script>
 
 <style>
   .dim { color: var(--muted); }
@@ -237,7 +255,10 @@ effort: high
   .split p { font-family: "Hanken Grotesk Variable", sans-serif; font-size: 16px; color: #3e3d3a; max-width: 50ch; margin: 0 0 24px; }
   .link { border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
 
-  .split__card { min-width: 0; background: #fff; border: 1px solid var(--line); font-size: 13px; }
+  /* The card is a fixed-size illustration: scale it to the column like a video instead of reflowing. */
+  .fit { --scale: 1; min-width: 0; overflow: hidden; }
+  .fit__inner { width: 560px; transform: scale(var(--scale)); transform-origin: top left; }
+  .split__card { background: #fff; border: 1px solid var(--line); font-size: 13px; }
   .card__head { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 11px 16px; border-bottom: 1px dashed var(--line); }
