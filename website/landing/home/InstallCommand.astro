@@ -1,0 +1,62 @@
+---
+// Tabs for choosing an install method. The script preselects the visitor's OS and keeps every tab group and
+// every [data-install-command] button (whose data-copy and <code> show the command) on the same choice.
+import { INSTALL_METHODS } from "../content";
+
+const [initial] = INSTALL_METHODS;
+---
+
+<div class="install__tabs" role="tablist" aria-label="Install method">
+  {INSTALL_METHODS.map((method) => (
+    <button
+      class="install__tab" type="button" role="tab" data-install-tab={method.id}
+      aria-selected={method.id === initial.id ? "true" : "false"}
+    >{method.label}</button>
+  ))}
+</div>
+
+<style>
+  .install__tabs { display: flex; gap: 22px; margin-bottom: 14px; font-size: 13px; }
+  .install__tab {
+    padding: 0 0 4px; border: 0; border-bottom: 1px solid transparent; background: none;
+    font: inherit; color: var(--muted); cursor: pointer;
+  }
+  .install__tab:hover { color: var(--ink); }
+  .install__tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+</style>
+
+<script>
+  import { INSTALL_METHODS } from "../content";
+
+  type MethodId = (typeof INSTALL_METHODS)[number]["id"];
+
+  function select(id: MethodId): void {
+    const method = INSTALL_METHODS.find((candidate) => candidate.id === id);
+
+    if (!method) return;
+
+    for (const tab of document.querySelectorAll<HTMLElement>("[data-install-tab]")) {
+      tab.setAttribute("aria-selected", tab.dataset.installTab === id ? "true" : "false");
+    }
+
+    for (const command of document.querySelectorAll<HTMLElement>("[data-install-command]")) {
+      command.dataset.copy = method.command;
+
+      const code = command.querySelector("code");
+
+      if (code) code.textContent = method.command;
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+
+    const tab = event.target.closest<HTMLElement>("[data-install-tab]");
+    const id = INSTALL_METHODS.find((method) => method.id === tab?.dataset.installTab)?.id;
+
+    if (id) select(id);
+  });
+
+  // The user agent is only a default: every method stays one click away.
+  select(/Windows/i.test(navigator.userAgent) ? "windows" : "unix");
+</script>

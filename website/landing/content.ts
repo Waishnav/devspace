@@ -1,7 +1,14 @@
 // Copy shared by every landing variant, so the three designs differ in
 // presentation only and stay truthful to what DevSpace actually ships.
 
-export const INSTALL = "npx @waishnav/devspace init";
+// The first method is the server-rendered default; the page switches to the visitor's OS on load.
+export const INSTALL_METHODS = [
+  { id: "unix", label: "macOS / Linux", command: "curl -fsSL https://devspace.run/install | sh" },
+  { id: "windows", label: "Windows", command: 'powershell -c "irm https://devspace.run/install.ps1 | iex"' },
+  { id: "npm", label: "npm", command: "npm install -g @waishnav/devspace" },
+] as const;
+
+export const INSTALL = INSTALL_METHODS[0].command;
 export const GITHUB = "https://github.com/Waishnav/devspace";
 export const NPM = "https://www.npmjs.com/package/@waishnav/devspace";
 export const DOCS = "/docs";
