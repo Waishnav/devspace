@@ -1,3 +1,6 @@
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
 import { unsafeNarrow } from "./unsafe-narrow.js";
 import type { WireInput, JsonObject } from "./json-value.js";
@@ -307,4 +310,47 @@ function asRecord(value: WireInput): JsonObject | undefined {
     // SAFETY: The surrounding checks or construction already match this type.
     ? unsafeNarrow<JsonObject>(value)
     : undefined;
+}
+
+const GROK_LOG_TAIL_BYTES = 512 * 1024;
+
+/**
+ * Grok reports a failed turn over ACP only as `stopReason: "error"` and writes the cause (such as a 401 for an
+ * expired login) to its own log, so read that session's terminal failure from the end of the log. Best effort.
+ */
+export function readGrokTurnFailure(sessionId: string, env: NodeJS.ProcessEnv): string | undefined {
+  const path = join(env.HOME ?? homedir(), ".grok", "logs", "unified.jsonl");
+  let text: string;
+
+  try {
+    const size = statSync(path).size;
+    const length = Math.min(size, GROK_LOG_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(path, "r");
+
+    try {
+      readSync(fd, buffer, 0, length, size - length);
+    } finally {
+      closeSync(fd);
+    }
+
+    text = buffer.toString("utf8");
+  } catch {
+    return undefined;
+  }
+
+  for (const line of text.split("\n").reverse()) {
+    if (!line.includes(sessionId) || !line.includes("turn.terminal_failure")) continue;
+
+    try {
+      const entry = asRecord(JSON.parse(line));
+      const message = directString(asRecord(entry?.ctx)?.message);
+
+      if (entry?.sid === sessionId && message) return message.split("\n")[0];
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
 }

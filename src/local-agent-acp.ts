@@ -21,6 +21,7 @@ import {
   GROK_DEFAULT_MODEL,
   parseGrokPromptCompletion,
   readGrokSessionState,
+  readGrokTurnFailure,
   resolveGrokEffort,
   resolveGrokModelId,
 } from "./local-agent-grok.js";
@@ -102,6 +103,8 @@ export interface AcpRuntimeOptions {
   grokCompletionRegistry?: GrokPromptCompletionRegistry;
   promptCompletionTimeoutMs?: number;
   cancelGraceMs?: number;
+  /** The agent process's recent stderr, which often holds the real reason for a turn that produced nothing. */
+  stderrTail?: () => string;
 }
 
 export class AcpRuntime implements LocalAgentRuntime {
@@ -117,6 +120,8 @@ export class AcpRuntime implements LocalAgentRuntime {
   private readonly grokCompletionRegistry?: GrokPromptCompletionRegistry;
   private readonly promptCompletionTimeoutMs: number;
   private readonly cancelGraceMs: number;
+  private readonly stderrTail?: () => string;
+  private readonly env: NodeJS.ProcessEnv;
   private readonly activeSessions = new Set<string>();
   private promptSequence = 0;
   private alive = true;
@@ -133,17 +138,19 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.sessionMetadata = options.sessionMetadata ?? new Map();
     this.grokCompletionRegistry = options.grokCompletionRegistry;
     this.promptCompletionTimeoutMs = options.promptCompletionTimeoutMs ?? ACP_GROK_PROMPT_COMPLETION_TIMEOUT_MS;
+    this.stderrTail = options.stderrTail;
+    this.env = options.env;
     this.cancelGraceMs = options.cancelGraceMs ?? ACP_CANCEL_GRACE_MS;
     void this.connection.closed.then(() => {
       if (!this.closed) this.alive = false;
-      this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP connection closed.`));
+      this.grokCompletionRegistry?.rejectAll(new Error(`${acpAgentName(this.flavor)} connection closed.`));
     }).catch(() => {
       if (!this.closed) this.alive = false;
-      this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP connection closed.`));
+      this.grokCompletionRegistry?.rejectAll(new Error(`${acpAgentName(this.flavor)} connection closed.`));
     });
     this.child?.once("exit", () => {
       this.alive = false;
-      this.connection.close(new Error(`${this.provider} ACP process exited.`));
+      this.connection.close(new Error(`${acpAgentName(this.flavor)} process exited.`));
     });
     this.child?.once("error", (error) => {
       this.alive = false;
@@ -162,7 +169,7 @@ export class AcpRuntime implements LocalAgentRuntime {
             provider: this.provider,
             operation: "run",
             retryable: true,
-            message: `${this.provider} ACP runtime is not running.`,
+            message: `${acpAgentName(this.flavor)} runtime is not running.`,
           });
         }
 
@@ -171,7 +178,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         if (input.signal?.aborted) throw localAgentCancelledError(this.provider, "run");
 
         if (this.activeSessions.has(sessionId)) {
-          throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
+          throw new TypeError(`${acpAgentName(this.flavor)} session ${sessionId} already has an active turn.`);
         }
 
         this.activeSessions.add(sessionId);
@@ -263,8 +270,10 @@ export class AcpRuntime implements LocalAgentRuntime {
               provider: this.provider,
               operation: "run",
               retryable: false,
-              cause: response,
-              message: `${this.provider} ACP did not return a final assistant response.`,
+              cause: acpEmptyTurnDetail(response, updates, this.stderrTail?.() ?? "", this.flavor === "grok"
+                ? readGrokTurnFailure(sessionId, this.env) ?? "Grok wrote the cause to ~/.grok/logs/unified.jsonl; an expired login is common (run `grok` to sign in)."
+                : undefined),
+              message: `${acpAgentName(this.flavor)} did not return a final assistant response.`,
             });
           }
 
@@ -311,8 +320,8 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.sessionWriteModes.clear();
     this.sessionMetadata.clear();
     this.activeSessions.clear();
-    this.grokCompletionRegistry?.rejectAll(new Error(`${this.provider} ACP runtime closed.`));
-    this.connection.close(new Error(`${this.provider} ACP runtime closed.`));
+    this.grokCompletionRegistry?.rejectAll(new Error(`${acpAgentName(this.flavor)} runtime closed.`));
+    this.connection.close(new Error(`${acpAgentName(this.flavor)} runtime closed.`));
 
     if (this.child && this.child.exitCode === null) {
       const detached = process.platform !== "win32";
@@ -345,7 +354,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           provider: this.provider,
           operation: "resume_session",
           retryable: false,
-          message: `${this.provider} ACP does not advertise session resume support.`,
+          message: `${acpAgentName(this.flavor)} does not advertise session resume support.`,
         });
       }
 
@@ -383,7 +392,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         operation: "create_session",
         retryable: false,
         cause: response,
-        message: `${this.provider} ACP did not return a session id.`,
+        message: `${acpAgentName(this.flavor)} did not return a session id.`,
       });
     }
 
@@ -434,7 +443,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           provider: this.provider,
           operation: "configure_session",
           retryable: false,
-          message: `${this.provider} ACP cannot apply the requested ${requested} override because the resumed session did not advertise configurable options.`,
+          message: `${acpAgentName(this.flavor)} cannot apply the requested ${requested} override because the resumed session did not advertise configurable options.`,
         });
       }
 
@@ -470,7 +479,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         operation: "configure_session",
         retryable: false,
         cause,
-        message: `${this.provider} ACP could not enter its read-only mode '${modeId}'.`,
+        message: `${acpAgentName(this.flavor)} could not enter its read-only mode '${modeId}'.`,
       });
     }
   }
@@ -495,7 +504,7 @@ export class AcpRuntime implements LocalAgentRuntime {
           provider: this.provider,
           operation: "configure_session",
           retryable: false,
-          message: `${this.provider} ACP did not advertise typed model metadata required for the requested ${requested} override.`,
+          message: `${acpAgentName(this.flavor)} did not advertise typed model metadata required for the requested ${requested} override.`,
         });
       }
 
@@ -529,7 +538,7 @@ export class AcpRuntime implements LocalAgentRuntime {
         operation: "configure_session",
         retryable: false,
         cause,
-        message: `${this.provider} ACP could not select model '${requestedModel}'.`,
+        message: `${acpAgentName(this.flavor)} could not select model '${requestedModel}'.`,
       });
     }
   }
@@ -665,7 +674,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             agentId: context.agentId,
             operation: "create_runtime",
             retryable: false,
-            message: `${this.provider} ACP process did not expose stdio pipes.`,
+            message: `${acpAgentName(this.flavor)} process did not expose stdio pipes.`,
           });
         }
 
@@ -729,12 +738,13 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             startupError.then((error) => { throw error; }),
           ]),
           ACP_INITIALIZE_TIMEOUT_MS,
-          `${this.provider} ACP initialize timed out.`,
+          `${acpAgentName(this.flavor)} initialize timed out.`,
           );
 
           const capabilities = readAcpCapabilities(init);
 
           const runtime = new AcpRuntime({
+            stderrTail: () => stderrTail,
             flavor: this.flavor,
             command,
             args,
@@ -778,7 +788,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             operation: "create_runtime",
             retryable: true,
             cause: { error, stderr: stderrTail.trim() || undefined },
-            message: `${this.provider} ACP initialization failed.`,
+            message: `${acpAgentName(this.flavor)} initialization failed.`,
           });
         }
       },
@@ -968,6 +978,30 @@ function resolveAcpSelectConfigUpdate(
  * Accepts an exact option value, or a plain name such as `composer-2.5` when exactly one option is that name plus
  * bracketed settings (Cursor's `composer-2.5[fast=true]`). An ambiguous name matches nothing.
  */
+/** Names the agent in messages (`grok ACP`, `cursor ACP`) rather than the shared `acp` driver kind. */
+export function acpAgentName(flavor: AcpFlavor): string {
+  return flavor === "generic" ? "ACP agent" : `${flavor} ACP`;
+}
+
+/** Summarizes a turn that ended without assistant text, so the agent's real reason (often on stderr) is shown. */
+export function acpEmptyTurnDetail(
+  response: WireInput,
+  updates: readonly WireInput[],
+  stderr: string,
+  agentReason?: string,
+): string {
+  const stopReason = directString(asRecord(response)?.stopReason);
+  const kinds = [...new Set(updates.flatMap((update) => directString(asRecord(update)?.sessionUpdate) ?? []))];
+  const trimmed = stderr.trim();
+
+  return [
+    ...(agentReason ? [agentReason] : []),
+    `stop reason: ${stopReason ?? "none"}`,
+    `updates: ${kinds.length > 0 ? kinds.join(", ") : "none"}`,
+    ...(trimmed ? [`stderr: ${trimmed.slice(-500)}`] : []),
+  ].join("; ");
+}
+
 export function matchAcpSelectValue(available: readonly string[], requested: string): string | undefined {
   if (available.includes(requested)) return requested;
 
