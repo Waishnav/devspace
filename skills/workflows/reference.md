@@ -127,3 +127,7 @@ call that differs, everything runs fresh. Runs that made editing calls cannot be
 | Agent response / run result | 256 KiB |
 | `log` and `phase` events | 64 KiB per run |
 | Sandbox heap / stack | 32 MiB / 512 KiB |
+
+Exceeding a limit ends the whole run, including a `workflow()` call nested past one level: `try`/`catch` in the
+script cannot recover from it. Ordinary agent failures (unknown target, provider errors, invalid output) are normal
+rejections you can catch, and `parallel`/`pipeline` report them per item.
