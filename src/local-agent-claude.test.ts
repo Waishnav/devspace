@@ -273,6 +273,13 @@ test("authority settings map each write mode to permissions and sandbox", () => 
   assert.ok((readOnlyPermissions.deny as string[]).includes("Bash"));
   // SAFETY: The surrounding checks or construction already match this type.
   assert.ok((readOnlyPermissions.deny as string[]).includes("Edit"));
+
+  // A nested agent or another file tool must not reopen the writes the parent is denied.
+  for (const tool of ["Write", "MultiEdit", "NotebookEdit", "EnterWorktree", "Agent", "Task", "Workflow", "CronCreate", "RemoteTrigger"]) {
+    // SAFETY: The surrounding checks or construction already match this type.
+    assert.ok((readOnlyPermissions.deny as string[]).includes(tool), tool);
+  }
+
   assert.deepEqual(
     // SAFETY: The surrounding checks or construction already match this type.
     ((readOnlySettings.sandbox as JsonObject).filesystem as JsonObject).allowWrite,

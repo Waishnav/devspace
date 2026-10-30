@@ -24,6 +24,24 @@ import type {
 
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 
+// Read-only turns deny every tool that writes locally (including EnterWorktree, which creates a Git worktree) and
+// every tool that starts other agents now or later (Agent, Task, Workflow, CronCreate, RemoteTrigger): those agents
+// do not inherit the parent's denies and could do the editing it is refused. The sandbox's denyWrite only covers
+// Bash, not Claude's built-in file tools.
+const CLAUDE_READ_ONLY_DENIED_TOOLS = [
+  "Bash",
+  "Edit",
+  "Write",
+  "MultiEdit",
+  "NotebookEdit",
+  "EnterWorktree",
+  "Agent",
+  "Task",
+  "Workflow",
+  "CronCreate",
+  "RemoteTrigger",
+] as const;
+
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
   // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
   "Read(/**)",
@@ -421,7 +439,7 @@ function claudeAuthorityOptions(
 
   const permissions = {
     defaultMode: "dontAsk",
-    deny: allowed ? [] : ["Bash", "Edit"],
+    deny: allowed ? [] : [...CLAUDE_READ_ONLY_DENIED_TOOLS],
   };
 
   const sandbox = {
