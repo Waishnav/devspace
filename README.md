@@ -215,7 +215,7 @@ explicit, inspectable tools.
 
 ## Built by Waishnav
 
-I'm Waishnav. I like building opinionated products and tools, and Artifacts is one example.
+I'm Waishnav. I like building opinionated products and tools, and DevSpace is one example.
 
 This year, I began my journey to build a one-person, multi-agent company capable of generating millions in revenue. If you want to follow the failures, wins, lessons, and everything in between, come hang out with me on [X](https://x.com/wshxnv).
 
