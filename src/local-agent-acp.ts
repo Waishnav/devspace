@@ -1063,13 +1063,26 @@ function resolveAcpSelectConfigUpdate(
 
   if (!configId) throw new Error(`${options.provider} ACP ${options.label} is missing an id.`);
   const available = flattenAcpSelectValues(config);
+  const value = matchAcpSelectValue(available, options.value);
 
-  if (!available.includes(options.value)) {
+  if (!value) {
     const suffix = available.length > 0 ? ` Available values: ${available.join(", ")}.` : "";
     throw new Error(`${options.provider} ACP ${options.label} does not support '${options.value}'.${suffix}`);
   }
 
-  return { sessionId, configId, value: options.value };
+  return { sessionId, configId, value };
+}
+
+/**
+ * Accepts an exact option value, or a plain name such as `composer-2.5` when exactly one option is that name plus
+ * bracketed settings (Cursor's `composer-2.5[fast=true]`). An ambiguous name matches nothing.
+ */
+export function matchAcpSelectValue(available: readonly string[], requested: string): string | undefined {
+  if (available.includes(requested)) return requested;
+
+  const variants = available.filter((value) => value.startsWith(`${requested}[`) && value.endsWith("]"));
+
+  return variants.length === 1 ? variants[0] : undefined;
 }
 
 export function flattenAcpSelectValues(option: JsonObject): string[] {

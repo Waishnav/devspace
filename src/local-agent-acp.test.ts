@@ -14,6 +14,7 @@ import {
   deliverAcpSessionUpdate,
   resolveAcpCommand,
   selectAcpPermissionOption,
+  matchAcpSelectValue,
 } from "./local-agent-acp.js";
 import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 
@@ -821,4 +822,13 @@ test("a stop requested before the prompt is sent starts no provider work", async
   if (preAbortResult.isErr()) assert.equal(preAbortResult.error.code, "PROVIDER_CANCELLED");
   assert.equal(preAbortRequests.includes("session/prompt"), false);
   await preAbortRuntime.close();
+});
+
+test("an ACP select accepts a plain name when exactly one bracketed variant matches", () => {
+  const available = ["default[]", "composer-2.5[fast=true]", "grok-4.6[effort=high,fast=true]", "grok-4.6[effort=low]"];
+
+  assert.equal(matchAcpSelectValue(available, "composer-2.5[fast=true]"), "composer-2.5[fast=true]");
+  assert.equal(matchAcpSelectValue(available, "composer-2.5"), "composer-2.5[fast=true]");
+  assert.equal(matchAcpSelectValue(available, "grok-4.6"), undefined, "ambiguous names match nothing");
+  assert.equal(matchAcpSelectValue(available, "composer"), undefined);
 });
