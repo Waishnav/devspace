@@ -120,8 +120,12 @@ jobs:
             exit 1
           fi
 
-          # The installer must have put the launcher directory on PATH for new shells.
-          grep -rqs "$HOME/.local/bin" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.profile"
+          # New shells must find the launcher: either PATH already had it (Ubuntu runners do), or the installer
+          # added it to a shell profile.
+          case ":$PATH:" in
+            *":$HOME/.local/bin:"*) echo "$HOME/.local/bin was already on PATH" ;;
+            *) grep -rqs "$HOME/.local/bin" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.profile" ;;
+          esac
 
       - name: Verify the installed CLI (Windows)
         if: runner.os == 'Windows'
