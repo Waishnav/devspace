@@ -703,6 +703,7 @@ export function spawnLocalAgentDaemon(
   const entrypoint = resolveDaemonEntrypoint();
 
   const silenceSqliteWarning = new URL("../bin/silence-sqlite-warning.js", import.meta.url).href;
+
   const child = spawn(process.execPath, [
     ...daemonExecArgv(process.execArgv),
     "--import",

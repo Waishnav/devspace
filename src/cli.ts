@@ -83,6 +83,7 @@ type Command =
   | "version";
 
 const require = createRequire(import.meta.url);
+
 // SAFETY: package.json always declares engines.node; it is the single source for the supported range.
 const SUPPORTED_NODE_RANGE = (require("../package.json") as { engines: { node: string } }).engines.node;
 

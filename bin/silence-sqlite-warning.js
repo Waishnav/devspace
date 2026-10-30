@@ -4,9 +4,11 @@
 const emitWarning = process.emitWarning;
 
 process.emitWarning = function (warning, ...args) {
-  const type = typeof args[0] === "string" ? args[0] : args[0]?.type;
-  const message = typeof warning === "string" ? warning : warning?.message;
+  // emitWarning(warning, type) and emitWarning(warning, { type }) are both valid call shapes.
+  const type = args[0]?.type ?? args[0];
+  const message = String(warning?.message ?? warning);
 
-  if (type === "ExperimentalWarning" && message?.startsWith("SQLite")) return;
+  if (type === "ExperimentalWarning" && message.startsWith("SQLite")) return;
+
   return emitWarning.call(process, warning, ...args);
 };

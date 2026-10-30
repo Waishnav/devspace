@@ -26,6 +26,7 @@ export function transaction<T>(
     try {
       const result = run();
       database.exec(`release ${savepoint}`);
+
       return result;
     } catch (error) {
       database.exec(`rollback to ${savepoint}`);
@@ -39,6 +40,7 @@ export function transaction<T>(
   try {
     const result = run();
     database.exec("commit");
+
     return result;
   } catch (error) {
     if (database.isTransaction) database.exec("rollback");
