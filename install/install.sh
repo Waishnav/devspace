@@ -132,8 +132,9 @@ install_package() {
   mkdir -p "$INSTALL_DIR/npm"
   # npm's shebang resolves `node` from PATH, so put the selected Node first.
   # DevSpace and its dependencies ship prebuilt binaries, so no install scripts are needed.
+  # --prefer-online revalidates cached metadata, so a rerun right after a release installs that release.
   PATH="$NODE_BIN_DIR:$PATH" "$NODE_BIN_DIR/npm" install --global --prefix "$INSTALL_DIR/npm" \
-    --ignore-scripts --no-fund --no-audit --no-update-notifier --loglevel=error "$PACKAGE_SPEC"
+    --ignore-scripts --prefer-online --no-fund --no-audit --no-update-notifier --loglevel=error "$PACKAGE_SPEC"
 }
 
 write_launchers() {
