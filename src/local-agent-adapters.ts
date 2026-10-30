@@ -64,7 +64,7 @@ export function createLocalAgentProviderRegistry(
 ): LocalAgentProviderRegistry {
   return new LocalAgentProviderRegistry()
     .register("codex", ({ env }) => new CodexLocalAgentDriver(env))
-    .register("claude", ({ env }) => new ClaudeLocalAgentDriver(options.claudeQueryFactory, env))
+    .register("claude", ({ env, envOverrides }) => new ClaudeLocalAgentDriver(options.claudeQueryFactory, env, envOverrides))
     .register("opencode", ({ env }) => new OpencodeLocalAgentDriver({ factory: options.opencodeFactory, env }))
     .register("pi", ({ env }) => new PiLocalAgentDriver(options.piRpcFactory, env))
     .register("acp", ({ instance, env }) => new AcpLocalAgentDriver({

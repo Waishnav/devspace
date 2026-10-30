@@ -56,6 +56,16 @@ test("the Claude command environment drops parent Claude Code session variables"
   assert.equal(env.PATH, "/usr/bin");
 });
 
+test("a Claude session variable set in the provider config env is kept", () => {
+  const env = claudeCommandEnvironment(
+    { CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "claude-vscode" },
+    { CLAUDE_CODE_ENTRYPOINT: "claude-vscode" },
+  );
+
+  assert.equal(env.CLAUDE_CODE_ENTRYPOINT, "claude-vscode");
+  assert.equal(env.CLAUDECODE, undefined);
+});
+
 test("the OpenCode final response is the last assistant text or structured output", () => {
   assert.equal(
     extractOpenCodeFinalResponse({
