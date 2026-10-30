@@ -73,7 +73,11 @@ function Select-Node {
     # Pin the real binary, since version managers switch what `node` points to but keep each version on disk.
     # nvm-windows repoints a symlinked directory, which process.execPath may report unresolved, so follow it.
     $dir = Get-Item -LiteralPath (Split-Path $system.Source)
-    if ($dir.LinkType -and $dir.Target) { return Join-Path @($dir.Target)[0] (Split-Path $system.Source -Leaf) }
+    if ($dir.LinkType -and $dir.Target) {
+      $target = @($dir.Target)[0]
+      if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path $dir.FullName) $target }
+      return Join-Path $target (Split-Path $system.Source -Leaf)
+    }
     return (& $system.Source -p "process.execPath")
   }
   if ($system) { Write-Host "Found Node $(& $system.Source --version), but DevSpace needs >=$NodeMin <$NodeMaxMajor." }
