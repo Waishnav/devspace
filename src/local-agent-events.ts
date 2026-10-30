@@ -150,6 +150,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 const SECRET_ASSIGNMENT = /\b([A-Za-z0-9_]*(?:api[_-]?key|token|secret|password|passwd|authorization|credential)[A-Za-z0-9_]*)(["']?\s*[:=]\s*["']?)(?:Bearer\s+)?([^\s"',;]{4,})/gi;
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
 
+// `Authorization: Basic <credential>` (or any scheme): redact the whole value, not just the scheme word.
+const AUTHORIZATION_VALUE = /\b(authorization["']?\s*[:=]\s*["']?)[A-Za-z][\w-]*\s+[^\s"',;]+/gi;
+
 // `https://user:pass@host`: keep the user, drop the password. The password runs to the
 // authority's last `@` (it may contain `@`) and never past `/`, `?` or `#`.
 const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*):[^\s/?#]*@(?=[^\s/?#@]*(?:[\s/?#]|$))/gi;
@@ -162,6 +165,7 @@ export function redactSecrets(text: string): string {
   let redacted = text;
 
   for (const pattern of SECRET_PATTERNS) redacted = redacted.replace(pattern, "[redacted]");
+  redacted = redacted.replace(AUTHORIZATION_VALUE, "$1[redacted]");
   redacted = redacted.replace(BEARER, "Bearer [redacted]");
   redacted = redacted.replace(URL_PASSWORD, "$1:[redacted]@");
   redacted = redacted.replace(SECRET_FLAG, "$1[redacted]");

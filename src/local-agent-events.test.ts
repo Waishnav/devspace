@@ -59,3 +59,14 @@ test("a process-launch cause reports the agent's stderr, or else its nested erro
     "spawn grok ENOENT",
   );
 });
+
+test("an Authorization value is redacted in full, whatever its scheme", () => {
+  assert.equal(
+    providerErrorDetail({ message: "init failed", cause: { stderr: "GET /models Authorization: Basic dXNlcjpwYXNz failed" } }),
+    "GET /models Authorization: [redacted] failed",
+  );
+  assert.equal(
+    providerErrorDetail({ message: "init failed", cause: { stderr: "authorization=Bearer abcdefghijklmnop" } }),
+    "authorization=[redacted]",
+  );
+});

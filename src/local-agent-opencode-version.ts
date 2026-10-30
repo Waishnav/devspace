@@ -148,6 +148,8 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
 }
 
 const OPENCODE_MODELS_TIMEOUT_MS = 60_000;
+const OPENCODE_MODELS_MAX_BYTES = 4 * 1024 * 1024;
+const OPENCODE_MODELS_KILL_GRACE_MS = 2_000;
 
 /** Runs `opencode models` through cross-spawn, so a Windows `.cmd` shim launches like the server does. */
 export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
@@ -155,6 +157,7 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
     const child = spawn(resolveOpenCodeCommand(env), ["models"], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let bytes = 0;
     let settled = false;
 
     const finish = (error?: Error) => {
@@ -166,14 +169,33 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
       else resolve(stdout);
     };
 
-    const timer = setTimeout(() => {
+    // A child that ignores SIGTERM is killed outright, so a stuck listing never outlives the command.
+    const stop = (error: Error) => {
       child.kill("SIGTERM");
-      finish(new Error(`opencode models did not finish within ${OPENCODE_MODELS_TIMEOUT_MS / 1000}s.`));
+      setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, OPENCODE_MODELS_KILL_GRACE_MS).unref();
+      finish(error);
+    };
+
+    const timer = setTimeout(() => {
+      stop(new Error(`opencode models did not finish within ${OPENCODE_MODELS_TIMEOUT_MS / 1000}s.`));
     }, OPENCODE_MODELS_TIMEOUT_MS);
 
+    const collect = (chunk: Buffer | string, into: "stdout" | "stderr") => {
+      bytes += Buffer.byteLength(chunk);
+
+      if (bytes > OPENCODE_MODELS_MAX_BYTES) {
+        stop(new Error(`opencode models printed more than ${OPENCODE_MODELS_MAX_BYTES / 1024 / 1024} MiB.`));
+
+        return;
+      }
+
+      if (into === "stdout") stdout += chunk.toString();
+      else stderr += chunk.toString();
+    };
+
     timer.unref();
-    child.stdout?.on("data", (chunk: Buffer | string) => { stdout += chunk.toString(); });
-    child.stderr?.on("data", (chunk: Buffer | string) => { stderr += chunk.toString(); });
+    child.stdout?.on("data", (chunk: Buffer | string) => collect(chunk, "stdout"));
+    child.stderr?.on("data", (chunk: Buffer | string) => collect(chunk, "stderr"));
     child.once("error", (cause) => finish(cause));
     // `close` waits for stdout/stderr to drain; `exit` can fire before the list is read.
     child.once("close", (code) => finish(
