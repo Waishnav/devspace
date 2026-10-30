@@ -36,7 +36,6 @@
     "dev": "tsx scripts/dev.ts",
     "dev:seed": "tsx scripts/dev-state.ts seed",
     "dev:reset": "tsx scripts/dev-state.ts reset",
-    "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
@@ -101,6 +100,6 @@
     "undici": "8.5.0"
   },
   "optionalDependencies": {
-    "node-pty": "^1.1.0"
+    "@lydell/node-pty": "1.2.0-beta.18"
   }
 }

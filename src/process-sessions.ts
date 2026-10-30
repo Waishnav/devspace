@@ -455,16 +455,16 @@ export class ProcessSessionManager {
   }
 
   private async startPty(session: ProcessSession, input: StartCommandInput): Promise<void> {
-    let nodePty: typeof import("node-pty");
+    let nodePty: typeof import("@lydell/node-pty");
 
     try {
-      nodePty = await import("node-pty");
+      nodePty = await import("@lydell/node-pty");
     } catch {
-      throw new Error("PTY support requires the optional node-pty dependency.");
+      throw new Error("PTY support requires the optional @lydell/node-pty dependency.");
     }
 
     const shell = resolveShellCommand(input.command);
-    let pty: import("node-pty").IPty;
+    let pty: import("@lydell/node-pty").IPty;
 
     pty = nodePty.spawn(shell.executable, shell.args, {
       cwd: input.cwd,
