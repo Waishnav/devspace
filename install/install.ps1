@@ -1,6 +1,6 @@
 # DevSpace installer for Windows.
 #
-#   powershell -c "irm https://raw.githubusercontent.com/Waishnav/devspace/main/install/install.ps1 | iex"
+#   powershell -c "irm https://devspace.run/install.ps1 | iex"
 #
 # Mirrors install.sh: uses a compatible Node already on PATH, otherwise downloads a checksum-verified Node 24 LTS
 # for DevSpace alone, installs @waishnav/devspace into a user-owned npm prefix, writes `devspace` launchers that

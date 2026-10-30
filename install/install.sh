@@ -1,7 +1,7 @@
 #!/bin/sh
 # DevSpace installer for macOS, Linux, and WSL.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Waishnav/devspace/main/install/install.sh | sh
+#   curl -fsSL https://devspace.run/install | sh
 #
 # Uses a compatible Node already on PATH, otherwise downloads a checksum-verified Node 24 LTS for DevSpace alone.
 # Installs @waishnav/devspace into a user-owned npm prefix (no sudo), writes `devspace` launchers that pin that
