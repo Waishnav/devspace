@@ -5,17 +5,32 @@ sidebar:
   icon: rocket
 ---
 
-DevSpace requires Node `>=22.19 <27`, Git, and a Bash-compatible shell
-(Git Bash or WSL on Windows).
+DevSpace needs Git and a Bash-compatible shell (Git Bash or WSL on Windows).
+The installer brings its own Node when yours is missing or outside
+`>=22.19 <27`.
 
 <Steps>
-  <Step title="Run setup">
-    ```bash
-    npx @waishnav/devspace init
-    ```
+  <Step title="Install and run setup">
+    <Tabs>
+      <Tab title="macOS / Linux / WSL">
+        ```bash
+        curl -fsSL https://devspace.run/install | sh
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```powershell
+        powershell -c "irm https://devspace.run/install.ps1 | iex"
+        ```
+      </Tab>
+    </Tabs>
 
-    Or install the CLI globally with `npm install -g @waishnav/devspace` and run
-    `devspace init`.
+    The installer uses a compatible Node on your `PATH` or downloads a
+    checksum-verified Node 24 LTS for DevSpace alone, installs DevSpace without
+    `sudo`, puts `devspace` on your `PATH`, and starts `devspace init`. Rerun it
+    to update.
+
+    Already manage Node yourself? `npm install -g @waishnav/devspace` and
+    `devspace init` work too.
 
   </Step>
   <Step title="Choose where you will use it">
@@ -47,7 +62,7 @@ DevSpace requires Node `>=22.19 <27`, Git, and a Bash-compatible shell
         HTTPS origin of your tunnel (without `/mcp`). Then start the server:
 
         ```bash
-        npx @waishnav/devspace serve
+        devspace serve
         ```
 
         Add `https://your-tunnel.example.com/mcp` as a connector and approve it
@@ -62,8 +77,7 @@ DevSpace requires Node `>=22.19 <27`, Git, and a Bash-compatible shell
 ## Your first delegation
 
 From a project directory, ask your harness to delegate — or try the commands
-yourself. They assume a global install; with npx, prefix each with
-`npx @waishnav/devspace` instead of `devspace`.
+yourself.
 
 ```bash
 devspace agents targets
@@ -92,11 +106,11 @@ work in its own context.
 ## Check your setup
 
 ```bash
-npx @waishnav/devspace doctor
+devspace doctor
 ```
 
-`doctor` reports the resolved config, Node version and ABI, platform, Git,
-Bash, public URL, allowed hosts, and native SQLite status.
+`doctor` reports the resolved config, Node version, platform, Git, Bash,
+public URL, allowed hosts, and SQLite status.
 
 <CardGroup cols={2}>
   <Card title="Subagents" href="/orchestration/subagents" icon="users">

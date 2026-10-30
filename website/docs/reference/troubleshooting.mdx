@@ -3,29 +3,18 @@ title: Troubleshooting
 description: The setup issues people hit most, and the one-line fix for each.
 ---
 
-Start with `npx @waishnav/devspace doctor` — it reports config, Node, Git,
-Bash, public URL, allowed hosts, and native SQLite status.
+Start with `devspace doctor` — it reports config, Node, Git,
+Bash, public URL, allowed hosts, and SQLite status.
 
 <Accordion title="devspace: command not found">
-  Use `npx @waishnav/devspace …`, or make sure npm's global bin directory is on
+  Open a new terminal so the installer's `PATH` change applies, or rerun the
+  installer. With an npm install, make sure npm's global bin directory is on
   your `PATH`.
 </Accordion>
 
 <Accordion title="Unsupported Node version">
   DevSpace requires Node `>=22.19 <27`. Install Node 22 LTS with `nvm`, `fnm`,
   or `mise`.
-</Accordion>
-
-<Accordion title="better-sqlite3 could not load">
-  Release starts check native dependencies before launching. A load failure
-  usually means they were built for a different Node runtime. Reinstall with
-  the Node you run DevSpace with, then rerun `doctor`:
-
-  - global install: `npm install -g @waishnav/devspace`
-  - npx: remove only DevSpace's cached copy, then rerun the `npx` command.
-    With npm 11.2 or newer, find its key in `npm cache npx ls` and run
-    `npm cache npx rm <key>`. With older npm, switch to a global install.
-  - local project install: `npm rebuild better-sqlite3` in that project
 </Accordion>
 
 <Accordion title="Public URL includes /mcp">
