@@ -1,9 +1,9 @@
-import type Database from "better-sqlite3";
+import { transaction, type SqliteDatabase } from "./sqlite.js";
 
 interface Migration {
   version: number;
   name: string;
-  up(sqlite: Database.Database): void;
+  up(sqlite: SqliteDatabase): void;
 }
 
 const migrations: Migration[] = [
@@ -114,8 +114,8 @@ const migrations: Migration[] = [
   },
 ];
 
-export function migrateDatabase(sqlite: Database.Database): void {
-  const migrate = sqlite.transaction(() => {
+export function migrateDatabase(sqlite: SqliteDatabase): void {
+  transaction(sqlite, () => {
     sqlite.exec(`
       create table if not exists devspace_schema_migrations (
         version integer primary key,
@@ -158,12 +158,10 @@ export function migrateDatabase(sqlite: Database.Database): void {
       migration.up(sqlite);
       recordMigration.run(migration.version, migration.name, new Date().toISOString());
     }
-  });
-
-  migrate.immediate();
+  }, "immediate");
 }
 
-function migrateWorkspaceState(sqlite: Database.Database): void {
+function migrateWorkspaceState(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists workspace_sessions (
       id text primary key,
@@ -208,7 +206,7 @@ function migrateWorkspaceState(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workspace_sessions", "managed", "text not null default 'false'");
 }
 
-function migrateOAuthState(sqlite: Database.Database): void {
+function migrateOAuthState(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists oauth_clients (
       client_id text primary key,
@@ -251,7 +249,7 @@ function migrateOAuthState(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentSessions(sqlite: Database.Database): void {
+function migrateLocalAgentSessions(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists local_agent_sessions (
       id text primary key,
@@ -282,7 +280,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
 }
 
-function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
+function migrateWorkspaceConversationBindings(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists workspace_conversation_bindings (
       conversation_scope_id text not null,
@@ -301,12 +299,12 @@ function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
+function migrateLocalAgentStructuredErrors(sqlite: SqliteDatabase): void {
   addColumnIfMissing(sqlite, "local_agent_sessions", "error_code", "text");
   addColumnIfMissing(sqlite, "local_agent_sessions", "error_retryable", "text");
 }
 
-function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
+function migrateLocalAgentEffortRename(sqlite: SqliteDatabase): void {
   // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
@@ -335,7 +333,7 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
-function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
+function migrateWorkspaceRecoveryState(sqlite: SqliteDatabase): void {
   const workspaceStateExists = sqlite
     .prepare("select 1 from sqlite_master where type = 'table' and name = 'workspace_sessions'")
     .get();
@@ -345,7 +343,7 @@ function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workspace_sessions", "recovery_kind", "text");
 }
 
-function migrateLocalAgentTurns(sqlite: Database.Database): void {
+function migrateLocalAgentTurns(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists local_agent_turns (
       id integer primary key autoincrement,
@@ -369,7 +367,7 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
+function migrateLocalAgentProviderInstances(sqlite: SqliteDatabase): void {
   // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
@@ -389,7 +387,7 @@ function migrateLocalAgentProviderInstances(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentGenericAcpDriver(sqlite: Database.Database): void {
+function migrateLocalAgentGenericAcpDriver(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     update local_agent_sessions
     set driver = 'acp'
@@ -397,7 +395,7 @@ function migrateLocalAgentGenericAcpDriver(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentTurnEvents(sqlite: Database.Database): void {
+function migrateLocalAgentTurnEvents(sqlite: SqliteDatabase): void {
   addColumnIfMissing(sqlite, "local_agent_turns", "turn_id", "text");
   addColumnIfMissing(sqlite, "local_agent_turns", "error_detail", "text");
   addColumnIfMissing(sqlite, "local_agent_sessions", "latest_turn_id", "text");
@@ -428,7 +426,7 @@ function migrateLocalAgentTurnEvents(sqlite: Database.Database): void {
   `);
 }
 
-function migrateWorkspaceActivity(sqlite: Database.Database): void {
+function migrateWorkspaceActivity(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists workspace_turns (
       id integer primary key autoincrement,
@@ -475,7 +473,7 @@ function migrateWorkspaceActivity(sqlite: Database.Database): void {
 }
 
 function addColumnIfMissing(
-  sqlite: Database.Database,
+  sqlite: SqliteDatabase,
   table: "workspace_sessions" | "local_agent_sessions" | "local_agent_turns",
   column: string,
   definition: string,

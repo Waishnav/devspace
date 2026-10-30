@@ -1,3 +1,4 @@
+import "./silence-sqlite-warning.js";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 

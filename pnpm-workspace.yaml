@@ -1,6 +1,5 @@
 allowBuilds:
   '@google/genai': false
-  better-sqlite3: true
   esbuild: true
   koffi: true
   msgpackr-extract: false

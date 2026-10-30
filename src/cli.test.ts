@@ -29,7 +29,7 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 
 test("-v and --version print the package version", () => {
   for (const flag of ["-v", "--version"]) {
-    const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", flag], {
+    const output = execFileSync("node", ["bin/devspace.js", flag], {
       encoding: "utf8",
       env: { ...process.env, DEVSPACE_CONFIG_DIR: "/tmp/devspace-cli-version-test" },
     }).trim();
@@ -204,7 +204,7 @@ const currentWorkspaceEnv = { DEVSPACE_WORKSPACE_ID: "ws_current", DEVSPACE_WORK
 
 // Runs the source CLI against the fixture config; pass `{}` to omit the current-workspace variables.
 function execCli(args: string[], workspaceEnv: NodeJS.ProcessEnv = currentWorkspaceEnv) {
-  return execFileAsync("node", ["--import", "tsx", "src/cli.ts", ...args], {
+  return execFileAsync("node", ["bin/devspace.js", ...args], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: { ...process.env, ...cliConfigEnv, ...workspaceEnv },

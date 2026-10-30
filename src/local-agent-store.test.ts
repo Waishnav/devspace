@@ -5,7 +5,7 @@ import { mock } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { openSqlite } from "./db/sqlite.js";
 import { databasePath } from "./db/client.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 
@@ -216,7 +216,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
 
   const legacyStateDir = join(root, "legacy-state");
   mkdirSync(legacyStateDir, { recursive: true });
-  const legacy = new Database(databasePath(legacyStateDir));
+  const legacy = openSqlite(databasePath(legacyStateDir));
   legacy.exec(`
     create table devspace_schema_migrations (
       version integer primary key,
@@ -274,7 +274,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(legacyRecord?.effort, "high");
   assert.equal(legacyRecord?.providerInstanceId, "cursor");
   assert.equal(legacyRecord?.driver, "acp");
-  const inspect = new Database(databasePath(legacyStateDir), { readonly: true });
+  const inspect = openSqlite(databasePath(legacyStateDir), { readOnly: true });
 
   // SAFETY: The surrounding checks or construction already match this type.
   const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)

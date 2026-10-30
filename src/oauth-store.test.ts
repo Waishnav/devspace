@@ -57,10 +57,10 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
   const database = openDatabase(stateDir);
 
   try {
-    assert.equal(database.sqlite.pragma("journal_mode", { simple: true }), "wal");
-    assert.equal(database.sqlite.pragma("synchronous", { simple: true }), 1);
-    assert.equal(database.sqlite.pragma("busy_timeout", { simple: true }), 5000);
-    assert.equal(database.sqlite.pragma("foreign_keys", { simple: true }), 1);
+    assert.equal(database.sqlite.prepare("pragma journal_mode").get()?.journal_mode, "wal");
+    assert.equal(database.sqlite.prepare("pragma synchronous").get()?.synchronous, 1);
+    assert.equal(database.sqlite.prepare("pragma busy_timeout").get()?.timeout, 5000);
+    assert.equal(database.sqlite.prepare("pragma foreign_keys").get()?.foreign_keys, 1);
 
     const migrations = database.sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
@@ -115,17 +115,15 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   const database = openDatabase(stateDir);
 
   try {
-    // SAFETY: The surrounding checks or construction already match this type.
     const accessHashes = database.sqlite
       .prepare("select token_hash from oauth_access_tokens")
-      .pluck()
-      .all() as string[];
+      .all()
+      .map((row) => row.token_hash);
 
-    // SAFETY: The surrounding checks or construction already match this type.
     const refreshHashes = database.sqlite
       .prepare("select token_hash from oauth_refresh_tokens")
-      .pluck()
-      .all() as string[];
+      .all()
+      .map((row) => row.token_hash);
 
     assert.deepEqual(accessHashes, [hashToken(accessToken)]);
     assert.deepEqual(refreshHashes, [hashToken(refreshToken)]);

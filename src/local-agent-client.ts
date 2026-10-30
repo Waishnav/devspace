@@ -702,7 +702,13 @@ export function spawnLocalAgentDaemon(
 ): void {
   const entrypoint = resolveDaemonEntrypoint();
 
-  const child = spawn(process.execPath, [...daemonExecArgv(process.execArgv), entrypoint], {
+  const silenceSqliteWarning = new URL("../bin/silence-sqlite-warning.js", import.meta.url).href;
+  const child = spawn(process.execPath, [
+    ...daemonExecArgv(process.execArgv),
+    "--import",
+    silenceSqliteWarning,
+    entrypoint,
+  ], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
