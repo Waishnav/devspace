@@ -2,6 +2,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -44,17 +45,23 @@ function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): string {
-  const skillPath = join(name, "SKILL.md");
-  const sourcePath = join(bundledSkillsDir(), skillPath);
-  const targetPath = join(config.devspaceSkillsDir, skillPath);
+// Sync every bundled file, not just SKILL.md, so references a skill points to (such as reference.md) ship with it.
+function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): void {
+  const sourceDir = join(bundledSkillsDir(), name);
+
+  for (const file of readdirSync(sourceDir)) {
+    syncManagedFile(join(sourceDir, file), join(config.devspaceSkillsDir, name, file), name);
+  }
+}
+
+function syncManagedFile(sourcePath: string, targetPath: string, name: ManagedSkillName): void {
   const source = readFileSync(sourcePath, "utf8");
 
   if (existsSync(targetPath)) {
     const stat = lstatSync(targetPath);
 
     if (stat.isFile() && source === readFileSync(targetPath, "utf8")) {
-      return targetPath;
+      return;
     }
 
     if (stat.isDirectory()) {
@@ -72,8 +79,6 @@ function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): string 
   } finally {
     rmSync(tempPath, { force: true });
   }
-
-  return targetPath;
 }
 
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {

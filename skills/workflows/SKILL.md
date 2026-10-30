@@ -1,13 +1,21 @@
 ---
 name: workflows
-description: Run a persisted multi-agent DevSpace workflow from a script file or a named project workflow, then wait for or inspect its result.
+description: Write, run, and inspect persisted multi-agent DevSpace workflows, JavaScript scripts that compose subagent calls with agent, phase, parallel, and pipeline.
 ---
 
 # DevSpace workflows
 
 Use a workflow when a task has a repeatable multi-agent plan. Keep one-off delegation on the `subagents` commands.
 
-Named workflows live in the current project's `.devspace/workflows/` directory. Run a named workflow or a specific file:
+Named workflows live in the current project's `.devspace/workflows/` directory.
+
+## Write a workflow
+
+Before writing or editing a workflow script, read `reference.md` next to this file. It defines the only syntax and primitives the sandbox accepts (`agent`, `phase`, `parallel`, `pipeline`, `workflow`, `log`, `args`), the `meta` rules, `agent` options, structured output schemas, and limits. Do not guess the API.
+
+## Run a workflow
+
+Run a named workflow or a specific file:
 
 ```bash
 devspace workflow run --name <name> [--args '<json>']
@@ -40,10 +48,10 @@ Cancel only when the parent task no longer needs the run:
 devspace workflow cancel <id>
 ```
 
-Resume an interrupted or failed run from its durable call history:
+Resume an interrupted or failed run from its durable call history. Resume reuses the original arguments and write mode:
 
 ```bash
-devspace workflow run --resume <id> [--args '<json>']
+devspace workflow run --resume <id>
 ```
 
 Use `--json` only for scripts that need structured output.
