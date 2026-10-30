@@ -29,6 +29,7 @@ import type {
   LocalAgentRunResult,
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
+  LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
 const PI_READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
@@ -365,6 +366,34 @@ export function piModelsFromResponse(response: WireInput): LocalAgentModel[] {
   });
 }
 
+/**
+ * In read_only and allowed mode DevSpace's sandbox extension replaces Pi's file and shell tools to enforce the
+ * workspace boundary, so user extensions are disabled: one that also overrides those tools stops Pi from starting,
+ * and one that won would bypass the sandbox. Explicit `--extension` paths still load. full_access has no sandbox and
+ * keeps the user's extensions.
+ */
+export function piLaunchArgs(
+  launchArgs: readonly string[],
+  writeMode: LocalAgentWriteMode,
+  sandboxPath: string | undefined,
+): string[] {
+  if (writeMode === "full_access") return [...launchArgs, "--mode", "rpc", "--approve"];
+
+  if (!sandboxPath) throw new Error(`Pi ${writeMode} runs require the DevSpace sandbox extension.`);
+
+  return [
+    ...launchArgs,
+    "--mode",
+    "rpc",
+    "--approve",
+    "--no-extensions",
+    "--extension",
+    sandboxPath,
+    "--tools",
+    (writeMode === "read_only" ? PI_READ_ONLY_TOOLS : PI_ALLOWED_TOOLS).join(","),
+  ];
+}
+
 async function defaultPiRpcFactory(
   context: LocalAgentRuntimeContext,
   env: NodeJS.ProcessEnv,
@@ -391,18 +420,7 @@ async function defaultPiRpcFactory(
     ? undefined
     : await materializePiSandboxExtension(context.workspaceRoot, writeMode);
 
-  const args = [
-    ...launch.args,
-    "--mode",
-    "rpc",
-    "--approve",
-    ...(writeMode === "full_access" ? [] : ["--extension", sandbox!.path]),
-    ...(writeMode === "read_only"
-      ? ["--tools", PI_READ_ONLY_TOOLS.join(",")]
-      : writeMode === "allowed"
-        ? ["--tools", PI_ALLOWED_TOOLS.join(",")]
-        : []),
-  ];
+  const args = piLaunchArgs(launch.args, writeMode, sandbox?.path);
 
   try {
     return {
