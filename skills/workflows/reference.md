@@ -68,7 +68,7 @@ const failures = results.filter((r) => r.status === "failed").map((r) => r.error
 | `schema` | JSON Schema for a structured response (see below). |
 | `writeMode` | `"read_only"` or `"allowed"`. Defaults to the run's authority and can never exceed it. |
 | `isolation` | `"worktree"`: run this call in its own Git worktree created from committed `HEAD`. |
-| `workspace` | A logical name (letters, digits, `_`, `-`; at most 64) that calls in this run share. Never a path. |
+| `workspace` | A logical name (letters, digits, `_`, `-`; at most 64) for a worktree that later calls in this run reuse. Never a path. The first call that uses a name must also pass `isolation: "worktree"` to create it; later calls pass only `workspace`. |
 
 Any other option is rejected. Each prompt should be self-contained: a subagent sees only its prompt and the
 project, not the rest of the workflow.
@@ -96,8 +96,18 @@ Schemas are strict draft-07 with inline structural constraints only: at most 16 
 
 Runs are read-only unless started with `devspace workflow run ... --write-mode allowed`. In a writing run, give
 editing calls `writeMode: "allowed"`. Add `isolation: "worktree"` when parallel calls might edit the same files, so
-each works in its own worktree; isolated worktrees do not see uncommitted changes. Worktrees are kept for
+each works in its own worktree; isolated worktrees do not see uncommitted changes. To let several calls work on the
+same tree in turn (implement, then review, then fix), create a named worktree once and reuse it:
+
+```js
+await agent("Implement the change.", { target: "claude", writeMode: "allowed", isolation: "worktree", workspace: "feature" });
+await agent("Review the uncommitted diff.", { target: "codex", writeMode: "read_only", workspace: "feature" });
+```
+
+Without `workspace` or `isolation`, calls run in the checkout the workflow was started from. Worktrees are kept for
 inspection afterwards.
+
+For proven multi-step engineering loops (plan, implement, review, QA, bake-offs, fan-out), see `patterns.md`.
 
 ## Resume
 

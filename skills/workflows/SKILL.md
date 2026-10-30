@@ -13,6 +13,8 @@ Named workflows live in the current project's `.devspace/workflows/` directory.
 
 Before writing or editing a workflow script, read `reference.md` next to this file. It defines the only syntax and primitives the sandbox accepts (`agent`, `phase`, `parallel`, `pipeline`, `workflow`, `log`, `args`), the `meta` rules, `agent` options, structured output schemas, and limits. Do not guess the API.
 
+Then read `patterns.md` for proven engineering loops to adapt: plan with a critic, implement-review-fix until approved, a QA gate that loops until tests pass, explore-then-synthesize, multi-lens review with verified findings, bake-offs between agents, mapping one change over many units, debugging with competing hypotheses, and composing them.
+
 ## Run a workflow
 
 Run a named workflow or a specific file:
