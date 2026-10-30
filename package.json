@@ -38,7 +38,7 @@
     "dev:reset": "tsx scripts/dev-state.ts reset",
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
-    "start": "node dist/cli.js serve",
+    "start": "node --import ./bin/silence-sqlite-warning.js dist/cli.js serve",
     "test": "tsx --import ./bin/silence-sqlite-warning.js --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/qa/tsconfig.json && tsc -p test/agents-replay/tsconfig.json",
