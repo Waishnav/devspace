@@ -205,6 +205,9 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
     };
 
     timer.unref();
+    // Decode across chunk boundaries so a multibyte character split between chunks stays intact in model ids.
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: Buffer | string) => collect(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer | string) => collect(chunk, "stderr"));
     child.once("error", (cause) => finish(cause));
