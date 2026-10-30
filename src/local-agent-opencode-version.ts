@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { terminateProcessTree } from "./process-platform.js";
 import {
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
@@ -154,11 +155,14 @@ const OPENCODE_MODELS_KILL_GRACE_MS = 2_000;
 /** Runs `opencode models` through cross-spawn, so a Windows `.cmd` shim launches like the server does. */
 export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(resolveOpenCodeCommand(env), ["models"], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    // Its own process group, so a stop reaches anything `opencode models` started, not just the command itself.
+    const detached = process.platform !== "win32";
+    const child = spawn(resolveOpenCodeCommand(env), ["models"], { cwd, env, detached, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let bytes = 0;
     let settled = false;
+    let stopError: Error | undefined;
 
     const finish = (error?: Error) => {
       if (settled) return;
@@ -169,11 +173,16 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
       else resolve(stdout);
     };
 
-    // A child that ignores SIGTERM is killed outright, so a stuck listing never outlives the command.
+    // A child that ignores SIGTERM is killed outright, and the command reports the failure only once the child is
+    // gone (or, if it never closes, after the kill), so a stuck listing never outlives the command.
     const stop = (error: Error) => {
-      child.kill("SIGTERM");
-      setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, OPENCODE_MODELS_KILL_GRACE_MS).unref();
-      finish(error);
+      if (stopError || settled) return;
+      stopError = error;
+      terminateProcessTree(child, "SIGTERM", detached);
+      setTimeout(() => {
+        terminateProcessTree(child, "SIGKILL", detached);
+        setTimeout(() => finish(error), OPENCODE_MODELS_KILL_GRACE_MS).unref();
+      }, OPENCODE_MODELS_KILL_GRACE_MS).unref();
     };
 
     const timer = setTimeout(() => {
@@ -182,6 +191,8 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
 
     const collect = (chunk: Buffer | string, into: "stdout" | "stderr") => {
       bytes += Buffer.byteLength(chunk);
+
+      if (stopError) return;
 
       if (bytes > OPENCODE_MODELS_MAX_BYTES) {
         stop(new Error(`opencode models printed more than ${OPENCODE_MODELS_MAX_BYTES / 1024 / 1024} MiB.`));
@@ -199,7 +210,7 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
     child.once("error", (cause) => finish(cause));
     // `close` waits for stdout/stderr to drain; `exit` can fire before the list is read.
     child.once("close", (code) => finish(
-      code === 0 ? undefined : new Error(stderr.trim() || `opencode models exited with code ${code ?? 1}.`),
+      stopError ?? (code === 0 ? undefined : new Error(stderr.trim() || `opencode models exited with code ${code ?? 1}.`)),
     ));
   });
 }
