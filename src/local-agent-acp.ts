@@ -31,6 +31,7 @@ import type {
   LocalAgentRunResult,
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
+  LocalAgentModel,
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { resolveExecutableCommand } from "./local-agent-command.js";
@@ -324,6 +325,18 @@ export class AcpRuntime implements LocalAgentRuntime {
     }
   }
 
+  /** Opens a throwaway read-only session in `workspaceRoot` to read the models the agent offers there. */
+  async listModels(workspaceRoot: string): Promise<LocalAgentModel[]> {
+    const response = await this.connection.agent.request("session/new", {
+      cwd: workspaceRoot,
+      mcpServers: [],
+      ...this.additionalDirectoryParams(),
+      ...this.permissionMeta({ prompt: "", workspaceRoot, writeMode: "read_only" }),
+    });
+
+    return acpModelsFromSession(response, this.flavor);
+  }
+
   private async openSession(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<string> {
     if (input.providerSessionId) {
       if (this.liveSessions.has(input.providerSessionId)) {
@@ -592,6 +605,31 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
     this.configuredCommand = options.command;
     this.configuredArgs = options.args;
     this.commandResolver = options.commandResolver ?? resolveAcpCommand;
+  }
+
+  async listModels(workspaceRoot: string) {
+    const runtime = await this.createRuntime({
+      agentId: "models",
+      providerInstanceId: this.providerInstanceId,
+      provider: this.provider,
+      workspaceRoot,
+      writeMode: "read_only",
+    });
+
+    if (runtime.isErr()) return runtime;
+
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        try {
+          // SAFETY: createRuntime only ever returns an AcpRuntime.
+          return await unsafeNarrow<AcpRuntime>(runtime.value).listModels(workspaceRoot);
+        } finally {
+          await runtime.value.close();
+        }
+      },
+    });
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -894,6 +932,77 @@ export function acpCommandArgs(
       : ["--allow-all-tools", "--add-dir", resolve(context.workspaceRoot)]),
     "-C", resolve(context.workspaceRoot),
   ];
+}
+
+/** Reads selectable models from a `session/new` response: Grok model state, a `model` select, or ACP `models`. */
+export function acpModelsFromSession(response: WireInput, flavor: AcpFlavor): LocalAgentModel[] {
+  if (flavor === "grok") {
+    const state = readGrokSessionState(response);
+
+    return (state?.availableModels ?? []).map((model) => ({
+      id: model.id,
+      ...optionalFields(model.reasoningEfforts.length > 0 ? { efforts: [...model.reasoningEfforts] } : undefined),
+      ...optionalFields(model.id === state?.currentModelId ? { default: true } : undefined),
+    }));
+  }
+
+  const record = asRecord(response);
+  const session = asRecord(record?.newSessionResponse) ?? record;
+
+  const selects = (readArray(session, "configOptions") ?? []).map(asRecord)
+    .filter((option): option is JsonObject => option?.type === "select");
+
+  const modelSelect = selects.find((option) => option.category === "model");
+
+  const effortSelect = selects.find((option) => option.category === "thought_level");
+  const efforts = effortSelect ? flattenAcpSelectValues(effortSelect) : [];
+
+  if (modelSelect) {
+    const current = directString(modelSelect.currentValue);
+
+    return flattenAcpSelectOptions(modelSelect).map(({ value, name }) => ({
+      id: value,
+      ...optionalFields(name ? { name } : undefined),
+      ...optionalFields(efforts.length > 0 ? { efforts } : undefined),
+      ...optionalFields(value === current ? { default: true } : undefined),
+    }));
+  }
+
+  const models = asRecord(session?.models);
+  const current = directString(models?.currentModelId);
+
+  return (readArray(models, "availableModels") ?? []).flatMap((entry) => {
+    const model = asRecord(entry);
+    const id = directString(model?.modelId);
+
+    if (!id) return [];
+
+    const name = directString(model?.name);
+
+    return [{
+      id,
+      ...optionalFields(name ? { name } : undefined),
+      ...optionalFields(id === current ? { default: true } : undefined),
+    }];
+  });
+}
+
+function flattenAcpSelectOptions(option: JsonObject): Array<{ value: string; name?: string }> {
+  return (readArray(option, "options") ?? []).flatMap((item) => {
+    const record = asRecord(item);
+    const value = directString(record?.value);
+
+    if (value) return [{ value, ...optionalFields(directString(record?.name) ? { name: directString(record?.name)! } : undefined) }];
+
+    return (readArray(record, "options") ?? []).flatMap((nested) => {
+      const nestedRecord = asRecord(nested);
+      const nestedValue = directString(nestedRecord?.value);
+
+      return nestedValue
+        ? [{ value: nestedValue, ...optionalFields(directString(nestedRecord?.name) ? { name: directString(nestedRecord?.name)! } : undefined) }]
+        : [];
+    });
+  });
 }
 
 export function resolveAcpModelConfigUpdate(

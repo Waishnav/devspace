@@ -40,7 +40,9 @@ import {
   formatAgentTurnEvent,
   formatAgentReceipt,
   formatAgentSummary,
+  formatAgentModels,
   formatAgentTargetCatalog,
+  type AgentModelsOutput,
   presentAgentObservation,
   presentAgentReceipt,
   presentAgentSummary,
@@ -658,6 +660,10 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       await runAgentWorkflowCommand(json, () => runAgentsTargets(commandArgs, json));
 
       return;
+    case "models":
+      await runAgentWorkflowCommand(json, () => runAgentsModels(commandArgs, json));
+
+      return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
 
@@ -703,6 +709,48 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
 
   if (json) printJson(output);
   else printAgentXml(formatAgentTargetCatalog(output));
+}
+
+/** Asks each enabled provider (or the named one, enabled or not) which models it offers here. */
+async function runAgentsModels(args: string[], json: boolean): Promise<void> {
+  if (args.length > 1) throw new Error("Usage: devspace agents models [provider] [--json]");
+  const [name] = args;
+  const config = loadAgentConfig();
+  const { workspaceRoot } = resolveAgentCliWorkspaceContext(config);
+  // Loaded on demand: the adapters pull in every provider SDK, which other commands never need.
+  const { createLocalAgentDrivers } = await import("./local-agent-adapters.js");
+  const { providerErrorDetail } = await import("./local-agent-events.js");
+  const drivers = createLocalAgentDrivers({ subagents: config.subagents });
+
+  const selected = name
+    ? drivers.filter((driver) => driver.providerInstanceId === name)
+    : drivers.filter((driver) => config.subagents.providers.some((provider) => provider.id === driver.providerInstanceId && provider.enabled));
+
+  if (name && selected.length === 0) throw new Error(`Unknown subagent provider: ${name}.`);
+
+  const detail = (error: Parameters<typeof providerErrorDetail>[0]) => {
+    const text = providerErrorDetail(error);
+
+    return text ? { detail: text } : undefined;
+  };
+
+  const results: AgentModelsOutput[] = await Promise.all(selected.map(async (driver) => {
+    const models = await driver.listModels!(workspaceRoot);
+
+    return models.isOk()
+      ? { provider: driver.providerInstanceId, models: models.value }
+      : {
+        provider: driver.providerInstanceId,
+        error: {
+          code: models.error.code,
+          message: models.error.message,
+          ...optionalFields(detail(models.error)),
+        },
+      };
+  }));
+
+  if (json) printJson(results);
+  else printAgentXml(formatAgentModels(results));
 }
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
@@ -1136,6 +1184,7 @@ function printAgentsHelp(): void {
       "  devspace agents stop <id> [--json]",
       "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
       "  devspace agents targets [--json]",
+      "  devspace agents models [provider] [--json]",
       "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
       "  devspace agents daemon <status|stop|logs> [--json]",
       "",

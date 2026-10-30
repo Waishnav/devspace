@@ -23,6 +23,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
   LocalAgentWriteMode,
+  LocalAgentModel,
 } from "./local-agent-runtime.js";
 
 export interface ResolvedCodexCommand {
@@ -129,6 +130,19 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
       capabilities: {},
     });
     this.rpc.notify("initialized");
+  }
+
+  async listModels(): Promise<LocalAgentModel[]> {
+    const pages: WireInput[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await this.rpc.request("model/list", optionalFields(cursor ? { cursor } : undefined));
+      pages.push(page);
+      cursor = readString(page, "nextCursor");
+    } while (cursor && pages.length < 20);
+
+    return codexModelsFromPages(pages);
   }
 
   async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
@@ -336,6 +350,25 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
             cause: codexAppServerError(errorMessage(cause), command.version),
             message: "Codex app-server initialization failed.",
           });
+        }
+      },
+    });
+  }
+
+  async listModels(_workspaceRoot: string) {
+    const runtime = await this.createRuntime({ agentId: "models", providerInstanceId: this.providerInstanceId, provider: this.provider, workspaceRoot: _workspaceRoot });
+
+    if (runtime.isErr()) return runtime;
+
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        try {
+          // SAFETY: createRuntime only ever returns a CodexAppServerRuntime.
+          return await unsafeNarrow<CodexAppServerRuntime>(runtime.value).listModels();
+        } finally {
+          await runtime.value.close();
         }
       },
     });
@@ -728,6 +761,18 @@ function readString(value: WireInput, key: string): string | undefined {
   return isJsonString(result) ? result : undefined;
 }
 
+function readArray(value: WireInput, key: string): WireInput[] | undefined {
+  const result = asRecord(value)?.[key];
+
+  return Array.isArray(result) ? result : undefined;
+}
+
+function readBoolean(value: WireInput, key: string): boolean | undefined {
+  const result = asRecord(value)?.[key];
+
+  return result === true || result === false ? result : undefined;
+}
+
 function directString(value: WireInput): string | undefined {
   return isJsonString(value) && value.trim() ? value.trim() : undefined;
 }
@@ -753,4 +798,24 @@ function appendTail(value: string, chunk: string, maxBytes: number): string {
   const bytes = Buffer.from(next, "utf8");
 
   return bytes.subarray(bytes.length - maxBytes).toString("utf8");
+}
+
+/** Maps `model/list` pages to selectable models, skipping ones hidden from Codex's own picker. */
+export function codexModelsFromPages(pages: readonly WireInput[]): LocalAgentModel[] {
+  return pages.flatMap((page) => readArray(page, "data") ?? []).flatMap((entry) => {
+    const id = readString(entry, "model") ?? readString(entry, "id");
+
+    if (!id || readBoolean(entry, "hidden") === true) return [];
+
+    const efforts = (readArray(entry, "supportedReasoningEfforts") ?? [])
+      .map((effort) => readString(effort, "reasoningEffort"))
+      .filter((effort): effort is string => effort !== undefined);
+
+    return [{
+      id,
+      ...optionalFields(readString(entry, "displayName") ? { name: readString(entry, "displayName")! } : undefined),
+      ...optionalFields(efforts.length > 0 ? { efforts } : undefined),
+      ...optionalFields(readBoolean(entry, "isDefault") === true ? { default: true } : undefined),
+    }];
+  });
 }

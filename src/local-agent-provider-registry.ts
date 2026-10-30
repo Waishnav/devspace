@@ -1,3 +1,5 @@
+import { Result } from "better-result";
+import { AgentProviderUnavailableError } from "./local-agent-errors.js";
 import type {
   SubagentProviderConfig,
   SubagentsConfig,
@@ -69,5 +71,17 @@ class ProviderInstanceDriver implements LocalAgentDriver {
 
   createRuntime(context: Parameters<LocalAgentDriver["createRuntime"]>[0]) {
     return this.driver.createRuntime(context);
+  }
+
+  listModels(workspaceRoot: string) {
+    return this.driver.listModels
+      ? this.driver.listModels(workspaceRoot)
+      : Promise.resolve(Result.err(new AgentProviderUnavailableError({
+        code: "PROVIDER_UNAVAILABLE",
+        provider: this.provider,
+        operation: "list_models",
+        retryable: false,
+        message: `${this.providerInstanceId} cannot list its models.`,
+      })));
   }
 }

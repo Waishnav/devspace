@@ -89,10 +89,20 @@ export interface LocalAgentRuntime {
   isAlive(): boolean;
 }
 
+/** A model a harness reports as selectable. `id` is exactly what `--model` and profile `model` accept. */
+export interface LocalAgentModel {
+  id: string;
+  name?: string;
+  efforts?: string[];
+  default?: boolean;
+}
+
 export interface LocalAgentDriver {
   readonly providerInstanceId: LocalAgentProviderInstanceId;
   readonly provider: LocalAgentDriverKind;
   readonly runtimePolicy: LocalAgentRuntimePolicy;
   readonly capabilities: LocalAgentCapabilities;
   createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
+  /** Starts the harness just long enough to ask which models it offers in `workspaceRoot`. */
+  listModels?(workspaceRoot: string): Promise<Result<LocalAgentModel[], AgentProviderError>>;
 }

@@ -2,6 +2,7 @@ import { optionalFields } from "./json-value.js";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
 import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentRecord, LocalAgentStatus } from "./local-agent-store.js";
+import type { LocalAgentModel } from "./local-agent-runtime.js";
 
 export type AgentCommandStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -167,6 +168,30 @@ export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): str
   });
 
   return [...targets, ...unavailable].join("\n");
+}
+
+export interface AgentModelsOutput {
+  provider: string;
+  models?: LocalAgentModel[];
+  error?: { code: string; message: string; detail?: string };
+}
+
+export function formatAgentModels(results: readonly AgentModelsOutput[]): string {
+  return results.map(({ provider, models, error }) => {
+    if (error) {
+      const cause = error.detail ? `<cause>${escapeXmlText(error.detail)}</cause>` : "";
+
+      return `<models provider="${escapeXmlAttribute(provider)}" error="${escapeXmlAttribute(error.code)}">${escapeXmlText(error.message)}${cause}</models>`;
+    }
+
+    const rows = (models ?? []).map((model) => `<model id="${escapeXmlAttribute(model.id)}"${xmlAttributes({
+      name: model.name,
+      efforts: model.efforts?.join(","),
+      default: model.default ? "true" : undefined,
+    })}/>`);
+
+    return [`<models provider="${escapeXmlAttribute(provider)}">`, ...rows, "</models>"].join("\n");
+  }).join("\n");
 }
 
 export function formatAgentReceipt(receipt: AgentReceiptOutput): string {
