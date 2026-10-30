@@ -168,6 +168,8 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
 
       if (error) reject(error);
       else resolve(stdout);
@@ -179,11 +181,18 @@ export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<
       if (stopError || settled) return;
       stopError = error;
       terminateProcessTree(child, "SIGTERM", detached);
+      // Kept referenced: the escalation must run even if nothing else holds the process open.
       setTimeout(() => {
         terminateProcessTree(child, "SIGKILL", detached);
-        setTimeout(() => finish(error), OPENCODE_MODELS_KILL_GRACE_MS).unref();
-      }, OPENCODE_MODELS_KILL_GRACE_MS).unref();
+        setTimeout(() => finish(error), OPENCODE_MODELS_KILL_GRACE_MS);
+      }, OPENCODE_MODELS_KILL_GRACE_MS);
     };
+
+    // The listing has its own process group, so a terminal Ctrl-C does not reach it: forward it while it runs.
+    const interrupt = (signal: NodeJS.Signals) => stop(new Error(`opencode models was interrupted by ${signal}.`));
+
+    process.once("SIGINT", interrupt);
+    process.once("SIGTERM", interrupt);
 
     const timer = setTimeout(() => {
       stop(new Error(`opencode models did not finish within ${OPENCODE_MODELS_TIMEOUT_MS / 1000}s.`));
