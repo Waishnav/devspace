@@ -134,7 +134,8 @@ jobs:
           $devspace = Join-Path $env:LOCALAPPDATA "devspace\bin\devspace.cmd"
           Get-Content $devspace
           if ("${{ matrix.node }}" -eq "managed") {
-            if (-not (Select-String -Quiet -SimpleMatch (Join-Path $env:LOCALAPPDATA "devspace\install\node\node.exe") $devspace)) { throw "launcher does not pin the managed Node" }
+            # Launchers spell profile paths through %LOCALAPPDATA% so non-ASCII usernames survive cmd.exe.
+            if (-not (Select-String -Quiet -SimpleMatch "%LOCALAPPDATA%\devspace\install\node\node.exe" $devspace)) { throw "launcher does not pin the managed Node" }
           }
 
           & $devspace --version
