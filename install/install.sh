@@ -8,7 +8,7 @@
 # Node, then runs `devspace init`. Rerun it to update.
 #
 # Environment overrides:
-#   DEVSPACE_VERSION      npm version or dist-tag to install (default: latest)
+#   DEVSPACE_VERSION      npm version or dist-tag to install (default: beta)
 #   DEVSPACE_INSTALL_DIR  runtime and package location (default: ~/.local/share/devspace/install)
 #   DEVSPACE_BIN_DIR      launcher location (default: ~/.local/bin)
 #   DEVSPACE_NO_INIT=1    skip running `devspace init` afterwards
@@ -18,7 +18,9 @@
 set -eu
 
 PACKAGE="@waishnav/devspace"
-VERSION="${DEVSPACE_VERSION:-latest}"
+# v1.1 is the first release installable without install scripts, and it is still on the beta tag.
+# Switch this to latest once v1.1 ships as stable.
+VERSION="${DEVSPACE_VERSION:-beta}"
 PACKAGE_SPEC="${DEVSPACE_PACKAGE_SPEC:-$PACKAGE@$VERSION}"
 INSTALL_DIR="${DEVSPACE_INSTALL_DIR:-$HOME/.local/share/devspace/install}"
 BIN_DIR="${DEVSPACE_BIN_DIR:-$HOME/.local/bin}"
@@ -107,8 +109,13 @@ select_node() {
   if [ -x "$INSTALL_DIR/node/bin/node" ] && node_is_compatible "$INSTALL_DIR/node/bin/node"; then
     NODE="$INSTALL_DIR/node/bin/node"
   elif command -v node >/dev/null 2>&1 && node_is_compatible "$(command -v node)"; then
-    # Resolve through version-manager shims (mise, asdf, Volta) so the launcher pins this Node, not the shim.
-    NODE=$(node -p process.execPath)
+    NODE=$(command -v node)
+
+    # A version-manager shim (mise, asdf, nodenv, Volta) re-resolves on every run, so pin the Node behind it.
+    # Anything else stays as found: Homebrew's bin/node symlink survives upgrades, its Cellar target does not.
+    case "$NODE" in
+      */shims/node | */.volta/bin/node) NODE=$("$NODE" -p process.execPath) ;;
+    esac
   else
     if command -v node >/dev/null 2>&1; then
       info "Found Node $(node --version), but DevSpace needs >=$NODE_MIN <$NODE_MAX_MAJOR."

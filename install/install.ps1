@@ -6,14 +6,16 @@
 # for DevSpace alone, installs @waishnav/devspace into a user-owned npm prefix, writes `devspace` launchers that
 # pin that Node, then runs `devspace init`. Rerun it to update. DevSpace itself also needs Git Bash on Windows.
 #
-# Environment overrides: DEVSPACE_VERSION, DEVSPACE_INSTALL_DIR, DEVSPACE_BIN_DIR, DEVSPACE_NO_INIT=1,
+# Environment overrides: DEVSPACE_VERSION (default: beta), DEVSPACE_INSTALL_DIR, DEVSPACE_BIN_DIR, DEVSPACE_NO_INIT=1,
 # DEVSPACE_NO_MODIFY_PATH=1, DEVSPACE_PACKAGE_SPEC (see install.sh).
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Package = "@waishnav/devspace"
-$Version = if ($env:DEVSPACE_VERSION) { $env:DEVSPACE_VERSION } else { "latest" }
+# v1.1 is the first release installable without install scripts, and it is still on the beta tag.
+# Switch this to latest once v1.1 ships as stable.
+$Version = if ($env:DEVSPACE_VERSION) { $env:DEVSPACE_VERSION } else { "beta" }
 $PackageSpec = if ($env:DEVSPACE_PACKAGE_SPEC) { $env:DEVSPACE_PACKAGE_SPEC } else { "$Package@$Version" }
 $InstallDir = if ($env:DEVSPACE_INSTALL_DIR) { $env:DEVSPACE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "devspace\install" }
 $BinDir = if ($env:DEVSPACE_BIN_DIR) { $env:DEVSPACE_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "devspace\bin" }
@@ -67,8 +69,11 @@ function Select-Node {
   if ((Test-Path $managed) -and (Test-CompatibleNode $managed)) { return $managed }
 
   $system = Get-Command node -ErrorAction SilentlyContinue
-  # Resolve through version-manager shims so the launcher pins this Node, not the shim.
-  if ($system -and (Test-CompatibleNode $system.Source)) { return (& $system.Source -p "process.execPath") }
+  if ($system -and (Test-CompatibleNode $system.Source)) {
+    # A Volta shim re-resolves on every run, so pin the Node behind it; anything else stays as found.
+    if ($system.Source -match "\\Volta\\") { return (& $system.Source -p "process.execPath") }
+    return $system.Source
+  }
   if ($system) { Write-Host "Found Node $(& $system.Source --version), but DevSpace needs >=$NodeMin <$NodeMaxMajor." }
 
   return Install-Node
@@ -89,7 +94,7 @@ function ConvertTo-CmdPath([string]$Path) {
     }
   }
   if ($rest -match "[^\x00-\x7F]") {
-    throw "Cannot write a launcher for the non-ASCII path $Path. Set DEVSPACE_INSTALL_DIR and DEVSPACE_BIN_DIR to ASCII paths and rerun."
+    throw "Cannot write a launcher for $Path because cmd.exe cannot read its non-ASCII characters. If it is a Node runtime, move that Node to an ASCII path or remove it from PATH so the installer downloads its own; otherwise set DEVSPACE_INSTALL_DIR and DEVSPACE_BIN_DIR to ASCII paths. Then rerun."
   }
   return $prefix + $rest.Replace("%", "%%")
 }
@@ -124,7 +129,7 @@ foreach ($command in @("devspace", "devspace-agentd")) {
     "`"$cmdNode`" `"$cmdEntry`" %*",
     "exit /b %errorlevel%",
     ":missing",
-    "echo DevSpace's Node runtime is missing: $cmdNode 1>&2",
+    "echo DevSpace's Node runtime is missing: `"$cmdNode`" 1>&2",
     "echo Rerun the DevSpace installer. 1>&2",
     "exit /b 1"
   ) -join "`r`n"
