@@ -6,16 +6,14 @@
 # for DevSpace alone, installs @waishnav/devspace into a user-owned npm prefix, writes `devspace` launchers that
 # pin that Node, then runs `devspace init`. Rerun it to update. DevSpace itself also needs Git Bash on Windows.
 #
-# Environment overrides: DEVSPACE_VERSION (default: beta), DEVSPACE_INSTALL_DIR, DEVSPACE_BIN_DIR, DEVSPACE_NO_INIT=1,
+# Environment overrides: DEVSPACE_VERSION (default: latest), DEVSPACE_INSTALL_DIR, DEVSPACE_BIN_DIR, DEVSPACE_NO_INIT=1,
 # DEVSPACE_NO_MODIFY_PATH=1, DEVSPACE_PACKAGE_SPEC (see install.sh).
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Package = "@waishnav/devspace"
-# v1.1 is the first release installable without install scripts, and it is still on the beta tag.
-# Switch this to latest once v1.1 ships as stable.
-$Version = if ($env:DEVSPACE_VERSION) { $env:DEVSPACE_VERSION } else { "beta" }
+$Version = if ($env:DEVSPACE_VERSION) { $env:DEVSPACE_VERSION } else { "latest" }
 $PackageSpec = if ($env:DEVSPACE_PACKAGE_SPEC) { $env:DEVSPACE_PACKAGE_SPEC } else { "$Package@$Version" }
 $InstallDir = if ($env:DEVSPACE_INSTALL_DIR) { $env:DEVSPACE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "devspace\install" }
 $BinDir = if ($env:DEVSPACE_BIN_DIR) { $env:DEVSPACE_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "devspace\bin" }
