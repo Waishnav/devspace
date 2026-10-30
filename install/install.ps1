@@ -115,8 +115,9 @@ $prefix = Join-Path $InstallDir "npm"
 New-Item -ItemType Directory -Path $prefix -Force | Out-Null
 # npm resolves `node` from PATH, so put the selected Node first.
 # DevSpace and its dependencies ship prebuilt binaries, so no install scripts are needed.
+# --prefer-online revalidates cached metadata, so a rerun right after a release installs that release.
 $env:Path = "$NodeDir;$env:Path"
-& $Npm install --global --prefix $prefix --ignore-scripts --no-fund --no-audit --no-update-notifier --loglevel=error $PackageSpec
+& $Npm install --global --prefix $prefix --ignore-scripts --prefer-online --no-fund --no-audit --no-update-notifier --loglevel=error $PackageSpec
 if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
 
 $packageDir = Join-Path $prefix "node_modules\$Package"
