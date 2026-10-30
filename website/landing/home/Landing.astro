@@ -169,13 +169,19 @@ effort: high
 
 <script>
   const DESIGN_WIDTH = 560;
+
   document.querySelectorAll<HTMLElement>("[data-fit]").forEach((fit) => {
-    const inner = fit.firstElementChild as HTMLElement;
+    const inner = fit.firstElementChild;
+
+    if (!(inner instanceof HTMLElement)) return;
+
     const update = () => {
       const scale = Math.min(1, fit.clientWidth / DESIGN_WIDTH);
+
       fit.style.setProperty("--scale", String(scale));
       fit.style.height = `${inner.offsetHeight * scale}px`;
     };
+
     new ResizeObserver(update).observe(fit);
     new ResizeObserver(update).observe(inner);
   });
