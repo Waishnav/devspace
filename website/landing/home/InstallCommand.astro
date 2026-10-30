@@ -1,16 +1,16 @@
 ---
-// Tabs for choosing an install method. The script preselects the visitor's OS and keeps every tab group and
+// Toggle buttons for choosing an install method. The script preselects the visitor's OS and keeps every group and
 // every [data-install-command] button (whose data-copy and <code> show the command) on the same choice.
 import { INSTALL_METHODS } from "../content";
 
 const [initial] = INSTALL_METHODS;
 ---
 
-<div class="install__tabs" role="tablist" aria-label="Install method">
+<div class="install__tabs" role="group" aria-label="Install method">
   {INSTALL_METHODS.map((method) => (
     <button
-      class="install__tab" type="button" role="tab" data-install-tab={method.id}
-      aria-selected={method.id === initial.id ? "true" : "false"}
+      class="install__tab" type="button" data-install-tab={method.id}
+      aria-pressed={method.id === initial.id ? "true" : "false"}
     >{method.label}</button>
   ))}
 </div>
@@ -22,7 +22,7 @@ const [initial] = INSTALL_METHODS;
     font: inherit; color: var(--muted); cursor: pointer;
   }
   .install__tab:hover { color: var(--ink); }
-  .install__tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+  .install__tab[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
 </style>
 
 <script>
@@ -36,7 +36,7 @@ const [initial] = INSTALL_METHODS;
     if (!method) return;
 
     for (const tab of document.querySelectorAll<HTMLElement>("[data-install-tab]")) {
-      tab.setAttribute("aria-selected", tab.dataset.installTab === id ? "true" : "false");
+      tab.setAttribute("aria-pressed", tab.dataset.installTab === id ? "true" : "false");
     }
 
     for (const command of document.querySelectorAll<HTMLElement>("[data-install-command]")) {

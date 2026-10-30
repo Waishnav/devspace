@@ -17,6 +17,19 @@ Bash, public URL, allowed hosts, and SQLite status.
   or `mise`.
 </Accordion>
 
+<Accordion title="better-sqlite3 could not load (DevSpace 1.0.x)">
+  DevSpace 1.1 uses Node's built-in SQLite, so this only affects 1.0.x
+  installs, whose native SQLite module was built for a different Node runtime.
+  The simplest fix is to upgrade with the installer above. To stay on 1.0.x,
+  reinstall with the Node you run DevSpace with, then rerun `doctor`:
+
+  - global install: `npm install -g @waishnav/devspace@1.0.8`
+  - npx: remove only DevSpace's cached copy, then rerun the `npx` command.
+    With npm 11.2 or newer, find its key in `npm cache npx ls` and run
+    `npm cache npx rm <key>`. With older npm, switch to a global install.
+  - local project install: `npm rebuild better-sqlite3` in that project
+</Accordion>
+
 <Accordion title="Public URL includes /mcp">
   Setup wants the origin (`https://host`); the client wants the endpoint
   (`https://host/mcp`). Fix it with
