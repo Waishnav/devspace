@@ -1,4 +1,4 @@
-{"type":"meta","provider":"pi","scenario":"events","args":["--mode","rpc","--approve","--extension","$TMP/devspace-pi-5dV6hw/devspace-sandbox.ts","--tools","read,grep,find,ls,edit,write,bash"],"version":"1.4.0","recordedAt":"2026-10-26T07:03:11.992Z"}
+{"type":"meta","provider":"pi","scenario":"events","args":["--mode","rpc","--approve","--no-extensions","--extension","$TMP/devspace-pi-5dV6hw/devspace-sandbox.ts","--tools","read,grep,find,ls,edit,write,bash"],"version":"1.4.0","recordedAt":"2026-10-26T07:03:11.992Z"}
 {"dir":"in","ms":243,"frame":{"type":"new_session","id":"devspace-1"}}
 {"dir":"out","ms":1330,"frame":{"id":"devspace-1","type":"response","command":"new_session","success":true,"data":{"cancelled":false}}}
 {"dir":"in","ms":1330,"frame":{"type":"get_state","id":"devspace-2"}}
