@@ -1,11 +1,10 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import * as schema from "./schema.js";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrateDatabase } from "./migrations.js";
+import { openSqlite, type SqliteDatabase } from "./sqlite.js";
 
-export type SqliteDatabase = Database.Database;
+export { transaction, type SqliteDatabase } from "./sqlite.js";
 
 export type AppDatabase = ReturnType<typeof createDrizzleDatabase>;
 
@@ -23,12 +22,14 @@ export function openDatabase(stateDir: string): DatabaseHandle {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   chmodSync(stateDir, 0o700);
   const path = databasePath(stateDir);
-  const sqlite = new Database(path);
+  const sqlite = openSqlite(path);
   chmodSync(path, 0o600);
-  sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("synchronous = NORMAL");
-  sqlite.pragma("busy_timeout = 5000");
-  sqlite.pragma("foreign_keys = ON");
+  sqlite.exec(`
+    pragma journal_mode = WAL;
+    pragma synchronous = NORMAL;
+    pragma busy_timeout = 5000;
+    pragma foreign_keys = ON;
+  `);
   migrateDatabase(sqlite);
 
   return {
@@ -39,5 +40,5 @@ export function openDatabase(stateDir: string): DatabaseHandle {
 }
 
 function createDrizzleDatabase(sqlite: SqliteDatabase) {
-  return drizzle(sqlite, { schema });
+  return drizzle({ client: sqlite });
 }

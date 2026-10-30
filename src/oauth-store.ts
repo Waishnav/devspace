@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import { InvalidRequestError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { openDatabase, transaction, type DatabaseHandle } from "./db/client.js";
 
 export interface PersistedAccessTokenRecord {
   clientId: string;
@@ -146,7 +146,7 @@ export class SqliteOAuthStore {
   }
 
   saveTokenPair(pair: PersistedTokenPair, consumedRefreshTokenHash?: string): boolean {
-    const save = this.database.sqlite.transaction(() => {
+    return transaction(this.database.sqlite, () => {
       if (consumedRefreshTokenHash) {
         const now = Math.floor(Date.now() / 1000);
 
@@ -166,9 +166,7 @@ export class SqliteOAuthStore {
       this.saveRefreshToken(pair.refreshTokenHash, pair.refreshToken);
 
       return true;
-    });
-
-    return save.immediate();
+    }, "immediate");
   }
 
   getRefreshToken(tokenHash: string): PersistedRefreshTokenRecord | undefined {

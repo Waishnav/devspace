@@ -1,5 +1,5 @@
 import type { WireInput } from "./json-value.js";
-import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { openDatabase, transaction, type DatabaseHandle } from "./db/client.js";
 import type { LocalAgentWorkspaceScope } from "./local-agent-store.js";
 import { WorkflowError, type WorkflowCall, type WorkflowEvent, type WorkflowSnapshot } from "./workflow-types.js";
 
@@ -34,14 +34,14 @@ export class WorkflowStore {
     return run;
   }
   addCall(call: WorkflowCall): void {
-    this.database.sqlite.transaction(() => {
+    transaction(this.database.sqlite, () => {
       const run = this.get(call.runId)!;
       this.database.sqlite.prepare("insert into workflow_calls (run_id, call_index, agent_id, record_json) values (?, ?, ?, ?)")
         .run(call.runId, call.index, call.agentId, JSON.stringify(call));
       run.callCount++;
       run.updatedAt = new Date().toISOString();
       this.database.sqlite.prepare("update workflow_runs set record_json = ? where id = ?").run(JSON.stringify(run), run.id);
-    })();
+    });
   }
   calls(runId: string): WorkflowCall[] {
     return this.database.sqlite.prepare("select record_json from workflow_calls where run_id = ? order by call_index").all(runId)

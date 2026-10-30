@@ -15,7 +15,7 @@ test("config set tells users to restart the running server", () => {
 
     const stdout = execFileSync(
       "node",
-      ["--import", "tsx", "src/cli.ts", "config", "set", "publicBaseUrl", "https://example.com"],
+      ["bin/devspace.js", "config", "set", "publicBaseUrl", "https://example.com"],
       { encoding: "utf8", env },
     );
 

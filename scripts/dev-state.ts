@@ -10,11 +10,11 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import Database from "better-sqlite3";
 import { parse, type ParseError } from "jsonc-parser";
 import { migrateLegacyConfig } from "../src/config-migration.js";
 import { devspaceConfigSchema, type DevspaceConfig } from "../src/config-schema.js";
 import { databasePath } from "../src/db/client.js";
+import { backupSqlite, openSqlite } from "../src/db/sqlite.js";
 import { expandHomePath } from "../src/roots.js";
 
 const checkoutRoot = resolve(process.cwd());
@@ -145,10 +145,10 @@ async function readSourceConfig(configDir: string): Promise<{ config: DevspaceCo
 
 async function backupDatabase(sourcePath: string, destinationPath: string): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true });
-  const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
+  const source = openSqlite(sourcePath, { readOnly: true });
 
   try {
-    await source.backup(destinationPath);
+    await backupSqlite(source, destinationPath);
     await chmod(destinationPath, 0o600);
   } finally {
     source.close();

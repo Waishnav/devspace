@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
-import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { openDatabase, transaction, type DatabaseHandle } from "./db/client.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
 import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 import type { LocalAgentTurnEvent, LocalAgentTurnEventBody } from "./local-agent-events.js";
 import { validateAgentId } from "./local-agent-id.js";
@@ -165,36 +166,36 @@ export class LocalAgentStore {
 
     if (scope.workspaceId && scope.workspaceRoot) {
       // SAFETY: The surrounding checks or construction already match this type.
-      rows = this.database.sqlite
+      rows = unsafeNarrow<LocalAgentRow[]>(this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
            where workspace_id = ? and workspace_root = ?
            order by updated_at desc`,
         )
-        .all(scope.workspaceId, resolve(scope.workspaceRoot)) as LocalAgentRow[];
+        .all(scope.workspaceId, resolve(scope.workspaceRoot)));
     } else if (scope.workspaceId) {
       // SAFETY: The surrounding checks or construction already match this type.
-      rows = this.database.sqlite
+      rows = unsafeNarrow<LocalAgentRow[]>(this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
            where workspace_id = ?
            order by updated_at desc`,
         )
-        .all(scope.workspaceId) as LocalAgentRow[];
+        .all(scope.workspaceId));
     } else if (scope.workspaceRoot) {
       // SAFETY: The surrounding checks or construction already match this type.
-      rows = this.database.sqlite
+      rows = unsafeNarrow<LocalAgentRow[]>(this.database.sqlite
         .prepare(
           `select * from local_agent_sessions
            where workspace_root = ?
            order by updated_at desc`,
         )
-        .all(resolve(scope.workspaceRoot)) as LocalAgentRow[];
+        .all(resolve(scope.workspaceRoot)));
     } else {
       // SAFETY: The surrounding checks or construction already match this type.
-      rows = this.database.sqlite
+      rows = unsafeNarrow<LocalAgentRow[]>(this.database.sqlite
         .prepare("select * from local_agent_sessions order by updated_at desc")
-        .all() as LocalAgentRow[];
+        .all());
     }
 
     return rows.map(rowToLocalAgentRecord);
@@ -209,7 +210,7 @@ export class LocalAgentStore {
   }
 
   private createDispatch(input: CreateLocalAgentRecordInput): CreatedLocalAgentRecord {
-    return this.database.sqlite.transaction(() => {
+    return transaction(this.database.sqlite, () => {
       const generate = () => `agt_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
       let id = input.id ?? generate();
       validateAgentId(id);
@@ -282,7 +283,7 @@ export class LocalAgentStore {
         );
 
       return { record, created: true };
-    }).immediate();
+    }, "immediate");
   }
 
   createResult(input: CreateLocalAgentRecordInput): BetterResult<CreatedLocalAgentRecord, AgentStoreError> {
@@ -396,7 +397,7 @@ export class LocalAgentStore {
   }
 
   beginTurn(agentId: string, input: BeginLocalAgentTurnInput): BegunLocalAgentTurn {
-    return this.database.sqlite.transaction(() => {
+    return transaction(this.database.sqlite, () => {
       const current = this.getById(agentId);
 
       if (!current) throw new Error(`Unknown subagent id: ${agentId}`);
@@ -444,7 +445,7 @@ export class LocalAgentStore {
       if (!turn) throw new Error(`Unable to load the new turn for subagent ${agentId}.`);
 
       return { agent, turn };
-    }).immediate();
+    }, "immediate");
   }
 
   beginTurnResult(
@@ -459,7 +460,7 @@ export class LocalAgentStore {
     turnId: number,
     completion: FinishLocalAgentTurnInput,
   ): LocalAgentRecord {
-    return this.database.sqlite.transaction(() => {
+    return transaction(this.database.sqlite, () => {
       const turn = this.getTurnById(turnId);
 
       if (!turn || turn.agentId !== agentId) {
@@ -521,7 +522,7 @@ export class LocalAgentStore {
         errorRetryable: completion.errorRetryable,
         errorDetail: completion.errorDetail,
       });
-    }).immediate();
+    }, "immediate");
   }
 
   finishTurnResult(
@@ -582,13 +583,13 @@ export class LocalAgentStore {
 
   listTurnEvents(turn: LocalAgentTurnRecord, afterSeq = 0): LocalAgentTurnEvent[] {
     // SAFETY: The surrounding checks or construction already match this type.
-    const rows = this.database.sqlite
+    const rows = unsafeNarrow<LocalAgentTurnEventRow[]>(this.database.sqlite
       .prepare(
         `select seq, type, data, created_at from local_agent_turn_events
          where turn_row_id = ? and seq > ?
          order by seq asc`,
       )
-      .all(turn.id, afterSeq) as LocalAgentTurnEventRow[];
+      .all(turn.id, afterSeq));
 
     return rows.map((row) => ({
       // SAFETY: The surrounding checks or construction already match this type.
@@ -623,15 +624,15 @@ export class LocalAgentStore {
 
   listTurns(agentId: string): LocalAgentTurnRecord[] {
     // SAFETY: The surrounding checks or construction already match this type.
-    const rows = this.database.sqlite
+    const rows = unsafeNarrow<LocalAgentTurnRow[]>(this.database.sqlite
       .prepare("select * from local_agent_turns where agent_id = ? order by id asc")
-      .all(agentId) as LocalAgentTurnRow[];
+      .all(agentId));
 
     return rows.map(rowToLocalAgentTurnRecord);
   }
 
   reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
-    return this.database.sqlite.transaction(() => {
+    return transaction(this.database.sqlite, () => {
       const now = new Date().toISOString();
       this.database.sqlite
         .prepare(
@@ -651,7 +652,7 @@ export class LocalAgentStore {
         .run(message, now);
 
       return Number(result.changes);
-    }).immediate();
+    }, "immediate");
   }
 
   reconcileActiveRunsResult(

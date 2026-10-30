@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
+import { openSqlite } from "./db/sqlite.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-dev-state-test-"));
 const checkoutRoot = join(root, "checkout");
@@ -30,7 +30,7 @@ test("seed copies source config and state, and reset reseeds only once source au
   }));
   await writeFile(join(sourceConfigDir, "skills", "example", "SKILL.md"), "example skill\n");
 
-  const sourceDatabase = new Database(join(sourceStateDir, "devspace.sqlite"));
+  const sourceDatabase = openSqlite(join(sourceStateDir, "devspace.sqlite"));
   sourceDatabase.exec("create table marker (value text); insert into marker values ('source')");
   sourceDatabase.close();
 
@@ -51,8 +51,8 @@ test("seed copies source config and state, and reset reseeds only once source au
   assert.equal(existsSync(join(devRoot, "config", "skills", "example", "SKILL.md")), true);
 
   const localDatabasePath = join(devRoot, "state", "devspace.sqlite");
-  const localDatabase = new Database(localDatabasePath);
-  assert.equal(localDatabase.prepare("select value from marker").pluck().get(), "source");
+  const localDatabase = openSqlite(localDatabasePath);
+  assert.equal(localDatabase.prepare("select value from marker").get()?.value, "source");
   localDatabase.exec("insert into marker values ('local-only')");
   localDatabase.close();
 
@@ -61,11 +61,11 @@ test("seed copies source config and state, and reset reseeds only once source au
   await rm(join(sourceConfigDir, "auth.json"));
   await assert.rejects(runDevState("reset"), /No auth\.json found/);
 
-  const preservedDatabase = new Database(localDatabasePath, { readonly: true });
+  const preservedDatabase = openSqlite(localDatabasePath, { readOnly: true });
 
   try {
     assert.deepEqual(
-      preservedDatabase.prepare("select value from marker order by rowid").pluck().all(),
+      preservedDatabase.prepare("select value from marker order by rowid").all().map((row) => row.value),
       ["source", "local-only"],
     );
   } finally {
@@ -77,8 +77,8 @@ test("seed copies source config and state, and reset reseeds only once source au
   }));
   await runDevState("reset");
 
-  const resetDatabase = new Database(localDatabasePath, { readonly: true });
-  assert.deepEqual(resetDatabase.prepare("select value from marker order by rowid").pluck().all(), ["source"]);
+  const resetDatabase = openSqlite(localDatabasePath, { readOnly: true });
+  assert.deepEqual(resetDatabase.prepare("select value from marker order by rowid").all().map((row) => row.value), ["source"]);
   resetDatabase.close();
 });
 

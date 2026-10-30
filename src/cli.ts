@@ -83,7 +83,9 @@ type Command =
   | "version";
 
 const require = createRequire(import.meta.url);
-const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+
+// SAFETY: package.json always declares engines.node; it is the single source for the supported range.
+const SUPPORTED_NODE_RANGE = (require("../package.json") as { engines: { node: string } }).engines.node;
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
@@ -371,20 +373,6 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-  const sqliteStatus = checkSqliteNative();
-
-  if (sqliteStatus !== "ok") {
-    throw new Error(
-      [
-        "better-sqlite3 could not load for this Node runtime.",
-        sqliteStatus,
-        "",
-        "Try reinstalling or rebuilding dependencies under the active Node version:",
-        "  npm rebuild better-sqlite3",
-      ].join("\n"),
-    );
-  }
-
   const config = loadConfig();
   await runStartupWorktreeCleanup(config);
   const { configureHttpServer, createServer } = await import("./server.js");
@@ -474,11 +462,10 @@ async function runDoctor(): Promise<void> {
   console.log(`Config file: ${files.configExists ? files.configPath : "missing"}`);
   console.log(`Auth file: ${files.authExists ? files.authPath : "missing"}`);
   console.log(`Node: ${process.version} (${nodeVersionStatus()})`);
-  console.log(`Node ABI: ${process.versions.modules}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
   console.log(`Git: ${checkGitAvailable()}`);
   console.log(`Bash shell: ${checkBashShell()}`);
-  console.log(`SQLite native dependency: ${checkSqliteNative()}`);
+  console.log(`SQLite: ${await checkSqlite()}`);
 
   try {
     const config = loadConfig();
@@ -1250,14 +1237,15 @@ function nodeVersionStatus(): string {
 
 class SetupCancelledError extends Error {}
 
-function checkSqliteNative(): string {
+async function checkSqlite(): Promise<string> {
   try {
-    // SAFETY: The surrounding checks or construction already match this type.
-    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
-    const db = new Database(":memory:");
+    const { openSqlite } = await import("./db/sqlite.js");
+    const db = openSqlite(":memory:");
+    // SAFETY: sqlite_version() always returns one text column.
+    const { version } = db.prepare("select sqlite_version() as version").get() as { version: string };
     db.close();
 
-    return "ok";
+    return `ok (node:sqlite ${version})`;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }

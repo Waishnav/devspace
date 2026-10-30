@@ -1,6 +1,6 @@
 import { optionalFields } from "./json-value.js";
 import { and, asc, count, desc, eq, max, sql } from "drizzle-orm";
-import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { openDatabase, transaction, type DatabaseHandle } from "./db/client.js";
 import {
   workspaceSessions,
   workspaceTurns,
@@ -93,7 +93,7 @@ export class WorkspaceActivityStore {
 
   /** Returns the workspace's open turn, starting the next one when none is open. */
   openTurn(workspaceId: string, now = new Date()): WorkspaceTurn {
-    const open = this.database.sqlite.transaction(() => {
+    const open = transaction(this.database.sqlite, () => {
       const existing = this.findOpenTurnRow(workspaceId);
 
       if (existing) return existing;
@@ -114,9 +114,9 @@ export class WorkspaceActivityStore {
         })
         .returning()
         .get();
-    });
+    }, "immediate");
 
-    return this.withCallCounts(open.immediate());
+    return this.withCallCounts(open);
   }
 
   currentTurn(workspaceId: string): WorkspaceTurn | undefined {
