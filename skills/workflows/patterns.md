@@ -19,8 +19,9 @@ keep the parts that fit the task. Each one is a complete script.
 - **Use the right workspace.** Read-only steps run in the checkout. Sequential edits share one named worktree
   (`isolation: "worktree"` plus `workspace`). Parallel edits each get their own worktree.
 - **Handle per-item failures.** `parallel` and `pipeline` never throw; check each `status`.
-- **Keep it resumable.** Same inputs should produce the same calls in the same order: no timestamps or random values
-  in prompts.
+- **Know what resumes.** Same inputs should produce the same calls in the same order: no timestamps or random values
+  in prompts. Only read-only runs in the checkout can be resumed; a run that used `writeMode: "allowed"`,
+  `isolation`, or `workspace` (as most edit loops below do) must be restarted instead.
 
 Start writing runs with `--write-mode allowed`; everything else stays read-only by default.
 
@@ -115,6 +116,8 @@ for (let attempt = 1; attempt <= attempts; attempt++) {
     { target: tester, writeMode: "read_only", workspace: "qa", schema: RESULT, label: `test-${attempt}` },
   );
   if (result.passed) return { passed: true, attempts: attempt };
+  // The verdict always comes from a test run: do not apply a fix that nothing will test.
+  if (attempt === attempts) return { passed: false, attempts, failures: result.failures };
   await agent(`Make these failures pass without weakening the tests:\n${result.failures.join("\n")}`, {
     target: implementer, writeMode: "allowed", workspace: "qa", label: `fix-${attempt}`,
   });

@@ -203,10 +203,12 @@ export class PiRpcRuntime implements LocalAgentRuntime {
   }
 
   private async resolveModel(model: string): Promise<{ provider: string; modelId: string }> {
-    // Gateway providers have model ids that contain "/", so an exact id wins over provider/model.
+    // `devspace agents models` lists Pi models as provider/id, so that form wins. Gateway providers have model ids
+    // that contain "/", so an exact id comes next, before parsing the value as provider/model.
     const available = await this.connection.request({ type: "get_available_models" });
     const models = recordArray(available, "models");
-    const matches = models.filter((entry) => piRecordString(entry, "id") === model);
+    const listed = models.filter((entry) => `${piRecordString(entry, "provider")}/${piRecordString(entry, "id")}` === model);
+    const matches = listed.length === 1 ? listed : models.filter((entry) => piRecordString(entry, "id") === model);
 
     if (matches.length === 1) {
       const provider = piRecordString(matches[0], "provider");

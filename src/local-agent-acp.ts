@@ -108,6 +108,8 @@ export interface AcpRuntimeOptions {
   stderrTail?: () => string;
 }
 
+const LIST_MODELS_TIMEOUT_MS = 30_000;
+
 export class AcpRuntime implements LocalAgentRuntime {
   readonly provider = "acp" as const;
   private readonly flavor: AcpFlavor;
@@ -336,12 +338,13 @@ export class AcpRuntime implements LocalAgentRuntime {
 
   /** Opens a throwaway read-only session in `workspaceRoot` to read the models the agent offers there. */
   async listModels(workspaceRoot: string): Promise<LocalAgentModel[]> {
-    const response = await this.connection.agent.request("session/new", {
+    // Bounded so one unresponsive agent cannot stall `devspace agents models` for every provider.
+    const response = await withTimeout(this.connection.agent.request("session/new", {
       cwd: workspaceRoot,
       mcpServers: [],
       ...this.additionalDirectoryParams(),
       ...this.permissionMeta({ prompt: "", workspaceRoot, writeMode: "read_only" }),
-    });
+    }), LIST_MODELS_TIMEOUT_MS, `${acpAgentName(this.flavor)} did not answer session/new within ${LIST_MODELS_TIMEOUT_MS / 1000}s.`);
 
     return acpModelsFromSession(response, this.flavor);
   }

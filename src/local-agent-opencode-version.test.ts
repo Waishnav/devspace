@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import {
   encodeOpenCodeV2SessionId,
   requireOpenCodeV1NativeSessionId,
   requireOpenCodeV2NativeSessionId,
+  runOpenCodeModels,
 } from "./local-agent-opencode-version.js";
 
 test("CLI version output is classified into a protocol generation", () => {
@@ -66,3 +67,24 @@ test(
     server.close();
   },
 );
+
+test("opencode models stops a flooding process and reports only after it exits", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "devspace-opencode-models-"));
+  const command = join(root, "opencode");
+  const pidFile = join(root, "pid");
+
+  try {
+    // Ignores SIGTERM and prints past the 4 MiB cap, so only the SIGKILL escalation can end it.
+    writeFileSync(command, `#!/bin/sh\necho $$ > "${pidFile}"\ntrap '' TERM\nsleep 30 &\necho $! >> "${pidFile}"\nhead -c 5000000 /dev/zero | tr '\\0' x\nwait\n`);
+    chmodSync(command, 0o755);
+
+    await assert.rejects(runOpenCodeModels({ ...process.env, OPENCODE_COMMAND: command }, root), /more than 4 MiB/);
+
+    // The command and a process it started (`sleep`) are both gone once the call rejects.
+    for (const pid of readFileSync(pidFile, "utf8").trim().split("\n").map(Number)) {
+      assert.throws(() => process.kill(pid, 0), `process ${pid} is gone once the call rejects`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

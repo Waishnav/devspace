@@ -65,6 +65,8 @@ function syncManagedFile(sourcePath: string, targetPath: string, name: ManagedSk
     }
 
     if (stat.isDirectory()) {
+      // A broken supporting file must not stop the skill (or the workspace) from loading; SKILL.md must.
+      if (!targetPath.endsWith("SKILL.md")) return;
       throw new Error(`Managed ${name} skill path is a directory: ${targetPath}`);
     }
   }

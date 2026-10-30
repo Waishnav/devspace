@@ -305,6 +305,33 @@ test("an exact model id wins over provider/model parsing", async () => {
   await gatewayRuntime.value.close();
 });
 
+// The provider/id value `devspace agents models` lists wins over a gateway model whose bare id is the same string.
+test("a listed provider/id wins over a gateway model with that id", async () => {
+  const connection = new FakePiRpcConnection();
+  connection.request = async function(record: JsonObject): Promise<WireInput> {
+    if (record.type === "get_available_models") {
+      this.requests.push(record);
+
+      return { models: [{ provider: "gateway", id: "xai/grok-4.5" }, { provider: "xai", id: "grok-4.5" }] };
+    }
+
+    return FakePiRpcConnection.prototype.request.call(this, record);
+  };
+
+  const runtime = await new PiLocalAgentDriver(async () => ({ connection })).createRuntime(context);
+
+  if (runtime.isErr()) throw runtime.error;
+
+  const result = await runtime.value.run({ prompt: "inspect", workspaceRoot: "/tmp/project", model: "xai/grok-4.5" });
+
+  assert.equal(result.isOk(), true);
+  assert.deepEqual(
+    connection.requests.find((request) => request.type === "set_model"),
+    { type: "set_model", provider: "xai", modelId: "grok-4.5" },
+  );
+  await runtime.value.close();
+});
+
 // Stop: Pi is aborted, a Pi that never settles is discarded, and stale events never reach the next turn.
 test("stopping aborts Pi and discards a Pi that does not settle", async () => {
   const stalledConnection = new FakePiRpcConnection();

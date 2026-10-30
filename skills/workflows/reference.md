@@ -113,8 +113,13 @@ For proven multi-step engineering loops (plan, implement, review, QA, bake-offs,
 
 `devspace workflow run --resume <id>` reruns the script with the original arguments. Completed read-only calls are
 reused as long as the script makes the same calls in the same order with the same prompts and options; from the first
-call that differs, everything runs fresh. Runs that made editing calls cannot be resumed. Keep prompts deterministic
-(no timestamps or random values) so resume can reuse work.
+call that differs, everything runs fresh. Keep prompts deterministic (no timestamps or random values) so resume can
+reuse work.
+
+Resume is refused (`RECOVERY_REQUIRED`) for a run that made any call with `writeMode: "allowed"`, `isolation`, or
+`workspace`, even a read-only call, because those may have changed a workspace: inspect its calls and preserved
+worktrees, then start a new run. It is also refused (`RECOVERY_CONTEXT_CHANGED`) when the project's context changed
+since the original run.
 
 ## Limits
 
@@ -128,6 +133,7 @@ call that differs, everything runs fresh. Runs that made editing calls cannot be
 | `log` and `phase` events | 64 KiB per run |
 | Sandbox heap / stack | 32 MiB / 512 KiB |
 
-Exceeding a limit ends the whole run, including a `workflow()` call nested past one level: `try`/`catch` in the
-script cannot recover from it. Ordinary agent failures (unknown target, provider errors, invalid output) are normal
-rejections you can catch, and `parallel`/`pipeline` report them per item.
+Exceeding a run limit ends the whole run, and `try`/`catch` in the script cannot recover from it: the turn, nesting
+(a `workflow()` nested past one level), time, size, and event limits, and stack overflow. Running out of sandbox heap
+is different: it throws a catchable `InternalError: out of memory`. Ordinary agent failures (unknown target, provider
+errors, invalid output) are normal rejections you can catch, and `parallel`/`pipeline` report them per item.
