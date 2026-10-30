@@ -100,6 +100,12 @@ test("the managed subagents skill replaces a stale user copy and workflows need 
       flagged.find((skill) => skill.name === "workflows")?.filePath,
       join(devspaceSkills, "workflows", "SKILL.md"),
     );
+    // The authoring reference the skill points to is synced beside it, and is not a skill of its own.
+    assert.match(await readFile(join(devspaceSkills, "workflows", "reference.md"), "utf8"), /# Writing DevSpace workflows/);
+    assert.deepEqual(
+      flagged.filter((skill) => skill.filePath.startsWith(join(devspaceSkills, "workflows"))).map((skill) => skill.name),
+      ["workflows"],
+    );
   } finally {
     delete process.env.DEVSPACE_EXPERIMENTAL_WORKFLOWS;
   }
