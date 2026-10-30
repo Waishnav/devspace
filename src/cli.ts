@@ -83,7 +83,8 @@ type Command =
   | "version";
 
 const require = createRequire(import.meta.url);
-const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+// SAFETY: package.json always declares engines.node; it is the single source for the supported range.
+const SUPPORTED_NODE_RANGE = (require("../package.json") as { engines: { node: string } }).engines.node;
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
