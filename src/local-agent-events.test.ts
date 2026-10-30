@@ -48,3 +48,14 @@ test("provider error detail surfaces the most specific distinct cause", () => {
   );
   assert.equal(providerErrorDetail({ message: "No cause." }), undefined);
 });
+
+test("a process-launch cause reports the agent's stderr, or else its nested error", () => {
+  assert.equal(
+    providerErrorDetail({ message: "grok ACP initialization failed.", cause: { error: new Error("closed"), stderr: "not logged in\n" } }),
+    "not logged in",
+  );
+  assert.equal(
+    providerErrorDetail({ message: "grok ACP initialization failed.", cause: { error: new Error("spawn grok ENOENT") } }),
+    "spawn grok ENOENT",
+  );
+});

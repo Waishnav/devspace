@@ -146,3 +146,38 @@ function runOpenCodeVersion(env: NodeJS.ProcessEnv): Promise<string> {
     });
   });
 }
+
+const OPENCODE_MODELS_TIMEOUT_MS = 60_000;
+
+/** Runs `opencode models` through cross-spawn, so a Windows `.cmd` shim launches like the server does. */
+export function runOpenCodeModels(env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(resolveOpenCodeCommand(env), ["models"], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+
+      if (error) reject(error);
+      else resolve(stdout);
+    };
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(new Error(`opencode models did not finish within ${OPENCODE_MODELS_TIMEOUT_MS / 1000}s.`));
+    }, OPENCODE_MODELS_TIMEOUT_MS);
+
+    timer.unref();
+    child.stdout?.on("data", (chunk: Buffer | string) => { stdout += chunk.toString(); });
+    child.stderr?.on("data", (chunk: Buffer | string) => { stderr += chunk.toString(); });
+    child.once("error", (cause) => finish(cause));
+    // `close` waits for stdout/stderr to drain; `exit` can fire before the list is read.
+    child.once("close", (code) => finish(
+      code === 0 ? undefined : new Error(stderr.trim() || `opencode models exited with code ${code ?? 1}.`),
+    ));
+  });
+}

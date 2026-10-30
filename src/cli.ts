@@ -718,13 +718,21 @@ async function runAgentsModels(args: string[], json: boolean): Promise<void> {
   const config = loadAgentConfig();
   const { workspaceRoot } = resolveAgentCliWorkspaceContext(config);
   // Loaded on demand: the adapters pull in every provider SDK, which other commands never need.
-  const { createLocalAgentDrivers } = await import("./local-agent-adapters.js");
+  const { createLocalAgentDrivers, createLocalAgentProviderRegistry } = await import("./local-agent-adapters.js");
   const { providerErrorDetail } = await import("./local-agent-events.js");
+  const { defaultDriverForProviderId } = await import("./local-agent-provider.js");
   const drivers = createLocalAgentDrivers({ subagents: config.subagents });
 
   const selected = name
     ? drivers.filter((driver) => driver.providerInstanceId === name)
     : drivers.filter((driver) => config.subagents.providers.some((provider) => provider.id === driver.providerInstanceId && provider.enabled));
+
+  // A built-in provider left out of config is still answerable by name, with its default settings.
+  const builtInDriver = name && selected.length === 0 ? defaultDriverForProviderId(name) : undefined;
+
+  if (name && builtInDriver) {
+    selected.push(createLocalAgentProviderRegistry().create({ id: name, driver: builtInDriver, enabled: true }, undefined, process.env));
+  }
 
   if (name && selected.length === 0) throw new Error(`Unknown subagent provider: ${name}.`);
 

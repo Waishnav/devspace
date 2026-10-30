@@ -123,7 +123,15 @@ export function providerErrorDetail(error: { message: string; cause?: WireInput 
     }
 
     // SAFETY: The surrounding checks or construction already match this type.
-    current = isObjectValue(current) ? (current as { cause?: unknown }).cause : undefined;
+    const record = isObjectValue(current) ? (current as { cause?: unknown; error?: unknown; stderr?: unknown }) : undefined;
+
+    // Process-launch failures (such as ACP initialization) carry `{ error, stderr }`: the agent's own stderr
+    // explains the failure better than the transport error, so prefer it.
+    if (isJsonString(record?.stderr) && record.stderr.trim()) {
+      return boundText(redactSecrets(record.stderr.trim()), MAX_ERROR_DETAIL_CHARS);
+    }
+
+    current = record?.cause ?? record?.error;
   }
 
   return undefined;

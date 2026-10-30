@@ -96,6 +96,23 @@ export interface CodexAppServerRuntimeOptions {
   version?: string;
 }
 
+const CODEX_LIST_MODELS_TIMEOUT_MS = 30_000;
+
+async function withDeadline<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class CodexAppServerRuntime implements LocalAgentRuntime {
   readonly provider = "codex" as const;
   private readonly child: ChildProcessWithoutNullStreams;
@@ -137,7 +154,13 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
     let cursor: string | undefined;
 
     do {
-      const page = await this.rpc.request("model/list", optionalFields(cursor ? { cursor } : undefined));
+      // Bounded so a stalled app-server cannot stall `devspace agents models` for every provider.
+      const page = await withDeadline(
+        this.rpc.request("model/list", optionalFields(cursor ? { cursor } : undefined)),
+        CODEX_LIST_MODELS_TIMEOUT_MS,
+        `Codex app-server did not answer model/list within ${CODEX_LIST_MODELS_TIMEOUT_MS / 1000}s.`,
+      );
+
       pages.push(page);
       cursor = readString(page, "nextCursor");
     } while (cursor && pages.length < 20);

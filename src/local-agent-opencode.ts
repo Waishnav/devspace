@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { isObjectValue, isJsonString, optionalFields } from "./json-value.js";
 import { unsafeNarrow } from "./unsafe-narrow.js";
 import type { WireInput, JsonObject } from "./json-value.js";
@@ -31,7 +29,7 @@ import {
 } from "./local-agent-opencode-v2.js";
 import {
   probeOpenCodeBinary,
-  resolveOpenCodeCommand,
+  runOpenCodeModels,
   requireOpenCodeV1NativeSessionId,
   type OpenCodeRuntimeProbeFunction,
 } from "./local-agent-opencode-version.js";
@@ -237,20 +235,11 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       provider: this.provider,
       operation: "list_models",
       run: async () => {
-        const { stdout } = await execFileAsync(resolveOpenCodeCommand(this.env), ["models"], {
-          cwd: workspaceRoot,
-          env: this.env,
-          timeout: 60_000,
-          maxBuffer: 4 * 1024 * 1024,
-        });
-
-        return opencodeModelsFromCli(stdout);
+        return opencodeModelsFromCli(await runOpenCodeModels(this.env, workspaceRoot));
       },
     });
   }
 }
-
-const execFileAsync = promisify(execFile);
 
 export function opencodeModelsFromCli(stdout: string): LocalAgentModel[] {
   return stdout.split("\n")
