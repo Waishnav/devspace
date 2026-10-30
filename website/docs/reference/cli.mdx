@@ -28,6 +28,7 @@ replaces detection. Availability does not check sign-in.
 | Command | Description |
 | --- | --- |
 | `devspace agents targets` | List usable providers and profiles, unavailable reasons, or `<disabled>…</disabled>` when disabled. |
+| `devspace agents models [provider]` | Ask each enabled provider, or the named one, which models it offers here. Each `id` is exactly what `--model` and profile `model` accept; `efforts` and `default` appear when the harness reports them. A provider that cannot answer prints its error instead. |
 | `devspace agents run <target> [options] <prompt>` | Start a new logical agent. |
 | `devspace agents continue <id> [options] <prompt>` | Send a follow-up to an existing agent. |
 | `devspace agents show <id>` | Immediate snapshot. |

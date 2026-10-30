@@ -86,6 +86,27 @@ Provider configuration takes precedence over equivalent process-level settings:
 | `GROK_COMMAND` | Grok executable. |
 | `GROK_AGENT_PROFILE` | Grok agent profile selected at startup. |
 
+## List models
+
+Each harness names its models differently: Cursor's IDs carry settings such as `composer-2.5[fast=true]`, Pi
+needs `provider/id`, and OpenCode uses `provider/model`. Ask the harness instead of guessing:
+
+```bash
+devspace agents models            # every enabled provider
+devspace agents models cursor     # one provider, enabled or not
+```
+
+```xml
+<models provider="codex">
+<model id="gpt-6.1-sol" name="GPT-6.1-Sol" efforts="low,medium,high,xhigh,max,ultra" default="true"/>
+<model id="gpt-6-luna" name="GPT-6-Luna" efforts="low,medium,high,xhigh,max"/>
+</models>
+```
+
+Each `id` is exactly what `--model` and profile `model` accept. DevSpace starts the harness only long enough to ask
+(Codex `model/list`, the Claude Agent SDK, `opencode models`, Pi RPC, or an ACP session), so no prompt is sent and
+nothing is billed. A provider that cannot answer prints its error, with the cause, instead of a list.
+
 ## Any ACP agent
 
 Any agent that speaks ACP over stdio can use `driver: "acp"` with a `command`

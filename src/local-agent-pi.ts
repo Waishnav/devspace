@@ -23,6 +23,7 @@ import {
 } from "./local-agent-pi-rpc.js";
 import type {
   LocalAgentDriver,
+  LocalAgentModel,
   LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
@@ -325,6 +326,43 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
       },
     });
   }
+
+  async listModels(workspaceRoot: string) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        const { connection, cleanup } = await this.factory({
+          agentId: "models",
+          providerInstanceId: this.providerInstanceId,
+          provider: this.provider,
+          workspaceRoot,
+          writeMode: "read_only",
+        }, this.env);
+
+        try {
+          return piModelsFromResponse(await connection.request({ type: "get_available_models" }));
+        } finally {
+          connection.close();
+          await cleanup?.();
+        }
+      },
+    });
+  }
+}
+
+/** Reports Pi models as `provider/id`, which model selection always resolves unambiguously. */
+export function piModelsFromResponse(response: WireInput): LocalAgentModel[] {
+  return recordArray(response, "models").flatMap((entry) => {
+    const provider = piRecordString(entry, "provider");
+    const id = piRecordString(entry, "id");
+
+    if (!provider || !id) return [];
+
+    const name = piRecordString(entry, "name");
+
+    return [{ id: `${provider}/${id}`, ...optionalFields(name ? { name } : undefined) }];
+  });
 }
 
 async function defaultPiRpcFactory(

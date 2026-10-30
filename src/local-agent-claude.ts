@@ -18,6 +18,7 @@ import type {
   LocalAgentRunResult,
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
+  LocalAgentModel,
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
@@ -37,6 +38,7 @@ export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
   applyFlagSettings(settings: JsonObject): Promise<void>;
   setModel?(model?: string): Promise<void>;
+  supportedModels?(): Promise<WireInput[]>;
 }
 
 export interface ClaudeQueryFactoryInput {
@@ -300,6 +302,39 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
       },
     });
   }
+
+  async listModels(workspaceRoot: string) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        const context: LocalAgentRuntimeContext = {
+          agentId: "models",
+          providerInstanceId: this.providerInstanceId,
+          provider: this.provider,
+          workspaceRoot,
+          writeMode: "read_only",
+        };
+
+        // Nothing is ever pushed: the query only starts Claude Code so it can answer the models request.
+        const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+
+        const query = await this.factory({
+          context,
+          options: claudeQueryOptions(context, { prompt: "", workspaceRoot, writeMode: "read_only" }, this.env),
+          prompt: inputQueue,
+        });
+
+        try {
+          if (!query.supportedModels) throw new Error("Claude Agent SDK does not report supported models.");
+
+          return claudeModelsFromSdk(await query.supportedModels());
+        } finally {
+          query.close();
+        }
+      },
+    });
+  }
 }
 
 async function defaultClaudeQueryFactory({
@@ -487,4 +522,24 @@ function asRecord(value: WireInput): JsonObject | undefined {
     // SAFETY: The surrounding checks or construction already match this type.
     ? unsafeNarrow<JsonObject>(value)
     : undefined;
+}
+
+/** Maps the Claude Agent SDK's `supportedModels()` rows; `value` is what `--model` accepts. */
+export function claudeModelsFromSdk(models: readonly WireInput[]): LocalAgentModel[] {
+  return models.flatMap((entry) => {
+    const record = asRecord(entry);
+    const id = record?.value;
+
+    if (!isJsonString(id) || !id) return [];
+
+    const levels = record?.supportedEffortLevels;
+    const efforts = Array.isArray(levels) ? levels.filter(isJsonString) : [];
+    const name = record?.displayName;
+
+    return [{
+      id,
+      ...optionalFields(isJsonString(name) && name ? { name } : undefined),
+      ...optionalFields(efforts.length > 0 ? { efforts } : undefined),
+    }];
+  });
 }

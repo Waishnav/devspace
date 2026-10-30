@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { isObjectValue, isJsonString, optionalFields } from "./json-value.js";
 import { unsafeNarrow } from "./unsafe-narrow.js";
 import type { WireInput, JsonObject } from "./json-value.js";
@@ -18,6 +20,7 @@ import type {
   LocalAgentRunInput,
   LocalAgentRunResult,
   LocalAgentRuntime,
+  LocalAgentModel,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
 import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
@@ -28,6 +31,7 @@ import {
 } from "./local-agent-opencode-v2.js";
 import {
   probeOpenCodeBinary,
+  resolveOpenCodeCommand,
   requireOpenCodeV1NativeSessionId,
   type OpenCodeRuntimeProbeFunction,
 } from "./local-agent-opencode-version.js";
@@ -226,6 +230,33 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       },
     });
   }
+
+  /** `opencode models` prints the same `provider/model` ids `--model` accepts, on both protocol generations. */
+  async listModels(workspaceRoot: string) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        const { stdout } = await execFileAsync(resolveOpenCodeCommand(this.env), ["models"], {
+          cwd: workspaceRoot,
+          env: this.env,
+          timeout: 60_000,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+
+        return opencodeModelsFromCli(stdout);
+      },
+    });
+  }
+}
+
+const execFileAsync = promisify(execFile);
+
+export function opencodeModelsFromCli(stdout: string): LocalAgentModel[] {
+  return stdout.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^[^\s/]+\/\S+$/.test(line))
+    .map((id) => ({ id }));
 }
 
 async function defaultOpencodeFactory(

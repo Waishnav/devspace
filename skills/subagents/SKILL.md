@@ -26,6 +26,12 @@ Each line is one of:
 
 Pass the `name` as `<profile-or-provider>`. Prefer a matching profile; otherwise use a provider. Keep the default model and effort unless the task needs an override (`--model`, `--effort`).
 
+Never guess model names. List the exact `--model` values (and supported efforts) a provider accepts:
+
+```bash
+devspace agents models <provider>
+```
+
 ## Start work
 
 Give the subagent a self-contained brief with the objective, relevant paths, constraints, context it cannot infer, and the expected result. It receives this brief (and its profile instructions), not your conversation.
