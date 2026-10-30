@@ -271,6 +271,8 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   constructor(
     private readonly factory: ClaudeQueryFactory = defaultClaudeQueryFactory,
     private readonly env: NodeJS.ProcessEnv = process.env,
+    /** The provider's explicit `env` from config, which wins over the inherited session variables DevSpace strips. */
+    private readonly envOverrides: Record<string, string> = {},
   ) {}
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -292,7 +294,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
 
         const query = await this.factory({
           context,
-          options: claudeQueryOptions(context, input, this.env),
+          options: claudeQueryOptions(context, input, this.env, this.envOverrides),
           prompt: inputQueue,
         });
 
@@ -319,6 +321,7 @@ export function claudeQueryOptions(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
   env: NodeJS.ProcessEnv = process.env,
+  envOverrides: Record<string, string> = {},
 ): JsonObject {
   const executable = env.CLAUDE_COMMAND;
   const permissionMode = claudePermissionMode(input.writeMode);
@@ -336,7 +339,7 @@ export function claudeQueryOptions(
     sandbox: authority.sandbox,
     settings: authority.settings,
     ...optionalFields(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : undefined),
-    env: claudeCommandEnvironment(env),
+    env: claudeCommandEnvironment(env, envOverrides),
     ...optionalFields(executable ? { pathToClaudeCodeExecutable: executable } : undefined),
   };
 }
@@ -400,7 +403,14 @@ function claudeAuthorityOptions(
   return { sandbox, settings: { permissions, sandbox } };
 }
 
-export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * Drops the session variables a parent Claude Code exports, so a DevSpace started from Claude Code does not make
+ * its subagent look like a nested session. Values set explicitly in the provider's config `env` are kept.
+ */
+export function claudeCommandEnvironment(
+  env: NodeJS.ProcessEnv,
+  envOverrides: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   const next = { ...env };
 
   for (const key of [
@@ -409,7 +419,8 @@ export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.Process
     "CLAUDE_CODE_SSE_PORT",
     "CLAUDE_AGENT_SDK_VERSION",
   ]) {
-    delete next[key];
+    if (Object.hasOwn(envOverrides, key)) next[key] = envOverrides[key];
+    else delete next[key];
   }
 
   return next;
