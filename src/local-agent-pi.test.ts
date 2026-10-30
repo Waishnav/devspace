@@ -8,6 +8,7 @@ import {
   PiLocalAgentDriver,
   type PiRpcFactory,
   type PiRpcRuntimeConnection,
+  piLaunchArgs,
 } from "./local-agent-pi.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
@@ -395,4 +396,20 @@ test("Pi RPC tool and message frames map onto DevSpace activity events", async (
 test("a missing Pi command is unavailable", async () => {
   const missingCommand = await new PiLocalAgentDriver(undefined, { PATH: "", PI_COMMAND: "/missing/pi" }).createRuntime(context);
   assert.equal(missingCommand.isErr() && missingCommand.error.code, "PROVIDER_UNAVAILABLE");
+});
+
+test("sandboxed Pi runs disable user extensions but keep the DevSpace sandbox", () => {
+  assert.deepEqual(piLaunchArgs(["cli.js"], "read_only", "/tmp/sandbox.ts"), [
+    "cli.js", "--mode", "rpc", "--approve",
+    "--no-extensions", "--extension", "/tmp/sandbox.ts",
+    "--tools", "read,grep,find,ls",
+  ]);
+  assert.deepEqual(piLaunchArgs([], "allowed", "/tmp/sandbox.ts"), [
+    "--mode", "rpc", "--approve",
+    "--no-extensions", "--extension", "/tmp/sandbox.ts",
+    "--tools", "read,grep,find,ls,edit,write,bash",
+  ]);
+  // full_access has no sandbox, so the user's extensions stay enabled.
+  assert.deepEqual(piLaunchArgs([], "full_access", undefined), ["--mode", "rpc", "--approve"]);
+  assert.throws(() => piLaunchArgs([], "allowed", undefined), /sandbox extension/);
 });
