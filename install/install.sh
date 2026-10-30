@@ -109,12 +109,12 @@ select_node() {
   if [ -x "$INSTALL_DIR/node/bin/node" ] && node_is_compatible "$INSTALL_DIR/node/bin/node"; then
     NODE="$INSTALL_DIR/node/bin/node"
   elif command -v node >/dev/null 2>&1 && node_is_compatible "$(command -v node)"; then
-    NODE=$(command -v node)
-
-    # A version-manager shim (mise, asdf, nodenv, Volta) re-resolves on every run, so pin the Node behind it.
-    # Anything else stays as found: Homebrew's bin/node symlink survives upgrades, its Cellar target does not.
+    # Pin the real binary: version managers (nvm, fnm, mise, asdf, Volta) switch what `node` points to but
+    # keep every installed version on disk. Homebrew and Nix delete old versions on upgrade instead, so for
+    # them keep the stable link that `command -v` found.
+    NODE=$(node -p process.execPath)
     case "$NODE" in
-      */shims/node | */.volta/bin/node) NODE=$("$NODE" -p process.execPath) ;;
+      */Cellar/* | /nix/store/*) NODE=$(command -v node) ;;
     esac
   else
     if command -v node >/dev/null 2>&1; then

@@ -70,9 +70,11 @@ function Select-Node {
 
   $system = Get-Command node -ErrorAction SilentlyContinue
   if ($system -and (Test-CompatibleNode $system.Source)) {
-    # A Volta shim re-resolves on every run, so pin the Node behind it; anything else stays as found.
-    if ($system.Source -match "\\Volta\\") { return (& $system.Source -p "process.execPath") }
-    return $system.Source
+    # Pin the real binary, since version managers switch what `node` points to but keep each version on disk.
+    # nvm-windows repoints a symlinked directory, which process.execPath may report unresolved, so follow it.
+    $dir = Get-Item -LiteralPath (Split-Path $system.Source)
+    if ($dir.LinkType -and $dir.Target) { return Join-Path @($dir.Target)[0] (Split-Path $system.Source -Leaf) }
+    return (& $system.Source -p "process.execPath")
   }
   if ($system) { Write-Host "Found Node $(& $system.Source --version), but DevSpace needs >=$NodeMin <$NodeMaxMajor." }
 
