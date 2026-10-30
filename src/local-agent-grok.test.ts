@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -7,6 +10,7 @@ import {
   readGrokSessionState,
   resolveGrokEffort,
   resolveGrokModelId,
+  readGrokTurnFailure,
 } from "./local-agent-grok.js";
 
 const sessionResponse = {
@@ -92,4 +96,18 @@ test("a completion wait times out", async () => {
   const keepAlive = new Promise((resolve) => setTimeout(resolve, 20));
   await assert.rejects(timeout, /timed out/);
   await keepAlive;
+});
+
+test("a Grok turn failure is read from Grok's log for the matching session", () => {
+  const home = mkdtempSync(join(tmpdir(), "devspace-grok-log-"));
+  mkdirSync(join(home, ".grok", "logs"), { recursive: true });
+  writeFileSync(join(home, ".grok", "logs", "unified.jsonl"), [
+    JSON.stringify({ sid: "other", msg: "turn.terminal_failure", ctx: { message: "Not this one" } }),
+    JSON.stringify({ sid: "s1", msg: "shell.turn.started", ctx: {} }),
+    JSON.stringify({ sid: "s1", msg: "turn.terminal_failure", ctx: { message: "Unauthorized (401): Invalid or expired credentials\n\n  Model: grok-4.5" } }),
+  ].join("\n"));
+
+  assert.equal(readGrokTurnFailure("s1", { HOME: home }), "Unauthorized (401): Invalid or expired credentials");
+  assert.equal(readGrokTurnFailure("missing", { HOME: home }), undefined);
+  assert.equal(readGrokTurnFailure("s1", { HOME: join(home, "nowhere") }), undefined);
 });

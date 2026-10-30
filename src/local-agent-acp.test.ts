@@ -15,6 +15,7 @@ import {
   resolveAcpCommand,
   selectAcpPermissionOption,
   matchAcpSelectValue,
+  acpEmptyTurnDetail,
 } from "./local-agent-acp.js";
 import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 
@@ -831,4 +832,12 @@ test("an ACP select accepts a plain name when exactly one bracketed variant matc
   assert.equal(matchAcpSelectValue(available, "composer-2.5"), "composer-2.5[fast=true]");
   assert.equal(matchAcpSelectValue(available, "grok-4.6"), undefined, "ambiguous names match nothing");
   assert.equal(matchAcpSelectValue(available, "composer"), undefined);
+});
+
+test("a turn without assistant text reports the agent's reason, stop reason, updates, and stderr", () => {
+  assert.equal(
+    acpEmptyTurnDetail({ stopReason: "error" }, [{ sessionUpdate: "tool_call" }], "boom\n", "Unauthorized (401)"),
+    "Unauthorized (401); stop reason: error; updates: tool_call; stderr: boom",
+  );
+  assert.equal(acpEmptyTurnDetail({}, [], ""), "stop reason: none; updates: none");
 });
