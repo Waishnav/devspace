@@ -23,6 +23,9 @@ on:
       - bin/**
       - package.json
       - pnpm-lock.yaml
+      - src/db/**
+      - src/cli.ts
+      - src/local-agent-client.ts
       - .github/workflows/install.yml
   workflow_dispatch:
 
@@ -30,7 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # Key PR runs on the PR number so same-named branches from different forks never cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -136,6 +140,9 @@ jobs:
           if ("${{ matrix.node }}" -eq "managed") {
             # Launchers spell profile paths through %LOCALAPPDATA% so non-ASCII usernames survive cmd.exe.
             if (-not (Select-String -Quiet -SimpleMatch "%LOCALAPPDATA%\devspace\install\node\node.exe" $devspace)) { throw "launcher does not pin the managed Node" }
+          } else {
+            $node = & (Get-Command node).Source -p "process.execPath"
+            if (-not (Select-String -Quiet -SimpleMatch $node $devspace)) { throw "launcher does not pin the Node on PATH ($node)" }
           }
 
           & $devspace --version
