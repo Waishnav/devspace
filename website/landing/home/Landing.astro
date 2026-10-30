@@ -8,6 +8,7 @@ import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import HeroStage from "./HeroStage.astro";
 import WorkflowStage from "./WorkflowStage.astro";
+import InstallCommand from "./InstallCommand.astro";
 import { Code } from "astro:components";
 import { workbenchLightTheme } from "./theme";
 import Logo from "../../logos/Logo.astro";
@@ -31,7 +32,7 @@ effort: high
       <a href="/docs/roadmap">Roadmap</a>
       <a href={GITHUB}>GitHub</a>
     </div>
-    <button class="btn btn--dark" data-copy={INSTALL}>
+    <button class="btn btn--dark" data-copy={INSTALL} data-install-command>
       <span class="btn__idle">Install</span><span class="btn__done">Copied</span>
       <Icon name="download" size={18} />
     </button>
@@ -49,8 +50,9 @@ effort: high
           edits, runs tests, and shows you the diff. Then it lets that AI hand work
           to Codex, Claude Code, and other agents.
         </p>
+        <InstallCommand />
         <div class="hero__cta">
-          <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
+          <button class="btn btn--dark btn--lg btn--command" data-copy={INSTALL} data-install-command>
             <code>{INSTALL}</code>
             <span class="btn__idle"><Icon name="copy" size={15} /></span><span class="btn__done"><Icon name="check" size={15} /></span>
           </button>
@@ -144,8 +146,9 @@ effort: high
 
     <section class="cta">
       <h2>Stop deciding what to prompt next.</h2>
+      <InstallCommand />
       <div class="hero__cta">
-        <button class="btn btn--dark btn--lg" data-copy={INSTALL}>
+        <button class="btn btn--dark btn--lg btn--command" data-copy={INSTALL} data-install-command>
           <code>{INSTALL}</code><span class="btn__idle"><Icon name="copy" size={15} /></span><span class="btn__done"><Icon name="check" size={15} /></span>
         </button>
         <a class="btn btn--ghost btn--lg" href={GITHUB}>Star on GitHub <span>→</span></a>
@@ -209,6 +212,8 @@ effort: high
   .btn--ghost:hover { border-color: var(--ink); }
   .btn--lg { padding: 16px 24px; }
   .btn code { font: inherit; }
+  .btn--command { max-width: 100%; text-align: left; }
+  .btn--command code { overflow-wrap: anywhere; }
   .btn__idle, .btn__done { display: inline-flex; }
   .btn__done, .btn[data-copied] .btn__idle { display: none; }
   .btn[data-copied] .btn__done { display: inline-flex; }

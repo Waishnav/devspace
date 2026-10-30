@@ -1,14 +1,14 @@
 #!/bin/sh
 # DevSpace installer for macOS, Linux, and WSL.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Waishnav/devspace/main/install/install.sh | sh
+#   curl -fsSL https://devspace.run/install | sh
 #
 # Uses a compatible Node already on PATH, otherwise downloads a checksum-verified Node 24 LTS for DevSpace alone.
 # Installs @waishnav/devspace into a user-owned npm prefix (no sudo), writes `devspace` launchers that pin that
 # Node, then runs `devspace init`. Rerun it to update.
 #
 # Environment overrides:
-#   DEVSPACE_VERSION      npm version or dist-tag to install (default: beta)
+#   DEVSPACE_VERSION      npm version or dist-tag to install (default: latest)
 #   DEVSPACE_INSTALL_DIR  runtime and package location (default: ~/.local/share/devspace/install)
 #   DEVSPACE_BIN_DIR      launcher location (default: ~/.local/bin)
 #   DEVSPACE_NO_INIT=1    skip running `devspace init` afterwards
@@ -18,9 +18,7 @@
 set -eu
 
 PACKAGE="@waishnav/devspace"
-# v1.1 is the first release installable without install scripts, and it is still on the beta tag.
-# Switch this to latest once v1.1 ships as stable.
-VERSION="${DEVSPACE_VERSION:-beta}"
+VERSION="${DEVSPACE_VERSION:-latest}"
 PACKAGE_SPEC="${DEVSPACE_PACKAGE_SPEC:-$PACKAGE@$VERSION}"
 INSTALL_DIR="${DEVSPACE_INSTALL_DIR:-$HOME/.local/share/devspace/install}"
 BIN_DIR="${DEVSPACE_BIN_DIR:-$HOME/.local/bin}"

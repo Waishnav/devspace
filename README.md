@@ -60,25 +60,24 @@ The same `/mcp` endpoint serves the 2026-07-28 per-request protocol and automati
 
 ## Installation
 
-DevSpace requires Node `>=22.19 <27`.
-
-Install the DevSpace CLI:
+macOS, Linux, and WSL:
 
 ```bash
-npm install -g @waishnav/devspace
+curl -fsSL https://devspace.run/install | sh
 ```
 
-Then initialize DevSpace:
+Windows (DevSpace also needs Git Bash):
 
-```bash
-devspace init
+```powershell
+powershell -c "irm https://devspace.run/install.ps1 | iex"
 ```
 
-Or run it without a global install:
+The installer uses a compatible Node (`>=22.19 <27`) on your `PATH` or
+downloads Node 24 LTS for DevSpace alone, installs without `sudo`, and starts
+`devspace init`. Rerun it to update.
 
-```bash
-npx @waishnav/devspace init
-```
+If you manage Node yourself, `npm install -g @waishnav/devspace` followed by
+`devspace init` also works.
 
 During setup, DevSpace asks for:
 
