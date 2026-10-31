@@ -14,6 +14,17 @@ const ROW = 62; // px per host slot
 const TICKS_PER_STEP = 8;
 const TICK_MS = 550;
 const AGENT_IDS = ["7Kq2", "Q9m4", "Xb31", "Lp58", "Tn0d", "Ve66", "Rw29", "Zc74"];
+// Agent rows, matching `.dm__agents li` height and gap in routing.css, so the
+// fan's curves land on each row's centre.
+const AGENT_ROW = 38;
+const AGENT_GAP = 9;
+const FAN_HEIGHT = PROVIDERS.length * AGENT_ROW + (PROVIDERS.length - 1) * AGENT_GAP;
+const fanCurve = (i: number) => {
+  const y = i * (AGENT_ROW + AGENT_GAP) + AGENT_ROW / 2;
+  const mid = FAN_HEIGHT / 2;
+
+  return `M0 ${mid} C 55 ${mid}, 45 ${y}, 100 ${y}`;
+};
 
 type Phase = "idle" | "running" | "completed";
 
@@ -86,7 +97,13 @@ export default function DelegationDiagram() {
 
           <div className="dm__core"><img className="dm__logo dm__logo--light" src="/logos/devspace-blue.png" alt="" width="27" height="28" /><img className="dm__logo dm__logo--dark" src="/logos/devspace-tile.png" alt="" width="28" height="28" /><b>DevSpace</b></div>
 
-          <div className={`dm__wire ${phase === "running" ? "on" : ""}`}><i /></div>
+          <svg className="dm__fan" style={{ height: FAN_HEIGHT }} viewBox={`0 0 100 ${FAN_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
+            {PROVIDERS.map((p, i) => {
+              const active = routed && targets.includes(i);
+
+              return <path key={p.id} d={fanCurve(i)} className={active ? `on dm__fan--${phase}` : ""} />;
+            })}
+          </svg>
 
           <ul className="dm__agents">
             {PROVIDERS.map((p, i) => {
