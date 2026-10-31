@@ -36,6 +36,7 @@ const props = Astro.props;
     const url = new URL(`https://app.gitcms.dev/${owner}/${repo}/docs/${file}`);
 
     if (segments.length > 0) url.searchParams.set("subpath", segments.join("/"));
+    // SAFETY: a shallow clone of an <a> is an <a>.
     const row = github.cloneNode() as HTMLAnchorElement;
 
     row.href = url.href;

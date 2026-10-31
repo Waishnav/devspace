@@ -14,11 +14,13 @@ const ROW = 62; // px per host slot
 const TICKS_PER_STEP = 8;
 const TICK_MS = 550;
 const AGENT_IDS = ["7Kq2", "Q9m4", "Xb31", "Lp58", "Tn0d", "Ve66", "Rw29", "Zc74"];
+
 // Agent rows, matching `.dm__agents li` height and gap in routing.css, so the
 // fan's curves land on each row's centre.
 const AGENT_ROW = 38;
 const AGENT_GAP = 9;
 const FAN_HEIGHT = PROVIDERS.length * AGENT_ROW + (PROVIDERS.length - 1) * AGENT_GAP;
+
 const fanCurve = (i: number) => {
   const y = i * (AGENT_ROW + AGENT_GAP) + AGENT_ROW / 2;
   const mid = FAN_HEIGHT / 2;
