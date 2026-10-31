@@ -74,13 +74,15 @@ const COMMANDS = [
   .menu__label em { font-style: normal; font-weight: 500; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
   .menu__cmd {
     display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
-    background: var(--ink); color: #f5f5f3; border: 0; border-radius: 8px;
+    background: #efefec; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+    transition: border-color 0.2s;
   }
-  .menu__cmd:hover { background: #2b2b2b; }
+  .menu__cmd:hover { border-color: var(--ink); }
+  .menu__idle { color: var(--muted); }
   /* One line, so a flag never splits; scrolls instead of wrapping on narrow windows. */
   .menu__cmd code { flex: 1; min-width: 0; font: 500 12.5px "IBM Plex Mono", monospace; white-space: nowrap; overflow-x: auto; }
   .menu__done, .menu__cmd[data-copied] .menu__idle { display: none; }
-  .menu__cmd[data-copied] .menu__done { display: inline-flex; color: #4ade80; }
+  .menu__cmd[data-copied] .menu__done { display: inline-flex; color: #15803d; }
   .menu__link { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; color: var(--muted); font-size: 13px; text-decoration: none; }
   .menu__link:hover { color: var(--ink); }
 
