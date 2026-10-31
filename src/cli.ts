@@ -188,7 +188,7 @@ async function ensureConfigured(): Promise<void> {
         "  devspace init",
         "",
         "Setup questions can also be answered with flags, for example:",
-        "  devspace init --public-url https://your-tunnel-host.example.com",
+        "  devspace init --public-url https://your-tunnel-host.example.com --roots ~/work",
         "",
         "Or provide DEVSPACE_OAUTH_OWNER_TOKEN.",
       ].join("\n"),
@@ -345,7 +345,8 @@ async function promptInitAnswers(
         : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
     })),
     initialValues: defaults.providers,
-    required: true,
+    // An MCP host works without subagents, so only a subagents-only setup must pick one.
+    required: !usesChatGpt(usage),
   });
 
   if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
@@ -1372,9 +1373,14 @@ function validateRequiredPublicBaseUrl(value: string | undefined): string | unde
 
   if (!trimmed) return "Enter the public URL from your tunnel or reverse proxy.";
 
-  if (trimmed.replace(/\/+$/, "").endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
+  const invalid = validatePublicBaseUrl(trimmed);
 
-  return validatePublicBaseUrl(trimmed);
+  if (invalid) return invalid;
+
+  // Check the parsed path, since the query and fragment are dropped when the URL is saved.
+  return new URL(trimmed).pathname.replace(/\/+$/, "").endsWith("/mcp")
+    ? "Enter the base URL only, without /mcp."
+    : undefined;
 }
 
 function validatePublicBaseUrl(value: string): string | undefined {
