@@ -145,7 +145,7 @@ effort: high
     </section>
 
     <section class="cta">
-      <h2>Stop deciding what to prompt next.</h2>
+      <h2>Stop deciding what to prompt next.<br /><span>Let the model decide that.</span></h2>
       <InstallCommand />
       <div class="hero__cta">
         <button class="btn btn--dark btn--lg btn--command" data-copy={INSTALL} data-install-command>
@@ -158,7 +158,7 @@ effort: high
 
   <footer class="foot">
     <span>devspace.run — MIT licensed</span>
-    <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a></span>
+    <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a> · <a href="https://gitcms.dev">GitCMS</a></span>
   </footer>
 </Shell>
 
@@ -294,6 +294,7 @@ effort: high
 
   .cta { padding: 110px 44px; display: flex; flex-direction: column; align-items: center; gap: 32px; text-align: center; }
   .cta h2 { margin: 0; font-size: clamp(28px, 3.4vw, 44px); letter-spacing: -0.035em; font-weight: 600; }
+  .cta h2 span { color: var(--muted); }
 
   .foot {
     max-width: 1296px; margin: 0 auto; padding: 22px 12px 90px;
