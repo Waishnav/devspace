@@ -20,7 +20,8 @@ export const AGENT_PROMPT = `Set up DevSpace (https://devspace.run) on this comp
    If \`devspace\` is not on PATH afterwards, use ~/.local/bin/devspace (Windows: & "$env:LOCALAPPDATA\\devspace\\bin\\devspace.cmd").
 2. Configure it: devspace init --yes
    If it says DevSpace is already configured, keep that setup.
-3. Install the subagents skill for yourself: devspace agents skill --install <claude-code|codex|cursor|opencode|agents>
+3. Install the subagents skill for yourself: devspace agents skill --install <claude-code|codex|opencode|agents>
+   For Cursor, run devspace agents skill --install cursor --project from the project root.
 4. Check it works: devspace agents targets
 
 Then tell me which agents you can delegate to. Docs: https://devspace.run/docs/quickstart`;

@@ -103,7 +103,11 @@ const structuredData = {
 
     const status = document.querySelector<HTMLElement>("[data-copy-status]");
 
-    if (status) status.textContent = "Copied to clipboard";
+    // Clear first so a repeat copy is a new change that screen readers announce again.
+    if (status) {
+      status.textContent = "";
+      setTimeout(() => (status.textContent = "Copied to clipboard"), 50);
+    }
   });
 </script>
 
