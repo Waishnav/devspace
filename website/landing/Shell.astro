@@ -76,6 +76,8 @@ const structuredData = {
   </head>
   <body class={bodyClass}>
     <slot />
+    <!-- Copy buttons only change their visible text, so announce the result here too. -->
+    <p class="sr-only" role="status" data-copy-status></p>
   </body>
 </html>
 
@@ -98,6 +100,10 @@ const structuredData = {
 
     target.dataset.copied = "";
     setTimeout(() => delete target.dataset.copied, 1400);
+
+    const status = document.querySelector<HTMLElement>("[data-copy-status]");
+
+    if (status) status.textContent = "Copied to clipboard";
   });
 </script>
 
@@ -108,4 +114,5 @@ const structuredData = {
   img, svg { display: block; max-width: 100%; }
   a { color: inherit; }
   button { font: inherit; color: inherit; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 </style>
