@@ -1,0 +1,50 @@
+---
+// Floating corner link to the DevSpace skills on skills.sh, fronted by the
+// hosts we want people to associate with them.
+import Logo from "../../logos/Logo.astro";
+import type { LogoId } from "../../logos";
+
+const SKILLS = "https://skills.sh/waishnav/devspace";
+const AGENTS: ReadonlyArray<{ id: LogoId; name: string }> = [
+  { id: "grok", name: "Grok Bot" },
+  { id: "openai", name: "ChatGPT" },
+  { id: "claude", name: "Claude" },
+];
+---
+
+<a class="skills" href={SKILLS} target="_blank" rel="noopener">
+  <span class="skills__logos">
+    {AGENTS.map((a) => <span class="skills__tile" title={a.name}><Logo id={a.id} size={22} /></span>)}
+  </span>
+  <span class="skills__text">
+    <span class="skills__kicker">Works with your favorite AI agents</span>
+    <b>Use the DevSpace skills <span aria-hidden="true">↗</span></b>
+  </span>
+</a>
+
+<style>
+  .skills {
+    position: fixed; left: 20px; bottom: 20px; z-index: 40;
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px 10px 10px;
+    background: rgba(250, 250, 248, 0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(21, 21, 21, 0.08);
+    color: var(--ink); text-decoration: none; font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
+    transition: border-color 0.2s, transform 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+    animation: skills-in 0.5s cubic-bezier(0.23, 1, 0.32, 1) 1.2s both;
+  }
+  .skills:hover { border-color: var(--ink); transform: translateY(-2px); }
+  .skills__logos { display: flex; }
+  .skills__tile {
+    display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+    background: #fff; border: 1px solid var(--line); box-shadow: 0 0 0 2px var(--paper);
+  }
+  .skills__tile + .skills__tile { margin-left: -8px; }
+  .skills__text { display: grid; gap: 1px; line-height: 1.3; }
+  .skills__kicker { color: var(--muted); font-size: 12.5px; }
+  .skills b { font-size: 14px; font-weight: 600; }
+
+  @keyframes skills-in { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .skills { animation: none; transition: border-color 0.2s; } .skills:hover { transform: none; } }
+  /* On phones the corner card would cover content. */
+  @media (max-width: 720px) { .skills { display: none; } }
+</style>

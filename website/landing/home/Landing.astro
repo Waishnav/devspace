@@ -8,6 +8,7 @@ import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import HeroStage from "./HeroStage.astro";
 import WorkflowStage from "./WorkflowStage.astro";
+import SkillsPopover from "./SkillsPopover.astro";
 import InstallCommand from "./InstallCommand.astro";
 import { Code } from "astro:components";
 import { workbenchLightTheme } from "./theme";
@@ -160,6 +161,7 @@ effort: high
     <span>devspace.run — MIT licensed</span>
     <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a> · <a href="https://gitcms.dev">GitCMS</a></span>
   </footer>
+  <SkillsPopover />
 </Shell>
 
 <style is:global>
