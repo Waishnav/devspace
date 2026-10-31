@@ -30,10 +30,9 @@ const AGENTS: ReadonlyArray<{ id: LogoId; name: string }> = [
     background: rgba(250, 250, 248, 0.92); backdrop-filter: blur(8px);
     border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(21, 21, 21, 0.08);
     color: var(--ink); text-decoration: none; font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
-    transition: border-color 0.2s, transform 0.2s cubic-bezier(0.23, 1, 0.32, 1);
-    animation: skills-in 0.5s cubic-bezier(0.23, 1, 0.32, 1) 1.2s both;
+    transition: border-color 0.2s;
   }
-  .skills:hover { border-color: var(--ink); transform: translateY(-2px); }
+  .skills:hover { border-color: var(--ink); }
   .skills__logos { display: flex; }
   .skills__tile {
     display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
@@ -44,8 +43,6 @@ const AGENTS: ReadonlyArray<{ id: LogoId; name: string }> = [
   .skills__kicker { color: var(--muted); font-size: 12.5px; }
   .skills b { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; }
 
-  @keyframes skills-in { from { opacity: 0; transform: translateY(8px); } }
-  @media (prefers-reduced-motion: reduce) { .skills { animation: none; transition: border-color 0.2s; } .skills:hover { transform: none; } }
   /* On phones the corner card would cover content. */
   @media (max-width: 720px) { .skills { display: none; } }
 </style>
