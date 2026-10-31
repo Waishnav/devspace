@@ -6,7 +6,7 @@
 
 <h1 align="center">DevSpace</h1>
 
-<p align="center">Bring a Codex-style coding workflow to ChatGPT.</p>
+<p align="center">Give ChatGPT, Claude, and Grok Bot your computer. Let any coding agent hand work to any other.</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@waishnav/devspace"><img alt="npm" src="https://img.shields.io/npm/v/%40waishnav%2Fdevspace?style=flat-square" /></a>
@@ -16,11 +16,21 @@
 
 [![DevSpace connected to ChatGPT](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)
 
-**Give ChatGPT a secure connection to your own machine and Turn ChatGPT into Codex**
+DevSpace is the agent-agnostic layer between the AI you talk to and the coding
+agents on your machine. It does two things:
 
-DevSpace is a self-hosted MCP server that lets ChatGPT read, edit, search, and run code in your real local projects — your files, your tools, your terminal — without uploading anything to a third party. You run it on your machine, expose it through a tunnel you control, and approve the connection with a password only you have.
+- **Connects MCP hosts to your machine.** ChatGPT, Claude, and proactive agents
+  like Grok Bot, OpenClaw, and Hermes open a workspace, read and edit files, run
+  your tests, and show you a review card of the diff — against your real
+  checkout, through a tunnel you own.
+- **Lets agents delegate to each other.** Codex, Claude Code, OpenCode, Pi,
+  Cursor, Copilot, and Grok Build run as subagents of whichever agent is in
+  charge, using the CLIs and subscriptions you already have. Parallel writers
+  get their own Git worktrees.
 
-The same `/mcp` endpoint serves the 2026-07-28 per-request protocol and automatically supports older 2025-era clients through stateless compatibility handling. There is no protocol mode to configure.
+Your agent stays the orchestrator: DevSpace never runs a hidden agent loop of
+its own. And there is no DevSpace service — everything runs locally with your
+credentials.
 
 ## Sponsors and Special Thanks
 <!-- 
@@ -74,58 +84,70 @@ powershell -c "irm https://devspace.run/install.ps1 | iex"
 
 The installer uses a compatible Node (`>=22.19 <27`) on your `PATH` or
 downloads Node 24 LTS for DevSpace alone, installs without `sudo`, and starts
-`devspace init`. Rerun it to update.
+`devspace init`. Rerun it to update. If you manage Node yourself,
+`npm install -g @waishnav/devspace` followed by `devspace init` also works.
 
-If you manage Node yourself, `npm install -g @waishnav/devspace` followed by
-`devspace init` also works.
+`devspace init` asks where you will use DevSpace and which agents it may run as
+subagents. Each question can also be answered with a flag, so scripts and
+agents can set it up without prompts:
 
-During setup, DevSpace asks for:
-
-- where you will use it: ChatGPT, Coding Agents, or both
-- which agents DevSpace may use as subagents
-
-The first choice is where you invoke DevSpace from. The subagent choice is
-separate: ChatGPT or another coding agent can delegate work through DevSpace to
-the agents you select there.
-
-If you select ChatGPT, setup also asks which local project folders it may open
-and for your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy,
-Tailscale Funnel, or another reverse proxy. A Coding Agents-only setup asks
-neither question: local commands use the current Git project, or the current
-directory outside a repository.
-
-Use the public origin without `/mcp` during setup:
-
-```text
-https://your-tunnel-host.example.com
+```bash
+devspace init --yes                                                      # subagents only
+devspace init --public-url https://your-tunnel.example.com --roots ~/work # also serve an MCP host
 ```
 
-You will configure your MCP client with the public `/mcp` URL after setup.
-Run `devspace serve` when using ChatGPT. For Coding Agents, setup prints a
-`skills` command and lets the Skills CLI handle installation.
+**Let your agent set itself up.** The **Copy prompt** button on
+[devspace.run](https://devspace.run) copies a prompt you can paste into Codex,
+Claude Code, or any agent with a shell. It installs, configures, and checks
+DevSpace without asking you anything.
 
-When the client connects, DevSpace opens an Owner password approval page. Enter
-the Owner password printed by `devspace init`. It is also stored in:
+## Use It from Your Coding Agents
 
-```text
-~/.devspace/auth.json
+Subagents need no server, tunnel, or OAuth. Install the skill that teaches your
+agent the workflow, then delegate:
+
+```bash
+devspace agents skill --install <claude-code|codex|opencode|agents>
+# Cursor: devspace agents skill --install cursor --project
+
+devspace agents run codex "Review the staged diff for correctness"
+devspace agents run pi "Check the staged diff for test gaps"
+devspace agents wait <id> <id>
 ```
 
-Keep that password private.
+- **Profiles** turn your "which model for which job" choices into named roles
+  (`planner`, `reviewer`, …) as Markdown files you own.
+- **Worktrees** (`--worktree`) let agents edit in parallel without touching
+  your checkout.
+- **Dynamic workflows** (experimental, `DEVSPACE_EXPERIMENTAL_WORKFLOWS=1`) let
+  the orchestrator write a small, resumable script with `agent()`,
+  `parallel()`, `pipeline()`, and `phase()` instead of prompting step by step.
 
-## Connect Your MCP Client
+## Use It from ChatGPT, Claude, and Other MCP Hosts
 
-The default local endpoint is:
-
-```text
-http://127.0.0.1:7676/mcp
-```
-
-Most users should connect through a public HTTPS tunnel:
+Start a tunnel (Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your
+own HTTPS reverse proxy) to `http://127.0.0.1:7676`, run `devspace serve`, and
+add the public `/mcp` URL as a connector in your host:
 
 ```text
 https://your-tunnel-host.example.com/mcp
 ```
+
+When the host connects, DevSpace opens an Owner password approval page. The
+password is stored in `~/.devspace/auth.json`; keep it private. The `/mcp`
+endpoint serves the 2026-07-28 protocol and older 2025-era clients without any
+configuration.
+
+Once connected, the host can open one of your allowed project folders as a
+workspace and:
+
+- read, write, and edit files, and search code
+- run shell commands for tests, builds, Git, and package scripts
+- use isolated Git worktrees for parallel sessions
+- follow project instructions from `AGENTS.md` and `CLAUDE.md`, and discover
+  your skills
+- show a change-review card at the end of a turn
+- delegate to your coding agents through the same `devspace agents` CLI
 
 > [!NOTE]
 > Using DevSpace as an MCP connector isn't against OpenAI's Usage Policies — it's
@@ -135,37 +157,16 @@ https://your-tunnel-host.example.com/mcp
 > Used normally, you're fine. (Based on OpenAI's Usage Policies and Service Terms
 > as of June 2026.)
 
-## What ChatGPT Can Do
-
-Once connected, ChatGPT can open one of your approved project folders as a
-workspace. From there, it can inspect the repo, make scoped edits, run commands,
-and show you what changed.
-
-DevSpace gives ChatGPT tools to:
-
-- read, write, and edit files inside the opened workspace
-- search code and inspect directories
-- run shell commands for tests, builds, git, and package scripts
-- use isolated Git worktrees for parallel coding sessions
-- follow project instructions from `AGENTS.md` and `CLAUDE.md`
-- discover local agent skills from your skill folders
-- show tool cards and optional change summaries in ChatGPT Apps-compatible hosts
-
 ## Mental Model
 
-DevSpace is remote access to selected local folders.
+DevSpace is remote access to selected local folders, plus a way for your
+agents to work together.
 
-You decide which roots are allowed. The MCP client still has powerful local
-capabilities inside an opened workspace, including shell execution. Treat a
-connected client like a trusted coding partner with access to your machine.
-
-For a normal ChatGPT coding session:
-
-1. Start your tunnel.
-2. Run `devspace serve`.
-3. Connect the MCP client to your public `/mcp` URL.
-4. Approve the connection with the Owner password.
-5. Ask ChatGPT to open a project inside one of your allowed roots.
+You decide which roots an MCP host may open. Inside a workspace the host has
+powerful local capabilities, including shell execution, so treat a connected
+host like a trusted coding partner with access to your machine. Subagents run
+with your local user's authority and logins, scoped to the project they are
+started from.
 
 ## Platform Support
 
@@ -190,28 +191,27 @@ devspace doctor
 Full documentation lives at [devspace.run/docs](https://devspace.run/docs):
 
 - [Quickstart](https://devspace.run/docs/quickstart)
-- [Connect ChatGPT, Claude, and other MCP hosts](https://devspace.run/docs/connect/mcp-hosts)
-- [Agents CLI for Claude Code, Cursor, OpenCode, Codex, and bots](https://devspace.run/docs/connect/coding-agents)
-- [Configuration reference](https://devspace.run/docs/reference/configuration)
-- [CLI reference](https://devspace.run/docs/reference/cli)
-- [Native file download](https://devspace.run/docs/reference/artifacts)
+- [Connect ChatGPT, Claude, Grok Bot, and other MCP hosts](https://devspace.run/docs/connect/mcp-hosts)
+- [Use DevSpace from Codex, Claude Code, Cursor, OpenCode, and bots](https://devspace.run/docs/connect/coding-agents)
+- [Subagents](https://devspace.run/docs/orchestration/subagents) and [agent profiles](https://devspace.run/docs/orchestration/profiles)
+- [Dynamic workflows](https://devspace.run/docs/orchestration/dynamic-workflows)
+- [CLI reference](https://devspace.run/docs/reference/cli) and [configuration reference](https://devspace.run/docs/reference/configuration)
 - [Security model](https://devspace.run/docs/concepts/security)
 - [Troubleshooting](https://devspace.run/docs/reference/troubleshooting)
 
 ## Philosophy
 
-Every piece of software is becoming conversational. Natural language is
-redefining how we interact with tools, workflows, and systems.
+Every piece of software is becoming conversational, and every provider is
+racing to make _their_ agent the orchestrator.
 
-My bet is that ChatGPT becomes the operating system for everything. Once we
-reach AGI, we will simply talk to ChatGPT, and it will prompt, coordinate, and
-orchestrate sub-agents that set up the right loops for us.
+In practice, people already pick a different model and harness per task: one
+to plan, another to implement, a cheap one to explore, a second vendor to
+review. That matrix is personal, and it changes every few weeks.
 
-We are not there yet.
-
-DevSpace is one attempt to fast-forward that future: a way for MCP-capable
-hosts like ChatGPT and Claude to work directly with local project files through
-explicit, inspectable tools.
+DevSpace keeps it yours. Whichever agent you talk to — ChatGPT, Claude, Grok
+Bot, or a coding agent in your terminal — can reach your machine and hand work
+to the others, through explicit, inspectable tools instead of one vendor's
+closed loop.
 
 ## Built by Waishnav
 
@@ -242,9 +242,10 @@ This year, I began my journey to build a one-person, multi-agent company capable
         </a>
       </td>
       <td>
-        <strong>Modern CMS and tooling for markdown based content sites — built for agents and humans.</strong><br><br>
-        Visual editing, editorial workflow, and ChatGPT/Claude content agents, with
-        every post and page stored as files in your repo.
+        <strong>The CMS for code-first and AI-built websites.</strong><br><br>
+        GitCMS gives your team, your clients, and AI agents one safe place to
+        edit, review, and publish website changes, while everything stays in
+        your site’s repository. No migration and no content database.
         <a href="https://gitcms.dev/">Learn more</a>.
       </td>
     </tr>
