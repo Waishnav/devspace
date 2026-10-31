@@ -58,7 +58,7 @@ export default function DelegationDiagram() {
 
   return (
     <Fit width={DESIGN_WIDTH}>
-      <div className="ds-diagram dm" role="img" aria-label="Illustration: a host such as ChatGPT delegates through DevSpace to coding agents, which run and then complete">
+      <div className="ds-diagram dm" role="img" aria-label="Illustration: a host such as Grok Bot delegates through DevSpace to coding agents, which run and then complete">
         <div className="ds-diagram__bar">
           <span className="ds-diagram__dots"><i /><i /><i /></span>
           <span>host: <b>{host.name}</b></span>

@@ -1,6 +1,6 @@
 ---
-title: Chat apps over MCP
-description: Give ChatGPT, Claude, Grok Bot, OpenClaw, Hermes, or any MCP host a minimal coding harness on your own machine, through a tunnel you control.
+title: Hosts over MCP
+description: Give Grok Bot, ChatGPT, Claude, OpenClaw, Hermes, or any MCP host a minimal coding harness on your own machine, through a tunnel you control.
 ---
 
 <Logos set="hosts" />
@@ -84,13 +84,17 @@ sign in with the Owner password, and browse workspaces, turns, each call's
 arguments and result, and each turn's diff. Turn it off with
 `activity.enabled: false` — see [Configuration](/reference/configuration).
 
-## Delegating from a chat app
+## Delegating from an MCP host
 
 There are no dedicated subagent MCP tools. The host runs
 `devspace agents …` through its ordinary shell or process tool, and DevSpace
 injects the opened workspace identity so agents stay scoped to that project.
 `subagents.instructions` decides whether the workflow is read on demand
 (default) or preloaded into `open_workspace`.
+
+This gives a proactive agent like Grok Bot a team of coding agents: it keeps
+planning and following up, and hands the actual coding to the Codex or Claude
+Code subscriptions you already have instead of spending its own usage.
 
 :::note
 Using DevSpace as a custom connector is a standard MCP App setup and writing or

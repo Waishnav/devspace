@@ -31,14 +31,14 @@ export const PILLARS = [
     key: "harness",
     kicker: "Harness over MCP",
     title: "A coding harness inside your chat app.",
-    body: "ChatGPT, Claude, Grok Bot, OpenClaw, Hermes — open a workspace, read, patch, run tests, and review a diff card against your real checkout, through a tunnel you own.",
+    body: "ChatGPT and Claude — or proactive agents like Grok Bot, OpenClaw, and Hermes — open a workspace, read, patch, run tests, and review a diff card against your real checkout, through a tunnel you own.",
     href: "/docs/connect/mcp-hosts",
   },
   {
     key: "subagents",
     kicker: "Subagents",
     title: "Any harness can call any other.",
-    body: "Codex hands implementation to Claude Code. Claude asks Codex for review. One CLI, one daemon, compact XML the model reads directly — and worktrees so parallel writers never collide.",
+    body: "Grok Bot hands its coding to the Codex and Claude Code subscriptions you already pay for. Claude asks Codex for review. One CLI, one daemon, compact XML the model reads directly — and worktrees so parallel writers never collide.",
     href: "/docs/orchestration/subagents",
   },
   {
@@ -82,11 +82,11 @@ export const FAQ = [
   },
   {
     q: "Where can I orchestrate from?",
-    a: "Any MCP host with remote connectors — ChatGPT and Claude, or MCP-capable Grok Bot, OpenClaw, Hermes, and Muse setups — through a tunnel you own. Coding agents like Codex and Claude Code orchestrate too, straight from their shell.",
+    a: "Any MCP host with remote connectors — proactive agents like Grok Bot, chat apps like ChatGPT and Claude, or MCP-capable OpenClaw, Hermes, and Muse setups — through a tunnel you own. Coding agents like Codex and Claude Code orchestrate too, straight from their shell.",
   },
   {
     q: "Do I need a tunnel?",
-    a: "Only if you want a chat app to drive it over MCP. Coding agents call the devspace CLI directly: install one skill and no server is needed.",
+    a: "Only if you want a chat app or proactive agent to drive it over MCP. Coding agents call the devspace CLI directly: install one skill and no server is needed.",
   },
   {
     q: "Does my code leave my machine?",
