@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isNonInteractiveInit,
+  parseInitArgs,
+  resolveInitAnswers,
   resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
 } from "./onboarding.js";
@@ -72,5 +75,68 @@ test("onboarding toggles existing providers and preserves their settings", () =>
         { id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" },
       ],
     },
+  );
+});
+
+const DEFAULTS = {
+  destinations: ["coding-agents" as const],
+  providers: ["codex"],
+  knownProviders: ["codex", "claude", "pi"],
+  roots: ["/home/me/work"],
+  publicUrl: null,
+};
+
+test("init flags parse spaced and inline values and reject unknown options", () => {
+  assert.deepEqual(
+    parseInitArgs(["--use=both", "--providers", "codex, claude", "--roots", "~/a,~/b", "--public-url", "https://t.example", "--json"]),
+    {
+      force: false,
+      yes: false,
+      json: true,
+      use: ["chatgpt", "coding-agents"],
+      providers: ["codex", "claude"],
+      roots: ["~/a", "~/b"],
+      publicUrl: "https://t.example",
+    },
+  );
+  assert.throws(() => parseInitArgs(["--use", "slack"]), /Unknown --use value: slack/);
+  assert.throws(() => parseInitArgs(["--providers"]), /--providers needs a value/);
+  assert.throws(() => parseInitArgs(["--bogus"]), /Unknown option: --bogus/);
+});
+
+test("init runs without prompts when given answers or no terminal", () => {
+  assert.equal(isNonInteractiveInit(parseInitArgs([]), true), false);
+  assert.equal(isNonInteractiveInit(parseInitArgs([]), false), true);
+  assert.equal(isNonInteractiveInit(parseInitArgs(["--yes"]), true), true);
+  assert.equal(isNonInteractiveInit(parseInitArgs(["--providers", "codex"]), true), true);
+});
+
+test("init answers fall back to the prompt defaults for coding agents", () => {
+  assert.deepEqual(resolveInitAnswers(parseInitArgs(["--yes"]), DEFAULTS), {
+    usage: "coding-agents",
+    providers: ["codex"],
+  });
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--providers", "codex,nope"]), DEFAULTS),
+    /Unknown provider: nope. Known providers: codex, claude, pi/,
+  );
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--yes"]), { ...DEFAULTS, providers: [] }),
+    /No coding agents were detected/,
+  );
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example"]), DEFAULTS),
+    /apply only with --use chatgpt/,
+  );
+});
+
+test("init answers for an MCP host need a public URL and default the roots", () => {
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--use", "chatgpt"]), DEFAULTS),
+    /--public-url is required/,
+  );
+  assert.deepEqual(
+    resolveInitAnswers(parseInitArgs(["--use", "chatgpt", "--public-url", "https://t.example"]), DEFAULTS),
+    { usage: "chatgpt", providers: ["codex"], roots: ["/home/me/work"], publicUrl: "https://t.example" },
   );
 });

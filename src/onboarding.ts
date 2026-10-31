@@ -66,3 +66,108 @@ export function updateOnboardingSubagentsConfig(
     ],
   };
 }
+
+/** `devspace init` options; any answer flag makes setup non-interactive. */
+export interface InitFlags {
+  force: boolean;
+  yes: boolean;
+  json: boolean;
+  use?: OnboardingDestination[];
+  providers?: string[];
+  roots?: string[];
+  publicUrl?: string;
+}
+
+export const INIT_USAGE =
+  "Usage: devspace init [--force] [--yes] [--json] [--use <chatgpt|coding-agents|both>] [--providers <id,...>] [--roots <path,...>] [--public-url <url>]";
+
+const list = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
+
+export function parseInitArgs(args: readonly string[]): InitFlags {
+  const flags: InitFlags = { force: false, yes: false, json: false };
+
+  for (let i = 0; i < args.length; i++) {
+    const [name, inline] = args[i]!.split(/=(.*)/s, 2) as [string, string | undefined];
+    const value = () => {
+      const next = inline ?? args[++i];
+
+      if (next === undefined || next.startsWith("--")) throw new Error(`${name} needs a value.\n${INIT_USAGE}`);
+
+      return next;
+    };
+
+    switch (name) {
+      case "--force": flags.force = true; break;
+      case "--yes": case "-y": flags.yes = true; break;
+      case "--json": flags.json = true; break;
+      case "--use": flags.use = parseDestinations(value()); break;
+      case "--providers": flags.providers = list(value()); break;
+      case "--roots": flags.roots = list(value()); break;
+      case "--public-url": flags.publicUrl = value().trim(); break;
+      default: throw new Error(`Unknown option: ${args[i]}\n${INIT_USAGE}`);
+    }
+  }
+
+  return flags;
+}
+
+function parseDestinations(value: string): OnboardingDestination[] {
+  return list(value).flatMap((item) => {
+    if (item === "both") return [...ONBOARDING_DESTINATIONS];
+
+    if ((ONBOARDING_DESTINATIONS as readonly string[]).includes(item)) return [item as OnboardingDestination];
+    throw new Error(`Unknown --use value: ${item}. Use chatgpt, coding-agents, or both.`);
+  });
+}
+
+/** Setup runs without prompts when asked to, when given answers, or when nobody can answer. */
+export function isNonInteractiveInit(flags: InitFlags, interactiveTerminal: boolean): boolean {
+  return flags.yes || flags.json || !interactiveTerminal
+    || [flags.use, flags.providers, flags.roots, flags.publicUrl].some((value) => value !== undefined);
+}
+
+export interface InitAnswers {
+  usage: OnboardingUsage;
+  providers: string[];
+  /** Raw root paths; set only when DevSpace serves an MCP host. */
+  roots?: string[];
+  /** Raw public URL; set only when DevSpace serves an MCP host. */
+  publicUrl?: string;
+}
+
+export interface InitDefaults {
+  destinations: OnboardingDestination[];
+  providers: string[];
+  knownProviders: string[];
+  roots: string[];
+  publicUrl: string | null;
+}
+
+/** Fill unanswered flags with the same defaults the prompts preselect. */
+export function resolveInitAnswers(flags: InitFlags, defaults: InitDefaults): InitAnswers {
+  const usage = resolveOnboardingUsage(flags.use ?? defaults.destinations);
+  const providers = flags.providers ?? defaults.providers;
+  const unknown = providers.filter((id) => !defaults.knownProviders.includes(id));
+
+  if (unknown.length > 0) {
+    throw new Error(`Unknown provider: ${unknown.join(", ")}. Known providers: ${defaults.knownProviders.join(", ")}.`);
+  }
+
+  if (providers.length === 0) {
+    throw new Error("No coding agents were detected. Install one, or pass --providers <id,...>.");
+  }
+
+  if (!usesChatGpt(usage)) {
+    if (flags.roots || flags.publicUrl) throw new Error("--roots and --public-url apply only with --use chatgpt or both.");
+
+    return { usage, providers };
+  }
+
+  const publicUrl = flags.publicUrl ?? defaults.publicUrl;
+
+  if (!publicUrl) {
+    throw new Error("--public-url is required with --use chatgpt: the HTTPS origin of your tunnel, without /mcp.");
+  }
+
+  return { usage, providers, roots: flags.roots ?? defaults.roots, publicUrl };
+}

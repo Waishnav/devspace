@@ -49,8 +49,13 @@ import {
   presentAgentTargetCatalog,
 } from "./local-agent-presentation.js";
 import {
+  type InitAnswers,
+  type InitFlags,
   type OnboardingDestination,
   SUBAGENT_SKILL_INSTALL_COMMAND,
+  isNonInteractiveInit,
+  parseInitArgs,
+  resolveInitAnswers,
   resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
   usesChatGpt,
@@ -102,7 +107,7 @@ async function main(argv: string[]): Promise<void> {
 
       return;
     case "init":
-      await runInit({ force: args.includes("--force") });
+      await runInit(parseInitArgs(args));
 
       return;
     case "doctor":
@@ -182,187 +187,67 @@ async function ensureConfigured(): Promise<void> {
         "Run:",
         "  devspace init",
         "",
+        "Agents and scripts can answer setup with flags, for example:",
+        "  devspace init --use chatgpt --public-url https://your-tunnel-host.example.com",
+        "",
         "Or provide DEVSPACE_OAUTH_OWNER_TOKEN.",
       ].join("\n"),
     );
   }
 
-  await runInit({ force: false });
+  await runInit({ force: false, yes: false, json: false });
 }
 
-async function runInit({ force }: { force: boolean }): Promise<void> {
+async function runInit(flags: InitFlags): Promise<void> {
   const files = loadDevspaceFiles();
+  const nonInteractive = isNonInteractiveInit(flags, Boolean(input.isTTY && output.isTTY));
 
-  if (!force && files.configExists && files.authExists) {
-    prompts.log.info(`DevSpace is already configured at ${files.dir}`);
-    prompts.log.info("Run `devspace init --force` to update it.");
+  if (!flags.force && files.configExists && files.authExists) {
+    if (flags.json) {
+      console.log(JSON.stringify({ status: "already_configured", config_path: files.configPath }, null, 2));
+    } else {
+      console.log(`DevSpace is already configured at ${files.dir}`);
+      console.log("Run `devspace init --force` to update it.");
+    }
+
+    return;
+  }
+
+  const currentSubagents = resolveSubagentsConfig(files.config.subagents ?? disabledSubagentsConfig());
+  const availability = getLocalAgentProviderAvailabilitySnapshot(process.env, currentSubagents);
+  const configuredProviders = currentSubagents.providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => provider.id);
+  const defaults = {
+    destinations: [files.config.server.publicBaseUrl ? "chatgpt" : "coding-agents"] as OnboardingDestination[],
+    providers: configuredProviders.length > 0
+      ? configuredProviders
+      : availability.filter((provider) => provider.available).map((provider) => provider.name),
+    knownProviders: availability.map((provider) => provider.name),
+    roots: files.config.workspaces.allowedRoots.length > 0 ? files.config.workspaces.allowedRoots : [process.cwd()],
+    publicUrl: files.config.server.publicBaseUrl ?? null,
+  };
+
+  if (nonInteractive) {
+    const answers = resolveInitAnswers(flags, defaults);
+    const publicUrlError = answers.publicUrl ? validateRequiredPublicBaseUrl(answers.publicUrl) : undefined;
+
+    if (publicUrlError) throw new Error(`--public-url: ${publicUrlError}`);
+    const result = applyInitAnswers(files, currentSubagents, answers);
+    const unavailable = availability
+      .filter((provider) => result.providers.includes(provider.name) && !provider.available)
+      .map((provider) => `${provider.name} (${provider.reason ?? "provider preflight failed"})`);
+
+    printInitResult(result, unavailable, flags.json);
 
     return;
   }
 
   try {
     prompts.intro("DevSpace setup");
+    const result = applyInitAnswers(files, currentSubagents, await promptInitAnswers(defaults, availability, files.config.server.port));
 
-    const destinationAnswer = await prompts.multiselect({
-      message: "Where do you want to use DevSpace?",
-      options: [
-        {
-          value: "chatgpt",
-          label: "ChatGPT",
-          hint: "Connect ChatGPT to projects on this computer.",
-        },
-        {
-          value: "coding-agents",
-          label: "Coding Agents",
-          hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
-        },
-      ],
-      initialValues: files.config.server.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
-      required: true,
-    });
-
-    if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
-    // SAFETY: The surrounding checks or construction already match this type.
-    const usage = resolveOnboardingUsage(destinationAnswer as OnboardingDestination[]);
-    const useChatGpt = usesChatGpt(usage);
-    const useCodingAgents = usesCodingAgents(usage);
-
-    let allowedRoots: string[] | undefined;
-
-    if (useChatGpt) {
-      const defaultRoots = files.config.workspaces.allowedRoots.join(", ") || process.cwd();
-
-      const rootsAnswer = await textPrompt({
-        message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
-        placeholder: defaultRoots,
-        defaultValue: defaultRoots,
-        validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
-      });
-
-      allowedRoots = rootsAnswer
-        .split(",")
-        .map((root) => resolve(expandHomePath(root.trim())))
-        .filter(Boolean);
-    }
-
-    const port = files.config.server.port;
-
-    let publicBaseUrl: string | null = null;
-
-    if (useChatGpt) {
-      prompts.note(
-        [
-          `Point your HTTPS tunnel or reverse proxy to http://127.0.0.1:${port}.`,
-          "Paste its public URL below.",
-          "",
-          "Example: https://your-tunnel-host.example.com",
-        ].join("\n"),
-        "Connect ChatGPT",
-      );
-      publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-        message: files.config.server.publicBaseUrl
-          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.server.publicBaseUrl}`
-          : "What public URL will ChatGPT connect to?",
-        placeholder: files.config.server.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-        defaultValue: files.config.server.publicBaseUrl ?? "",
-        validate: validateRequiredPublicBaseUrl,
-      }));
-    }
-
-    const currentSubagents = resolveSubagentsConfig(files.config.subagents ?? disabledSubagentsConfig());
-
-    const availability = getLocalAgentProviderAvailabilitySnapshot(
-      process.env,
-      currentSubagents,
-    );
-
-    const configuredProviders = currentSubagents.providers
-      .filter((provider) => provider.enabled)
-      .map((provider) => provider.id);
-
-    const initialValues = configuredProviders.length > 0
-      ? configuredProviders
-      : availability
-          .filter((provider) => provider.available)
-          .map((provider) => provider.name);
-
-    prompts.log.info(
-      "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
-    );
-
-    const providerAnswer = await prompts.multiselect({
-      message: "Which agents can DevSpace use as subagents?",
-      options: availability.map((provider) => ({
-        value: provider.name,
-        label: provider.name,
-        hint: provider.available
-          ? provider.note ?? "available"
-          : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
-      })),
-      initialValues,
-      required: true,
-    });
-
-    if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
-    // SAFETY: The surrounding checks or construction already match this type.
-    const selectedProviders = providerAnswer as string[];
-
-    const subagents = updateOnboardingSubagentsConfig(
-      currentSubagents,
-      selectedProviders,
-    );
-
-    const auth = {
-      ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
-    };
-
-    setDevspaceConfigValues([
-      { path: ["server", "port"], value: port },
-      ...(useChatGpt
-        ? [{ path: ["server", "publicBaseUrl"], value: publicBaseUrl }]
-        : []),
-      ...(allowedRoots
-        ? [{ path: ["workspaces", "allowedRoots"], value: allowedRoots }]
-        : []),
-      { path: ["subagents"], value: subagents },
-    ]);
-    writeDevspaceAuth(auth);
-
-    const lines = [
-      ...(allowedRoots ? [`Project folders: ${allowedRoots.join(", ")}`] : []),
-      `Subagents: ${selectedProviders.join(", ")}`,
-      ...(publicBaseUrl ? [`ChatGPT connection URL: ${publicBaseUrl}/mcp`] : []),
-    ];
-
-    prompts.note(lines.join("\n"), "DevSpace is ready");
-
-    if (useChatGpt) {
-      prompts.note(
-        [
-          `Owner password: ${auth.ownerToken}`,
-          "Use this when ChatGPT asks you to approve DevSpace access.",
-        ].join("\n"),
-        "Owner password",
-      );
-    }
-
-    if (useCodingAgents) {
-      prompts.note(
-        [
-          SUBAGENT_SKILL_INSTALL_COMMAND,
-          "",
-          "The Skills CLI will let you choose which Coding Agents receive it.",
-        ].join("\n"),
-        "Install the Subagents skill",
-      );
-    }
-
-    const nextSteps = [
-      useChatGpt ? "Run `devspace serve`, then connect ChatGPT." : undefined,
-      useCodingAgents ? "Run the skill command above before delegating from your Coding Agents." : undefined,
-    ].filter(Boolean).join(" ");
-
-    prompts.outro(nextSteps);
+    printInteractiveInitResult(result);
   } catch (error) {
     if (error instanceof SetupCancelledError) {
       prompts.cancel("Setup cancelled");
@@ -372,6 +257,207 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     throw error;
   }
+}
+
+async function promptInitAnswers(
+  defaults: { destinations: OnboardingDestination[]; providers: string[]; roots: string[]; publicUrl: string | null },
+  availability: ReturnType<typeof getLocalAgentProviderAvailabilitySnapshot>,
+  port: number,
+): Promise<InitAnswers> {
+  const destinationAnswer = await prompts.multiselect({
+    message: "Where do you want to use DevSpace?",
+    options: [
+      {
+        value: "chatgpt",
+        label: "ChatGPT",
+        hint: "Connect ChatGPT to projects on this computer.",
+      },
+      {
+        value: "coding-agents",
+        label: "Coding Agents",
+        hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
+      },
+    ],
+    initialValues: defaults.destinations,
+    required: true,
+  });
+
+  if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
+  // SAFETY: The surrounding checks or construction already match this type.
+  const usage = resolveOnboardingUsage(destinationAnswer as OnboardingDestination[]);
+  let roots: string[] | undefined;
+  let publicUrl: string | undefined;
+
+  if (usesChatGpt(usage)) {
+    const defaultRoots = defaults.roots.join(", ");
+
+    roots = (await textPrompt({
+      message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
+      placeholder: defaultRoots,
+      defaultValue: defaultRoots,
+      validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
+    })).split(",");
+
+    prompts.note(
+      [
+        `Point your HTTPS tunnel or reverse proxy to http://127.0.0.1:${port}.`,
+        "Paste its public URL below.",
+        "",
+        "Example: https://your-tunnel-host.example.com",
+      ].join("\n"),
+      "Connect ChatGPT",
+    );
+    publicUrl = await textPrompt({
+      message: defaults.publicUrl
+        ? `What public URL will ChatGPT connect to? Press Enter to keep ${defaults.publicUrl}`
+        : "What public URL will ChatGPT connect to?",
+      placeholder: defaults.publicUrl ?? "https://your-tunnel-host.example.com",
+      defaultValue: defaults.publicUrl ?? "",
+      validate: validateRequiredPublicBaseUrl,
+    });
+  }
+
+  prompts.log.info(
+    "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
+  );
+
+  const providerAnswer = await prompts.multiselect({
+    message: "Which agents can DevSpace use as subagents?",
+    options: availability.map((provider) => ({
+      value: provider.name,
+      label: provider.name,
+      hint: provider.available
+        ? provider.note ?? "available"
+        : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
+    })),
+    initialValues: defaults.providers,
+    required: true,
+  });
+
+  if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  return { usage, providers: providerAnswer as string[], roots, publicUrl };
+}
+
+interface InitResult {
+  configPath: string;
+  usage: InitAnswers["usage"];
+  providers: string[];
+  allowedRoots?: string[];
+  publicBaseUrl?: string;
+  ownerToken: string;
+}
+
+/** Persist setup answers, from prompts or flags, and return what was written. */
+function applyInitAnswers(
+  files: ReturnType<typeof loadDevspaceFiles>,
+  currentSubagents: ReturnType<typeof resolveSubagentsConfig>,
+  answers: InitAnswers,
+): InitResult {
+  const allowedRoots = answers.roots
+    ?.map((root) => root.trim())
+    .filter(Boolean)
+    .map((root) => resolve(expandHomePath(root)));
+  const publicBaseUrl = answers.publicUrl ? normalizePublicBaseUrl(answers.publicUrl) : undefined;
+  const auth = { ownerToken: files.auth.ownerToken ?? generateOwnerToken() };
+
+  setDevspaceConfigValues([
+    { path: ["server", "port"], value: files.config.server.port },
+    ...(publicBaseUrl ? [{ path: ["server", "publicBaseUrl"], value: publicBaseUrl }] : []),
+    ...(allowedRoots ? [{ path: ["workspaces", "allowedRoots"], value: allowedRoots }] : []),
+    { path: ["subagents"], value: updateOnboardingSubagentsConfig(currentSubagents, answers.providers) },
+  ]);
+  writeDevspaceAuth(auth);
+
+  return {
+    configPath: files.configPath,
+    usage: answers.usage,
+    providers: answers.providers,
+    allowedRoots,
+    publicBaseUrl,
+    ownerToken: auth.ownerToken,
+  };
+}
+
+function initNextSteps(result: InitResult): string[] {
+  return [
+    ...(usesChatGpt(result.usage) ? ["Run `devspace serve`, then connect ChatGPT."] : []),
+    ...(usesCodingAgents(result.usage) ? [`Install the Subagents skill: ${SUBAGENT_SKILL_INSTALL_COMMAND}`] : []),
+  ];
+}
+
+function printInitResult(result: InitResult, unavailable: string[], json: boolean): void {
+  const chatGpt = usesChatGpt(result.usage);
+
+  if (json) {
+    console.log(JSON.stringify({
+      status: "configured",
+      config_path: result.configPath,
+      usage: result.usage,
+      providers: result.providers,
+      unavailable_providers: unavailable,
+      ...(chatGpt ? {
+        allowed_roots: result.allowedRoots,
+        mcp_url: `${result.publicBaseUrl}/mcp`,
+        owner_password: result.ownerToken,
+      } : {}),
+      next_steps: initNextSteps(result),
+    }, null, 2));
+
+    return;
+  }
+
+  console.log([
+    `DevSpace is configured at ${result.configPath}`,
+    `Subagents: ${result.providers.join(", ")}`,
+    ...unavailable.map((provider) => `Warning: ${provider} is not available yet.`),
+    ...(chatGpt ? [
+      `Project folders: ${result.allowedRoots!.join(", ")}`,
+      `ChatGPT connection URL: ${result.publicBaseUrl}/mcp`,
+      `Owner password: ${result.ownerToken}`,
+      "The user enters the owner password when ChatGPT asks to approve DevSpace access.",
+    ] : []),
+    ...initNextSteps(result),
+  ].join("\n"));
+}
+
+function printInteractiveInitResult(result: InitResult): void {
+  const lines = [
+    ...(result.allowedRoots ? [`Project folders: ${result.allowedRoots.join(", ")}`] : []),
+    `Subagents: ${result.providers.join(", ")}`,
+    ...(result.publicBaseUrl ? [`ChatGPT connection URL: ${result.publicBaseUrl}/mcp`] : []),
+  ];
+
+  prompts.note(lines.join("\n"), "DevSpace is ready");
+
+  if (usesChatGpt(result.usage)) {
+    prompts.note(
+      [
+        `Owner password: ${result.ownerToken}`,
+        "Use this when ChatGPT asks you to approve DevSpace access.",
+      ].join("\n"),
+      "Owner password",
+    );
+  }
+
+  if (usesCodingAgents(result.usage)) {
+    prompts.note(
+      [
+        SUBAGENT_SKILL_INSTALL_COMMAND,
+        "",
+        "The Skills CLI will let you choose which Coding Agents receive it.",
+      ].join("\n"),
+      "Install the Subagents skill",
+    );
+  }
+
+  const nextSteps = [
+    usesChatGpt(result.usage) ? "Run `devspace serve`, then connect ChatGPT." : undefined,
+    usesCodingAgents(result.usage) ? "Run the skill command above before delegating from your Coding Agents." : undefined,
+  ].filter(Boolean).join(" ");
+
+  prompts.outro(nextSteps);
 }
 
 async function serve(): Promise<void> {
@@ -566,6 +652,8 @@ function printHelp(): void {
       "  devspace                 Run first-time setup if needed, then start the server",
       "  devspace serve           Start the server",
       "  devspace init            Create or update ~/.devspace/config.jsonc and auth.json",
+      "  devspace init --use <chatgpt|coding-agents|both> [--providers <id,...>] [--roots <path,...>] [--public-url <url>] [--force] [--json]",
+      "                           Set up without prompts, for agents and scripts",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
