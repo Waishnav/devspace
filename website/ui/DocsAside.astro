@@ -1,0 +1,65 @@
+---
+// Wraps Blume's on-this-page outline to add a GitCMS card to the desktop aside.
+// Blume has no slot below the page actions, so CSS `order` moves the card there.
+import type { ComponentProps } from "astro/types";
+import TableOfContents from "blume/components/layout/TableOfContents.astro";
+
+type Props = ComponentProps<typeof TableOfContents>;
+
+const props = Astro.props;
+---
+
+<TableOfContents {...props} />
+{props.variant === "desktop" && (
+  <a class="gitcms" href="https://gitcms.dev">
+    <span class="gitcms__head"><img src="/logos/gitcms.svg" alt="" width="18" height="18" />GitCMS</span>
+    <span class="gitcms__body">Let your team edit the site your agents built. GitCMS edits the files in your repository, whichever tool wrote the code.</span>
+    <span class="gitcms__more">gitcms.dev →</span>
+  </a>
+)}
+
+<script>
+  // Blume's page actions aren't a slot, so clone its "Edit on GitHub" row into
+  // an "Edit in GitCMS" row that opens this page in GitCMS's public editor.
+  // Paths follow the `docs` collection in .gitcms/sites/devspace. The app domain
+  // is used directly: gitcms.dev's redirect rewrites `.mdx` to `.md`.
+  const EDIT_URL = /github\.com\/([^/]+)\/([^/]+)\/edit\/[^/]+\/website\/docs\/(.+)$/;
+
+  const addGitcmsAction = () => {
+    const github = document.querySelector<HTMLAnchorElement>('[data-blume-toc] a[href*="/edit/"]');
+    const match = github?.href.match(EDIT_URL);
+
+    if (!github || !match || github.nextElementSibling?.hasAttribute("data-gitcms-edit")) return;
+    const [, owner, repo, path] = match;
+    const segments = path!.split("/");
+    const file = segments.pop()!;
+    const url = new URL(`https://app.gitcms.dev/${owner}/${repo}/docs/${file}`);
+
+    if (segments.length > 0) url.searchParams.set("subpath", segments.join("/"));
+    const row = github.cloneNode() as HTMLAnchorElement;
+
+    row.href = url.href;
+    row.setAttribute("data-gitcms-edit", "");
+    row.innerHTML = '<img src="/logos/gitcms.svg" alt="" width="16" height="16" class="size-4 shrink-0" />Edit in GitCMS';
+    github.after(row);
+  };
+
+  document.addEventListener("astro:page-load", addGitcmsAction);
+</script>
+
+<style>
+  @media (min-width: 1280px) {
+    :global([data-blume-toc]) { display: flex; flex-direction: column; }
+  }
+  .gitcms {
+    order: 1; display: grid; gap: 6px; margin-top: 20px; padding: 12px 14px;
+    /* GitCMS lime, mixed into the page background so it adapts to light and dark. */
+    background: color-mix(in oklab, #dcf986 22%, var(--blume-background));
+    border: 1px solid color-mix(in oklab, #b5d74e 45%, var(--blume-background)); border-radius: var(--blume-radius);
+    color: var(--blume-muted-foreground); text-decoration: none; transition: border-color 0.2s;
+  }
+  .gitcms:hover { border-color: #b5d74e; }
+  .gitcms__head { display: flex; align-items: center; gap: 8px; color: var(--blume-foreground); font-weight: 600; }
+  .gitcms__body { font-size: 13px; line-height: 1.5; }
+  .gitcms__more { font-family: var(--blume-font-mono); font-size: 12px; color: var(--blume-foreground); }
+</style>
