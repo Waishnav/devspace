@@ -99,6 +99,7 @@ test("init flags parse spaced and inline values and reject unknown options", () 
   );
   assert.throws(() => parseInitArgs(["--providers"]), /--providers needs a value/);
   assert.throws(() => parseInitArgs(["--use", "chatgpt"]), /Unknown option: --use/);
+  assert.throws(() => parseInitArgs(["--force=false"]), /--force takes no value/);
 });
 
 test("init runs without prompts when given answers or no terminal", () => {
@@ -135,5 +136,19 @@ test("init also serves an MCP host once a public URL is given or saved", () => {
   assert.deepEqual(
     resolveInitAnswers(parseInitArgs(["--yes"]), { ...DEFAULTS, publicUrl: "https://saved.example" }),
     { usage: "both", providers: ["codex"], roots: ["/home/me/work"], publicUrl: "https://saved.example" },
+  );
+});
+
+test("init never guesses the roots an MCP host may open", () => {
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example"]), { ...DEFAULTS, roots: [] }),
+    /--roots is required with --public-url/,
+  );
+});
+
+test("init can serve an MCP host without any coding agent installed", () => {
+  assert.deepEqual(
+    resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example", "--roots", "~/work"]), { ...DEFAULTS, providers: [] }),
+    { usage: "both", providers: [], roots: ["~/work"], publicUrl: "https://t.example" },
   );
 });

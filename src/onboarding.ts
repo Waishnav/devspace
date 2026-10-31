@@ -94,6 +94,12 @@ export function parseInitArgs(args: readonly string[]): InitFlags {
     const name = equals === -1 ? arg : arg.slice(0, equals);
     const inline = equals === -1 ? undefined : arg.slice(equals + 1);
 
+    const flag = () => {
+      if (inline !== undefined) throw new Error(`${name} takes no value.\n${INIT_USAGE}`);
+
+      return true;
+    };
+
     const value = () => {
       const next = inline ?? args[++i];
 
@@ -103,9 +109,9 @@ export function parseInitArgs(args: readonly string[]): InitFlags {
     };
 
     switch (name) {
-      case "--force": flags.force = true; break;
-      case "--yes": case "-y": flags.yes = true; break;
-      case "--json": flags.json = true; break;
+      case "--force": flags.force = flag(); break;
+      case "--yes": case "-y": flags.yes = flag(); break;
+      case "--json": flags.json = flag(); break;
       case "--providers": flags.providers = list(value()); break;
       case "--roots": flags.roots = list(value()); break;
       case "--public-url": flags.publicUrl = value().trim(); break;
@@ -134,6 +140,7 @@ export interface InitAnswers {
 export interface InitDefaults {
   providers: string[];
   knownProviders: string[];
+  /** Configured roots only; an MCP host never gets a guessed root. */
   roots: string[];
   publicUrl: string | null;
 }
@@ -150,17 +157,24 @@ export function resolveInitAnswers(flags: InitFlags, defaults: InitDefaults): In
     throw new Error(`Unknown provider: ${unknown.join(", ")}. Known providers: ${defaults.knownProviders.join(", ")}.`);
   }
 
-  if (providers.length === 0) {
-    throw new Error("No coding agents were detected. Install one, or pass --providers <id,...>.");
-  }
-
   const publicUrl = flags.publicUrl ?? defaults.publicUrl;
 
   if (!publicUrl) {
     if (flags.roots) throw new Error("--roots needs --public-url: project folders apply only when an MCP host connects.");
 
+    if (providers.length === 0) {
+      throw new Error("No coding agents were detected. Install one, or pass --providers <id,...>.");
+    }
+
     return { usage: "coding-agents", providers };
   }
 
-  return { usage: "both", providers, roots: flags.roots ?? defaults.roots, publicUrl };
+  // Roots bound what an MCP host may open, so they are never guessed from wherever init happened to run.
+  const roots = flags.roots ?? defaults.roots;
+
+  if (roots.length === 0) {
+    throw new Error("--roots is required with --public-url: the project folders an MCP host may open.");
+  }
+
+  return { usage: "both", providers, roots, publicUrl };
 }

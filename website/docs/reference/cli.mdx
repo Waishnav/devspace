@@ -27,10 +27,10 @@ of them, and `--yes` takes the defaults for the rest. Without a terminal,
 | --- | --- | --- |
 | `--providers` | Configured providers, else every detected one | Comma-separated subagent providers, such as `codex,claude`. |
 | `--public-url` | The saved public URL | Your tunnel's HTTPS origin, without `/mcp`. Setting one also serves an MCP host such as ChatGPT. |
-| `--roots` | Configured roots, else the current directory | Project folders an MCP host may open. Needs a public URL. |
+| `--roots` | Configured roots | Project folders an MCP host may open. Needs a public URL, and is required with one unless roots are already configured. |
 | `--yes`, `-y` | — | Use the defaults for every unanswered question. |
 | `--force` | — | Update an existing setup. |
-| `--json` | — | Print the result as JSON. With a public URL it includes the MCP URL and owner password. |
+| `--json` | — | Print the result as JSON. With a public URL it includes the MCP URL and where the owner password is stored, never the password itself. |
 
 ```bash
 devspace init --yes

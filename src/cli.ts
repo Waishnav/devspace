@@ -204,7 +204,11 @@ async function runInit(flags: InitFlags): Promise<void> {
 
   if (!flags.force && files.configExists && files.authExists) {
     if (flags.json) {
-      console.log(JSON.stringify({ status: "already_configured", config_path: files.configPath }, null, 2));
+      console.log(JSON.stringify({
+        status: "already_configured",
+        config_path: files.configPath,
+        next_steps: ["Run `devspace init --force` with your answers to update it."],
+      }, null, 2));
     } else {
       console.log(`DevSpace is already configured at ${files.dir}`);
       console.log("Run `devspace init --force` to update it.");
@@ -225,7 +229,7 @@ async function runInit(flags: InitFlags): Promise<void> {
       ? configuredProviders
       : availability.filter((provider) => provider.available).map((provider) => provider.name),
     knownProviders: availability.map((provider) => provider.name),
-    roots: files.config.workspaces.allowedRoots.length > 0 ? files.config.workspaces.allowedRoots : [process.cwd()],
+    roots: files.config.workspaces.allowedRoots,
     publicUrl: files.config.server.publicBaseUrl ?? null,
   };
 
@@ -240,7 +244,7 @@ async function runInit(flags: InitFlags): Promise<void> {
       .filter((provider) => result.providers.includes(provider.name) && !provider.available)
       .map((provider) => `${provider.name} (${provider.reason ?? "provider preflight failed"})`);
 
-    printInitResult(result, unavailable, flags.json);
+    printInitResult(result, files.authPath, unavailable, flags.json);
 
     return;
   }
@@ -248,11 +252,13 @@ async function runInit(flags: InitFlags): Promise<void> {
   try {
     prompts.intro("DevSpace setup");
     const destinations: OnboardingDestination[] = [defaults.publicUrl ? "chatgpt" : "coding-agents"];
+    // A person confirms the prompt's root, so the current directory is a fine suggestion there.
+    const roots = defaults.roots.length > 0 ? defaults.roots : [process.cwd()];
 
     const result = applyInitAnswers(
       files,
       currentSubagents,
-      await promptInitAnswers({ ...defaults, destinations }, availability, files.config.server.port),
+      await promptInitAnswers({ ...defaults, roots, destinations }, availability, files.config.server.port),
     );
 
     printInteractiveInitResult(result);
@@ -391,7 +397,7 @@ function applyInitAnswers(
 
 function initNextSteps(result: InitResult): string[] {
   return [
-    ...(usesChatGpt(result.usage) ? ["Run `devspace serve`, then connect ChatGPT."] : []),
+    ...(usesChatGpt(result.usage) ? ["Run `devspace serve` (restart it if it is already running), then connect ChatGPT."] : []),
     ...(usesCodingAgents(result.usage) ? [`Install the Subagents skill: ${SUBAGENT_SKILL_INSTALL_COMMAND}`] : []),
   ];
 }
@@ -405,10 +411,11 @@ interface InitReport {
   next_steps: string[];
   allowed_roots?: string[];
   mcp_url?: string;
-  owner_password?: string;
+  /** Where the owner password lives; it is never printed here, so it stays out of tool logs. */
+  owner_password_file?: string;
 }
 
-function printInitResult(result: InitResult, unavailable: string[], json: boolean): void {
+function printInitResult(result: InitResult, authPath: string, unavailable: string[], json: boolean): void {
   const chatGpt = usesChatGpt(result.usage);
 
   if (json) {
@@ -423,7 +430,7 @@ function printInitResult(result: InitResult, unavailable: string[], json: boolea
     if (chatGpt) {
       report.allowed_roots = result.allowedRoots;
       report.mcp_url = `${result.publicBaseUrl}/mcp`;
-      report.owner_password = result.ownerToken;
+      report.owner_password_file = authPath;
     }
 
     console.log(JSON.stringify(report, null, 2));
@@ -438,8 +445,7 @@ function printInitResult(result: InitResult, unavailable: string[], json: boolea
     ...(chatGpt ? [
       `Project folders: ${result.allowedRoots!.join(", ")}`,
       `ChatGPT connection URL: ${result.publicBaseUrl}/mcp`,
-      `Owner password: ${result.ownerToken}`,
-      "The user enters the owner password when ChatGPT asks to approve DevSpace access.",
+      `Owner password: stored in ${authPath}. You enter it when ChatGPT asks to approve DevSpace access.`,
     ] : []),
     ...initNextSteps(result),
   ].join("\n"));
@@ -1366,7 +1372,7 @@ function validateRequiredPublicBaseUrl(value: string | undefined): string | unde
 
   if (!trimmed) return "Enter the public URL from your tunnel or reverse proxy.";
 
-  if (trimmed.endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
+  if (trimmed.replace(/\/+$/, "").endsWith("/mcp")) return "Enter the base URL only, without /mcp.";
 
   return validatePublicBaseUrl(trimmed);
 }
