@@ -13,7 +13,7 @@ import InstallCommand from "./InstallCommand.astro";
 import { Code } from "astro:components";
 import { workbenchLightTheme } from "./theme";
 import Logo from "../../logos/Logo.astro";
-import { DOCS, GITHUB, INSTALL, MATRIX, PILLARS, FAQ } from "../content";
+import { AGENT_PROMPT, DOCS, GITHUB, INSTALL, MATRIX, PILLARS, FAQ } from "../content";
 
 const REVIEWER_PROFILE = `---
 name: reviewer
@@ -57,6 +57,12 @@ effort: high
           <button class="btn btn--dark btn--lg btn--command" data-copy={INSTALL} data-install-command>
             <code>{INSTALL}</code>
             <span class="btn__idle"><Icon name="copy" size={15} /></span><span class="btn__done"><Icon name="check" size={15} /></span>
+          </button>
+          <button class="btn btn--ghost btn--lg btn--prompt" data-copy={AGENT_PROMPT} aria-label="Copy a setup prompt for your coding agent">
+            <span class="prompt__logos" aria-hidden="true">
+              {(["openai", "claude", "grok"] as const).map((id) => <span class="prompt__logo"><Logo id={id} size={14} /></span>)}
+            </span>
+            <span class="btn__idle">Copy prompt</span><span class="btn__done">Copied</span>
           </button>
           <a class="btn btn--ghost btn--lg" href={DOCS}>Read the docs <span>→</span></a>
         </div>
@@ -242,6 +248,13 @@ effort: high
   }
   .hero__right p { margin: 0 0 30px; max-width: 46ch; font-size: 14.5px; }
   .hero__cta { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* Agent marks stacked like avatars, so the prompt button reads as "for your agent". */
+  .prompt__logos { display: flex; }
+  .prompt__logo {
+    display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+    background: #fff; border: 1px solid var(--line); box-shadow: 0 0 0 2px var(--paper);
+  }
+  .prompt__logo + .prompt__logo { margin-left: -7px; }
 
   .stage { position: relative; padding: 14px 14px 0; background: #ededea; }
   .stage__art { height: 846px; }

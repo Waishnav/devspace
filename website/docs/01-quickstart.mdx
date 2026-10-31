@@ -74,6 +74,28 @@ The installer brings its own Node when yours is missing or outside
   </Step>
 </Steps>
 
+## Let your agent set itself up
+
+A coding agent can do all of the above for itself. Paste this into Codex,
+Claude Code, or any agent with a shell — every step runs without prompts:
+
+```text
+Set up DevSpace (https://devspace.run) on this computer so you can delegate
+coding work to my other coding agents.
+
+1. Install or update it:
+   curl -fsSL https://devspace.run/install | DEVSPACE_NO_INIT=1 sh
+2. Configure it: devspace init --yes
+3. Install the subagents skill for yourself:
+   devspace agents skill --install <claude-code|codex|opencode|agents>
+   (Cursor: devspace agents skill --install cursor --project, from the project root)
+4. Check it works: devspace agents targets
+```
+
+The **Copy prompt** button on [devspace.run](https://devspace.run) copies a
+version that also covers Windows. To answer setup questions with flags, see
+[init options](/reference/cli#init-options).
+
 ## Your first delegation
 
 From a project directory, ask your harness to delegate — or try the commands

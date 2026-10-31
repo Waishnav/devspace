@@ -8,14 +8,18 @@ interface Props {
 }
 
 const SITE = "https://devspace.run";
+
 const {
   title = "DevSpace — let your agents delegate to each other",
   description = "Connect Grok Bot, ChatGPT, and Claude to your machine, and let any agent delegate to Codex, Claude Code, OpenCode, Cursor, and more.",
   bodyClass,
 } = Astro.props;
+
 const url = new URL(Astro.url.pathname, SITE).href;
+
 // Blume generates the home route's card; scripts/og-cards.mjs redraws it after the build.
 const image = `${SITE}/og/index.png`;
+
 // Docs pages get Blume's WebSite and SoftwareApplication graph; the landing page
 // uses its own shell, so it declares the same identity here.
 const structuredData = {
@@ -72,6 +76,8 @@ const structuredData = {
   </head>
   <body class={bodyClass}>
     <slot />
+    <!-- Copy buttons only change their visible text, so announce the result here too. -->
+    <p class="sr-only" role="status" data-copy-status></p>
   </body>
 </html>
 
@@ -94,6 +100,14 @@ const structuredData = {
 
     target.dataset.copied = "";
     setTimeout(() => delete target.dataset.copied, 1400);
+
+    const status = document.querySelector<HTMLElement>("[data-copy-status]");
+
+    // Clear first so a repeat copy is a new change that screen readers announce again.
+    if (status) {
+      status.textContent = "";
+      setTimeout(() => (status.textContent = "Copied to clipboard"), 50);
+    }
   });
 </script>
 
@@ -104,4 +118,5 @@ const structuredData = {
   img, svg { display: block; max-width: 100%; }
   a { color: inherit; }
   button { font: inherit; color: inherit; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 </style>

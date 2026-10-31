@@ -7,11 +7,13 @@ import Logo from "../../logos/Logo.astro";
 import type { LogoId } from "../../logos";
 
 const SKILLS = "https://skills.sh/waishnav/devspace";
+
 const AGENTS: ReadonlyArray<{ id: LogoId; name: string }> = [
   { id: "grok", name: "Grok Bot" },
   { id: "openai", name: "ChatGPT" },
   { id: "claude", name: "Claude" },
 ];
+
 const COMMANDS = [
   { label: "Subagents", note: undefined, command: "npx skills add Waishnav/devspace --skill subagents --global" },
   { label: "Dynamic workflows", note: "experimental", command: "npx skills add Waishnav/devspace --skill workflows --global" },

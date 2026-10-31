@@ -8,7 +8,7 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | Command | Description |
 | --- | --- |
 | `devspace` | Run first-time setup if needed, then start the server. |
-| `devspace init [--force]` | Create or update `~/.devspace/config.jsonc` and `auth.json`. |
+| `devspace init [options]` | Create or update `~/.devspace/config.jsonc` and `auth.json`. See [init options](#init-options). |
 | `devspace serve` | Start the MCP server on `127.0.0.1:7676`. |
 | `devspace doctor` | Show config, runtime, Git, Bash, and native dependency status. |
 | `devspace config get` | Print the persisted config. |
@@ -16,6 +16,26 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | `devspace worktrees prune` | Prune managed worktrees unused for three days; CLI agent worktrees are excluded. |
 | `devspace show-changes <review-ref> [--json]` | Inspect a Git-backed review checkpoint. |
 | `devspace -v`, `--version` | Print the installed version. |
+
+### init options
+
+In a terminal, `devspace init` asks its setup questions. Each flag answers one
+of them, and `--yes` takes the defaults for the rest. Without a terminal,
+`init` uses the defaults too.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--providers` | Configured providers, else every detected one | Comma-separated subagent providers, such as `codex,claude`. |
+| `--public-url` | The saved public URL | Your tunnel's HTTPS origin, without `/mcp`. Setting one also serves an MCP host such as ChatGPT. |
+| `--roots` | Configured roots | Project folders an MCP host may open. Needs a public URL, and is required with one unless roots are already configured. |
+| `--yes`, `-y` | — | Use the defaults for every unanswered question. |
+| `--force` | — | Update an existing setup. |
+| `--json` | — | Print the result as JSON. With a public URL it includes the MCP URL and where the owner password is stored, never the password itself. |
+
+```bash
+devspace init --yes
+devspace init --public-url https://your-tunnel-host.example.com --roots ~/work
+```
 
 ## Subagents
 

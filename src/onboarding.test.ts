@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isNonInteractiveInit,
+  parseInitArgs,
+  resolveInitAnswers,
   resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
 } from "./onboarding.js";
@@ -72,5 +75,80 @@ test("onboarding toggles existing providers and preserves their settings", () =>
         { id: "codex-work", driver: "codex", enabled: true, model: "gpt-work" },
       ],
     },
+  );
+});
+
+const DEFAULTS = {
+  providers: ["codex"],
+  knownProviders: ["codex", "claude", "pi"],
+  roots: ["/home/me/work"],
+  publicUrl: null,
+};
+
+test("init flags parse spaced and inline values and reject unknown options", () => {
+  assert.deepEqual(
+    parseInitArgs(["--providers", "codex, claude", "--roots=~/a,~/b", "--public-url", "https://t.example", "--json"]),
+    {
+      force: false,
+      yes: false,
+      json: true,
+      providers: ["codex", "claude"],
+      roots: ["~/a", "~/b"],
+      publicUrl: "https://t.example",
+    },
+  );
+  assert.throws(() => parseInitArgs(["--providers"]), /--providers needs a value/);
+  assert.throws(() => parseInitArgs(["--use", "chatgpt"]), /Unknown option: --use/);
+  assert.throws(() => parseInitArgs(["--force=false"]), /--force takes no value/);
+});
+
+test("init runs without prompts when given answers or no terminal", () => {
+  assert.equal(isNonInteractiveInit(parseInitArgs([]), true), false);
+  assert.equal(isNonInteractiveInit(parseInitArgs([]), false), true);
+  assert.equal(isNonInteractiveInit(parseInitArgs(["--yes"]), true), true);
+  assert.equal(isNonInteractiveInit(parseInitArgs(["--providers", "codex"]), true), true);
+});
+
+test("init sets up subagents from the prompt defaults when no public URL is known", () => {
+  assert.deepEqual(resolveInitAnswers(parseInitArgs(["--yes"]), DEFAULTS), {
+    usage: "coding-agents",
+    providers: ["codex"],
+  });
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--providers", "codex,nope"]), DEFAULTS),
+    /Unknown provider: nope. Known providers: codex, claude, pi/,
+  );
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--yes"]), { ...DEFAULTS, providers: [] }),
+    /No coding agents were detected/,
+  );
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--roots", "~/work"]), DEFAULTS),
+    /--roots needs --public-url/,
+  );
+});
+
+test("init also serves an MCP host once a public URL is given or saved", () => {
+  assert.deepEqual(
+    resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example"]), DEFAULTS),
+    { usage: "both", providers: ["codex"], roots: ["/home/me/work"], publicUrl: "https://t.example" },
+  );
+  assert.deepEqual(
+    resolveInitAnswers(parseInitArgs(["--yes"]), { ...DEFAULTS, publicUrl: "https://saved.example" }),
+    { usage: "both", providers: ["codex"], roots: ["/home/me/work"], publicUrl: "https://saved.example" },
+  );
+});
+
+test("init never guesses the roots an MCP host may open", () => {
+  assert.throws(
+    () => resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example"]), { ...DEFAULTS, roots: [] }),
+    /--roots is required with --public-url/,
+  );
+});
+
+test("init can serve an MCP host without any coding agent installed", () => {
+  assert.deepEqual(
+    resolveInitAnswers(parseInitArgs(["--public-url", "https://t.example", "--roots", "~/work"]), { ...DEFAULTS, providers: [] }),
+    { usage: "both", providers: [], roots: ["~/work"], publicUrl: "https://t.example" },
   );
 });

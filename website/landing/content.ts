@@ -9,6 +9,23 @@ export const INSTALL_METHODS = [
 ] as const;
 
 export const INSTALL = INSTALL_METHODS[0].command;
+
+// Pasted into a coding agent, which sets DevSpace up itself; every step runs
+// without prompts, so the agent never waits on the user.
+export const AGENT_PROMPT = `Set up DevSpace (https://devspace.run) on this computer so you can delegate coding work to my other coding agents, such as Codex and Claude Code.
+
+1. Install or update it:
+   - macOS / Linux: curl -fsSL https://devspace.run/install | DEVSPACE_NO_INIT=1 sh
+   - Windows (PowerShell): $env:DEVSPACE_NO_INIT=1; irm https://devspace.run/install.ps1 | iex
+   If \`devspace\` is not on PATH afterwards, use ~/.local/bin/devspace (Windows: & "$env:LOCALAPPDATA\\devspace\\bin\\devspace.cmd").
+2. Configure it: devspace init --yes
+   If it says DevSpace is already configured, keep that setup.
+3. Install the subagents skill for yourself: devspace agents skill --install <claude-code|codex|opencode|agents>
+   For Cursor, run devspace agents skill --install cursor --project from the project root.
+4. Check it works: devspace agents targets
+
+Then tell me which agents you can delegate to. Docs: https://devspace.run/docs/quickstart`;
+
 export const GITHUB = "https://github.com/Waishnav/devspace";
 export const NPM = "https://www.npmjs.com/package/@waishnav/devspace";
 export const DOCS = "/docs";
