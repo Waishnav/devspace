@@ -113,7 +113,9 @@ const jsonRpc: ReplayProtocol = {
     : "id" in frame ? "response" : "unknown",
   requestId: (frame: JsonObject) => isJsonString(frame.method) ? frame.id : undefined,
   responseTo: (frame: JsonObject) => isJsonString(frame.method) ? undefined : frame.id,
-  volatileKeys: new Set(["id", "sessionId", "threadId", "turnId", "itemId", "timestamp"]),
+  // `version` is DevSpace's own release in clientInfo (and the provider's in its reply): it changes every
+  // release and says nothing about the protocol, so a version bump must not invalidate recordings.
+  volatileKeys: new Set(["id", "sessionId", "threadId", "turnId", "itemId", "timestamp", "version"]),
   elasticKinds: new Set<string>(),
 };
 
