@@ -1,0 +1,91 @@
+---
+// Corner card that opens the DevSpace skill install commands, fronted by the
+// hosts we want people to associate with them. Copy buttons use the Shell's
+// shared data-copy handler; the native popover gives light dismiss and Escape.
+import Icon from "../Icon.astro";
+import Logo from "../../logos/Logo.astro";
+import type { LogoId } from "../../logos";
+
+const SKILLS = "https://skills.sh/waishnav/devspace";
+const AGENTS: ReadonlyArray<{ id: LogoId; name: string }> = [
+  { id: "grok", name: "Grok Bot" },
+  { id: "openai", name: "ChatGPT" },
+  { id: "claude", name: "Claude" },
+];
+const COMMANDS = [
+  { label: "Subagents", note: undefined, command: "npx skills add Waishnav/devspace --skill subagents --global" },
+  { label: "Dynamic workflows", note: "experimental", command: "npx skills add Waishnav/devspace --skill workflows --global" },
+];
+---
+
+<button class="skills" type="button" popovertarget="skills-menu">
+  <span class="skills__logos">
+    {AGENTS.map((a) => <span class="skills__tile" title={a.name}><Logo id={a.id} size={22} /></span>)}
+  </span>
+  <span class="skills__text">
+    <span class="skills__kicker">Works with your favorite AI agents</span>
+    <b>Install the DevSpace skills <Icon name="chevron-up" size={15} /></b>
+  </span>
+</button>
+
+<div class="menu" id="skills-menu" popover>
+  {COMMANDS.map((c) => (
+    <div class="menu__row">
+      <span class="menu__label">{c.label}{c.note && <em>{c.note}</em>}</span>
+      <button class="menu__cmd" type="button" data-copy={c.command} aria-label={`Copy: ${c.command}`}>
+        <code>{c.command}</code>
+        <span class="menu__idle"><Icon name="copy" size={15} /></span><span class="menu__done"><Icon name="check" size={15} /></span>
+      </button>
+    </div>
+  ))}
+  <a class="menu__link" href={SKILLS} target="_blank" rel="noopener">View on skills.sh <Icon name="arrow-up-right" size={14} /></a>
+</div>
+
+<style>
+  .skills {
+    position: fixed; left: 20px; bottom: 20px; z-index: 40; cursor: pointer; text-align: left;
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px 10px 10px;
+    background: rgba(250, 250, 248, 0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(21, 21, 21, 0.08);
+    color: var(--ink); font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
+    transition: border-color 0.2s;
+  }
+  .skills:hover { border-color: var(--ink); }
+  .skills__logos { display: flex; }
+  .skills__tile {
+    display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+    background: #fff; border: 1px solid var(--line); box-shadow: 0 0 0 2px var(--paper);
+  }
+  .skills__tile + .skills__tile { margin-left: -8px; }
+  .skills__text { display: grid; gap: 1px; line-height: 1.3; }
+  .skills__kicker { color: var(--muted); font-size: 12.5px; }
+  .skills b { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; }
+
+  /* Opens above the card, aligned to its left edge. */
+  .menu {
+    position: fixed; inset: auto auto 92px 20px; margin: 0; width: min(580px, calc(100vw - 40px));
+    padding: 14px; display: none; flex-direction: column; gap: 12px;
+    background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(21, 21, 21, 0.14); font-family: "Hanken Grotesk Variable", system-ui, sans-serif;
+  }
+  .menu:popover-open { display: flex; }
+  .menu__row { display: grid; gap: 6px; }
+  .menu__label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .menu__label em { font-style: normal; font-weight: 500; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+  .menu__cmd {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
+    background: #efefec; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+  .menu__cmd:hover { border-color: var(--ink); }
+  .menu__idle { color: var(--muted); }
+  /* One line, so a flag never splits; scrolls instead of wrapping on narrow windows. */
+  .menu__cmd code { flex: 1; min-width: 0; font: 500 12.5px "IBM Plex Mono", monospace; white-space: nowrap; overflow-x: auto; }
+  .menu__done, .menu__cmd[data-copied] .menu__idle { display: none; }
+  .menu__cmd[data-copied] .menu__done { display: inline-flex; color: #15803d; }
+  .menu__link { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; color: var(--muted); font-size: 13px; text-decoration: none; }
+  .menu__link:hover { color: var(--ink); }
+
+  /* On phones the corner card would cover content. */
+  @media (max-width: 720px) { .skills, .menu { display: none; } }
+</style>

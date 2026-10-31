@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "blume dev",
-    "build": "blume build",
+    "build": "blume build && node scripts/og-cards.mjs",
     "doctor": "blume doctor"
   },
   "dependencies": {
@@ -13,6 +13,7 @@
     "blume": "^2.0.3"
   },
   "devDependencies": {
+    "takumi-js": "2.14.0",
     "wrangler": "^4.153.0"
   }
 }

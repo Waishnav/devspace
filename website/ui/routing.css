@@ -40,6 +40,13 @@
 .dm__wire.on i { animation: dm-pulse 0.95s ease-in-out infinite; }
 @keyframes dm-pulse { 0% { left: 0; opacity: 0; } 20%, 80% { opacity: 1; } 100% { left: calc(100% - 22px); opacity: 0; } }
 
+/* DevSpace fans out to every agent; routed curves light up while they run. */
+.dm__fan { width: 100%; overflow: visible; }
+.dm__fan path { fill: none; stroke: var(--ds-border); stroke-width: 1; vector-effect: non-scaling-stroke; transition: stroke 0.3s; }
+.dm__fan path.on { stroke: var(--dm-accent); stroke-width: 1.5; }
+.dm__fan path.dm__fan--running { stroke-dasharray: 5 5; animation: dm-flow 0.8s linear infinite; }
+@keyframes dm-flow { to { stroke-dashoffset: -20; } }
+
 .dm__core {
   text-align: center; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--dm-chip);
   padding: 22px 6px; display: grid; justify-items: center; gap: 4px; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ds-fg) 5%, transparent);

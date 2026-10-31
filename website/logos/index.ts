@@ -14,11 +14,11 @@ export function logoSvg(id: LogoId): string {
   return dark ? `<span class="lv lv--light">${svg}</span><span class="lv lv--dark">${dark}</span>` : svg;
 }
 
-/** Orchestration interfaces: where people talk to the model that delegates. */
+/** Orchestration interfaces: where people talk to the model that delegates. Order drives the animations. */
 export const HOSTS: ReadonlyArray<{ name: string; logo: LogoId }> = [
+  { name: "Grok Bot", logo: "grok" },
   { name: "ChatGPT", logo: "openai" },
   { name: "Claude", logo: "claude" },
-  { name: "Grok Bot", logo: "grok" },
   { name: "Muse", logo: "muse" },
   { name: "OpenClaw", logo: "openclaw" },
   { name: "Hermes", logo: "hermes" },

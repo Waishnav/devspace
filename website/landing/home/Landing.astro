@@ -8,6 +8,7 @@ import Icon from "../Icon.astro";
 import PixelField from "./PixelField.astro";
 import HeroStage from "./HeroStage.astro";
 import WorkflowStage from "./WorkflowStage.astro";
+import SkillsPopover from "./SkillsPopover.astro";
 import InstallCommand from "./InstallCommand.astro";
 import { Code } from "astro:components";
 import { workbenchLightTheme } from "./theme";
@@ -28,6 +29,7 @@ effort: high
     <div class="nav__left">
       <a class="brand" href="/"><img src="/logos/devspace-blue.png" alt="" width="26" height="27" style="margin-right: 9px" />DevSpace</a>
       <a href={DOCS}>Docs</a>
+      <a href="/docs/orchestration/subagents">Subagents</a>
       <a href="/docs/orchestration/dynamic-workflows">Workflows</a>
       <a href="/docs/roadmap">Roadmap</a>
       <a href={GITHUB}>GitHub</a>
@@ -41,7 +43,7 @@ effort: high
   <main class="frame">
     <section class="hero">
       <div class="hero__left">
-        <a class="tag" href="/docs/orchestration/dynamic-workflows">v1.1 · dynamic workflows, experimental <span>→</span></a>
+        <a class="tag" href="/docs/orchestration/subagents">v1.1 · subagents and dynamic workflows <span>→</span></a>
         <h1>Give ChatGPT and Claude access to your computer.</h1>
       </div>
       <div class="hero__right">
@@ -145,7 +147,7 @@ effort: high
     </section>
 
     <section class="cta">
-      <h2>Stop deciding what to prompt next.</h2>
+      <h2>Stop deciding what to prompt next.<br /><span>Let the model decide that.</span></h2>
       <InstallCommand />
       <div class="hero__cta">
         <button class="btn btn--dark btn--lg btn--command" data-copy={INSTALL} data-install-command>
@@ -158,8 +160,9 @@ effort: high
 
   <footer class="foot">
     <span>devspace.run — MIT licensed</span>
-    <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a></span>
+    <span><a href={DOCS}>Docs</a> · <a href={GITHUB}>GitHub</a> · <a href="https://x.com/wshxnv">@wshxnv</a> · <a href="https://gitcms.dev">GitCMS</a></span>
   </footer>
+  <SkillsPopover />
 </Shell>
 
 <style is:global>
@@ -294,6 +297,7 @@ effort: high
 
   .cta { padding: 110px 44px; display: flex; flex-direction: column; align-items: center; gap: 32px; text-align: center; }
   .cta h2 { margin: 0; font-size: clamp(28px, 3.4vw, 44px); letter-spacing: -0.035em; font-weight: 600; }
+  .cta h2 span { color: var(--muted); }
 
   .foot {
     max-width: 1296px; margin: 0 auto; padding: 22px 12px 90px;
