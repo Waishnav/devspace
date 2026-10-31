@@ -23,7 +23,7 @@
       }
     ]
   },
-  "ssg_framework": "tanstack-start",
+  "ssg_framework": "astro",
   "frontmatter_format": "yaml",
   "publishing_mode": "editorial_workflow",
   "collections": [
