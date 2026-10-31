@@ -8,8 +8,7 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | Command | Description |
 | --- | --- |
 | `devspace` | Run first-time setup if needed, then start the server. |
-| `devspace init [--force]` | Create or update `~/.devspace/config.jsonc` and `auth.json`. |
-| `devspace init --use <chatgpt\|coding-agents\|both> [--providers <id,...>] [--roots <path,...>] [--public-url <url>] [--force] [--json]` | Set up without prompts. See [Setup without prompts](#setup-without-prompts). |
+| `devspace init [options]` | Create or update `~/.devspace/config.jsonc` and `auth.json`. See [init options](#init-options). |
 | `devspace serve` | Start the MCP server on `127.0.0.1:7676`. |
 | `devspace doctor` | Show config, runtime, Git, Bash, and native dependency status. |
 | `devspace config get` | Print the persisted config. |
@@ -18,32 +17,25 @@ description: Every devspace command — setup, the MCP server, subagents, workfl
 | `devspace show-changes <review-ref> [--json]` | Inspect a Git-backed review checkpoint. |
 | `devspace -v`, `--version` | Print the installed version. |
 
-### Setup without prompts
+### init options
 
-`devspace init` asks its questions interactively. Agents and scripts answer
-them with flags instead. Any answer flag, `--yes`, `--json`, or a missing
-terminal skips the prompts, and unanswered questions take the defaults the
-prompts preselect.
+In a terminal, `devspace init` asks its setup questions. Each flag answers one
+of them, and `--yes` takes the defaults for the rest. Without a terminal,
+`init` uses the defaults too.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--use` | `coding-agents` (or `chatgpt` when a public URL is saved) | Where DevSpace is used: `chatgpt`, `coding-agents`, or `both`. |
 | `--providers` | Configured providers, else every detected one | Comma-separated subagent providers, such as `codex,claude`. |
-| `--roots` | Configured roots, else the current directory | Project folders an MCP host may open. Only with `--use chatgpt` or `both`. |
-| `--public-url` | The saved public URL | Your tunnel's HTTPS origin, without `/mcp`. Required for `chatgpt` or `both`. |
-| `--json` | — | Print the result as JSON, including the MCP URL and owner password for MCP hosts. |
+| `--public-url` | The saved public URL | Your tunnel's HTTPS origin, without `/mcp`. Setting one also serves an MCP host such as ChatGPT. |
+| `--roots` | Configured roots, else the current directory | Project folders an MCP host may open. Needs a public URL. |
+| `--yes`, `-y` | — | Use the defaults for every unanswered question. |
+| `--force` | — | Update an existing setup. |
+| `--json` | — | Print the result as JSON. With a public URL it includes the MCP URL and owner password. |
 
 ```bash
-# A coding agent setting itself up
-devspace init --use coding-agents --json
-
-# An MCP host, once the user's tunnel is running
-devspace init --use chatgpt --roots ~/work --public-url https://your-tunnel-host.example.com
+devspace init --yes
+devspace init --public-url https://your-tunnel-host.example.com --roots ~/work
 ```
-
-The tunnel and approving the host's connection stay with you: DevSpace never
-creates a tunnel, and the host asks for the owner password before it gets
-access.
 
 ## Subagents
 

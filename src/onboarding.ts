@@ -67,19 +67,21 @@ export function updateOnboardingSubagentsConfig(
   };
 }
 
-/** `devspace init` options; any answer flag makes setup non-interactive. */
+/**
+ * `devspace init` options. Each flag answers one setup question; `--yes` takes
+ * the defaults for the rest. A public URL is what additionally serves an MCP host.
+ */
 export interface InitFlags {
   force: boolean;
   yes: boolean;
   json: boolean;
-  use?: OnboardingDestination[];
   providers?: string[];
   roots?: string[];
   publicUrl?: string;
 }
 
 export const INIT_USAGE =
-  "Usage: devspace init [--force] [--yes] [--json] [--use <chatgpt|coding-agents|both>] [--providers <id,...>] [--roots <path,...>] [--public-url <url>]";
+  "Usage: devspace init [--yes] [--providers <id,...>] [--public-url <url>] [--roots <path,...>] [--force] [--json]";
 
 const list = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
 
@@ -87,7 +89,11 @@ export function parseInitArgs(args: readonly string[]): InitFlags {
   const flags: InitFlags = { force: false, yes: false, json: false };
 
   for (let i = 0; i < args.length; i++) {
-    const [name, inline] = args[i]!.split(/=(.*)/s, 2) as [string, string | undefined];
+    const arg = args[i]!;
+    const equals = arg.indexOf("=");
+    const name = equals === -1 ? arg : arg.slice(0, equals);
+    const inline = equals === -1 ? undefined : arg.slice(equals + 1);
+
     const value = () => {
       const next = inline ?? args[++i];
 
@@ -100,30 +106,20 @@ export function parseInitArgs(args: readonly string[]): InitFlags {
       case "--force": flags.force = true; break;
       case "--yes": case "-y": flags.yes = true; break;
       case "--json": flags.json = true; break;
-      case "--use": flags.use = parseDestinations(value()); break;
       case "--providers": flags.providers = list(value()); break;
       case "--roots": flags.roots = list(value()); break;
       case "--public-url": flags.publicUrl = value().trim(); break;
-      default: throw new Error(`Unknown option: ${args[i]}\n${INIT_USAGE}`);
+      default: throw new Error(`Unknown option: ${arg}\n${INIT_USAGE}`);
     }
   }
 
   return flags;
 }
 
-function parseDestinations(value: string): OnboardingDestination[] {
-  return list(value).flatMap((item) => {
-    if (item === "both") return [...ONBOARDING_DESTINATIONS];
-
-    if ((ONBOARDING_DESTINATIONS as readonly string[]).includes(item)) return [item as OnboardingDestination];
-    throw new Error(`Unknown --use value: ${item}. Use chatgpt, coding-agents, or both.`);
-  });
-}
-
 /** Setup runs without prompts when asked to, when given answers, or when nobody can answer. */
 export function isNonInteractiveInit(flags: InitFlags, interactiveTerminal: boolean): boolean {
   return flags.yes || flags.json || !interactiveTerminal
-    || [flags.use, flags.providers, flags.roots, flags.publicUrl].some((value) => value !== undefined);
+    || [flags.providers, flags.roots, flags.publicUrl].some((value) => value !== undefined);
 }
 
 export interface InitAnswers {
@@ -136,16 +132,17 @@ export interface InitAnswers {
 }
 
 export interface InitDefaults {
-  destinations: OnboardingDestination[];
   providers: string[];
   knownProviders: string[];
   roots: string[];
   publicUrl: string | null;
 }
 
-/** Fill unanswered flags with the same defaults the prompts preselect. */
+/**
+ * Fill unanswered flags with the defaults the prompts preselect. Subagents are
+ * always set up; a public URL, given or already saved, also serves an MCP host.
+ */
 export function resolveInitAnswers(flags: InitFlags, defaults: InitDefaults): InitAnswers {
-  const usage = resolveOnboardingUsage(flags.use ?? defaults.destinations);
   const providers = flags.providers ?? defaults.providers;
   const unknown = providers.filter((id) => !defaults.knownProviders.includes(id));
 
@@ -157,17 +154,13 @@ export function resolveInitAnswers(flags: InitFlags, defaults: InitDefaults): In
     throw new Error("No coding agents were detected. Install one, or pass --providers <id,...>.");
   }
 
-  if (!usesChatGpt(usage)) {
-    if (flags.roots || flags.publicUrl) throw new Error("--roots and --public-url apply only with --use chatgpt or both.");
-
-    return { usage, providers };
-  }
-
   const publicUrl = flags.publicUrl ?? defaults.publicUrl;
 
   if (!publicUrl) {
-    throw new Error("--public-url is required with --use chatgpt: the HTTPS origin of your tunnel, without /mcp.");
+    if (flags.roots) throw new Error("--roots needs --public-url: project folders apply only when an MCP host connects.");
+
+    return { usage: "coding-agents", providers };
   }
 
-  return { usage, providers, roots: flags.roots ?? defaults.roots, publicUrl };
+  return { usage: "both", providers, roots: flags.roots ?? defaults.roots, publicUrl };
 }

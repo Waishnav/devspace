@@ -85,15 +85,15 @@ coding work to my other coding agents.
 
 1. Install it, unless `devspace --version` already works:
    curl -fsSL https://devspace.run/install | DEVSPACE_NO_INIT=1 sh
-2. Configure it: devspace init --use coding-agents --json
+2. Configure it: devspace init --yes
 3. Install the subagents skill for yourself:
    devspace agents skill --install <claude-code|codex|cursor|opencode|agents>
 4. Check it works: devspace agents targets
 ```
 
 The **Copy prompt** button on [devspace.run](https://devspace.run) copies a
-version that also covers Windows. For an MCP host, see
-[Setup without prompts](/reference/cli#setup-without-prompts).
+version that also covers Windows. To answer setup questions with flags, see
+[init options](/reference/cli#init-options).
 
 ## Your first delegation
 

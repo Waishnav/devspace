@@ -187,8 +187,8 @@ async function ensureConfigured(): Promise<void> {
         "Run:",
         "  devspace init",
         "",
-        "Agents and scripts can answer setup with flags, for example:",
-        "  devspace init --use chatgpt --public-url https://your-tunnel-host.example.com",
+        "Setup questions can also be answered with flags, for example:",
+        "  devspace init --public-url https://your-tunnel-host.example.com",
         "",
         "Or provide DEVSPACE_OAUTH_OWNER_TOKEN.",
       ].join("\n"),
@@ -215,11 +215,12 @@ async function runInit(flags: InitFlags): Promise<void> {
 
   const currentSubagents = resolveSubagentsConfig(files.config.subagents ?? disabledSubagentsConfig());
   const availability = getLocalAgentProviderAvailabilitySnapshot(process.env, currentSubagents);
+
   const configuredProviders = currentSubagents.providers
     .filter((provider) => provider.enabled)
     .map((provider) => provider.id);
+
   const defaults = {
-    destinations: [files.config.server.publicBaseUrl ? "chatgpt" : "coding-agents"] as OnboardingDestination[],
     providers: configuredProviders.length > 0
       ? configuredProviders
       : availability.filter((provider) => provider.available).map((provider) => provider.name),
@@ -234,6 +235,7 @@ async function runInit(flags: InitFlags): Promise<void> {
 
     if (publicUrlError) throw new Error(`--public-url: ${publicUrlError}`);
     const result = applyInitAnswers(files, currentSubagents, answers);
+
     const unavailable = availability
       .filter((provider) => result.providers.includes(provider.name) && !provider.available)
       .map((provider) => `${provider.name} (${provider.reason ?? "provider preflight failed"})`);
@@ -245,7 +247,13 @@ async function runInit(flags: InitFlags): Promise<void> {
 
   try {
     prompts.intro("DevSpace setup");
-    const result = applyInitAnswers(files, currentSubagents, await promptInitAnswers(defaults, availability, files.config.server.port));
+    const destinations: OnboardingDestination[] = [defaults.publicUrl ? "chatgpt" : "coding-agents"];
+
+    const result = applyInitAnswers(
+      files,
+      currentSubagents,
+      await promptInitAnswers({ ...defaults, destinations }, availability, files.config.server.port),
+    );
 
     printInteractiveInitResult(result);
   } catch (error) {
@@ -359,6 +367,7 @@ function applyInitAnswers(
     ?.map((root) => root.trim())
     .filter(Boolean)
     .map((root) => resolve(expandHomePath(root)));
+
   const publicBaseUrl = answers.publicUrl ? normalizePublicBaseUrl(answers.publicUrl) : undefined;
   const auth = { ownerToken: files.auth.ownerToken ?? generateOwnerToken() };
 
@@ -387,23 +396,37 @@ function initNextSteps(result: InitResult): string[] {
   ];
 }
 
+/** `devspace init --json` output; the MCP fields appear only when an MCP host is set up. */
+interface InitReport {
+  status: "configured";
+  config_path: string;
+  providers: string[];
+  unavailable_providers: string[];
+  next_steps: string[];
+  allowed_roots?: string[];
+  mcp_url?: string;
+  owner_password?: string;
+}
+
 function printInitResult(result: InitResult, unavailable: string[], json: boolean): void {
   const chatGpt = usesChatGpt(result.usage);
 
   if (json) {
-    console.log(JSON.stringify({
+    const report: InitReport = {
       status: "configured",
       config_path: result.configPath,
-      usage: result.usage,
       providers: result.providers,
       unavailable_providers: unavailable,
-      ...(chatGpt ? {
-        allowed_roots: result.allowedRoots,
-        mcp_url: `${result.publicBaseUrl}/mcp`,
-        owner_password: result.ownerToken,
-      } : {}),
       next_steps: initNextSteps(result),
-    }, null, 2));
+    };
+
+    if (chatGpt) {
+      report.allowed_roots = result.allowedRoots;
+      report.mcp_url = `${result.publicBaseUrl}/mcp`;
+      report.owner_password = result.ownerToken;
+    }
+
+    console.log(JSON.stringify(report, null, 2));
 
     return;
   }
@@ -651,9 +674,8 @@ function printHelp(): void {
       "Usage:",
       "  devspace                 Run first-time setup if needed, then start the server",
       "  devspace serve           Start the server",
-      "  devspace init            Create or update ~/.devspace/config.jsonc and auth.json",
-      "  devspace init --use <chatgpt|coding-agents|both> [--providers <id,...>] [--roots <path,...>] [--public-url <url>] [--force] [--json]",
-      "                           Set up without prompts, for agents and scripts",
+      "  devspace init [--yes] [--providers <id,...>] [--public-url <url>] [--roots <path,...>] [--force] [--json]",
+      "                           Create or update ~/.devspace/config.jsonc and auth.json",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
