@@ -14,7 +14,7 @@ const {
   bodyClass,
 } = Astro.props;
 const url = new URL(Astro.url.pathname, SITE).href;
-// Blume renders the home route's card at build time, branded by blume.config.ts.
+// Blume generates the home route's card; scripts/og-cards.mjs redraws it after the build.
 const image = `${SITE}/og/index.png`;
 // Docs pages get Blume's WebSite and SoftwareApplication graph; the landing page
 // uses its own shell, so it declares the same identity here.

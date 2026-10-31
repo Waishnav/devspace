@@ -27,11 +27,6 @@ export default defineConfig({
   },
   deployment: { site: "https://devspace.run" },
   seo: {
-    // Generated social cards follow the site's light theme and carry the real mark.
-    og: {
-      logo: "/logos/devspace-og.svg",
-      palette: { accent: "#161616", background: "#f7f7f5", foreground: "#151515", muted: "#6d6c67", border: "#dcdcd7" },
-    },
     x: { handle: "@wshxnv", creator: "@wshxnv" },
   },
 });
