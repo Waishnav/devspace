@@ -1,5 +1,6 @@
 import { isJsonNumber } from "./json-value.js";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,6 +60,33 @@ test("a command that finishes within the yield time returns no session", async (
   assert.equal(foreground.exitCode, 0);
   assert.match(foreground.output, /foreground/);
   assert.equal(foreground.sessionId, undefined);
+});
+
+test("Windows PowerShell output is decoded as UTF-8 from a legacy console code page", { skip: process.platform !== "win32" }, async (t) => {
+  const comspec = process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe";
+
+  const currentCodePage = spawnSync(comspec, ["/d", "/s", "/c", "chcp"], {
+    encoding: "latin1",
+    windowsHide: true,
+  }).stdout.match(/\d+/)?.[0] ?? "65001";
+
+  spawnSync(comspec, ["/d", "/s", "/c", "chcp 866>nul"], { windowsHide: true });
+  t.after(() => {
+    spawnSync(comspec, ["/d", "/s", "/c", `chcp ${currentCodePage}>nul`], { windowsHide: true });
+  });
+
+  const manager = createManager(t);
+
+  const unicode = await manager.start({
+    workspaceId: "workspace-a",
+    cwd: process.cwd(),
+    command: 'powershell.exe -NoProfile -Command "Write-Output \'Проверка русского текста: Привет, мир — ёж\'"',
+    yieldTimeMs: 2_000,
+  });
+
+  assert.equal(unicode.running, false);
+  assert.equal(unicode.exitCode, 0);
+  assert.match(unicode.output, /Проверка русского текста: Привет, мир — ёж/);
 });
 
 test("commands run with a non-interactive environment and workspace identity", async (t) => {
