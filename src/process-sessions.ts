@@ -431,7 +431,11 @@ export class ProcessSessionManager {
     const shell = resolveShellCommand(input.command);
     const detached = process.platform !== "win32";
 
-    const child = spawn(input.command, {
+    const command = process.platform === "win32"
+      ? `chcp 65001>nul && ${input.command}`
+      : input.command;
+
+    const child = spawn(command, {
       cwd: input.cwd,
       env: processEnvironment({
         workspaceId: input.workspaceId,
