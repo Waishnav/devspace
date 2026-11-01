@@ -14,7 +14,7 @@
   <a href="https://github.com/Waishnav/devspace/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/%40waishnav%2Fdevspace?style=flat-square" /></a>
 </p>
 
-[![DevSpace connected to ChatGPT](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)](https://raw.githubusercontent.com/Waishnav/devspace/main/.github/assets/devspace-screenshot.png)
+![DevSpace in ChatGPT: opening a workspace, fixing a bug, delegating a review to Codex, and reviewing the changes](https://raw.githubusercontent.com/Waishnav/devspace/main/website/public/media/devspace-in-chatgpt.gif)
 
 DevSpace is the agent-agnostic layer between the AI you talk to and the coding
 agents on your machine. It does two things:
