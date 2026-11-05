@@ -239,9 +239,9 @@ function sendJsonRpcError(
   });
 }
 
-// ChatGPT may retain the pre-snake_case workspace argument in cached tool calls.
-// Normalize only that known alias at the HTTP edge; the public schema remains canonical.
-function normalizeCachedWorkspaceArgument(body: WireInput): boolean {
+// ChatGPT may retain camelCase arguments from older cached tool schemas.
+// Normalize known aliases at the HTTP edge; public schemas stay canonical.
+function normalizeCachedToolArguments(body: WireInput): boolean {
   if (!body || !isObjectValue(body) || Array.isArray(body)) return true;
   // SAFETY: The surrounding checks or construction already match this type.
   const request = body as JsonObject;
@@ -251,20 +251,35 @@ function normalizeCachedWorkspaceArgument(body: WireInput): boolean {
 
   if (!params || !isObjectValue(params) || Array.isArray(params)) return true;
   // SAFETY: The surrounding checks or construction already match this type.
-  const args = (params as JsonObject).arguments;
+  const call = params as JsonObject;
+  const args = call.arguments;
 
   if (!args || !isObjectValue(args) || Array.isArray(args)) return true;
   // SAFETY: The surrounding checks or construction already match this type.
   const values = args as JsonObject;
 
-  if (!Object.hasOwn(values, "workspaceId")) return true;
+  const aliases = [["workspaceId", "workspace_id"]];
 
-  if (Object.hasOwn(values, "workspace_id") && values.workspace_id !== values.workspaceId) {
-    return false;
+  if (call.name === "exec_command" || call.name === "write_stdin") {
+    aliases.push(["yieldTimeMs", "yield_time_ms"], ["maxOutputTokens", "max_output_tokens"]);
+    aliases.push(call.name === "exec_command"
+      ? ["workingDirectory", "working_directory"]
+      : ["sessionId", "session_id"]);
   }
 
-  if (!Object.hasOwn(values, "workspace_id")) values.workspace_id = values.workspaceId;
-  delete values.workspaceId;
+  for (const [cached, canonical] of aliases) {
+    if (Object.hasOwn(values, cached) && Object.hasOwn(values, canonical)
+      && values[cached] !== values[canonical]) {
+      return false;
+    }
+  }
+
+  for (const [cached, canonical] of aliases) {
+    if (!Object.hasOwn(values, cached)) continue;
+
+    if (!Object.hasOwn(values, canonical)) values[canonical] = values[cached];
+    delete values[cached];
+  }
 
   return true;
 }
@@ -1314,7 +1329,7 @@ export function createServer(
       ...rpcRequestLogFields(req.body),
     });
 
-    if (!normalizeCachedWorkspaceArgument(req.body)) {
+    if (!normalizeCachedToolArguments(req.body)) {
       // SAFETY: The surrounding checks or construction already match this type.
       const body = req.body as JsonObject;
 
@@ -1325,7 +1340,7 @@ export function createServer(
       }
 
       const id = isJsonString(body.id) || isJsonNumber(body.id) ? body.id : null;
-      sendJsonRpcError(res, 400, -32602, "Conflicting workspaceId and workspace_id arguments", id);
+      sendJsonRpcError(res, 400, -32602, "Conflicting cached and canonical tool arguments", id);
 
       return;
     }
