@@ -110,6 +110,62 @@ test("a background session is only readable from its own workspace and reports c
   assert.match(completed.output, /finished/);
 });
 
+test("an aborted poll leaves completed output available to the next poll", async (t) => {
+  const manager = createManager(t);
+
+  const started = await manager.start({
+    workspaceId: "workspace-a", cwd: process.cwd(),
+    command: `${node} -e "setTimeout(() => console.log('retained-result'), 100)"`,
+    yieldTimeMs: 0,
+  });
+
+  assert.ok(started.sessionId);
+  const controller = new AbortController();
+
+  const poll = manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+    yieldTimeMs: 2_000, signal: controller.signal,
+  });
+
+  controller.abort();
+  await assert.rejects(poll, { name: "AbortError" });
+
+  const recovered = await manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId, yieldTimeMs: 2_000,
+  });
+
+  assert.equal(recovered.running, false);
+  assert.equal(recovered.exitCode, 0);
+  assert.match(recovered.output, /retained-result/);
+  await assert.rejects(manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+  }), /Unknown process session/);
+});
+
+test("an already aborted write does not send input to the process", async (t) => {
+  const manager = createManager(t);
+
+  const started = await manager.start({
+    workspaceId: "workspace-a", cwd: process.cwd(),
+    command: `${node} -e "process.stdin.once('data', data => { console.log(data.toString()); process.exit(0); })"`,
+    yieldTimeMs: 0,
+  });
+
+  assert.ok(started.sessionId);
+  await assert.rejects(manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+    chars: "cancelled-input\n", signal: AbortSignal.abort(),
+  }), { name: "AbortError" });
+
+  const completed = await manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+    chars: "accepted-input\n", yieldTimeMs: 2_000,
+  });
+
+  assert.match(completed.output, /accepted-input/);
+  assert.doesNotMatch(completed.output, /cancelled-input/);
+});
+
 test("input written to an interactive session reaches stdin", async (t) => {
   const manager = createManager(t);
 

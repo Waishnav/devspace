@@ -48,6 +48,7 @@ export interface WriteStdinInput {
   rows?: number;
   yieldTimeMs?: number;
   maxOutputTokens?: number;
+  signal?: AbortSignal;
 }
 
 export interface ProcessSnapshot {
@@ -336,6 +337,7 @@ export class ProcessSessionManager {
   }
 
   async write(input: WriteStdinInput): Promise<ProcessSnapshot> {
+    input.signal?.throwIfAborted();
     const session = this.getOwnedSession(input.workspaceId, input.sessionId);
     const chars = input.chars ?? "";
 
@@ -369,6 +371,8 @@ export class ProcessSessionManager {
       await this.waitForExit(session, yieldTimeMs);
     }
 
+    // A cancelled request must not drain output or discard the completed session.
+    input.signal?.throwIfAborted();
     const snapshot = this.consume(session, input.maxOutputTokens);
 
     if (!session.running) this.removeSession(session.id);
