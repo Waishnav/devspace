@@ -1,5 +1,6 @@
-import { createRequire } from "node:module";
-import { createServer as createNetServer } from "node:net";
+import { isObjectValue, isJsonString, optionalFields } from "./json-value.js";
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import type {
   OpencodeClient,
   PermissionConfig,
@@ -10,22 +11,30 @@ import {
   AgentProviderUnavailableError,
   captureAgentProviderResult,
 } from "./local-agent-errors.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
   LocalAgentRuntime,
+  LocalAgentModel,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
-import { terminateProcessTree } from "./process-platform.js";
+import { startOpencodeServer, type OpencodeServerLike } from "./local-agent-opencode-server.js";
+import {
+  defaultOpencodeV2Factory,
+  OpencodeV2Runtime,
+  type OpencodeV2Factory,
+} from "./local-agent-opencode-v2.js";
+import {
+  probeOpenCodeBinary,
+  runOpenCodeModels,
+  requireOpenCodeV1NativeSessionId,
+  type OpenCodeRuntimeProbeFunction,
+} from "./local-agent-opencode-version.js";
 
-const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
-const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
-const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
-const require = createRequire(import.meta.url);
-const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 
 interface OpencodeModelRef {
   providerID: string;
@@ -33,10 +42,6 @@ interface OpencodeModelRef {
 }
 
 export type OpencodeClientLike = Pick<OpencodeClient, "global" | "session">;
-
-export interface OpencodeServerLike {
-  close(): void;
-}
 
 export type OpencodeFactory = (
   context?: LocalAgentRuntimeContext,
@@ -72,13 +77,21 @@ export class OpencodeRuntime implements LocalAgentRuntime {
             message: "OpenCode runtime is not running.",
           });
         }
+
         try {
           await assertOpencodeHealthy(this.client);
-          const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input);
+
+          const sessionId = input.providerSessionId
+            ? requireOpenCodeV1NativeSessionId(input.providerSessionId)
+            : await createOpencodeSession(this.client, input);
+
           await callbacks?.onSessionId?.(sessionId);
           const promptResult = await this.prompt(sessionId, input);
           assertOpenCodePromptSucceeded(promptResult);
           const finalResponse = requireFinalResponse(extractOpenCodeFinalResponse(promptResult));
+          // OpenCode does not stream activity to DevSpace; report the reply once the turn ends.
+          callbacks?.onEvent?.({ type: "message", text: finalResponse });
+
           return {
             provider: this.provider,
             providerSessionId: sessionId,
@@ -97,6 +110,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
               message: "OpenCode provider is unavailable.",
             });
           }
+
           throw error;
         }
       },
@@ -115,22 +129,39 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     if (this.closed) return;
     this.closed = true;
     this.alive = false;
+
     for (const controller of this.promptControllers) controller.abort();
     this.promptControllers.clear();
     this.server.close();
   }
 
-  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<unknown> {
+  private async prompt(sessionId: string, input: LocalAgentRunInput): Promise<WireInput> {
     const controller = new AbortController();
     this.promptControllers.add(controller);
     let timedOut = false;
+
+    // End the local request only once OpenCode confirms the abort. A failed or
+    // stalled abort keeps the turn running, and the manager reports the stop as a conflict.
+    const removeAbort = bindLocalAgentAbort(input.signal, async () => {
+      const aborted = await this.client.session.abort({
+        sessionID: sessionId,
+        directory: input.workspaceRoot,
+      }, { throwOnError: false });
+
+      if (!aborted.error) controller.abort();
+    });
+
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.promptTimeoutMs);
+
     try {
       return await promptOpencodeSession(this.client, sessionId, input, controller.signal);
     } catch (error) {
+      // A provider timeout after a stop request is still a timeout: the abort was never confirmed.
+      if (input.signal?.aborted && !timedOut) throw localAgentCancelledError("opencode", "prompt", error);
+
       if (!timedOut) throw error;
       throw new AgentProviderProtocolError({
         code: "PROVIDER_PROTOCOL_ERROR",
@@ -142,6 +173,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
       });
     } finally {
       clearTimeout(timer);
+      removeAbort();
       this.promptControllers.delete(controller);
     }
   }
@@ -149,15 +181,30 @@ export class OpencodeRuntime implements LocalAgentRuntime {
 
 export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "opencode" as const;
-  readonly idleTimeoutMs = 5 * 60_000;
+  readonly providerInstanceId = "opencode";
+  readonly runtimePolicy = { scope: "instance", idleTimeoutMs: 5 * 60_000 } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: false },
+    turns: { interrupt: true, streaming: false },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "native" },
+    mcp: { supported: true },
+  } as const;
+  private readonly factory: OpencodeFactory;
+  private readonly v2Factory: OpencodeV2Factory;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly probeRuntime: OpenCodeRuntimeProbeFunction;
 
-  constructor(
-    private readonly factory: OpencodeFactory = defaultOpencodeFactory,
-    private readonly env: NodeJS.ProcessEnv = process.env,
-  ) {}
-
-  runtimeKey(_context: LocalAgentRuntimeContext): string {
-    return "opencode:default";
+  constructor(options: {
+    factory?: OpencodeFactory;
+    v2Factory?: OpencodeV2Factory;
+    env?: NodeJS.ProcessEnv;
+    probeRuntime?: OpenCodeRuntimeProbeFunction;
+  } = {}) {
+    this.factory = options.factory ?? defaultOpencodeFactory;
+    this.v2Factory = options.v2Factory ?? defaultOpencodeV2Factory;
+    this.env = options.env ?? process.env;
+    this.probeRuntime = options.probeRuntime ?? (() => probeOpenCodeBinary(this.env));
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
@@ -166,11 +213,39 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
       agentId: context.agentId,
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
+        // Probe on every runtime creation so an upgraded executable is routed to the matching protocol generation.
+        const runtime = await this.probeRuntime();
+
+        if (runtime.generation === "v2") {
+          const { client, server } = await this.v2Factory(context, this.env);
+
+          return new OpencodeV2Runtime(client, server);
+        }
+
         const { client, server } = await this.factory(context, this.env);
+
         return new OpencodeRuntime(client, server);
       },
     });
   }
+
+  /** `opencode models` prints the same `provider/model` ids `--model` accepts, on both protocol generations. */
+  async listModels(workspaceRoot: string) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        return opencodeModelsFromCli(await runOpenCodeModels(this.env, workspaceRoot));
+      },
+    });
+  }
+}
+
+export function opencodeModelsFromCli(stdout: string): LocalAgentModel[] {
+  return stdout.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^[^\s/]+\/\S+$/.test(line))
+    .map((id) => ({ id }));
 }
 
 async function defaultOpencodeFactory(
@@ -178,6 +253,7 @@ async function defaultOpencodeFactory(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ client: OpencodeClientLike; server: OpencodeServerLike }> {
   const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+
   const config = {
     agent: {
       devspace_read_only: opencodeAgentConfig("read_only"),
@@ -185,128 +261,19 @@ async function defaultOpencodeFactory(
       devspace_full_access: opencodeAgentConfig("full_access"),
     },
   };
-  const server = await startOpencodeServer(env, config);
+
+  const server = await startOpencodeServer({
+    ...env,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+  });
+
   return {
     client: createOpencodeClient({ baseUrl: server.url }),
     server,
   };
 }
 
-async function startOpencodeServer(
-  env: NodeJS.ProcessEnv,
-  config: Record<string, unknown>,
-): Promise<OpencodeServerLike & { url: string }> {
-  for (let attempt = 1; attempt <= OPENCODE_SERVER_START_ATTEMPTS; attempt += 1) {
-    const port = await allocateOpencodePort();
-    try {
-      return await launchOpencodeServer(env, config, port);
-    } catch (error) {
-      if (attempt === OPENCODE_SERVER_START_ATTEMPTS || !await isOpencodePortInUse(port)) throw error;
-    }
-  }
-  throw new Error("OpenCode server failed to start.");
-}
-
-async function launchOpencodeServer(
-  env: NodeJS.ProcessEnv,
-  config: Record<string, unknown>,
-  port: number,
-): Promise<OpencodeServerLike & { url: string }> {
-  const detached = process.platform !== "win32";
-  const child = spawn("opencode", [
-    "serve",
-    `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
-    `--port=${port}`,
-  ], {
-    detached,
-    env: {
-      ...env,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    terminateProcessTree(child, "SIGTERM", detached);
-  };
-  const url = await new Promise<string>((resolve, reject) => {
-    let output = "";
-    let ready = false;
-    const timer = setTimeout(() => {
-      if (ready) return;
-      close();
-      reject(new Error(`Timeout waiting for OpenCode server after ${OPENCODE_SERVER_START_TIMEOUT_MS}ms`));
-    }, OPENCODE_SERVER_START_TIMEOUT_MS);
-    timer.unref();
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      if (ready) return;
-      output += chunk.toString();
-      for (const line of output.split("\n")) {
-        if (!line.startsWith("opencode server listening")) continue;
-        const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-        if (!match?.[1]) continue;
-        ready = true;
-        clearTimeout(timer);
-        resolve(match[1]);
-        return;
-      }
-    });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      if (!ready) output += chunk.toString();
-    });
-    child.once("error", (error) => {
-      if (ready) return;
-      clearTimeout(timer);
-      close();
-      reject(error);
-    });
-    child.once("exit", (code) => {
-      if (ready) return;
-      clearTimeout(timer);
-      close();
-      reject(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output.trim()}` : ""}`));
-    });
-  });
-  return { url, close };
-}
-
-async function allocateOpencodePort(): Promise<number> {
-  const server = createNetServer();
-  server.unref();
-  return new Promise<number>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port: 0, exclusive: true }, () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Failed to allocate an OpenCode server port."));
-        return;
-      }
-      server.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
-
-async function isOpencodePortInUse(port: number): Promise<boolean> {
-  const server = createNetServer();
-  server.unref();
-  return new Promise<boolean>((resolve, reject) => {
-    server.once("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "EADDRINUSE") resolve(true);
-      else reject(error);
-    });
-    server.listen({ host: OPENCODE_SERVER_HOSTNAME, port, exclusive: true }, () => {
-      server.close((error) => error ? reject(error) : resolve(false));
-    });
-  });
-}
-
-export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {
-  mode: "primary";
-  permission: PermissionConfig;
-} {
+export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]) {
   return {
     mode: "primary",
     permission: opencodePermissionFor(writeMode),
@@ -320,6 +287,7 @@ async function createOpencodeSession(
   const result = await client.session.create({
     directory: input.workspaceRoot,
   }, { throwOnError: true });
+
   return requireSessionId(result.data);
 }
 
@@ -335,6 +303,7 @@ export function opencodeAgentFor(writeMode: LocalAgentRunInput["writeMode"]): st
 export function opencodePermissionFor(writeMode: LocalAgentRunInput["writeMode"]): PermissionConfig {
   const allowed = writeMode !== "read_only";
   const unrestricted = writeMode === "full_access";
+
   return {
     read: "allow",
     edit: allowed ? "allow" : "deny",
@@ -355,9 +324,10 @@ async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> 
   }
 }
 
-function isOpenCodeTransportFailure(error: unknown): boolean {
+function isOpenCodeTransportFailure(error: WireInput): boolean {
   if (error instanceof OpencodeHealthError) return true;
   const code = transportErrorCode(error);
+
   return code === "ECONNREFUSED"
     || code === "ECONNRESET"
     || code === "EPIPE"
@@ -366,12 +336,18 @@ function isOpenCodeTransportFailure(error: unknown): boolean {
     || code === "ETIMEDOUT";
 }
 
-function transportErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
+function transportErrorCode(error: WireInput): string | undefined {
+  if (!error || !isObjectValue(error)) return undefined;
+  // SAFETY: The surrounding checks or construction already match this type.
   const code = (error as NodeJS.ErrnoException).code;
-  if (typeof code === "string") return code;
+
+  if (isJsonString(code)) return code;
+  // SAFETY: The surrounding checks or construction already match this type.
   const cause = (error as Error & { cause?: unknown }).cause;
-  return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  return cause && isObjectValue(cause) && isJsonString((cause as NodeJS.ErrnoException).code)
+    // SAFETY: The surrounding checks or construction already match this type.
     ? (cause as NodeJS.ErrnoException).code
     : undefined;
 }
@@ -388,28 +364,31 @@ async function promptOpencodeSession(
   sessionId: string,
   input: LocalAgentRunInput,
   signal: AbortSignal,
-): Promise<unknown> {
+): Promise<WireInput> {
   const model = input.model ? parseOpencodeModel(input.model) : undefined;
+
   return client.session.prompt({
     sessionID: sessionId,
     directory: input.workspaceRoot,
     parts: [{ type: "text", text: input.prompt }],
     agent: opencodeAgentFor(input.writeMode),
-    ...(model ? { model } : {}),
-    ...(input.effort ? { variant: input.effort } : {}),
+    ...optionalFields(model ? { model } : undefined),
+    ...optionalFields(input.effort ? { variant: input.effort } : undefined),
   }, { throwOnError: true, signal });
 }
 
 function parseOpencodeModel(model: string): OpencodeModelRef {
   const separator = model.indexOf("/");
+
   return separator === -1
     ? { providerID: "opencode", modelID: model }
     : { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
 }
 
-function requireSessionId(session: unknown): string {
+function requireSessionId(session: WireInput): string {
   const id = asRecord(session)?.id;
-  if (typeof id !== "string" || !id) {
+
+  if (!isJsonString(id) || !id) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
       provider: "opencode",
@@ -418,22 +397,26 @@ function requireSessionId(session: unknown): string {
       message: "OpenCode did not return a session id.",
     });
   }
+
   return id;
 }
 
-function assertOpenCodePromptSucceeded(value: unknown): void {
+function assertOpenCodePromptSucceeded(value: WireInput): void {
   const result = asRecord(unwrapProviderPayload(value));
   const info = asRecord(result?.info);
   const error = asRecord(info?.error);
+
   if (!error) return;
   const data = asRecord(error.data);
-  const message = typeof data?.message === "string"
+
+  const message = isJsonString(data?.message)
     ? data.message
-    : typeof error.message === "string"
+    : isJsonString(error.message)
       ? error.message
-      : typeof error.name === "string"
+      : isJsonString(error.name)
         ? `OpenCode returned ${error.name}.`
         : "OpenCode returned an assistant error.";
+
   throw new AgentProviderExecutionError({
     code: "PROVIDER_EXECUTION_ERROR",
     provider: "opencode",
@@ -444,89 +427,108 @@ function assertOpenCodePromptSucceeded(value: unknown): void {
   });
 }
 
-export function extractOpenCodeFinalResponse(value: unknown): string {
+export function extractOpenCodeFinalResponse(value: WireInput): string {
   const root = unwrapProviderPayload(value);
   const messages = Array.isArray(root) ? root : readArray(root, "messages");
+
   if (messages) return extractLastOpenCodeAssistantMessageText(messages);
+
   return extractOpenCodeAssistantMessageText(root);
 }
 
-function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
+function extractLastOpenCodeAssistantMessageText(messages: WireInput[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = asRecord(messages[index]);
+
     if (!message) continue;
     const info = asRecord(message.info);
-    const role = typeof info?.role === "string" ? info.role : message.role;
-    const type = typeof message.type === "string" ? message.type : undefined;
+    const role = isJsonString(info?.role) ? info.role : message.role;
+    const type = isJsonString(message.type) ? message.type : undefined;
+
     if (role !== "assistant" && type !== "assistant") continue;
     const text = extractOpenCodeAssistantMessageText(message);
+
     if (text) return text;
   }
+
   return "";
 }
 
-function extractOpenCodeAssistantMessageText(value: unknown): string {
+function extractOpenCodeAssistantMessageText(value: WireInput): string {
   const message = asRecord(value);
+
   if (!message) return "";
+
   for (const key of ["content", "parts"] as const) {
     const parts = readArray(message, key);
+
     if (!parts) continue;
+
     const text = parts
       .map((part) => {
         const record = asRecord(part);
-        return record?.type === "text" && typeof record.text === "string" ? record.text : "";
+
+        return record?.type === "text" && isJsonString(record.text) ? record.text : "";
       })
       .filter(Boolean)
       .join("");
+
     if (text.trim()) return text.trim();
   }
+
   const info = asRecord(message.info) ?? message;
+
   return stringifyStructuredMessage(info.structured);
 }
 
-function stringifyStructuredMessage(value: unknown): string {
+function stringifyStructuredMessage(value: WireInput): string {
   if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value.trim();
+
+  if (isJsonString(value)) return value.trim();
+
   return JSON.stringify(value);
 }
 
-function unwrapProviderPayload(value: unknown): unknown {
+function unwrapProviderPayload(value: WireInput): WireInput {
   let current = value;
+
   for (let depth = 0; depth < 3; depth += 1) {
     const record = asRecord(current);
+
     if (!record) return current;
+
     if (record.data !== undefined) {
       current = record.data;
       continue;
     }
+
     if (record.result !== undefined) {
       current = record.result;
       continue;
     }
+
     return current;
   }
+
   return current;
 }
 
-function readArray(value: unknown, key: string): unknown[] | undefined {
+function readArray(value: WireInput, key: string): WireInput[] | undefined {
   const result = asRecord(value)?.[key];
+
   return Array.isArray(result) ? result : undefined;
 }
 
-function readNestedString(value: unknown, path: string[]): string | undefined {
-  let current: unknown = value;
-  for (const key of path) current = asRecord(current)?.[key];
-  return typeof current === "string" ? current : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
 }
 
 function requireFinalResponse(response: string): string {
   const trimmed = response.trim();
+
   if (!trimmed) {
     throw new AgentProviderProtocolError({
       code: "PROVIDER_PROTOCOL_ERROR",
@@ -536,9 +538,10 @@ function requireFinalResponse(response: string): string {
       message: "OpenCode did not return a final assistant response.",
     });
   }
+
   return trimmed;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: WireInput): string {
   return error instanceof Error ? error.message : String(error);
 }

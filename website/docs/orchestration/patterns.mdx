@@ -1,0 +1,94 @@
+---
+title: Delegation patterns
+description: Planner, implementer, reviewer, and QA — composing different harnesses by task, first with plain subagents and then as a workflow.
+---
+
+The point of an agent-agnostic layer is that the best model for each step can
+come from a different vendor. These patterns assume the starter
+[profiles](/orchestration/profiles); swap in your own.
+
+## Second opinion
+
+The cheapest win. Whatever harness you are in, ask a different one to review.
+
+```bash
+devspace agents run copilot-reviewer "Review the staged diff. Severity-ordered findings with file:line."
+devspace agents wait <id>
+```
+
+## Explore, then implement
+
+Spend a cheap model on discovery and an expensive one on the change.
+
+```bash
+devspace agents run opencode-explorer "Which files define rate limiting for the public API? List paths and symbols."
+devspace agents wait <id>
+devspace agents run claude-implementer "Add a per-key burst limit in <paths from explorer>. Acceptance: …"
+```
+
+## Plan → build → review → QA
+
+The full matrix, written as an [experimental workflow](/orchestration/dynamic-workflows)
+so the orchestrator launches one run instead of driving each step.
+
+```js .devspace/workflows/ship.js lineNumbers
+export const meta = {
+  name: "ship",
+  description: "Plan with Codex, build with Claude, review and QA in parallel",
+};
+
+const plan = await phase("Plan", (agent) => agent(`Write an implementation plan for: ${args.task}`, {
+  target: "codex",
+  effort: "xhigh",
+  schema: {
+    type: "object",
+    properties: { steps: { type: "array", items: { type: "string" } } },
+    required: ["steps"],
+  },
+}));
+
+const build = await phase("Build", (agent) => agent(`Implement this plan:\n${plan.steps.join("\n")}`, {
+  target: "claude-implementer",
+  writeMode: "allowed",
+}));
+
+const [review, qa] = await phase("Verify", (agent) => parallel(
+  [
+    { target: "copilot-reviewer", brief: "Review the working-tree diff against the plan." },
+    { target: "codex-qa-tester", brief: "Exercise the changed flow in the browser." },
+  ],
+  ({ target, brief }) => agent(brief, { target }),
+));
+
+// parallel() reports a failed worker instead of throwing; fail the run here.
+if (review.status === "failed" || qa.status === "failed") {
+  throw new Error("Verification failed: see the review and QA calls.");
+}
+
+return { plan, build, review, qa };
+```
+
+```bash
+devspace workflow run --name ship --write-mode allowed \
+  --args '{"task":"Add CSV export to the billing page"}'
+```
+
+## Bake-off
+
+Two harnesses implement the same brief in isolated worktrees; a third judges.
+
+```js
+const [a, b] = await parallel(
+  ["claude", "codex"],
+  (target) => agent(args.brief, { target, writeMode: "allowed", isolation: "worktree" }),
+);
+return await agent(
+  `Compare these two implementations and pick one:\nA: ${JSON.stringify(a)}\nB: ${JSON.stringify(b)}`,
+  { target: "pi-reviewer" },
+);
+```
+
+## When not to delegate
+
+A subagent costs a brief, a cold context, and a wait. Do routine edits in the
+orchestrator. Delegate for independent context, a specialist, or parallelism.

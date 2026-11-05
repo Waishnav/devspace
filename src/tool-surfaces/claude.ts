@@ -74,6 +74,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
           response.content,
           startedAt,
         );
+
         return response;
       }
 
@@ -128,6 +129,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       const workspaceId = workspace_id;
       const workspace = await workspaces.getWorkspace(workspaceId);
       const path = await workspaces.resolvePath(workspace, input.path);
+
       const response = await editFileTool({
         ...input,
         path,
@@ -148,12 +150,14 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
           response.content,
           startedAt,
         );
+
         return response;
       }
 
       const stats = countDiffStats(
         response.details?.patch ?? response.details?.diff,
       );
+
       const editResultText = `Edited ${input.path} (+${stats.additions} -${stats.removals}).`;
       const editContent = [textBlock(editResultText)];
       logToolCall(config, {
@@ -209,10 +213,12 @@ function registerShellTool(context: ToolRegistrationContext): void {
       const workspaceId = workspace_id;
       const workingDirectory = working_directory;
       const workspace = await workspaces.getWorkspace(workspaceId);
+
       const cwd = await workspaces.resolveWorkingDirectory(
         workspace,
         workingDirectory,
       );
+
       const response = await runShellTool(input, {
         cwd,
       });
@@ -230,6 +236,7 @@ function registerShellTool(context: ToolRegistrationContext): void {
           response.content,
           startedAt,
         );
+
         return response;
       }
 

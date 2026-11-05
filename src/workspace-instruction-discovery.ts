@@ -31,6 +31,7 @@ export async function walkWorkspaceInstructions(
     if (directories >= limits.maxDirectories || performance.now() >= deadline) return false;
     directories++;
     let entries;
+
     try {
       entries = await opendir(directory);
     } catch {
@@ -42,12 +43,14 @@ export async function walkWorkspaceInstructions(
       if (entriesVisited >= limits.maxEntries || performance.now() >= deadline) return false;
       entriesVisited++;
       const path = join(directory, entry.name);
+
       if (entry.isDirectory()) {
         if (!SKIPPED_CONTEXT_DIRS.has(entry.name) && !await walk(path)) return false;
       } else if (entry.isFile()) {
         await visit(path, entry.name);
       }
     }
+
     return true;
   }
 

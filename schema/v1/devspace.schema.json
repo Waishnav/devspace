@@ -51,7 +51,15 @@
         },
         "trustProxy": {
           "default": false,
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "loopback"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -93,7 +101,7 @@
       "type": "object",
       "properties": {
         "mode": {
-          "default": "codex",
+          "description": "Optional override. When unset, DevSpace picks the tool surface from the connecting MCP host.",
           "type": "string",
           "enum": [
             "claude",
@@ -110,6 +118,25 @@
         "enabled": {
           "default": true,
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "activity": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Record workspace tool calls, with their arguments and results, in the local state database.",
+          "type": "boolean"
+        },
+        "maxTurns": {
+          "default": 200,
+          "description": "Closed turns kept per workspace. Older turns and their tool calls are deleted.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "additionalProperties": false
@@ -156,11 +183,6 @@
       "additionalProperties": false
     },
     "subagents": {
-      "default": {
-        "enabled": false,
-        "instructions": "on-demand",
-        "providers": []
-      },
       "type": "object",
       "properties": {
         "enabled": {
@@ -177,92 +199,77 @@
         "providers": {
           "type": "array",
           "items": {
-            "oneOf": [
-              {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "driver": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "opencode",
+                  "pi",
+                  "acp",
+                  "cursor",
+                  "copilot",
+                  "grok"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "config": {
                 "type": "object",
                 "properties": {
-                  "id": {
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "flavor": {
                     "type": "string",
                     "enum": [
-                      "codex",
-                      "claude",
                       "cursor",
                       "copilot",
                       "grok"
                     ]
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "effort": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "env": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "command": {
-                    "type": "string",
-                    "minLength": 1,
-                    "pattern": "\\S"
                   }
                 },
-                "required": [
-                  "id",
-                  "enabled"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "enum": [
-                      "opencode",
-                      "pi"
-                    ]
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "effort": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "env": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "required": [
-                  "id",
-                  "enabled"
-                ],
                 "additionalProperties": false
               }
-            ]
+            },
+            "required": [
+              "id",
+              "enabled"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -330,6 +337,13 @@
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
         },
+        "refreshTokenGraceSeconds": {
+          "default": 0,
+          "description": "Allow refresh-token retries for up to this many seconds after rotation. Zero consumes tokens immediately.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600
+        },
         "scopes": {
           "default": [
             "devspace"
@@ -353,6 +367,8 @@
         "allowedRedirectHosts": {
           "default": [
             "chatgpt.com",
+            "claude.ai",
+            "claude.com",
             "localhost",
             "127.0.0.1"
           ],

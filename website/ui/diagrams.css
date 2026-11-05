@@ -1,0 +1,77 @@
+/* Shared styles for the docs islands. Colors come from Blume's theme tokens so
+   the diagrams follow light and dark mode. */
+.ds-diagram {
+  --ds-fg: var(--blume-foreground, #161616);
+  --ds-muted: var(--blume-muted-foreground, #6b6b6b);
+  --ds-border: var(--blume-border, #e3e3df);
+  --ds-bg: var(--blume-code-background, #f1f1ee);
+  --ds-live: #d97706;
+  --ds-ok: #16a34a;
+  --ds-err: #dc2626;
+  margin: 1.75rem 0;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--blume-radius, 4px);
+  background: var(--ds-bg);
+  font-family: var(--blume-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--ds-fg);
+  overflow: hidden;
+}
+.ds-diagram__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.85rem;
+  border-bottom: 1px solid var(--ds-border);
+  color: var(--ds-muted);
+}
+.ds-diagram__dots { display: flex; gap: 6px; }
+.ds-diagram__dots i {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ds-border); display: block;
+}
+
+.ds-logo svg { width: 100%; height: 100%; border-radius: 22%; }
+.ds-status { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ds-muted); }
+.ds-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ds-border); }
+.ds-status--running { color: var(--ds-live); }
+.ds-status--running::before { background: var(--ds-live); animation: ds-blink 0.8s infinite alternate; }
+.ds-status--completed { color: var(--ds-ok); }
+.ds-status--completed::before { background: var(--ds-ok); }
+.ds-status--failed { color: var(--ds-err); }
+.ds-status--failed::before { background: var(--ds-err); }
+@keyframes ds-blink { to { opacity: 0.25; } }
+@keyframes ds-in { from { opacity: 0; transform: translateY(3px); } }
+
+/* Workflow run */
+.ds-wf { display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+.ds-wf__phases { border-right: 1px solid var(--ds-border); padding: 0.6rem 0; }
+.ds-wf__phase {
+  display: flex; justify-content: space-between; padding: 0.35rem 0.85rem;
+  color: var(--ds-muted);
+}
+.ds-wf__phase--active { color: var(--ds-fg); background: color-mix(in oklab, var(--ds-fg) 6%, transparent); }
+.ds-wf__calls { padding: 0.6rem 0.85rem; display: grid; gap: 4px; align-content: start; min-height: 11.5em; }
+.ds-wf__call {
+  display: grid; grid-template-columns: 1.2em minmax(0, 1fr) auto auto; gap: 0.6rem; align-items: center;
+  padding: 0.3rem 0; border-bottom: 1px dashed var(--ds-border);
+  animation: ds-in 0.25s ease-out both;
+}
+.ds-wf__idx { color: var(--ds-muted); }
+.ds-wf__target { color: var(--ds-muted); }
+.ds-wf__bar { height: 3px; background: var(--ds-border); border-radius: 2px; overflow: hidden; grid-column: 2 / -1; }
+.ds-wf__bar > span { display: block; height: 100%; background: var(--ds-fg); transition: width 0.45s linear; }
+.ds-wf__foot {
+  display: flex; justify-content: space-between; border-top: 1px solid var(--ds-border);
+  padding: 0.45rem 0.85rem; color: var(--ds-muted);
+}
+
+@media (max-width: 640px) {
+  .ds-wf { grid-template-columns: 1fr; }
+  .ds-wf__phases { border-right: 0; border-bottom: 1px solid var(--ds-border); display: flex; overflow-x: auto; padding: 0; }
+  .ds-wf__phase { white-space: nowrap; gap: 0.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-diagram *, .ds-diagram *::before { animation: none !important; transition: none !important; }
+}

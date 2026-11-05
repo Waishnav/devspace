@@ -1,0 +1,85 @@
+---
+title: Tool surfaces
+description: The MCP tools DevSpace exposes to a host — Codex-style for ChatGPT, Claude-style for other hosts — and how the surface is chosen.
+---
+
+DevSpace keeps the model-facing surface small and gives each host the tools
+its model is trained on. ChatGPT gets the Codex-style surface; Claude, Cursor,
+and any host DevSpace doesn't recognise get the Claude-style surface.
+
+The host is identified from the OAuth client it registered: its `client_name`,
+then its redirect hosts (`chatgpt.com`/`openai.com` or `claude.ai`/`claude.com`),
+then the request's `User-Agent`. The client is fixed per connector, so a host
+keeps the same tool list across requests.
+
+To give every host one surface, set `tools.mode` to `"codex"` or `"claude"` in
+`~/.devspace/config.jsonc` and restart `serve`. When set, it wins over detection.
+[Experimental code mode](/connect/code-mode) overrides both surfaces with
+JavaScript tool composition.
+
+<Tabs>
+  <Tab title="codex (ChatGPT)">
+    | Tool | Purpose |
+    | --- | --- |
+    | `open_workspace` | Open a checkout or new worktree; returns `workspace_id`, instructions, skills, and the agent catalog. |
+    | `read` | Read a file inside the workspace. |
+    | `apply_patch` | Apply a Codex-format patch. |
+    | `exec_command` | Run a command; returns a process session if it outlives its yield window. |
+    | `write_stdin` | Poll a running session, send input, resize a PTY, or send Ctrl-C. |
+    | `show_changes` | Render the combined diff for the turn and advance the review point. |
+  </Tab>
+  <Tab title="claude (Claude and others)">
+    | Tool | Purpose |
+    | --- | --- |
+    | `open_workspace` | Same as above. |
+    | `read` | Read a file. |
+    | `write` | Write a file. |
+    | `edit` | Exact string replacement. |
+    | `bash` | Run a shell command. |
+    | `show_changes` | Same as above. |
+  </Tab>
+</Tabs>
+
+Dedicated `grep`, `glob`, and `ls` tools are intentionally absent; the shell
+tool uses `rg`, `find`, and `ls`. File writes go through the edit tools rather
+than shell redirection.
+
+On the Codex surface, set `tty: true` only for commands that need a terminal.
+Use `write_stdin` with the returned `session_id` for commands that outlive the
+yield window; do not rerun them.
+
+## Workspace context
+
+Reuse the `workspace_id` returned by `open_workspace`, including after a server
+restart. Optional OpenAI conversation metadata can make a repeated open of the
+same checkout reuse its ID. This is adapter behavior, not a model option; hosts
+without that metadata get a new workspace. New checkout workspaces return full
+context, reused checkouts omit repeated model-visible bootstrap context while
+the UI keeps the details, and each new worktree gets full context. See
+[Workspaces](/concepts/workspaces).
+
+## Review cards
+
+Widget UI is attached only to `open_workspace` and `show_changes` — never to
+every read or command. Call `show_changes` once after the final related file
+change to review the combined diff and advance the review point.
+
+Its structured result contains `workspace_id`, a Git-backed `review_ref`, and
+summary text in `result`. The full file list and patch travel in result metadata
+for MCP Apps hosts to render. If a host restores only structured content, the
+card reopens that exact saved review without advancing the current review
+point. The `open_workspace` card can also be rebuilt from its structured result.
+
+Inspect any review locally with:
+
+```bash
+devspace show-changes <review-ref> --json
+```
+
+Set `ui.enabled` to `false` to drop widget metadata while keeping the tool.
+
+## Native file download
+
+With `artifacts.enabled`, hosts also get `download_artifact`, which saves a
+host-native attached or generated file into an open workspace. See
+[Artifacts](/reference/artifacts).

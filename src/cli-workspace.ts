@@ -13,19 +13,29 @@ export function resolveCliWorkspaceContext(
   allowedRoots: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
+  authorizeManagedWorkspace?: (workspaceRoot: string, workspaceId: string) => boolean,
 ): CliWorkspaceContext {
   const workspaceId = env.DEVSPACE_WORKSPACE_ID?.trim() || undefined;
   const injectedRoot = workspaceId ? env.DEVSPACE_WORKSPACE_ROOT?.trim() : undefined;
+
   const candidate = canonicalizePath(
     injectedRoot ? resolve(injectedRoot) : findGitRoot(cwd) ?? resolve(cwd),
   );
 
   if (!workspaceId) return { workspaceId, workspaceRoot: candidate };
 
-  return {
-    workspaceId,
-    workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
-  };
+  try {
+    return {
+      workspaceId,
+      workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
+    };
+  } catch (error) {
+    if (authorizeManagedWorkspace?.(candidate, workspaceId)) {
+      return { workspaceId, workspaceRoot: candidate };
+    }
+
+    throw error;
+  }
 }
 
 function canonicalizePath(path: string): string {
@@ -36,14 +46,16 @@ function canonicalizePath(path: string): string {
   }
 }
 
-function findGitRoot(cwd: string): string | undefined {
+export function findGitRoot(cwd: string): string | undefined {
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: resolve(cwd),
     encoding: "utf8",
     windowsHide: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
+
   if (result.status !== 0) return undefined;
   const root = result.stdout.trim();
+
   return root ? resolve(root) : undefined;
 }

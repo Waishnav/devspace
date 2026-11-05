@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "key": "devspace",
+      "display_name": "devspace.run",
+      "website_url": "https://devspace.run",
+      "root_path": ""
+    }
+  ]
+}

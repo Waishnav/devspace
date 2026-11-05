@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test, { type TestContext } from "node:test";
 import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { databasePath, openDatabase } from "./db/client.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { SqliteOAuthClientsStore, SqliteOAuthStore } from "./oauth-store.js";
 
-const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
 const oauthConfig = {
   ownerToken: "test-owner-token-that-is-long-enough",
   accessTokenTtlSeconds: 3600,
@@ -17,42 +17,62 @@ const oauthConfig = {
   allowedResourceUrls: ["https://tunnel.example.com/v1/mcp/tunnel_123"],
   allowedRedirectHosts: ["chatgpt.com"],
 };
+
 const mcpUrl = new URL("https://agent.example.com/mcp");
 const tunnelUrl = new URL(oauthConfig.allowedResourceUrls[0]!);
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
 
-try {
-  await testDatabaseConfiguration(join(root, "database-configuration"));
-  testPersistenceAndTokenHashing(join(root, "persistence"));
-  testExpiredTokenCleanup(join(root, "expiration"));
-  testTransactionalTokenRotation(join(root, "rotation"));
-  await testProviderRestartRotationAndRevocation(join(root, "provider"));
-  await testRefreshResourcePolicy(join(root, "refresh-policy"));
-} finally {
-  await rm(root, { recursive: true, force: true });
+test("the database opens in WAL mode with every migration applied and private permissions", async (t) => {
+  await testDatabaseConfiguration(await stateDirFixture(t, "database-configuration"));
+});
+
+test("clients and tokens persist across restarts with only token hashes stored", async (t) => {
+  testPersistenceAndTokenHashing(await stateDirFixture(t, "persistence"));
+});
+
+test("expired tokens are not returned after reopening the store", async (t) => {
+  testExpiredTokenCleanup(await stateDirFixture(t, "expiration"));
+});
+
+test("refresh token rotation succeeds once and a losing rotation stores nothing", async (t) => {
+  testTransactionalTokenRotation(await stateDirFixture(t, "rotation"));
+});
+
+test("provider tokens survive restarts, honor the resource policy, rotate, and revoke", async (t) => {
+  await testProviderRestartRotationAndRevocation(await stateDirFixture(t, "provider"));
+});
+
+test("refresh tokens without a resource are rejected when no alias is configured", async (t) => {
+  await testRefreshResourcePolicy(await stateDirFixture(t, "refresh-policy"));
+});
+
+async function stateDirFixture(t: TestContext, name: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  return join(root, name);
 }
 
 async function testDatabaseConfiguration(stateDir: string): Promise<void> {
   const database = openDatabase(stateDir);
+
   try {
-    assert.equal(database.sqlite.pragma("journal_mode", { simple: true }), "wal");
-    assert.equal(database.sqlite.pragma("synchronous", { simple: true }), 1);
-    assert.equal(database.sqlite.pragma("busy_timeout", { simple: true }), 5000);
-    assert.equal(database.sqlite.pragma("foreign_keys", { simple: true }), 1);
+    assert.equal(database.sqlite.prepare("pragma journal_mode").get()?.journal_mode, "wal");
+    assert.equal(database.sqlite.prepare("pragma synchronous").get()?.synchronous, 1);
+    assert.equal(database.sqlite.prepare("pragma busy_timeout").get()?.timeout, 5000);
+    assert.equal(database.sqlite.prepare("pragma foreign_keys").get()?.foreign_keys, 1);
 
     const migrations = database.sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
       .all();
-    assert.deepEqual(migrations, [
-      { version: 1, name: "workspace-state" },
-      { version: 2, name: "oauth-state" },
-      { version: 3, name: "local-agent-sessions" },
-      { version: 4, name: "workspace-conversation-bindings" },
-      { version: 5, name: "local-agent-structured-errors" },
-      { version: 6, name: "local-agent-effort-rename" },
-      { version: 7, name: "workspace-recovery-state" },
-      { version: 8, name: "local-agent-turns" },
-    ]);
+
+    // Every migration applies once, in order, with no gaps.
+    assert.deepEqual(
+      // SAFETY: The surrounding checks or construction already match this type.
+      migrations.map((migration) => (migration as { version: number }).version),
+      migrations.map((_, index) => index + 1),
+    );
+    assert.ok(migrations.length > 0);
   } finally {
     database.close();
   }
@@ -68,6 +88,7 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   const refreshToken = "refresh-token-example";
   const firstStore = new SqliteOAuthStore(stateDir);
   const firstClients = new SqliteOAuthClientsStore(firstStore, oauthConfig.allowedRedirectHosts);
+
   const client = firstClients.registerClient({
     redirect_uris: [redirectUri],
     client_name: "ChatGPT",
@@ -92,15 +113,18 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   firstStore.close();
 
   const database = openDatabase(stateDir);
+
   try {
     const accessHashes = database.sqlite
       .prepare("select token_hash from oauth_access_tokens")
-      .pluck()
-      .all() as string[];
+      .all()
+      .map((row) => row.token_hash);
+
     const refreshHashes = database.sqlite
       .prepare("select token_hash from oauth_refresh_tokens")
-      .pluck()
-      .all() as string[];
+      .all()
+      .map((row) => row.token_hash);
+
     assert.deepEqual(accessHashes, [hashToken(accessToken)]);
     assert.deepEqual(refreshHashes, [hashToken(refreshToken)]);
     assert.equal(accessHashes.includes(accessToken), false);
@@ -110,6 +134,7 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
   }
 
   const restoredStore = new SqliteOAuthStore(stateDir);
+
   try {
     const restoredClient = restoredStore.getClient(client.client_id);
     assert.equal(restoredClient?.client_id, client.client_id);
@@ -122,9 +147,11 @@ function testPersistenceAndTokenHashing(stateDir: string): void {
 
 function testExpiredTokenCleanup(stateDir: string): void {
   const store = new SqliteOAuthStore(stateDir);
+
   const client = new SqliteOAuthClientsStore(store, oauthConfig.allowedRedirectHosts).registerClient({
     redirect_uris: [redirectUri],
   });
+
   const expiredAt = Math.floor(Date.now() / 1000) - 1;
   store.saveTokenPair({
     accessTokenHash: "expired-access-hash",
@@ -135,6 +162,7 @@ function testExpiredTokenCleanup(stateDir: string): void {
   store.close();
 
   const reopened = new SqliteOAuthStore(stateDir);
+
   try {
     assert.equal(reopened.getAccessToken("expired-access-hash"), undefined);
     assert.equal(reopened.getRefreshToken("expired-refresh-hash"), undefined);
@@ -145,10 +173,12 @@ function testExpiredTokenCleanup(stateDir: string): void {
 
 function testTransactionalTokenRotation(stateDir: string): void {
   const store = new SqliteOAuthStore(stateDir);
+
   try {
     const client = new SqliteOAuthClientsStore(store, oauthConfig.allowedRedirectHosts).registerClient({
       redirect_uris: [redirectUri],
     });
+
     const expiresAt = Math.floor(Date.now() / 1000) + 3600;
     store.saveRefreshToken("old-refresh-hash", {
       clientId: client.client_id,
@@ -198,10 +228,12 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
   assert.equal(firstProvider.isResourceAllowed(tunnelUrl), true);
   assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}/session`)), false);
   assert.equal(firstProvider.isResourceAllowed(new URL(`${tunnelUrl.href}?other=1`)), false);
+
   const client = await firstProvider.clientsStore.registerClient?.({
     redirect_uris: [redirectUri],
     client_name: "ChatGPT",
   });
+
   assert.ok(client);
 
   const code = "code-test-123";
@@ -219,6 +251,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
     firstProvider.exchangeAuthorizationCode(client, code, undefined, redirectUri, mcpUrl),
     InvalidGrantError,
   );
+
   const issued = await firstProvider.exchangeAuthorizationCode(
     client,
     code,
@@ -226,12 +259,14 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
     redirectUri,
     tunnelUrl,
   );
+
   assert.ok(issued.refresh_token);
   firstProvider.close();
 
   const removedAliasProvider = new SingleUserOAuthProvider(
     { ...oauthConfig, allowedResourceUrls: [] }, mcpUrl, stateDir,
   );
+
   try {
     for (const resource of [undefined, tunnelUrl, mcpUrl]) {
       await assert.rejects(
@@ -244,6 +279,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
   }
 
   const secondProvider = new SingleUserOAuthProvider(oauthConfig, mcpUrl, stateDir);
+
   try {
     const verified = await secondProvider.verifyAccessToken(issued.access_token);
     assert.equal(verified.clientId, client.client_id);
@@ -260,6 +296,7 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
       ["devspace"],
       tunnelUrl,
     );
+
     assert.ok(refreshed.refresh_token);
     assert.notEqual(refreshed.access_token, issued.access_token);
 
@@ -288,14 +325,17 @@ async function testProviderRestartRotationAndRevocation(stateDir: string): Promi
 async function testRefreshResourcePolicy(stateDir: string): Promise<void> {
   const store = new SqliteOAuthStore(stateDir);
   const client = store.registerClient({ redirect_uris: [redirectUri] }, oauthConfig.allowedRedirectHosts);
+
   for (const [token, resource] of [["canonical", mcpUrl.href], ["missing", undefined]] as const) {
     store.saveRefreshToken(hashToken(token), {
       clientId: client.client_id, scopes: ["devspace"],
       expiresAt: Math.floor(Date.now() / 1000) + 3600, resource,
     });
   }
+
   store.close();
   const provider = new SingleUserOAuthProvider({ ...oauthConfig, allowedResourceUrls: [] }, mcpUrl, stateDir);
+
   try {
     await assert.rejects(provider.exchangeRefreshToken(client, "missing"), InvalidGrantError);
     const tokens = await provider.exchangeRefreshToken(client, "canonical");

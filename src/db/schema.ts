@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const workspaceSessions = sqliteTable(
   "workspace_sessions",
@@ -56,6 +56,48 @@ export const workspaceConversationBindings = sqliteTable(
   ],
 );
 
+export const workspaceTurns = sqliteTable(
+  "workspace_turns",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    workspaceSessionId: text("workspace_session_id")
+      .notNull()
+      .references(() => workspaceSessions.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    status: text("status").notNull().default("open"),
+    reviewRef: text("review_ref"),
+    startedAt: text("started_at").notNull(),
+    closedAt: text("closed_at"),
+  },
+  (table) => [
+    uniqueIndex("workspace_turns_sequence_idx").on(table.workspaceSessionId, table.sequence),
+  ],
+);
+
+export const workspaceTurnToolCalls = sqliteTable(
+  "workspace_turn_tool_calls",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    turnId: integer("turn_id")
+      .notNull()
+      .references(() => workspaceTurns.id, { onDelete: "cascade" }),
+    origin: text("origin").notNull().default("model"),
+    conversationScopeId: text("conversation_scope_id"),
+    requestId: text("request_id"),
+    toolName: text("tool_name").notNull(),
+    argumentsJson: text("arguments_json").notNull(),
+    resultJson: text("result_json"),
+    errorJson: text("error_json"),
+    isError: integer("is_error").notNull().default(0),
+    startedAt: text("started_at").notNull(),
+    completedAt: text("completed_at").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+  },
+  (table) => [
+    index("workspace_turn_tool_calls_turn_idx").on(table.turnId, table.startedAt),
+  ],
+);
+
 export const oauthClients = sqliteTable(
   "oauth_clients",
   {
@@ -98,7 +140,12 @@ export const localAgentSessions = sqliteTable(
     workspaceId: text("workspace_id"),
     workspaceRoot: text("workspace_root").notNull(),
     profileName: text("profile_name").notNull(),
-    provider: text("provider").notNull(),
+    providerInstanceId: text("provider_instance_id").notNull(),
+    driver: text("driver").notNull(),
+    writeMode: text("write_mode").notNull().default("allowed"),
+    dispatchSignature: text("dispatch_signature"),
+    worktreePath: text("worktree_path"),
+    branch: text("branch"),
     model: text("model"),
     effort: text("effort"),
     providerSessionId: text("provider_session_id"),
@@ -107,6 +154,8 @@ export const localAgentSessions = sqliteTable(
     error: text("error"),
     errorCode: text("error_code"),
     errorRetryable: text("error_retryable"),
+    errorDetail: text("error_detail"),
+    latestTurnId: text("latest_turn_id"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -118,10 +167,21 @@ export const localAgentSessions = sqliteTable(
 );
 
 export type WorkspaceSessionRow = typeof workspaceSessions.$inferSelect;
+
 export type NewWorkspaceSessionRow = typeof workspaceSessions.$inferInsert;
+
 export type LoadedAgentFileRow = typeof loadedAgentFiles.$inferSelect;
+
 export type NewLoadedAgentFileRow = typeof loadedAgentFiles.$inferInsert;
+
 export type WorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferSelect;
+
 export type NewWorkspaceConversationBindingRow = typeof workspaceConversationBindings.$inferInsert;
+
+export type WorkspaceTurnRow = typeof workspaceTurns.$inferSelect;
+
+export type WorkspaceTurnToolCallRow = typeof workspaceTurnToolCalls.$inferSelect;
+
 export type LocalAgentSessionRow = typeof localAgentSessions.$inferSelect;
+
 export type NewLocalAgentSessionRow = typeof localAgentSessions.$inferInsert;

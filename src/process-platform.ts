@@ -25,6 +25,7 @@ const defaultProcessTreeRuntime: ProcessTreeRuntime = {
       stdio: "ignore",
       windowsHide: true,
     });
+
     return !result.error && result.status === 0;
   },
 };
@@ -46,9 +47,11 @@ export function resolveShellCommand(
 
   const configuredShell = environment.SHELL;
   const shellName = configuredShell ? basename(configuredShell) : "";
+
   if (configuredShell && LOGIN_SHELLS.has(shellName)) {
     return { executable: configuredShell, args: ["-lc", command] };
   }
+
   if (configuredShell && POSIX_SHELLS.has(shellName)) {
     return { executable: configuredShell, args: ["-c", command] };
   }
@@ -67,8 +70,10 @@ export function terminateProcessTree(
   } else if (detached && child.pid) {
     try {
       runtime.killGroup(child.pid, signal);
+
       return;
     } catch (error) {
+      // SAFETY: The surrounding checks or construction already match this type.
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
     }
   }

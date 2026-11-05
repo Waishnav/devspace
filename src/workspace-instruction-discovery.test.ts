@@ -20,10 +20,12 @@ test("instruction discovery completes small trees and skips dependency directori
 
 test("directory budget stops the whole walk, including sibling subtrees", async (t) => {
   const root = await fixture(t);
+
   for (const name of ["a", "b", "c"]) {
     await mkdir(join(root, name));
     await writeFile(join(root, name, "AGENTS.md"), "instructions");
   }
+
   const files: string[] = [];
   assert.equal(await walkWorkspaceInstructions(root, (path) => { files.push(path); }, {
     ...limits, maxDirectories: 2,
@@ -33,6 +35,7 @@ test("directory budget stops the whole walk, including sibling subtrees", async 
 
 test("entry budget also bounds a flat directory with no subdirectories", async (t) => {
   const root = await fixture(t);
+
   for (const name of ["a.txt", "b.txt", "c.txt"]) await writeFile(join(root, name), "");
   let visited = 0;
   assert.equal(await walkWorkspaceInstructions(root, () => { visited++; }, {
@@ -54,5 +57,6 @@ test("expired discovery time budget does not start another directory", async (t)
 async function fixture(t: TestContext): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "devspace-instruction-discovery-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+
   return root;
 }

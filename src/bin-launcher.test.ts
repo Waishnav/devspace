@@ -3,8 +3,9 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxRoot = join(projectRoot, "node_modules", "tsx");
@@ -21,20 +22,31 @@ for (const entrypoint of [
     dist: "dist/local-agent-daemon-main.js",
   },
 ]) {
-  testLauncher(entrypoint);
+  test(`${entrypoint.bin} prefers source in a linked checkout and dist in a published package`, () => {
+    testLauncher(entrypoint);
+  });
 }
 
-testLinkedCheckoutReadsCurrentConfig();
-testMissingSourceRuntimeFailsClosed();
+test("the linked checkout launcher reads the current config", () => {
+  testLinkedCheckoutReadsCurrentConfig();
+});
+
+test("a source checkout without tsx fails closed instead of running stale dist", () => {
+  testMissingSourceRuntimeFailsClosed();
+});
 
 function testLinkedCheckoutReadsCurrentConfig(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-bin-config-test-"));
+
   try {
     const env = writeTestDevspaceConfig(root, { tools: { mode: "codex" } });
+
     const output = execFileSync(process.execPath, [join(projectRoot, "bin", "devspace.js"), "config", "get"], {
       encoding: "utf8",
       env: { ...process.env, ...env },
     });
+
+    // SAFETY: The surrounding checks or construction already match this type.
     const config = JSON.parse(output) as { tools?: { mode?: string } };
     assert.equal(config.tools?.mode, "codex");
   } finally {
@@ -44,6 +56,7 @@ function testLinkedCheckoutReadsCurrentConfig(): void {
 
 function testMissingSourceRuntimeFailsClosed(): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-bin-missing-tsx-test-"));
+
   try {
     cpSync(join(projectRoot, "bin"), join(root, "bin"), { recursive: true });
     mkdirSync(join(root, "src"), { recursive: true });
@@ -63,6 +76,7 @@ function testMissingSourceRuntimeFailsClosed(): void {
 
 function testLauncher(entrypoint: { bin: string; source: string; dist: string }): void {
   const root = mkdtempSync(join(tmpdir(), "devspace-bin-launcher-test-"));
+
   try {
     cpSync(join(projectRoot, "bin"), join(root, "bin"), { recursive: true });
     mkdirSync(dirname(join(root, entrypoint.source)), { recursive: true });
@@ -76,12 +90,15 @@ function testLauncher(entrypoint: { bin: string; source: string; dist: string })
     const sourceOutput = execFileSync(process.execPath, [join(root, "bin", entrypoint.bin)], {
       encoding: "utf8",
     }).trim();
+
     assert.equal(sourceOutput, "source", `${entrypoint.bin} must prefer source in a linked checkout`);
 
     rmSync(join(root, entrypoint.source));
+
     const packagedOutput = execFileSync(process.execPath, [join(root, "bin", entrypoint.bin)], {
       encoding: "utf8",
     }).trim();
+
     assert.equal(packagedOutput, "dist", `${entrypoint.bin} must use dist in a published package`);
   } finally {
     rmSync(root, { recursive: true, force: true });

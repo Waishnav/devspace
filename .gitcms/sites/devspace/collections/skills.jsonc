@@ -1,0 +1,21 @@
+{
+  "label": "Skills",
+  "git_path": "/skills/",
+  "file_extension": ".md",
+  "filename_pattern": "",
+  "collection_type": "grouped",
+  "frontmatter_schema": [
+    {
+      "name": "name",
+      "type": "title",
+      "label": "Name",
+      "required": false
+    },
+    {
+      "name": "description",
+      "type": "richtext",
+      "label": "Description",
+      "required": false
+    }
+  ]
+}

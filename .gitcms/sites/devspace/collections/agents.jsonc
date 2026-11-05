@@ -1,0 +1,45 @@
+{
+  "label": "Agents",
+  "git_path": "/examples/agents/",
+  "file_extension": ".md",
+  "filename_pattern": "",
+  "collection_type": "flat",
+  "frontmatter_schema": [
+    {
+      "name": "name",
+      "type": "title",
+      "label": "Name",
+      "required": false
+    },
+    {
+      "name": "schema",
+      "type": "text",
+      "label": "Schema",
+      "required": false
+    },
+    {
+      "name": "description",
+      "type": "richtext",
+      "label": "Description",
+      "required": false
+    },
+    {
+      "name": "provider",
+      "type": "text",
+      "label": "Provider",
+      "required": false
+    },
+    {
+      "name": "model",
+      "type": "text",
+      "label": "Model",
+      "required": false
+    },
+    {
+      "name": "effort",
+      "type": "text",
+      "label": "Effort",
+      "required": false
+    }
+  ]
+}

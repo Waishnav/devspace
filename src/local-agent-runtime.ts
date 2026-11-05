@@ -1,6 +1,10 @@
 import type { Result } from "better-result";
 import type { AgentProviderError } from "./local-agent-errors.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import type { LocalAgentActivityEvent } from "./local-agent-events.js";
+import type {
+  LocalAgentDriverKind,
+  LocalAgentProviderInstanceId,
+} from "./local-agent-provider.js";
 
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 
@@ -13,10 +17,11 @@ export interface LocalAgentRunInput {
   effort?: string;
   modelOverrideRequested?: boolean;
   effortOverrideRequested?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface LocalAgentRunResult {
-  provider: LocalAgentProvider;
+  provider: LocalAgentDriverKind;
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
@@ -29,11 +34,17 @@ export interface LocalAgentRunCallbacks {
    * could otherwise fail and lose that identity.
    */
   onSessionId?: (providerSessionId: string) => void | Promise<void>;
+  /**
+   * Receives normalized activity while the turn runs. It never throws, so
+   * drivers may call it inline from their provider event loop.
+   */
+  onEvent?: (event: LocalAgentActivityEvent) => void;
 }
 
 export interface LocalAgentRuntimeContext {
   agentId: string;
-  provider: LocalAgentProvider;
+  providerInstanceId: LocalAgentProviderInstanceId;
+  provider: LocalAgentDriverKind;
   workspaceRoot: string;
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
@@ -42,13 +53,33 @@ export interface LocalAgentRuntimeContext {
   agentDir?: string;
 }
 
+export type LocalAgentRuntimeScope = "instance" | "workspace" | "agent";
+
+export type LocalAgentRuntimeAuthority = "none" | "write_mode" | "full_access_boundary";
+
+export interface LocalAgentRuntimePolicy {
+  scope: LocalAgentRuntimeScope;
+  authority?: LocalAgentRuntimeAuthority;
+  idleTimeoutMs?: number;
+  sessionIdleTimeoutMs?: number;
+}
+
+export interface LocalAgentCapabilities {
+  sessions: { resume: boolean; close: boolean };
+  /** `streaming` means the driver reports messages and tool activity while a turn runs. */
+  turns: { interrupt: boolean; streaming: boolean };
+  configuration: { modelOverride: boolean; effortOverride: boolean };
+  permissions: { enforcement: "native" | "client-boundary" | "unsupported" };
+  mcp: { supported: boolean };
+}
+
 /**
  * A runtime is deliberately disposable. Nothing from this interface is
  * persisted; the provider session ID in LocalAgentStore is the continuation
  * identity used when a later runtime is created.
  */
 export interface LocalAgentRuntime {
-  readonly provider: LocalAgentProvider;
+  readonly provider: LocalAgentDriverKind;
   run(
     input: LocalAgentRunInput,
     callbacks?: LocalAgentRunCallbacks,
@@ -58,9 +89,20 @@ export interface LocalAgentRuntime {
   isAlive(): boolean;
 }
 
+/** A model a harness reports as selectable. `id` is exactly what `--model` and profile `model` accept. */
+export interface LocalAgentModel {
+  id: string;
+  name?: string;
+  efforts?: string[];
+  default?: boolean;
+}
+
 export interface LocalAgentDriver {
-  readonly provider: LocalAgentProvider;
-  runtimeKey(context: LocalAgentRuntimeContext): string;
+  readonly providerInstanceId: LocalAgentProviderInstanceId;
+  readonly provider: LocalAgentDriverKind;
+  readonly runtimePolicy: LocalAgentRuntimePolicy;
+  readonly capabilities: LocalAgentCapabilities;
   createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
-  readonly idleTimeoutMs?: number;
+  /** Starts the harness just long enough to ask which models it offers in `workspaceRoot`. */
+  listModels?(workspaceRoot: string): Promise<Result<LocalAgentModel[], AgentProviderError>>;
 }

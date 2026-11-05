@@ -62,6 +62,34 @@ const PI_NETWORK_ALLOWLIST = [
   "*.rubygems.org",
 ] as const;
 
+// Printed by apply-seccomp and bwrap when the host denies the capability-bearing
+// user namespaces the sandbox needs (Ubuntu 24.04+ AppArmor restrictions).
+const USER_NAMESPACE_DENIED =
+  /nested userns is capability-restricted|bwrap: (?:No permissions to create new namespace|setting up uid map: Permission denied)/;
+
+const DENIAL_SCAN_CHARS = 512;
+
+/** Detects a denial message even when it is split across output chunks. */
+export function createUserNamespaceDenialDetector() {
+  let tail = "";
+  let denied = false;
+
+  return {
+    push(chunk: string) {
+      if (denied) return;
+      tail = (tail + chunk).slice(-DENIAL_SCAN_CHARS);
+      denied = isUserNamespaceDenied(tail);
+    },
+    get denied() {
+      return denied;
+    },
+  };
+}
+
+export function isUserNamespaceDenied(output: string): boolean {
+  return USER_NAMESPACE_DENIED.test(output);
+}
+
 // Pi does not provide a built-in sandbox. Keep the provider-native sandbox
 // small and fail closed when a command needs a registry or host that is not
 // explicitly allowed here; the agent can report that limitation to the user.
@@ -84,6 +112,7 @@ export function createPiSandboxExtension(
   env: NodeJS.ProcessEnv = {},
 ): ExtensionFactory {
   const restrictedWorkspace = resolveWorkspace(workspace);
+
   return (pi) => {
     const localRead = createReadTool(workspace);
     const restrictedRead = createReadTool(workspace, { operations: createReadOperations(restrictedWorkspace) });
@@ -113,17 +142,21 @@ export function createPiSandboxExtension(
       ...context,
       env: { ...context.env, ...env },
     });
+
     const localBash = createBashTool(workspace, { spawnHook: withProviderEnv });
+
     const restrictedBash = createBashTool(workspace, {
       operations: createSandboxedBashOperations(restrictedWorkspace),
       spawnHook: withProviderEnv,
     });
+
     pi.registerTool(dynamicTool(localBash, restrictedBash, modeRef, true));
   };
 }
 
 export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig {
   const resolvedWorkspace = workspace ? resolveWorkspace(workspace) : undefined;
+
   return {
     network: {
       allowedDomains: [...PI_NETWORK_ALLOWLIST],
@@ -142,7 +175,7 @@ export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig 
 }
 
 export async function registerPiSandboxSession(
-  session: object,
+  session: {},
   workspace: string,
   modeRef: PiSandboxModeRef,
   writeMode: PiSandboxWriteMode,
@@ -152,36 +185,45 @@ export async function registerPiSandboxSession(
     modeRef,
     acquired: false,
   };
+
   sessionStates.set(session, state);
+
   if (writeMode !== "full_access") {
     await acquirePiSandbox(state);
   }
 }
 
 export async function updatePiSandboxSession(
-  session: object,
+  session: {},
   workspace: string,
   writeMode: PiSandboxWriteMode,
 ): Promise<void> {
   const state = sessionStates.get(session);
+
   if (!state) return;
   state.workspace = resolveWorkspace(workspace);
   state.modeRef.value = writeMode;
+
   if (writeMode !== "full_access" && !state.acquired) {
     await acquirePiSandbox(state);
   }
 }
 
-export async function releasePiSandboxSession(session: object): Promise<void> {
+export async function releasePiSandboxSession(session: {}): Promise<void> {
   const state = sessionStates.get(session);
+
   if (!state) return;
   sessionStates.delete(session);
+
   if (!state.acquired) return;
   state.acquired = false;
   sandboxSessionCount = Math.max(0, sandboxSessionCount - 1);
+
   if (sandboxSessionCount !== 0) return;
   await waitForSandboxCommands();
+
   if (sandboxSessionCount !== 0) return;
+
   const reset = async (): Promise<void> => {
     try {
       await SandboxManager.reset();
@@ -190,6 +232,7 @@ export async function releasePiSandboxSession(session: object): Promise<void> {
       windowsSandboxWorkspace = undefined;
     }
   };
+
   if (process.platform === "win32") await enqueueWindowsSandbox(reset);
   else await reset();
 }
@@ -200,12 +243,14 @@ function dynamicTool<T extends { execute: (...args: any[]) => any }>(
   modeRef: PiSandboxModeRef,
   writeCapable = false,
 ): T {
+  // SAFETY: The surrounding checks or construction already match this type.
   return {
     ...restricted,
     execute: (...args: Parameters<T["execute"]>) => {
       if (writeCapable && modeRef.value === "read_only") {
         throw new Error("Pi read-only mode does not allow write-capable tools.");
       }
+
       return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
     },
   } as T;
@@ -247,6 +292,7 @@ function createFindOperations(workspace: string): FindOperations {
     exists: async (path) => {
       try {
         await access(await assertPiWorkspacePath(path, workspace));
+
         return true;
       } catch {
         return false;
@@ -260,19 +306,25 @@ function createFindOperations(workspace: string): FindOperations {
 
       const visit = async (directory: string): Promise<void> => {
         if (results.length >= options.limit) return;
+
         for (const entry of await readdir(directory, { withFileTypes: true })) {
           if (entry.isSymbolicLink()) continue;
+
           if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
           const absolutePath = join(directory, entry.name);
           const relativePath = relative(searchRoot, absolutePath).split("\\").join("/");
           const candidate = pattern.includes("/") ? relativePath : basename(relativePath);
+
           if (matcher.test(candidate)) results.push(absolutePath);
+
           if (entry.isDirectory()) await visit(absolutePath);
+
           if (results.length >= options.limit) return;
         }
       };
 
       await visit(searchRoot);
+
       return results;
     },
   };
@@ -283,6 +335,7 @@ function createLsOperations(workspace: string): LsOperations {
     exists: async (path) => {
       try {
         await access(await assertPiWorkspacePath(path, workspace));
+
         return true;
       } catch {
         return false;
@@ -297,13 +350,17 @@ function createSandboxedBashOperations(workspace: string): BashOperations {
   return {
     exec: (command, cwd, options) => withSandboxCommand(async () => {
       const operationCwd = await assertPiWorkspacePath(cwd, workspace);
+
       if (process.platform === "win32") {
         return enqueueWindowsSandbox(async () => {
           await ensureWindowsSandbox(operationCwd);
+
           return runSandboxedCommand(command, operationCwd, options);
         });
       }
+
       await ensureSandboxInitialized();
+
       return runSandboxedCommand(command, operationCwd, options);
     }),
   };
@@ -313,6 +370,7 @@ async function acquirePiSandbox(state: PiSandboxSessionState): Promise<void> {
   if (state.acquired) return;
   state.acquired = true;
   sandboxSessionCount += 1;
+
   try {
     if (process.platform === "win32") {
       // Windows sandbox-runtime has process-global policy state. Serialize
@@ -333,21 +391,26 @@ async function ensureSandboxInitialized(): Promise<void> {
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(`Pi allowed mode requires a sandbox, but ${process.platform} is not supported by sandbox-runtime.`);
   }
+
   if (!sandboxInitialization) {
     sandboxInitialization = SandboxManager.initialize(createPiSandboxConfig()).catch((error) => {
       sandboxInitialization = undefined;
       throw new Error(`Pi allowed mode could not initialize its sandbox: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
+
   await sandboxInitialization;
 }
 
 async function ensureWindowsSandbox(workspace: string): Promise<void> {
   const resolvedWorkspace = resolveWorkspace(workspace);
+
   if (windowsSandboxWorkspace === resolvedWorkspace && sandboxInitialization) {
     await sandboxInitialization;
+
     return;
   }
+
   if (sandboxInitialization) {
     try {
       await SandboxManager.reset();
@@ -356,6 +419,7 @@ async function ensureWindowsSandbox(workspace: string): Promise<void> {
       windowsSandboxWorkspace = undefined;
     }
   }
+
   sandboxInitialization = SandboxManager.initialize(createPiSandboxConfig(resolvedWorkspace)).catch((error) => {
     sandboxInitialization = undefined;
     windowsSandboxWorkspace = undefined;
@@ -368,6 +432,7 @@ async function ensureWindowsSandbox(workspace: string): Promise<void> {
 function enqueueWindowsSandbox<T>(operation: () => Promise<T>): Promise<T> {
   const next = windowsSandboxQueue.then(operation, operation);
   windowsSandboxQueue = next.then(() => undefined, () => undefined);
+
   return next;
 }
 
@@ -378,9 +443,11 @@ async function runSandboxedCommand(
 ): Promise<{ exitCode: number | null }> {
   if (options.signal?.aborted) throw new Error("aborted");
   const workspace = resolveWorkspace(cwd);
+
   const customConfig: Partial<SandboxRuntimeConfig> = {
     filesystem: createPiSandboxFilesystem(workspace),
   };
+
   const wrapped = await SandboxManager.wrapWithSandboxArgv(
     command,
     undefined,
@@ -388,8 +455,30 @@ async function runSandboxedCommand(
     options.signal,
     workspace,
   );
+
+  const denial = createUserNamespaceDenialDetector();
+
   try {
-    return await spawnSandboxedCommand(wrapped.argv, wrapped.env, workspace, options);
+    const result = await spawnSandboxedCommand(wrapped.argv, wrapped.env, workspace, {
+      ...options,
+      onData: (data) => {
+        denial.push(data.toString("utf8"));
+        options.onData(data);
+      },
+    });
+
+    // The sandbox initializes fine on these hosts and only fails per command,
+    // which the model would otherwise read as its own command failing.
+    if (denial.denied && result.exitCode !== 0) {
+      throw new Error(
+        "Pi allowed mode could not start its sandbox: the host denies the user namespaces it needs. " +
+          "On Ubuntu 24.04+, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`; " +
+          "on Ubuntu 26.04 also unload the bwrap profile with " +
+          "`sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict`.",
+      );
+    }
+
+    return result;
   } finally {
     SandboxManager.cleanupAfterCommand();
   }
@@ -402,7 +491,9 @@ function spawnSandboxedCommand(
   options: Parameters<BashOperations["exec"]>[2],
 ): Promise<{ exitCode: number | null }> {
   const [executable, ...args] = argv;
+
   if (!executable) throw new Error("sandbox-runtime returned an empty command");
+
   return new Promise((resolveResult, reject) => {
     const child = spawn(executable, args, {
       cwd,
@@ -412,26 +503,32 @@ function spawnSandboxedCommand(
       shell: false,
       windowsHide: true,
     });
+
     let timedOut = false;
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
     const detached = process.platform !== "win32";
+
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
+
       if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       callback();
     };
+
     const kill = () => terminateProcessTree(child, "SIGKILL", detached);
     const onAbort = () => kill();
     options.signal?.addEventListener("abort", onAbort, { once: true });
+
     if (options.timeout !== undefined && options.timeout > 0) {
       timer = setTimeout(() => {
         timedOut = true;
         kill();
       }, options.timeout * 1000);
     }
+
     child.stdout?.on("data", options.onData);
     child.stderr?.on("data", options.onData);
     child.once("error", (error) => finish(() => reject(error)));
@@ -456,6 +553,7 @@ function createPiSandboxFilesystem(workspace: string): FilesystemConfig {
 
 function protectedHomePaths(): string[] {
   const home = homedir();
+
   return [
     join(home, ".ssh"),
     join(home, ".aws"),
@@ -474,18 +572,23 @@ async function assertPiWorkspacePath(
   const resolvedWorkspace = resolveWorkspace(workspace);
   const absolutePath = resolve(path);
   const { boundaryPath, suffix } = await resolveExistingBoundary(absolutePath);
+
   if (!isPathInsideRoot(boundaryPath, resolvedWorkspace)) {
     assertAllowedPath(boundaryPath, [resolvedWorkspace]);
   }
+
   const operationPath = suffix ? resolve(boundaryPath, suffix) : boundaryPath;
+
   if (!isPathInsideRoot(operationPath, resolvedWorkspace)) {
     assertAllowedPath(operationPath, [resolvedWorkspace]);
   }
+
   return operationPath;
 }
 
 async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: string; suffix: string }> {
   let candidate = path;
+
   for (;;) {
     try {
       return {
@@ -494,6 +597,7 @@ async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: st
       };
     } catch {
       const parent = dirname(candidate);
+
       if (parent === candidate) return { boundaryPath: candidate, suffix: relative(candidate, path) };
       candidate = parent;
     }
@@ -502,10 +606,12 @@ async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: st
 
 async function withSandboxCommand<T>(operation: () => Promise<T>): Promise<T> {
   sandboxCommandCount += 1;
+
   try {
     return await operation();
   } finally {
     sandboxCommandCount = Math.max(0, sandboxCommandCount - 1);
+
     if (sandboxCommandCount === 0) {
       for (const resolveWaiter of sandboxCommandWaiters) resolveWaiter();
       sandboxCommandWaiters.clear();
@@ -515,22 +621,28 @@ async function withSandboxCommand<T>(operation: () => Promise<T>): Promise<T> {
 
 function waitForSandboxCommands(): Promise<void> {
   if (sandboxCommandCount === 0) return Promise.resolve();
+
   return new Promise((resolveWaiter) => sandboxCommandWaiters.add(resolveWaiter));
 }
 
 function resolveWorkspace(workspace: string): string {
   const absolute = resolve(workspace);
+
   if (!existsSync(absolute)) throw new Error(`Pi workspace does not exist: ${workspace}`);
+
   return realpathSync(absolute);
 }
 
 function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
   let source = "^";
+
   for (let index = 0; index < normalized.length; index += 1) {
     const character = normalized[index];
+
     if (character === "*" && normalized[index + 1] === "*") {
       index += 1;
+
       if (normalized[index + 1] === "/") {
         index += 1;
         source += "(?:.*/)?";
@@ -545,5 +657,6 @@ function globToRegExp(pattern: string): RegExp {
       source += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
     }
   }
+
   return new RegExp(`${source}$`);
 }

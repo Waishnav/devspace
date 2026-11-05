@@ -1,0 +1,166 @@
+name: Installers
+
+# Runs install/install.sh and install/install.ps1 against this commit's packed tarball, the way a user's
+# `curl | sh` or `irm | iex` would, on each OS. The published npm package is not used: the installers take
+# DEVSPACE_PACKAGE_SPEC so the job installs exactly what this change ships.
+
+on:
+  pull_request:
+    paths:
+      - install/**
+      - bin/**
+      - package.json
+      - pnpm-lock.yaml
+      - src/db/**
+      - src/cli.ts
+      - src/local-agent-client.ts
+      - .github/workflows/install.yml
+  push:
+    branches:
+      - main
+    paths:
+      - install/**
+      - bin/**
+      - package.json
+      - pnpm-lock.yaml
+      - src/db/**
+      - src/cli.ts
+      - src/local-agent-client.ts
+      - .github/workflows/install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Key PR runs on the PR number so same-named branches from different forks never cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: ${{ matrix.os }} (${{ matrix.node }} Node)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # existing: reuse the compatible Node on PATH. managed: only a broken `node` is on PATH, so the installer
+        # must download its own Node.
+        node: [existing, managed]
+
+    env:
+      DEVSPACE_NO_INIT: "1"
+      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm and Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Pack this commit
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --silent --pack-destination "$RUNNER_TEMP/pack"
+          tarball=$(find "$RUNNER_TEMP/pack" -name '*.tgz' | head -n 1)
+          echo "DEVSPACE_PACKAGE_SPEC=$tarball" >> "$GITHUB_ENV"
+
+      # A standard Node install with npm beside it, as users have from nodejs.org, Homebrew, nvm, or mise.
+      - name: Setup Node for the installer
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Shadow node with an incompatible one
+        if: matrix.node == 'managed'
+        shell: bash
+        run: |
+          shim="$RUNNER_TEMP/broken-node"
+          mkdir -p "$shim"
+          printf '#!/bin/sh\nexit 1\n' > "$shim/node"
+          printf '@exit /b 1\r\n' > "$shim/node.cmd"
+          chmod +x "$shim/node"
+          echo "$shim" >> "$GITHUB_PATH"
+
+      - name: Run install.sh
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh install/install.sh
+
+      - name: Run install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./install/install.ps1
+
+      - name: Verify the installed CLI (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          devspace="$HOME/.local/bin/devspace"
+          cat "$devspace"
+          if [ "${{ matrix.node }}" = managed ]; then
+            grep -q "$HOME/.local/share/devspace/install/node/bin/node" "$devspace"
+          else
+            grep -q "$(command -v node)" "$devspace"
+          fi
+
+          "$devspace" --version
+          "$devspace" doctor | tee doctor.txt
+          grep -q '^SQLite: ok (node:sqlite' doctor.txt
+
+          # Starts the agent daemon, which opens the database through node:sqlite.
+          "$devspace" agents ls 2>&1 | tee agents.txt
+          if grep -q ExperimentalWarning agents.txt doctor.txt; then
+            echo "node:sqlite warning leaked" >&2
+            exit 1
+          fi
+
+          # New shells must find the launcher: either PATH already had it (Ubuntu runners do), or the installer
+          # added it to a shell profile.
+          case ":$PATH:" in
+            *":$HOME/.local/bin:"*) echo "$HOME/.local/bin was already on PATH" ;;
+            *) grep -rqs "$HOME/.local/bin" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.profile" ;;
+          esac
+
+      - name: Verify the installed CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $devspace = Join-Path $env:LOCALAPPDATA "devspace\bin\devspace.cmd"
+          Get-Content $devspace
+          if ("${{ matrix.node }}" -eq "managed") {
+            # Launchers spell profile paths through %LOCALAPPDATA% so non-ASCII usernames survive cmd.exe.
+            if (-not (Select-String -Quiet -SimpleMatch "%LOCALAPPDATA%\devspace\install\node\node.exe" $devspace)) { throw "launcher does not pin the managed Node" }
+          } else {
+            $node = & (Get-Command node).Source -p "process.execPath"
+            if (-not (Select-String -Quiet -SimpleMatch $node $devspace)) { throw "launcher does not pin the Node on PATH ($node)" }
+          }
+
+          & $devspace --version
+          if ($LASTEXITCODE -ne 0) { throw "devspace --version failed" }
+          $doctor = & $devspace doctor 2>&1 | Out-String
+          $doctor
+          if ($doctor -notmatch "SQLite: ok \(node:sqlite") { throw "doctor did not report node:sqlite" }
+
+          # Starts the agent daemon, which opens the database through node:sqlite.
+          $agents = & $devspace agents ls 2>&1 | Out-String
+          $agents
+          if (($doctor + $agents) -match "ExperimentalWarning") { throw "node:sqlite warning leaked" }
+
+          # The installer must have put the launcher directory on the user PATH for new terminals.
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if (($userPath -split ";") -notcontains (Join-Path $env:LOCALAPPDATA "devspace\bin")) { throw "bin directory missing from user PATH" }
+
+      - name: Rerun installs in place
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh install/install.sh && "$HOME/.local/bin/devspace" --version

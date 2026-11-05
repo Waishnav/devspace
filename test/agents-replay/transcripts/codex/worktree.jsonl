@@ -1,0 +1,65 @@
+{"type":"meta","provider":"codex","scenario":"worktree","args":["app-server","--help"],"cwd":"$WORKSPACE","version":"codex-cli 0.164.0","recordedAt":"2026-10-26T12:48:29.510Z"}
+{"dir":"out","ms":103,"frame":{"raw":"[experimental] Run the app server or related tooling"}}
+{"dir":"out","ms":103,"frame":{"raw":"Usage: codex app-server [OPTIONS] [COMMAND]"}}
+{"dir":"out","ms":103,"frame":{"raw":"Commands:"}}
+{"dir":"out","ms":103,"frame":{"raw":"  daemon                Manage the local app-server daemon"}}
+{"dir":"out","ms":103,"frame":{"raw":"  proxy                 Proxy stdio bytes to the running app-server control socket"}}
+{"dir":"out","ms":103,"frame":{"raw":"  generate-ts           [experimental] Generate TypeScript bindings for the app server protocol"}}
+{"dir":"out","ms":103,"frame":{"raw":"  generate-json-schema  [experimental] Generate JSON Schema for the app server protocol"}}
+{"dir":"out","ms":103,"frame":{"raw":"  help                  Print this message or the help of the given subcommand(s)"}}
+{"dir":"out","ms":104,"frame":{"raw":"Options:"}}
+{"dir":"out","ms":104,"frame":{"raw":"  -c, --config <key=value>"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`."}}
+{"dir":"out","ms":104,"frame":{"raw":"          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed"}}
+{"dir":"out","ms":104,"frame":{"raw":"          as TOML. If it fails to parse as TOML, the raw string is used as a literal."}}
+{"dir":"out","ms":104,"frame":{"raw":"          Examples: - `-c model=\"o3\"` - `-c 'sandbox_permissions=[\"disk-full-read-access\"]'` - `-c"}}
+{"dir":"out","ms":104,"frame":{"raw":"          shell_environment_policy.inherit=all`"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --startup-sign-out"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Sign out using the managed auth path before loading fresh startup requirements"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --enable <FEATURE>"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --print-startup-config"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Validate configuration and print requirements as JSON without starting the app server"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --disable <FEATURE>"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --startup-client-info <STARTUP_CLIENT_INFO>"}}
+{"dir":"out","ms":104,"frame":{"raw":"          ClientInfo JSON used for configuration/auth request identity"}}
+{"dir":"out","ms":104,"frame":{"raw":"      --cloud-skills-snapshot <PATH>"}}
+{"dir":"out","ms":104,"frame":{"raw":"          Load frozen cloud skills from a JSON snapshot instead of a live skill service"}}
+{"dir":"out","ms":105,"frame":{"raw":"      --code-mode-host <URL>"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Connect to a remote code-mode host instead of starting a local host"}}
+{"dir":"out","ms":105,"frame":{"raw":"      --strict-config"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Error out when config.toml contains fields that are not recognized by this version of"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Codex"}}
+{"dir":"out","ms":105,"frame":{"raw":"      --listen <URL>"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Transport endpoint URL. Supported values: `stdio://` (default), `unix://`, `unix://PATH`,"}}
+{"dir":"out","ms":105,"frame":{"raw":"          `ws://IP:PORT`, `off`"}}
+{"dir":"out","ms":105,"frame":{"raw":"          [default: stdio://]"}}
+{"dir":"out","ms":105,"frame":{"raw":"      --stdio"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Use stdio as the transport (equivalent to `--listen stdio://`)"}}
+{"dir":"out","ms":105,"frame":{"raw":"      --analytics-default-enabled"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Controls whether analytics are enabled by default."}}
+{"dir":"out","ms":105,"frame":{"raw":"          Analytics are disabled by default for app-server. Users have to explicitly opt in via the"}}
+{"dir":"out","ms":105,"frame":{"raw":"          `analytics` section in the config.toml file."}}
+{"dir":"out","ms":105,"frame":{"raw":"          However, for first-party use cases like the VSCode IDE extension, we default analytics to"}}
+{"dir":"out","ms":105,"frame":{"raw":"          be enabled by default by setting this flag. Users can still opt out by setting this in"}}
+{"dir":"out","ms":105,"frame":{"raw":"          their config.toml:"}}
+{"dir":"out","ms":105,"frame":{"raw":"          ```toml [analytics] enabled = false ```"}}
+{"dir":"out","ms":105,"frame":{"raw":"          See https://developers.openai.com/codex/config-advanced/#metrics for more details."}}
+{"dir":"out","ms":105,"frame":{"raw":"      --ws-auth <MODE>"}}
+{"dir":"out","ms":105,"frame":{"raw":"          Authentication mode for incoming WebSocket connections"}}
+{"dir":"out","ms":105,"frame":{"raw":"          [possible values: capability-token, signed-bearer-token]"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-token-file [redacted]"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Absolute path to the capability-token [redacted]"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-token-sha256 [redacted]"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Hex-encoded SHA-256 digest of the capability token"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-shared-secret-file [redacted]"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Absolute path to the shared secret file for signed JWT bearer tokens"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-issuer <ISSUER>"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Expected issuer for signed JWT bearer tokens"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-audience <AUDIENCE>"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Expected audience for signed JWT bearer tokens"}}
+{"dir":"out","ms":106,"frame":{"raw":"      --ws-max-clock-skew-seconds <SECONDS>"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Maximum clock skew when validating signed JWT bearer tokens"}}
+{"dir":"out","ms":106,"frame":{"raw":"  -h, --help"}}
+{"dir":"out","ms":106,"frame":{"raw":"          Print help (see a summary with '-h')"}}

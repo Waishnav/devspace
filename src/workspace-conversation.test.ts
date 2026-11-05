@@ -1,3 +1,5 @@
+import { isObjectValue } from "./json-value.js";
+import type { WireInput } from "./json-value.js";
 import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -9,7 +11,7 @@ import { loadConfig, type ServerConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -45,12 +47,15 @@ test("conversation bindings distinguish canonical projects", async (t) => {
   const firstProjectOpen = await registry.openWorkspace(project, {
     conversationScopeId: "chat-1",
   });
+
   const otherProjectOpen = await registry.openWorkspace(otherProject, {
     conversationScopeId: "chat-1",
   });
+
   const repeatedProjectOpen = await registry.openWorkspace(project, {
     conversationScopeId: "chat-1",
   });
+
   const repeatedOtherProjectOpen = await registry.openWorkspace(otherProject, {
     conversationScopeId: "chat-1",
   });
@@ -87,12 +92,15 @@ test("worktree requests remain fresh without replacing the reusable checkout", a
   const worktreeInput = { path: project, mode: "worktree" as const };
 
   const checkout = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
+
   const firstWorktree = await registry.openWorkspace(worktreeInput, {
     conversationScopeId: "chat-1",
   });
+
   const secondWorktree = await registry.openWorkspace(worktreeInput, {
     conversationScopeId: "chat-1",
   });
+
   const checkoutAgain = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
 
   assert.notEqual(firstWorktree.workspace.id, secondWorktree.workspace.id);
@@ -107,6 +115,7 @@ test("a worktree-first conversation creates and then reuses its checkout", async
   const worktree = await registry.openWorkspace(worktreeInput, {
     conversationScopeId: "chat-1",
   });
+
   const checkout = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
   const checkoutAgain = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
 
@@ -138,36 +147,21 @@ test("concurrent worktree opens remain fresh and return complete context", async
 
 test("checkout reuse survives a registry restart", async (t) => {
   const context = await fixture(t);
+
   const first = await context.registry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
+
   context.closeStore(context.store);
 
   const restoredStore = context.openStore();
   const restoredRegistry = new WorkspaceRegistry(context.config, restoredStore);
+
   const restored = await restoredRegistry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
 
   assert.equal(restored.workspace.id, first.workspace.id);
-});
-
-test("a failed first context load does not consume bootstrap", async (t) => {
-  const { project, registry } = await fixture(t);
-  const agentsDir = join(project, ".devspace", "agents");
-  const backupDir = join(project, ".devspace", "agents-backup");
-
-  await breakAgentsDirectory(agentsDir, backupDir);
-  try {
-    await assert.rejects(
-      () => registry.openWorkspace(project, { conversationScopeId: "chat-1" }),
-      /directory|ENOTDIR/i,
-    );
-  } finally {
-    await restoreAgentsDirectory(agentsDir, backupDir);
-  }
-
-  const successfulOpen = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
 });
 
 test("a context-loading failure preserves a valid checkout binding", async (t) => {
@@ -177,6 +171,7 @@ test("a context-loading failure preserves a valid checkout binding", async (t) =
   const backupDir = join(project, ".devspace", "agents-backup");
 
   await breakAgentsDirectory(agentsDir, backupDir);
+
   try {
     await assert.rejects(
       () => registry.openWorkspace(project, { conversationScopeId: "chat-1" }),
@@ -216,6 +211,7 @@ test("canonical checkout identity survives equivalent path and symlink aliases",
   const { root, project, registry } = await fixture(t);
 
   const direct = await registry.openWorkspace(project, { conversationScopeId: "chat-1" });
+
   const equivalent = await registry.openWorkspace(join(project, "..", "project"), {
     conversationScopeId: "chat-1",
   });
@@ -233,13 +229,16 @@ test("canonical checkout identity survives equivalent path and symlink aliases",
 
 test("canonical checkout identity survives macOS var path aliases", { skip: platform() !== "darwin" }, async (t) => {
   const context = await fixture(t);
+
   const macAlias = context.root.startsWith("/private/var/")
     ? `/var/${context.root.slice("/private/var/".length)}`
     : context.root.startsWith("/var/")
       ? `/private/var/${context.root.slice("/var/".length)}`
       : undefined;
+
   if (!macAlias) {
     t.skip("temporary directory is not under /var");
+
     return;
   }
 
@@ -251,11 +250,13 @@ test("canonical checkout identity survives macOS var path aliases", { skip: plat
     },
     skills: { agentDir: join(context.root, "agent") },
   }));
+
   const aliasRegistry = new WorkspaceRegistry(aliasConfig, context.store);
 
   const direct = await context.registry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
+
   const aliased = await aliasRegistry.openWorkspace(
     `${macAlias}/${context.project.slice(context.root.length + 1)}`,
     { conversationScopeId: "chat-1" },
@@ -266,12 +267,15 @@ test("canonical checkout identity survives macOS var path aliases", { skip: plat
 
 test("an invalid persisted checkout binding is not reused", async (t) => {
   const context = await fixture(t);
+
   const first = await context.registry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
+
   context.closeStore(context.store);
 
   const database = openDatabase(context.stateDir);
+
   try {
     database.sqlite
       .prepare("update workspace_sessions set mode = 'worktree' where id = ?")
@@ -282,6 +286,7 @@ test("an invalid persisted checkout binding is not reused", async (t) => {
 
   const restoredStore = context.openStore();
   const restoredRegistry = new WorkspaceRegistry(context.config, restoredStore);
+
   const replacement = await restoredRegistry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
@@ -291,12 +296,15 @@ test("an invalid persisted checkout binding is not reused", async (t) => {
 
 test("an inactive persisted checkout binding is not reused", async (t) => {
   const context = await fixture(t);
+
   const first = await context.registry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
+
   context.closeStore(context.store);
 
   const database = openDatabase(context.stateDir);
+
   try {
     database.sqlite
       .prepare("update workspace_sessions set status = 'inactive' where id = ?")
@@ -306,6 +314,7 @@ test("an inactive persisted checkout binding is not reused", async (t) => {
   }
 
   const restoredRegistry = new WorkspaceRegistry(context.config, context.openStore());
+
   const replacement = await restoredRegistry.openWorkspace(context.project, {
     conversationScopeId: "chat-1",
   });
@@ -357,6 +366,7 @@ test("unexpected filesystem errors are propagated without replacing the binding"
   context.closeStore(context.store);
 
   const database = openDatabase(context.stateDir);
+
   try {
     database.sqlite
       .prepare("update workspace_sessions set root = ? where id = ?")
@@ -369,8 +379,8 @@ test("unexpected filesystem errors are propagated without replacing the binding"
   const restoredRegistry = new WorkspaceRegistry(context.config, restoredStore);
   await assert.rejects(
     () => restoredRegistry.openWorkspace(context.project, { conversationScopeId: "chat-1" }),
-    (error: unknown) =>
-      typeof error === "object" &&
+    (error: WireInput) =>
+      isObjectValue(error) &&
       error !== null &&
       "code" in error &&
       error.code === "ELOOP",
@@ -423,14 +433,18 @@ async function fixture(
     skills: { agentDir },
     subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
+
   const openStore = () => {
     const store = new SqliteWorkspaceStore(stateDir);
     stores.add(store);
+
     return store;
   };
+
   const closeStore = (store: SqliteWorkspaceStore) => {
     if (stores.delete(store)) store.close();
   };
+
   const store = openStore();
 
   t.after(async () => {

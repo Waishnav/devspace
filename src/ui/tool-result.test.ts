@@ -21,6 +21,7 @@ test("workspace cards can be rebuilt from structured content without result meta
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "open_workspace");
   assert.equal(decoded.card.workspaceId, "ws_1");
@@ -47,6 +48,7 @@ test("review results use rich metadata when the host provides it", () => {
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "show_changes");
   assert.equal(decoded.card.files?.[0]?.path, "new.txt");
@@ -100,6 +102,7 @@ test("older review results can reload from their structured patch", () => {
   });
 
   assert.equal(decoded.kind, "card");
+
   if (decoded.kind !== "card") return;
   assert.equal(decoded.card.tool, "show_changes");
   assert.equal(decoded.card.files?.[0]?.path, "new.txt");
@@ -112,6 +115,7 @@ test("ChatGPT globals restore structured output and hidden MCP result metadata t
     structuredContent: { stale: true },
     _meta: { card: { workspaceId: "ws_1", payload: { patch: "patch" } } },
   };
+
   const restored = toolResultFromChatGptGlobals({
     toolOutput: {
       workspace_id: "ws_1",

@@ -2,6 +2,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -18,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
 import { expandHomePath, isPathInsideRoot } from "./roots.js";
+import { workflowsEnabled } from "./workflow-flag.js";
 
 export interface LoadedSkills {
   skills: Skill[];
@@ -30,33 +32,48 @@ export interface SkillReadResolution {
 }
 
 const SUBAGENTS_SKILL_NAME = "subagents";
-const SUBAGENTS_SKILL = join(SUBAGENTS_SKILL_NAME, "SKILL.md");
+const WORKFLOWS_SKILL_NAME = "workflows";
+
+type ManagedSkillName = typeof SUBAGENTS_SKILL_NAME | typeof WORKFLOWS_SKILL_NAME;
+
+// The workflows skill is part of the hidden DEVSPACE_EXPERIMENTAL_WORKFLOWS feature.
+function managedSkillNames(): ManagedSkillName[] {
+  return workflowsEnabled() ? [SUBAGENTS_SKILL_NAME, WORKFLOWS_SKILL_NAME] : [SUBAGENTS_SKILL_NAME];
+}
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
 }
 
-function bundledSubagentsSkillPath(): string {
-  return join(bundledSkillsDir(), SUBAGENTS_SKILL);
+// Sync every bundled file, not just SKILL.md, so references a skill points to (such as reference.md) ship with it.
+function syncManagedSkill(config: ServerConfig, name: ManagedSkillName): void {
+  const sourceDir = join(bundledSkillsDir(), name);
+
+  for (const file of readdirSync(sourceDir)) {
+    syncManagedFile(join(sourceDir, file), join(config.devspaceSkillsDir, name, file), name);
+  }
 }
 
-function syncManagedSubagentsSkill(config: ServerConfig): string {
-  const sourcePath = bundledSubagentsSkillPath();
-  const targetPath = join(config.devspaceSkillsDir, SUBAGENTS_SKILL);
+function syncManagedFile(sourcePath: string, targetPath: string, name: ManagedSkillName): void {
   const source = readFileSync(sourcePath, "utf8");
 
   if (existsSync(targetPath)) {
     const stat = lstatSync(targetPath);
+
     if (stat.isFile() && source === readFileSync(targetPath, "utf8")) {
-      return targetPath;
+      return;
     }
+
     if (stat.isDirectory()) {
-      throw new Error(`Managed subagents skill path is a directory: ${targetPath}`);
+      // A broken supporting file must not stop the skill (or the workspace) from loading; SKILL.md must.
+      if (!targetPath.endsWith("SKILL.md")) return;
+      throw new Error(`Managed ${name} skill path is a directory: ${targetPath}`);
     }
   }
 
   mkdirSync(dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.${process.pid}.tmp`;
+
   try {
     writeFileSync(tempPath, source, { mode: 0o644 });
     rmSync(targetPath, { force: true });
@@ -64,8 +81,6 @@ function syncManagedSubagentsSkill(config: ServerConfig): string {
   } finally {
     rmSync(tempPath, { force: true });
   }
-
-  return targetPath;
 }
 
 export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[] {
@@ -75,18 +90,21 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
   ];
+
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
   );
 
   const seen = new Set<string>();
-  return [...defaultPaths, ...config.skillPaths]
-    .map((path) => resolveSkillPath(path, cwd))
-    .filter((path) => {
-      if (seen.has(path)) return false;
-      seen.add(path);
-      return true;
-    });
+
+  return [...defaultPaths, ...config.skillPaths].flatMap((path) => {
+    const resolved = resolveSkillPath(path, cwd);
+
+    if (seen.has(resolved)) return [];
+    seen.add(resolved);
+
+    return [resolved];
+  });
 }
 
 function resolveSkillPath(path: string, cwd: string): string {
@@ -96,8 +114,10 @@ function resolveSkillPath(path: string, cwd: string): string {
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
+  const managedNames = managedSkillNames();
+
   if (config.subagents.enabled) {
-    syncManagedSubagentsSkill(config);
+    for (const name of managedNames) syncManagedSkill(config, name);
   }
 
   const result = loadSkills({
@@ -107,30 +127,46 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  const withoutSubagents = withoutSubagentsSkill(result);
-  if (!config.subagents.enabled) return withoutSubagents;
+  const withoutManaged = withoutManagedSkills(config, result, managedNames);
 
-  const managedDir = dirname(join(config.devspaceSkillsDir, SUBAGENTS_SKILL));
-  const managed = loadSkillsFromDir({
-    dir: managedDir,
-    source: "devspace",
-  }).skills.find((skill) => skill.name === SUBAGENTS_SKILL_NAME);
-  if (!managed) {
-    throw new Error("Managed subagents skill could not be loaded.");
-  }
+  if (!config.subagents.enabled) return withoutManaged;
+
+  const managed = managedNames.map((name) => {
+    const managedDir = dirname(join(config.devspaceSkillsDir, name, "SKILL.md"));
+
+    const skill = loadSkillsFromDir({ dir: managedDir, source: "devspace" })
+      .skills.find((entry) => entry.name === name);
+
+    if (!skill) throw new Error(`Managed ${name} skill could not be loaded.`);
+
+    return skill;
+  });
 
   return {
-    skills: [...withoutSubagents.skills, managed],
-    diagnostics: withoutSubagents.diagnostics,
+    skills: [...withoutManaged.skills, ...managed],
+    diagnostics: withoutManaged.diagnostics,
   };
 }
 
-function withoutSubagentsSkill(result: LoadSkillsResult): LoadedSkills {
+function withoutManagedSkills(
+  config: ServerConfig,
+  result: LoadSkillsResult,
+  managedNames: readonly ManagedSkillName[],
+): LoadedSkills {
+  // A managed workflows copy left behind while the feature was on must not be advertised once it is off.
+  const staleWorkflows = join(config.devspaceSkillsDir, WORKFLOWS_SKILL_NAME);
+
   return {
-    skills: result.skills.filter((skill) => skill.name !== SUBAGENTS_SKILL_NAME),
+    skills: result.skills.filter((skill) => (
+      // SAFETY: The surrounding checks or construction already match this type.
+      !managedNames.includes(skill.name as ManagedSkillName)
+      && !(skill.name === WORKFLOWS_SKILL_NAME && isPathInsideRoot(skill.filePath, staleWorkflows))
+    )),
     diagnostics: result.diagnostics.filter((diagnostic) => {
       const collision = diagnostic.collision;
-      return !(collision?.resourceType === "skill" && collision.name === SUBAGENTS_SKILL_NAME);
+
+      // SAFETY: The surrounding checks or construction already match this type.
+      return !(collision?.resourceType === "skill" && managedNames.includes(collision.name as ManagedSkillName));
     }),
   };
 }
@@ -143,6 +179,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const skillFilePath = resolve(skill.filePath);
+
     if (absolutePath === skillFilePath) {
       return { absolutePath, skill };
     }
@@ -150,6 +187,7 @@ export function resolveSkillReadPath(
 
   for (const skill of skills) {
     const baseDir = resolve(skill.baseDir);
+
     if (!isPathInsideRoot(absolutePath, baseDir)) continue;
 
     return { absolutePath, skill };
@@ -163,6 +201,7 @@ export function formatPathForPrompt(path: string): string {
   const resolvedPath = resolve(path);
 
   if (resolvedPath === home) return "~";
+
   if (resolvedPath.startsWith(`${home}${sep}`)) {
     return `~/${resolvedPath.slice(home.length + 1).split(sep).join("/")}`;
   }

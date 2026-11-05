@@ -1,9 +1,9 @@
-import type Database from "better-sqlite3";
+import { transaction, type SqliteDatabase } from "./sqlite.js";
 
 interface Migration {
   version: number;
   name: string;
-  up(sqlite: Database.Database): void;
+  up(sqlite: SqliteDatabase): void;
 }
 
 const migrations: Migration[] = [
@@ -47,10 +47,75 @@ const migrations: Migration[] = [
     name: "local-agent-turns",
     up: migrateLocalAgentTurns,
   },
+  {
+    version: 9,
+    name: "local-agent-provider-instances",
+    up: migrateLocalAgentProviderInstances,
+  },
+  {
+    version: 10,
+    name: "local-agent-generic-acp-driver",
+    up: migrateLocalAgentGenericAcpDriver,
+  },
+  {
+    version: 11,
+    name: "local-agent-turn-events",
+    up: migrateLocalAgentTurnEvents,
+  },
+  {
+    version: 12,
+    name: "local-agent-authority",
+    up: (sqlite) => {
+      addColumnIfMissing(sqlite, "local_agent_sessions", "write_mode", "text not null default 'allowed'");
+      addColumnIfMissing(sqlite, "local_agent_sessions", "dispatch_signature", "text");
+    },
+  },
+  {
+    version: 13,
+    name: "dynamic-workflows",
+    up: (sqlite) => sqlite.exec(`
+      create table workflow_runs (
+        id text primary key,
+        workspace_root text not null,
+        workspace_id text,
+        record_json text not null
+      );
+      create index workflow_runs_workspace_idx on workflow_runs(workspace_root, workspace_id);
+      create table workflow_calls (
+        run_id text not null references workflow_runs(id),
+        call_index integer not null,
+        agent_id text not null,
+        record_json text not null,
+        primary key (run_id, call_index)
+      );
+      create index workflow_calls_agent_idx on workflow_calls(agent_id);
+      create table workflow_events (
+        sequence integer primary key autoincrement,
+        run_id text not null references workflow_runs(id),
+        type text not null,
+        data_json text not null,
+        created_at text not null
+      );
+      create index workflow_events_run_idx on workflow_events(run_id, sequence);
+    `),
+  },
+  {
+    version: 14,
+    name: "local-agent-worktrees",
+    up: (sqlite) => {
+      addColumnIfMissing(sqlite, "local_agent_sessions", "worktree_path", "text");
+      addColumnIfMissing(sqlite, "local_agent_sessions", "branch", "text");
+    },
+  },
+  {
+    version: 15,
+    name: "workspace-activity",
+    up: migrateWorkspaceActivity,
+  },
 ];
 
-export function migrateDatabase(sqlite: Database.Database): void {
-  const migrate = sqlite.transaction(() => {
+export function migrateDatabase(sqlite: SqliteDatabase): void {
+  transaction(sqlite, () => {
     sqlite.exec(`
       create table if not exists devspace_schema_migrations (
         version integer primary key,
@@ -59,24 +124,31 @@ export function migrateDatabase(sqlite: Database.Database): void {
       );
     `);
 
+    // SAFETY: The surrounding checks or construction already match this type.
     const appliedRows = sqlite
       .prepare("select version, name from devspace_schema_migrations order by version")
       .all() as Array<{ version: number; name: string }>;
+
     const migrationsByVersion = new Map(migrations.map((migration) => [migration.version, migration]));
+
     for (const row of appliedRows) {
       const expected = migrationsByVersion.get(row.version);
+
       if (!expected) {
         throw new Error(
           `Database migration history is incompatible: version ${row.version} (${JSON.stringify(row.name)}) is unknown to this build.`,
         );
       }
+
       if (row.name !== expected.name) {
         throw new Error(
           `Database migration history is incompatible: version ${row.version} is recorded as ${JSON.stringify(row.name)}, but this build expects ${JSON.stringify(expected.name)}.`,
         );
       }
     }
+
     const applied = new Set(appliedRows.map((row) => row.version));
+
     const recordMigration = sqlite.prepare(
       "insert into devspace_schema_migrations (version, name, applied_at) values (?, ?, ?)",
     );
@@ -86,12 +158,10 @@ export function migrateDatabase(sqlite: Database.Database): void {
       migration.up(sqlite);
       recordMigration.run(migration.version, migration.name, new Date().toISOString());
     }
-  });
-
-  migrate.immediate();
+  }, "immediate");
 }
 
-function migrateWorkspaceState(sqlite: Database.Database): void {
+function migrateWorkspaceState(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists workspace_sessions (
       id text primary key,
@@ -136,7 +206,7 @@ function migrateWorkspaceState(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "workspace_sessions", "managed", "text not null default 'false'");
 }
 
-function migrateOAuthState(sqlite: Database.Database): void {
+function migrateOAuthState(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists oauth_clients (
       client_id text primary key,
@@ -179,7 +249,7 @@ function migrateOAuthState(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentSessions(sqlite: Database.Database): void {
+function migrateLocalAgentSessions(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists local_agent_sessions (
       id text primary key,
@@ -210,7 +280,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
   addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
 }
 
-function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
+function migrateWorkspaceConversationBindings(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists workspace_conversation_bindings (
       conversation_scope_id text not null,
@@ -229,16 +299,19 @@ function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
   `);
 }
 
-function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
+function migrateLocalAgentStructuredErrors(sqlite: SqliteDatabase): void {
   addColumnIfMissing(sqlite, "local_agent_sessions", "error_code", "text");
   addColumnIfMissing(sqlite, "local_agent_sessions", "error_retryable", "text");
 }
 
-function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
+function migrateLocalAgentEffortRename(sqlite: SqliteDatabase): void {
+  // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
     name: string;
   }>;
+
   const names = new Set(columns.map((column) => column.name));
+
   if (names.has("effort")) {
     if (names.has("thinking")) {
       sqlite.exec(`
@@ -247,25 +320,30 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
         where effort is null and thinking is not null
       `);
     }
+
     return;
   }
+
   if (!names.has("thinking")) {
     addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
+
     return;
   }
+
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
 }
 
-function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
+function migrateWorkspaceRecoveryState(sqlite: SqliteDatabase): void {
   const workspaceStateExists = sqlite
     .prepare("select 1 from sqlite_master where type = 'table' and name = 'workspace_sessions'")
     .get();
+
   if (!workspaceStateExists) return;
 
   addColumnIfMissing(sqlite, "workspace_sessions", "recovery_kind", "text");
 }
 
-function migrateLocalAgentTurns(sqlite: Database.Database): void {
+function migrateLocalAgentTurns(sqlite: SqliteDatabase): void {
   sqlite.exec(`
     create table if not exists local_agent_turns (
       id integer primary key autoincrement,
@@ -289,13 +367,120 @@ function migrateLocalAgentTurns(sqlite: Database.Database): void {
   `);
 }
 
+function migrateLocalAgentProviderInstances(sqlite: SqliteDatabase): void {
+  // SAFETY: The surrounding checks or construction already match this type.
+  const columns = sqlite.prepare("pragma table_info(local_agent_sessions)").all() as Array<{
+    name: string;
+  }>;
+
+  const names = new Set(columns.map((column) => column.name));
+
+  if (names.has("provider") && !names.has("provider_instance_id")) {
+    sqlite.exec("alter table local_agent_sessions rename column provider to provider_instance_id");
+  }
+
+  addColumnIfMissing(sqlite, "local_agent_sessions", "driver", "text not null default ''");
+  sqlite.exec(`
+    update local_agent_sessions
+    set driver = provider_instance_id
+    where driver is null or driver = ''
+  `);
+}
+
+function migrateLocalAgentGenericAcpDriver(sqlite: SqliteDatabase): void {
+  sqlite.exec(`
+    update local_agent_sessions
+    set driver = 'acp'
+    where driver in ('cursor', 'copilot', 'grok')
+  `);
+}
+
+function migrateLocalAgentTurnEvents(sqlite: SqliteDatabase): void {
+  addColumnIfMissing(sqlite, "local_agent_turns", "turn_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_turns", "error_detail", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "latest_turn_id", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_detail", "text");
+  sqlite.exec(`
+    update local_agent_turns set turn_id = 'trn_' || id where turn_id is null;
+
+    update local_agent_sessions
+    set latest_turn_id = (
+      select turn_id from local_agent_turns
+      where local_agent_turns.agent_id = local_agent_sessions.id
+      order by id desc limit 1
+    )
+    where latest_turn_id is null;
+
+    create unique index if not exists local_agent_turns_turn_id_idx
+      on local_agent_turns(turn_id);
+
+    create table if not exists local_agent_turn_events (
+      turn_row_id integer not null,
+      seq integer not null,
+      type text not null,
+      data text not null,
+      created_at text not null,
+      primary key (turn_row_id, seq),
+      foreign key (turn_row_id) references local_agent_turns(id) on delete cascade
+    );
+  `);
+}
+
+function migrateWorkspaceActivity(sqlite: SqliteDatabase): void {
+  sqlite.exec(`
+    create table if not exists workspace_turns (
+      id integer primary key autoincrement,
+      workspace_session_id text not null,
+      sequence integer not null,
+      status text not null default 'open',
+      review_ref text,
+      started_at text not null,
+      closed_at text,
+      foreign key (workspace_session_id)
+        references workspace_sessions(id)
+        on delete cascade
+    );
+
+    create unique index if not exists workspace_turns_sequence_idx
+      on workspace_turns(workspace_session_id, sequence);
+
+    create unique index if not exists workspace_turns_open_idx
+      on workspace_turns(workspace_session_id)
+      where status = 'open';
+
+    create table if not exists workspace_turn_tool_calls (
+      id integer primary key autoincrement,
+      turn_id integer not null,
+      origin text not null default 'model',
+      conversation_scope_id text,
+      request_id text,
+      tool_name text not null,
+      arguments_json text not null,
+      result_json text,
+      error_json text,
+      is_error integer not null default 0,
+      started_at text not null,
+      completed_at text not null,
+      duration_ms integer not null,
+      foreign key (turn_id)
+        references workspace_turns(id)
+        on delete cascade
+    );
+
+    create index if not exists workspace_turn_tool_calls_turn_idx
+      on workspace_turn_tool_calls(turn_id, started_at);
+  `);
+}
+
 function addColumnIfMissing(
-  sqlite: Database.Database,
-  table: "workspace_sessions" | "local_agent_sessions",
+  sqlite: SqliteDatabase,
+  table: "workspace_sessions" | "local_agent_sessions" | "local_agent_turns",
   column: string,
   definition: string,
 ): void {
+  // SAFETY: The surrounding checks or construction already match this type.
   const columns = sqlite.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
+
   if (columns.some((existingColumn) => existingColumn.name === column)) return;
 
   sqlite.exec(`alter table ${table} add column ${column} ${definition}`);

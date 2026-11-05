@@ -1,3 +1,4 @@
+import { isErrorValue } from "./json-value.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 import { openDatabase } from "./db/client.js";
-import { writeTestDevspaceConfig } from "./test-support/config.test.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -82,17 +83,21 @@ test("worktrees prune removes only managed worktrees unused for three days", asy
 
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+
   return stdout.trim();
 }
 
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
+
     return true;
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
+    // SAFETY: Node fs errors are Error objects with an optional string code.
+    if (isErrorValue(error) && (error as NodeJS.ErrnoException).code === "ENOENT") {
       return false;
     }
+
     throw error;
   }
 }

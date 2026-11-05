@@ -1,0 +1,172 @@
+---
+title: Providers
+description: The harnesses DevSpace can run as subagents, how each is integrated, and how to configure commands, models, and environments.
+---
+
+DevSpace integrates each harness natively instead of scraping a terminal. It
+uses the CLIs and logins you already have — your existing subscriptions keep
+working.
+
+<Logos set="providers" />
+
+| Built-in instance | Driver | Integration | Runtime sharing |
+| --- | --- | --- | --- |
+| `codex` | `codex` | Host-installed `codex app-server` | One app-server across agents |
+| `claude` | `claude` | Claude Agent SDK | One warm runtime per agent |
+| `opencode` | `opencode` | `opencode serve` over HTTP; installed CLI selects 1.x or 2.x | One server across sessions |
+| `pi` | `pi` | `pi --mode rpc` | One process per agent |
+| `cursor` | `acp` | Cursor ACP | One process per agent and write mode |
+| `copilot` | `acp` | Copilot ACP | One process per agent and write mode |
+| `grok` | `acp` | Grok Build ACP (`grok agent stdio`) | One process per agent and write mode |
+
+## Configure
+
+`id` names a provider instance; profiles and `devspace agents run` select that
+ID. `driver` selects the integration: `codex`, `claude`, `opencode`, `pi`, or
+`acp`. Cursor, Copilot, and Grok are built-in ACP instances, not separate drivers.
+Built-in IDs infer their driver when it is omitted; named instances declare it
+explicitly.
+
+Within `subagents.providers`, omitted providers are disabled. Without a
+`subagents` section, the local agents CLI discovers available built-ins while
+MCP subagents remain off. See [Configuration](/reference/configuration#subagents).
+
+```jsonc ~/.devspace/config.jsonc
+{
+  "subagents": {
+    "enabled": true,
+    "instructions": "on-demand",
+    "providers": [
+      {
+        "id": "codex",
+        "enabled": true,
+        "model": "gpt-5.4",
+        "effort": "high",
+      },
+      {
+        "id": "codex-work",
+        "driver": "codex",
+        "enabled": true,
+        "env": { "CODEX_HOME": "/home/alice/.codex-work" },
+      },
+      { "id": "claude", "enabled": true, "model": "sonnet" },
+    ],
+  },
+}
+```
+
+Multiple instances can share one driver with independent settings. Select the
+example instance with profile frontmatter `provider: codex-work` or:
+
+```bash
+devspace agents run codex-work "Inspect the project and summarize its architecture"
+```
+
+- `command` names one executable; DevSpace does not split shell arguments.
+  Use a wrapper script for fixed arguments, or `config.args` for generic ACP.
+- `env` overlays literal values on the daemon's startup environment for that
+  provider process only. Empty strings are preserved, `$NAME` references are
+  not expanded, and the daemon's environment is not mutated. OpenCode receives
+  the overlay on its managed server; Pi receives it on its RPC process.
+- Availability is re-checked before a provider is shown or used. An unavailable
+  executable or required package fails with `PROVIDER_UNAVAILABLE` before an
+  agent is created; Pi can fall back to its bundled package.
+
+Provider configuration takes precedence over equivalent process-level settings:
+
+| Environment variable | Purpose |
+| --- | --- |
+| `CODEX_COMMAND` | Codex executable. |
+| `CODEX_HOME` | Codex home directory. |
+| `CLAUDE_COMMAND` | Claude executable. |
+| `OPENCODE_COMMAND` | OpenCode executable for both the version probe and server. |
+| `PI_COMMAND` | Pi executable. |
+| `CURSOR_COMMAND` | Cursor executable. |
+| `COPILOT_COMMAND` | Copilot executable. |
+| `GROK_COMMAND` | Grok executable. |
+| `GROK_AGENT_PROFILE` | Grok agent profile selected at startup. |
+
+## List models
+
+Each harness names its models differently: Cursor's IDs carry settings such as `composer-2.5[fast=true]`, Pi
+needs `provider/id`, and OpenCode uses `provider/model`. Ask the harness instead of guessing:
+
+```bash
+devspace agents models            # every enabled provider
+devspace agents models cursor     # one provider, enabled or not
+```
+
+```xml
+<models provider="codex">
+<model id="gpt-6.1-sol" name="GPT-6.1-Sol" efforts="low,medium,high,xhigh,max,ultra" default="true"/>
+<model id="gpt-6-luna" name="GPT-6-Luna" efforts="low,medium,high,xhigh,max"/>
+</models>
+```
+
+Each `id` is exactly what `--model` and profile `model` accept. DevSpace starts the harness only long enough to ask
+(Codex `model/list`, the Claude Agent SDK, `opencode models`, Pi RPC, or an ACP session), so no prompt is sent and
+nothing is billed. A provider that cannot answer prints its error, with the cause, instead of a list.
+
+## Any ACP agent
+
+Any agent that speaks ACP over stdio can use `driver: "acp"` with a `command`
+and optional fixed startup arguments in `config.args`:
+
+```jsonc
+{
+  "id": "my-agent",
+  "driver": "acp",
+  "enabled": true,
+  "command": "my-agent",
+  "config": { "args": ["acp"] },
+}
+```
+
+:::caution
+Generic ACP instances support only explicit `full_access`. DevSpace cannot
+enforce `read_only` or the default `allowed` mode for an arbitrary ACP agent;
+both fail before it runs.
+:::
+
+```bash
+devspace agents run my-agent --write-mode full_access "Implement the requested change"
+```
+
+`config.flavor` is reserved for built-in Cursor, Copilot, and Grok protocol
+behavior. Those flavors derive their sandbox arguments from the write mode
+and reject `config.args`; generic ACP instances omit `flavor`.
+
+## Pi
+
+Pi runs through its normal CLI in RPC mode. It keeps native auth, settings,
+models, user-installed extensions, skills, context files, and session storage.
+DevSpace's continuation identity is the persisted session-file path, not a bare
+Pi session ID.
+
+Restricted write modes inject DevSpace's sandbox extension and pin Pi's active
+built-in tools to the matching read-only or workspace-safe set. `full_access`
+leaves Pi's tool configuration untouched.
+
+Executable resolution checks `PI_COMMAND`, then `pi` on `PATH`, then the bundled
+Pi package. The provider's `command` setting overrides `PI_COMMAND`.
+Use Pi **0.80.5 or newer**: DevSpace waits for the RPC `agent_settled` event.
+There is no version preflight, so an older CLI can appear available and fail to
+settle a turn.
+
+## OpenCode
+
+One `opencode` driver handles OpenCode 1.x and 2.x. Before creating its first
+runtime, it probes `--version` and selects the matching protocol; there is no
+`opencode2` driver or separate profile configuration. The configured executable
+is used for both `--version` and `serve`.
+
+## Effort
+
+`effort` passes through without translation:
+
+- **claude** — SDK effort with adaptive thinking
+- **codex** — app-server reasoning effort
+- **pi** — RPC thinking level
+- **opencode** — model variant
+- **cursor**, **copilot** — ACP thought-level config when supported
+- **grok** — `--reasoning-effort` on startup

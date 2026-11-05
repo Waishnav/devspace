@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mock } from "node:test";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { openSqlite } from "./db/sqlite.js";
 import { databasePath } from "./db/client.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 
@@ -12,20 +15,84 @@ const stores: LocalAgentStore[] = [];
 try {
   const store = new LocalAgentStore(root);
   stores.push(store);
+
   const created = store.create({
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
     profileName: "reviewer",
-    provider: "codex",
+    providerInstanceId: "codex-work",
+    driver: "codex",
     model: "gpt-5.4",
     effort: "high",
   });
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
+  assert.equal(created.writeMode, "allowed");
   assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");
+  assert.equal(store.getById(created.id)?.providerInstanceId, "codex-work");
+  assert.equal(store.getById(created.id)?.driver, "codex");
   assert.equal(store.getById(created.id.slice(0, 7)), undefined);
+
+  // A generated id that collides with an existing agent must be redrawn, never aliased.
+  const uuids = [
+    `${created.id.slice(4)}-0000-4000-8000-000000000000`,
+    "bbbbbbbb-0000-4000-8000-000000000000",
+  ];
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  const uuidMock = mock.method(crypto, "randomUUID", () => uuids.shift() as `${string}-${string}-${string}-${string}-${string}`);
+  syncBuiltinESMExports();
+
+  try {
+    const redrawn = store.create({
+      workspaceId: "ws_collision",
+      workspaceRoot: join(root, "collision-project"),
+      profileName: "reviewer",
+      providerInstanceId: "codex-work",
+      driver: "codex",
+      model: "gpt-5.4",
+      effort: "high",
+    });
+
+    assert.equal(redrawn.id, "agt_bbbbbbbb");
+    assert.notEqual(redrawn.id, created.id);
+  } finally {
+    uuidMock.mock.restore();
+    syncBuiltinESMExports();
+  }
+
+  const ownedDispatch = store.create({
+    id: "workflow-dispatch-store",
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  });
+
+  assert.equal(ownedDispatch.id, "workflow-dispatch-store");
+  assert.equal(ownedDispatch.writeMode, "read_only");
+  assert.equal(store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "dispatch-project"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  }).id, ownedDispatch.id);
+  assert.throws(() => store.create({
+    id: ownedDispatch.id,
+    workspaceId: "ws_dispatch",
+    workspaceRoot: join(root, "other"),
+    profileName: "reviewer",
+    providerInstanceId: "codex",
+    driver: "codex",
+    writeMode: "read_only",
+  }), /different dispatch/);
 
   const updated = store.update(created.id, {
     status: "error",
@@ -57,10 +124,12 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
 
   const begun = store.beginTurn(created.id, {
+    turnId: "trn_test1",
     prompt: "Review the current changes.",
     model: updated.model,
     effort: updated.effort,
   });
+
   assert.equal(begun.agent.status, "running");
   assert.equal(begun.turn.agentId, created.id);
   assert.equal(begun.turn.prompt, "Review the current changes.");
@@ -68,6 +137,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.equal(begun.turn.completedAt, undefined);
   assert.throws(
     () => store.beginTurn(created.id, {
+      turnId: "trn_test2",
       prompt: "Start overlapping work.",
       model: begun.agent.model,
       effort: begun.agent.effort,
@@ -81,6 +151,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     response: "No issues found.",
     providerSessionId: "thread_456",
   });
+
   assert.equal(completed.status, "idle");
   assert.equal(completed.latestResponse, "No issues found.");
   assert.equal(completed.providerSessionId, "thread_456");
@@ -91,10 +162,12 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   assert.ok(completedTurn?.completedAt);
 
   const failing = store.beginTurn(created.id, {
+    turnId: "trn_test3",
     prompt: "Retry the review.",
     model: completed.model,
     effort: completed.effort,
   });
+
   store.finishTurn(created.id, failing.turn.id, {
     status: "failed",
     error: "Provider disconnected.",
@@ -126,11 +199,13 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
 
   const otherStore = new LocalAgentStore(root);
   stores.push(otherStore);
+
   const createdFromOtherStore = otherStore.create({
     workspaceId: "ws_1",
     workspaceRoot: join(root, "project"),
     profileName: "explorer",
-    provider: "claude",
+    providerInstanceId: "claude",
+    driver: "claude",
   });
 
   assert.deepEqual(
@@ -141,7 +216,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
 
   const legacyStateDir = join(root, "legacy-state");
   mkdirSync(legacyStateDir, { recursive: true });
-  const legacy = new Database(databasePath(legacyStateDir));
+  const legacy = openSqlite(databasePath(legacyStateDir));
   legacy.exec(`
     create table devspace_schema_migrations (
       version integer primary key,
@@ -164,14 +239,17 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
       updated_at text not null
     );
   `);
+
   const migration = legacy.prepare(
     "insert into devspace_schema_migrations (version, name, applied_at) values (?, ?, ?)",
   );
+
   // Leave migration 3 unapplied to exercise an interrupted legacy upgrade:
   // it adds an empty effort column before migration 6 copies thinking values.
   for (const [version, name] of [[1, "workspace-state"], [2, "oauth-state"], [4, "workspace-conversation-bindings"]] as const) {
     migration.run(version, name, "2026-08-01T00:00:00.000Z");
   }
+
   legacy.prepare(`
     insert into local_agent_sessions (
       id, workspace_root, profile_name, provider, thinking, status, error, created_at, updated_at
@@ -180,7 +258,7 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
     "agt_legacy",
     join(root, "legacy-project"),
     "reviewer",
-    "codex",
+    "cursor",
     "high",
     "error",
     "old error",
@@ -194,27 +272,45 @@ assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "ot
   const legacyRecord = upgradedStore.getById("agt_legacy");
   assert.equal(legacyRecord?.error, "old error");
   assert.equal(legacyRecord?.effort, "high");
+  assert.equal(legacyRecord?.providerInstanceId, "cursor");
+  assert.equal(legacyRecord?.driver, "acp");
+  const inspect = openSqlite(databasePath(legacyStateDir), { readOnly: true });
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  const driverColumn = (inspect.prepare("pragma table_info(local_agent_sessions)").all() as Array<{ name: string; notnull: number }>)
+    .find((column) => column.name === "driver");
+
+  inspect.close();
+  assert.equal(driverColumn?.notnull, 1, "migrated driver column rejects NULL like a fresh schema");
   assert.equal(legacyRecord?.errorCode, undefined);
   assert.equal(legacyRecord?.errorRetryable, undefined);
+
   const upgradedRecord = upgradedStore.update("agt_legacy", {
     errorCode: "DAEMON_TIMEOUT",
     errorRetryable: true,
   });
+
   assert.equal(upgradedRecord.errorCode, "DAEMON_TIMEOUT");
   assert.equal(upgradedRecord.errorRetryable, true);
   const reloadedRecord = upgradedStore.getById("agt_legacy");
   assert.equal(reloadedRecord?.error, "old error");
   assert.equal(reloadedRecord?.errorCode, "DAEMON_TIMEOUT");
   assert.equal(reloadedRecord?.errorRetryable, true);
+
   const legacyTurn = upgradedStore.beginTurn("agt_legacy", {
+    turnId: "trn_test4",
     prompt: "Continue after upgrade.",
     model: reloadedRecord?.model,
     effort: reloadedRecord?.effort,
   });
+
   assert.equal(legacyTurn.turn.status, "running");
+  assert.equal(legacyTurn.turn.turnId, "trn_test4");
+  assert.equal(upgradedStore.getById("agt_legacy")?.latestTurnId, "trn_test4");
 } finally {
   for (const store of stores) {
     store.close();
   }
+
   rmSync(root, { recursive: true, force: true });
 }

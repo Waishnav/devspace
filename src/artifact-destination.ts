@@ -47,16 +47,19 @@ export function createPathArtifactDestinationDirectory(
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NO_FOLLOW,
         mode,
       );
+
       return artifactFileFromHandle(handle);
     },
     async statRegularFile(name) {
       let entry: Stats;
+
       try {
         entry = await lstat(join(anchorPath, name));
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") return undefined;
         throw error;
       }
+
       return !entry.isSymbolicLink() && entry.isFile()
         ? artifactEntryFromStats(entry)
         : undefined;
@@ -108,6 +111,7 @@ function artifactFileFromHandle(handle: FileHandle): ArtifactFile {
   return {
     async writeAll(buffer, position) {
       let offset = 0;
+
       while (offset < buffer.length) {
         const { bytesWritten } = await handle.write(
           buffer,
@@ -115,12 +119,14 @@ function artifactFileFromHandle(handle: FileHandle): ArtifactFile {
           buffer.length - offset,
           position + offset,
         );
+
         if (bytesWritten <= 0) {
           throw new ArtifactError(
             "artifact_short_write",
             "Native file was not fully written.",
           );
         }
+
         offset += bytesWritten;
       }
     },

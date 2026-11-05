@@ -1,0 +1,4 @@
+# Short installer URLs. Cloudflare applies these before serving any asset, so the shell never receives HTML.
+# 302 keeps the target changeable without clients caching it.
+/install https://raw.githubusercontent.com/Waishnav/devspace/main/install/install.sh 302
+/install.ps1 https://raw.githubusercontent.com/Waishnav/devspace/main/install/install.ps1 302

@@ -1,3 +1,6 @@
+import { unsafeNarrow } from "./unsafe-narrow.js";
+import { isJsonString, isObjectValue, optionalFields } from "./json-value.js";
+import type { JsonObject, WireInput } from "./json-value.js";
 import {
   AgentProviderExecutionError,
   AgentProviderProtocolError,
@@ -5,7 +8,9 @@ import {
   captureAgentProviderResult,
   isProgrammerDefect,
 } from "./local-agent-errors.js";
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import { bindLocalAgentAbort, localAgentCancelledError } from "./local-agent-cancellation.js";
+import { summarizeToolInput, type LocalAgentActivityEvent } from "./local-agent-events.js";
+import type { LocalAgentDriverKind } from "./local-agent-provider.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -13,10 +18,29 @@ import type {
   LocalAgentRunResult,
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
+  LocalAgentModel,
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
+
+// Read-only turns deny every tool that writes locally (including EnterWorktree, which creates a Git worktree) and
+// every tool that starts other agents now or later (Agent, Task, Workflow, CronCreate, RemoteTrigger): those agents
+// do not inherit the parent's denies and could do the editing it is refused. The sandbox's denyWrite only covers
+// Bash, not Claude's built-in file tools.
+const CLAUDE_READ_ONLY_DENIED_TOOLS = [
+  "Bash",
+  "Edit",
+  "Write",
+  "MultiEdit",
+  "NotebookEdit",
+  "EnterWorktree",
+  "Agent",
+  "Task",
+  "Workflow",
+  "CronCreate",
+  "RemoteTrigger",
+] as const;
 
 const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
   // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
@@ -28,14 +52,16 @@ const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
 
 export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
+  interrupt(): Promise<void>;
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
-  applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
+  applyFlagSettings(settings: JsonObject): Promise<void>;
   setModel?(model?: string): Promise<void>;
+  supportedModels?(): Promise<WireInput[]>;
 }
 
 export interface ClaudeQueryFactoryInput {
   context: LocalAgentRuntimeContext;
-  options: Record<string, unknown>;
+  options: JsonObject;
   prompt: AsyncIterable<ClaudeUserMessage>;
 }
 
@@ -54,6 +80,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   push(value: T): void {
     if (this.closed) throw new Error("Claude input stream is closed.");
     const waiter = this.waiters.shift();
+
     if (waiter) waiter.resolve({ done: false, value });
     else this.values.push(value);
   }
@@ -61,6 +88,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+
     while (this.waiters.length > 0) this.waiters.shift()!.resolve({ done: true, value: undefined });
   }
 
@@ -70,14 +98,17 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
 
   next(): Promise<IteratorResult<T>> {
     const value = this.values.shift();
+
     if (value !== undefined) return Promise.resolve({ done: false, value });
+
     if (this.closed) return Promise.resolve({ done: true, value: undefined });
+
     return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 }
 
 export class ClaudeQueryRuntime implements LocalAgentRuntime {
-  readonly provider: LocalAgentProvider = "claude";
+  readonly provider: LocalAgentDriverKind = "claude";
   private readonly iterator: AsyncIterator<unknown>;
   private alive = true;
   private closed = false;
@@ -106,17 +137,26 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             message: "Claude runtime is not running.",
           });
         }
+
+        const removeAbort = bindLocalAgentAbort(input.signal, () => this.query.interrupt());
+
+        try {
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
         const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
+
         if (input.effort) {
           Object.assign(flagSettings, {
             alwaysThinkingEnabled: true,
             effortLevel: input.effort,
           });
         }
+
         await this.query.applyFlagSettings(flagSettings);
         await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
+
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
+
+        if (input.signal?.aborted) throw localAgentCancelledError("claude", "run");
         this.inputQueue.push({
           type: "user",
           message: { role: "user", content: input.prompt },
@@ -124,13 +164,18 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
         });
 
         const items: unknown[] = [];
+        const toolCalls = new Map<string, ClaudeToolCall>();
+
         for (;;) {
           let next: IteratorResult<unknown>;
+
           try {
             next = await this.iterator.next();
           } catch (error) {
+            if (input.signal?.aborted) throw localAgentCancelledError("claude", "run", error);
             this.alive = false;
-            if (isProgrammerDefect(error)) throw error;
+
+            if (isProgrammerDefect(error) && !isClaudeExecutableError(error)) throw error;
             throw new AgentProviderUnavailableError({
               code: "PROVIDER_UNAVAILABLE",
               provider: "claude",
@@ -140,6 +185,7 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query stream failed.",
             });
           }
+
           if (next.done) {
             this.alive = false;
             throw new AgentProviderProtocolError({
@@ -150,19 +196,28 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude query ended before returning a result.",
             });
           }
+
           const message = next.value;
           items.push(message);
           const record = asRecord(message);
-          if (typeof record?.session_id === "string") {
+
+          if (record && callbacks?.onEvent) reportClaudeActivity(record, toolCalls, callbacks.onEvent);
+
+          if (isJsonString(record?.session_id)) {
             const previousSessionId = this.providerSessionId;
             this.providerSessionId = record.session_id;
+
             if (previousSessionId !== this.providerSessionId) {
               await callbacks?.onSessionId?.(this.providerSessionId);
             }
           }
+
           if (record?.type !== "result") continue;
 
+          if (input.signal?.aborted) throw localAgentCancelledError("claude", "run");
+
           const resultError = claudeResultError(record);
+
           if (resultError) {
             throw new AgentProviderExecutionError({
               code: "PROVIDER_EXECUTION_ERROR",
@@ -173,7 +228,9 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude agent turn failed.",
             });
           }
-          const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+
+          const finalResponse = isJsonString(record.result) ? record.result.trim() : "";
+
           if (!finalResponse) {
             throw new AgentProviderProtocolError({
               code: "PROVIDER_PROTOCOL_ERROR",
@@ -183,12 +240,16 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
               message: "Claude did not return a final assistant response.",
             });
           }
+
           return {
             provider: this.provider,
             providerSessionId: this.providerSessionId ?? null,
             finalResponse,
             items,
           };
+        }
+        } finally {
+          removeAbort();
         }
       },
     });
@@ -213,17 +274,26 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
 
 export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   readonly provider = "claude" as const;
-  readonly idleTimeoutMs = 3 * 60_000;
+  readonly providerInstanceId = "claude";
+  readonly runtimePolicy = {
+    scope: "agent",
+    authority: "full_access_boundary",
+    idleTimeoutMs: 3 * 60_000,
+  } as const;
+  readonly capabilities = {
+    sessions: { resume: true, close: false },
+    turns: { interrupt: true, streaming: true },
+    configuration: { modelOverride: true, effortOverride: true },
+    permissions: { enforcement: "native" },
+    mcp: { supported: true },
+  } as const;
 
   constructor(
     private readonly factory: ClaudeQueryFactory = defaultClaudeQueryFactory,
     private readonly env: NodeJS.ProcessEnv = process.env,
+    /** The provider's explicit `env` from config, which wins over the inherited session variables DevSpace strips. */
+    private readonly envOverrides: Record<string, string> = {},
   ) {}
-
-  runtimeKey(context: LocalAgentRuntimeContext): string {
-    const authority = context.writeMode === "full_access" ? "full_access" : "restricted";
-    return `claude:${context.agentId}:${authority}`;
-  }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
     return captureAgentProviderResult({
@@ -232,6 +302,7 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
       operation: "create_runtime",
       run: async (): Promise<LocalAgentRuntime> => {
         const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+
         const input: LocalAgentRunInput = {
           prompt: "",
           workspaceRoot: context.workspaceRoot,
@@ -240,12 +311,47 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
           model: context.model,
           effort: context.effort,
         };
+
         const query = await this.factory({
           context,
-          options: claudeQueryOptions(context, input, this.env),
+          options: claudeQueryOptions(context, input, this.env, this.envOverrides),
           prompt: inputQueue,
         });
+
         return new ClaudeQueryRuntime(query, inputQueue, context);
+      },
+    });
+  }
+
+  async listModels(workspaceRoot: string) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "list_models",
+      run: async () => {
+        const context: LocalAgentRuntimeContext = {
+          agentId: "models",
+          providerInstanceId: this.providerInstanceId,
+          provider: this.provider,
+          workspaceRoot,
+          writeMode: "read_only",
+        };
+
+        // Nothing is ever pushed: the query only starts Claude Code so it can answer the models request.
+        const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+
+        const query = await this.factory({
+          context,
+          options: claudeQueryOptions(context, { prompt: "", workspaceRoot, writeMode: "read_only" }, this.env),
+          prompt: inputQueue,
+        });
+
+        try {
+          if (!query.supportedModels) throw new Error("Claude Agent SDK does not report supported models.");
+
+          return claudeModelsFromSdk(await query.supportedModels());
+        } finally {
+          query.close();
+        }
       },
     });
   }
@@ -256,36 +362,38 @@ async function defaultClaudeQueryFactory({
   prompt,
 }: ClaudeQueryFactoryInput): Promise<ClaudeQueryLike> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
-  return query({
+
+  return unsafeNarrow<ClaudeQueryLike>(query({
     prompt,
+    // SAFETY: The surrounding checks or construction already match this type.
     options: options as never,
-  }) as unknown as ClaudeQueryLike;
+  }));
 }
 
 export function claudeQueryOptions(
   context: LocalAgentRuntimeContext,
   input: LocalAgentRunInput,
   env: NodeJS.ProcessEnv = process.env,
-): Record<string, unknown> {
+  envOverrides: Record<string, string> = {},
+): JsonObject {
   const executable = env.CLAUDE_COMMAND;
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
+
   return {
     cwd: input.workspaceRoot,
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : {}),
-    ...(context.providerSessionId ? { resume: context.providerSessionId } : {}),
+    ...optionalFields(input.model ? { model: input.model } : undefined),
+    ...optionalFields(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : undefined),
+    ...optionalFields(context.providerSessionId ? { resume: context.providerSessionId } : undefined),
     permissionMode,
     // Restricted runtimes stay warm across read_only/allowed turns. Keep the
     // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
-      ? {}
-      : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
+    ...optionalFields(input.writeMode === "full_access" ? undefined : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
     sandbox: authority.sandbox,
     settings: authority.settings,
-    ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
-    env: claudeCommandEnvironment(env),
-    ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+    ...optionalFields(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : undefined),
+    env: claudeCommandEnvironment(env, envOverrides),
+    ...optionalFields(executable ? { pathToClaudeCodeExecutable: executable } : undefined),
   };
 }
 
@@ -304,19 +412,20 @@ export function claudePermissionMode(
 export function claudeAuthoritySettings(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): Record<string, unknown> {
+): JsonObject {
   return claudeAuthorityOptions(workspaceRoot, writeMode).settings;
 }
 
 function claudeAuthorityOptions(
   workspaceRoot: string,
   writeMode: LocalAgentWriteMode | undefined,
-): { sandbox: Record<string, unknown>; settings: Record<string, unknown> } {
+) {
   if (writeMode === "full_access") {
     const sandbox = {
       enabled: false,
       allowUnsandboxedCommands: true,
     };
+
     return {
       sandbox,
       settings: {
@@ -327,10 +436,12 @@ function claudeAuthorityOptions(
   }
 
   const allowed = writeMode !== "read_only";
+
   const permissions = {
     defaultMode: "dontAsk",
-    deny: allowed ? [] : ["Bash", "Edit"],
+    deny: allowed ? [] : [...CLAUDE_READ_ONLY_DENIED_TOOLS],
   };
+
   const sandbox = {
     enabled: true,
     failIfUnavailable: true,
@@ -341,33 +452,83 @@ function claudeAuthorityOptions(
       denyWrite: allowed ? [] : [workspaceRoot],
     },
   };
+
   return { sandbox, settings: { permissions, sandbox } };
 }
 
-export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * Drops the session variables a parent Claude Code exports, so a DevSpace started from Claude Code does not make
+ * its subagent look like a nested session. Values set explicitly in the provider's config `env` are kept.
+ */
+export function claudeCommandEnvironment(
+  env: NodeJS.ProcessEnv,
+  envOverrides: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   const next = { ...env };
+
   for (const key of [
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SSE_PORT",
     "CLAUDE_AGENT_SDK_VERSION",
   ]) {
-    delete next[key];
+    if (Object.hasOwn(envOverrides, key)) next[key] = envOverrides[key];
+    else delete next[key];
   }
+
   return next;
 }
 
-export function claudeResultError(record: Record<string, unknown>): string | undefined {
-  const subtype = typeof record.subtype === "string" ? record.subtype : undefined;
+export function claudeResultError(record: JsonObject): string | undefined {
+  const subtype = isJsonString(record.subtype) ? record.subtype : undefined;
   const isError = record.is_error === true || subtype?.startsWith("error");
+
   if (!isError) return undefined;
+
   const message =
     directString(record.error) ??
     directString(record.message) ??
     directString(record.result) ??
     subtype ??
     "Claude returned an error result.";
+
   return `Claude returned an error result: ${message}`;
+}
+
+interface ClaudeToolCall {
+  tool: string;
+  summary?: string;
+}
+
+/** Maps complete SDK messages (no partial deltas) onto DevSpace activity events. */
+export function reportClaudeActivity(
+  record: JsonObject,
+  toolCalls: Map<string, ClaudeToolCall>,
+  onEvent: (event: LocalAgentActivityEvent) => void,
+): void {
+  if (record.type !== "assistant" && record.type !== "user") return;
+  const content = asRecord(record.message)?.content;
+
+  if (!Array.isArray(content)) return;
+
+  for (const value of content) {
+    const block = asRecord(value);
+
+    if (record.type === "assistant" && block?.type === "text" && isJsonString(block.text)) {
+      onEvent({ type: "message", text: block.text });
+    } else if (record.type === "assistant" && block?.type === "tool_use" && isJsonString(block.name)) {
+      const call = { tool: block.name, summary: summarizeToolInput(block.input) };
+
+      if (isJsonString(block.id)) toolCalls.set(block.id, call);
+      onEvent({ type: "tool_started", ...call });
+    } else if (record.type === "user" && block?.type === "tool_result" && isJsonString(block.tool_use_id)) {
+      const call = toolCalls.get(block.tool_use_id);
+
+      if (!call) continue;
+      toolCalls.delete(block.tool_use_id);
+      onEvent({ type: "tool_completed", ...call, status: block.is_error === true ? "failed" : "completed" });
+    }
+  }
 }
 
 export interface ClaudeUserMessage {
@@ -376,12 +537,38 @@ export interface ClaudeUserMessage {
   parent_tool_use_id: null;
 }
 
-function directString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** The SDK reports a missing or unlaunchable Claude CLI as a ReferenceError, not as a spawn error. */
+function isClaudeExecutableError(error: WireInput): boolean {
+  return error instanceof ReferenceError && /^Claude Code (native binary|executable) /.test(error.message);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+function directString(value: WireInput): string | undefined {
+  return isJsonString(value) && value.trim() ? value.trim() : undefined;
+}
+
+function asRecord(value: WireInput): JsonObject | undefined {
+  return value !== null && isObjectValue(value) && !Array.isArray(value)
+    // SAFETY: The surrounding checks or construction already match this type.
+    ? unsafeNarrow<JsonObject>(value)
     : undefined;
+}
+
+/** Maps the Claude Agent SDK's `supportedModels()` rows; `value` is what `--model` accepts. */
+export function claudeModelsFromSdk(models: readonly WireInput[]): LocalAgentModel[] {
+  return models.flatMap((entry) => {
+    const record = asRecord(entry);
+    const id = record?.value;
+
+    if (!isJsonString(id) || !id) return [];
+
+    const levels = record?.supportedEffortLevels;
+    const efforts = Array.isArray(levels) ? levels.filter(isJsonString) : [];
+    const name = record?.displayName;
+
+    return [{
+      id,
+      ...optionalFields(isJsonString(name) && name ? { name } : undefined),
+      ...optionalFields(efforts.length > 0 ? { efforts } : undefined),
+    }];
+  });
 }

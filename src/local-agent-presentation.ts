@@ -1,5 +1,8 @@
+import { optionalFields } from "./json-value.js";
 import type { LocalAgentCatalog } from "./local-agent-catalog.js";
+import type { LocalAgentTurnEvent } from "./local-agent-events.js";
 import type { LocalAgentRecord, LocalAgentStatus } from "./local-agent-store.js";
+import type { LocalAgentModel } from "./local-agent-runtime.js";
 
 export type AgentCommandStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -20,12 +23,20 @@ export type AgentTargetOutput =
     };
 
 export interface AgentTargetCatalogOutput {
+  /** False when config sets `subagents.enabled: false`; no target is usable then. */
+  enabled: boolean;
   targets: AgentTargetOutput[];
+  /** Enabled providers that cannot run, with the reason. */
+  unavailable: Array<{ name: string; reason: string }>;
 }
 
 export interface AgentReceiptOutput {
   id: string;
   status: AgentCommandStatus;
+  turnId?: string;
+  /** `--worktree` agents only: the isolated checkout the agent works in, and its branch. */
+  worktree?: string;
+  branch?: string;
 }
 
 export interface AgentSummaryOutput extends AgentReceiptOutput {
@@ -36,6 +47,8 @@ export interface AgentFailureOutput {
   code: string;
   message: string;
   retryable: boolean;
+  /** The provider's own explanation, redacted and bounded. */
+  detail?: string;
 }
 
 export interface AgentCommandErrorOutput {
@@ -45,37 +58,67 @@ export interface AgentCommandErrorOutput {
   agentId?: string;
 }
 
-export type AgentObservationOutput =
+export type AgentObservationOutput = { turnId?: string; worktree?: string; branch?: string } & (
   | { id: string; status: "running"; wait?: "timeout" }
   | { id: string; status: "completed"; response?: string }
   | { id: string; status: "failed"; error: AgentFailureOutput }
-  | { id: string; status: "stopped"; error?: AgentFailureOutput };
+  | { id: string; status: "stopped"; error?: AgentFailureOutput }
+);
+
+/**
+ * Process exit codes for `agents wait` and `--wait`. 1 is reserved for command errors
+ * (usage, unknown target, daemon failure) and is set where those are reported.
+ */
+export const AGENT_EXIT_CODES = { completed: 0, failed: 2, stopped: 3, timeout: 4 } as const;
+
+/** With several agents, the most severe outcome wins: failed, then stopped, then timeout. */
+export function agentObservationExitCode(observations: readonly AgentObservationOutput[]): number {
+  if (observations.some((entry) => entry.status === "failed")) return AGENT_EXIT_CODES.failed;
+
+  if (observations.some((entry) => entry.status === "stopped")) return AGENT_EXIT_CODES.stopped;
+
+  if (observations.some((entry) => entry.status === "running")) return AGENT_EXIT_CODES.timeout;
+
+  return AGENT_EXIT_CODES.completed;
+}
 
 export function presentAgentTargetCatalog(catalog: LocalAgentCatalog): AgentTargetCatalogOutput {
   return {
+    enabled: catalog.enabled,
     targets: [
       ...catalog.providers
         .filter((provider) => provider.usable)
         .map((provider): AgentTargetOutput => ({
           name: provider.id,
           kind: "provider",
-          ...(provider.model ? { model: provider.model } : {}),
-          ...(provider.effort ? { effort: provider.effort } : {}),
+          ...optionalFields(provider.model ? { model: provider.model } : undefined),
+          ...optionalFields(provider.effort ? { effort: provider.effort } : undefined),
         })),
       ...catalog.profiles.map((profile): AgentTargetOutput => ({
         name: profile.name,
         kind: "profile",
         provider: profile.provider,
         description: profile.description,
-        ...(profile.model ? { model: profile.model } : {}),
-        ...(profile.effort ? { effort: profile.effort } : {}),
+        ...optionalFields(profile.model ? { model: profile.model } : undefined),
+        ...optionalFields(profile.effort ? { effort: profile.effort } : undefined),
       })),
     ],
+    unavailable: catalog.enabled
+      ? catalog.providers
+        .filter((provider) => !provider.available)
+        .map((provider) => ({ name: provider.id, reason: provider.reason ?? "provider preflight failed" }))
+      : [],
   };
 }
 
 export function presentAgentReceipt(record: LocalAgentRecord): AgentReceiptOutput {
-  return { id: record.id, status: presentAgentStatus(record.status) };
+  return {
+    id: record.id,
+    status: presentAgentStatus(record.status),
+    ...optionalFields(record.latestTurnId ? { turnId: record.latestTurnId } : undefined),
+    ...optionalFields(record.worktreePath ? { worktree: record.worktreePath } : undefined),
+    ...optionalFields(record.branch ? { branch: record.branch } : undefined),
+  };
 }
 
 export function presentAgentSummary(record: LocalAgentRecord): AgentSummaryOutput {
@@ -84,12 +127,13 @@ export function presentAgentSummary(record: LocalAgentRecord): AgentSummaryOutpu
 
 export function presentAgentObservation(record: LocalAgentRecord): AgentObservationOutput {
   const receipt = presentAgentReceipt(record);
+
   switch (receipt.status) {
     case "completed":
       return {
         ...receipt,
         status: "completed",
-        ...(record.latestResponse === undefined ? {} : { response: record.latestResponse }),
+        ...optionalFields(record.latestResponse === undefined ? undefined : { response: record.latestResponse }),
       };
     case "failed":
       return { ...receipt, status: "failed", error: presentAgentFailure(record) };
@@ -97,47 +141,136 @@ export function presentAgentObservation(record: LocalAgentRecord): AgentObservat
       return {
         ...receipt,
         status: "stopped",
-        ...(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : {}),
+        ...optionalFields(hasAgentFailure(record) ? { error: presentAgentFailure(record) } : undefined),
       };
     case "running":
-      return { id: receipt.id, status: "running" };
+      return { ...receipt, status: "running" };
   }
 }
 
 export function formatAgentTargetCatalog(catalog: AgentTargetCatalogOutput): string {
-  return catalog.targets.map((target) => {
+  if (!catalog.enabled) {
+    return "<disabled>Subagents are disabled by subagents.enabled in config.jsonc. Remove the subagents key to detect installed agents, or set enabled to true.</disabled>";
+  }
+
+  const unavailable = catalog.unavailable.map((provider) => (
+    `<unavailable name="${escapeXmlAttribute(provider.name)}">${escapeXmlText(provider.reason)}</unavailable>`
+  ));
+
+  const targets = catalog.targets.map((target) => {
     const settings = xmlAttributes({ model: target.model, effort: target.effort });
+
     if (target.kind === "provider") {
       return `<provider name="${escapeXmlAttribute(target.name)}"${settings}/>`;
     }
+
     return `<profile name="${escapeXmlAttribute(target.name)}" provider="${escapeXmlAttribute(target.provider)}"${settings}>${escapeXmlText(target.description)}</profile>`;
+  });
+
+  return [...targets, ...unavailable].join("\n");
+}
+
+export interface AgentModelsOutput {
+  provider: string;
+  models?: LocalAgentModel[];
+  error?: { code: string; message: string; detail?: string };
+}
+
+export function formatAgentModels(results: readonly AgentModelsOutput[]): string {
+  return results.map(({ provider, models, error }) => {
+    if (error) {
+      const cause = error.detail ? `<cause>${escapeXmlText(error.detail)}</cause>` : "";
+
+      return `<models provider="${escapeXmlAttribute(provider)}" error="${escapeXmlAttribute(error.code)}">${escapeXmlText(error.message)}${cause}</models>`;
+    }
+
+    const rows = (models ?? []).map((model) => `<model id="${escapeXmlAttribute(model.id)}"${xmlAttributes({
+      name: model.name,
+      efforts: model.efforts?.join(","),
+      default: model.default ? "true" : undefined,
+    })}/>`);
+
+    return [`<models provider="${escapeXmlAttribute(provider)}">`, ...rows, "</models>"].join("\n");
   }).join("\n");
 }
 
 export function formatAgentReceipt(receipt: AgentReceiptOutput): string {
-  return `<agent id="${escapeXmlAttribute(receipt.id)}" status="${receipt.status}"/>`;
+  return `<agent${agentAttributes(receipt)}/>`;
 }
 
 export function formatAgentSummary(summary: AgentSummaryOutput): string {
-  return `<agent id="${escapeXmlAttribute(summary.id)}" status="${summary.status}" target="${escapeXmlAttribute(summary.target)}"/>`;
+  return `<agent${agentAttributes(summary, { target: summary.target })}/>`;
 }
 
 export function formatAgentObservation(observation: AgentObservationOutput): string {
   if (observation.status === "running" && observation.wait) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="running" wait="${observation.wait}"/>`;
+    return `<agent${agentAttributes(observation, { wait: observation.wait })}/>`;
   }
+
   if (observation.status === "completed" && observation.response !== undefined) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="completed">${escapeXmlText(observation.response)}</agent>`;
+    return `<agent${agentAttributes(observation)}>${escapeXmlText(observation.response)}</agent>`;
   }
+
   if ((observation.status === "failed" || observation.status === "stopped") && observation.error) {
-    return `<agent id="${escapeXmlAttribute(observation.id)}" status="${observation.status}" code="${escapeXmlAttribute(observation.error.code)}" retryable="${observation.error.retryable}">${escapeXmlText(observation.error.message)}</agent>`;
+    const { code, retryable, message, detail } = observation.error;
+    const cause = detail ? `<cause>${escapeXmlText(detail)}</cause>` : "";
+
+    return `<agent${agentAttributes(observation, { code, retryable: String(retryable) })}>${escapeXmlText(message)}${cause}</agent>`;
   }
+
   return formatAgentReceipt(observation);
+}
+
+export function formatAgentTurnEvent(event: LocalAgentTurnEvent): string {
+  const base = { seq: String(event.seq), type: event.type, turn: event.turnId };
+
+  switch (event.type) {
+    case "turn_started":
+      return `<event${xmlAttributes({ ...base, at: event.at })}/>`;
+    case "message":
+      return `<event${xmlAttributes(base)}>${escapeXmlText(event.text)}</event>`;
+    case "tool_started":
+    case "tool_completed": {
+      const attributes = xmlAttributes({
+        ...base,
+        tool: event.tool,
+        status: event.type === "tool_completed" ? event.status : undefined,
+      });
+
+      return event.summary
+        ? `<event${attributes}>${escapeXmlText(event.summary)}</event>`
+        : `<event${attributes}/>`;
+    }
+
+    case "turn_completed":
+      return `<event${xmlAttributes({
+        ...base,
+        status: event.status,
+        code: event.errorCode,
+        dropped: event.droppedEvents === undefined ? undefined : String(event.droppedEvents),
+        at: event.at,
+      })}/>`;
+  }
 }
 
 export function formatAgentCommandError(error: AgentCommandErrorOutput): string {
   const agentId = error.agentId ? ` agent-id="${escapeXmlAttribute(error.agentId)}"` : "";
+
   return `<error code="${escapeXmlAttribute(error.code)}" retryable="${error.retryable ?? false}"${agentId}>${escapeXmlText(error.message)}</error>`;
+}
+
+function agentAttributes(
+  agent: { id: string; status: string; turnId?: string; worktree?: string; branch?: string },
+  extra: Record<string, string | undefined> = {},
+): string {
+  return xmlAttributes({
+    id: agent.id,
+    status: agent.status,
+    turn: agent.turnId,
+    worktree: agent.worktree,
+    branch: agent.branch,
+    ...extra,
+  });
 }
 
 function xmlAttributes(values: Record<string, string | undefined>): string {
@@ -156,11 +289,26 @@ function escapeXmlText(value: string): string {
 }
 
 function escapeXml(value: string): string {
-  return value
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  let escaped = "";
+
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (
+      code <= 0x8
+      || code === 0xb
+      || code === 0xc
+      || (code >= 0xe && code <= 0x1f)
+      || code === 0xfffe
+      || code === 0xffff
+    ) {
+      escaped += "\uFFFD";
+    } else {
+      escaped += character;
+    }
+  }
+
+  return escaped.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function presentAgentStatus(status: LocalAgentStatus): AgentCommandStatus {
@@ -186,5 +334,6 @@ function presentAgentFailure(record: LocalAgentRecord): AgentFailureOutput {
     code: record.errorCode ?? "AGENT_FAILED",
     message: record.error ?? "Subagent failed without an error message.",
     retryable: record.errorRetryable ?? false,
+    ...optionalFields(record.errorDetail ? { detail: record.errorDetail } : undefined),
   };
 }

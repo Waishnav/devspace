@@ -1,3 +1,5 @@
+import { isObjectValue, isJsonString } from "./json-value.js";
+import type { WireInput, JsonObject } from "./json-value.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -32,6 +34,7 @@ const ARTIFACT_WRITE_ANNOTATIONS = {
   idempotentHint: false,
   openWorldHint: true,
 };
+
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const DIRECTORY_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | NO_FOLLOW;
 const PARTIAL_PREFIX = ".devspace-download-";
@@ -115,6 +118,7 @@ export function registerArtifactTools(
     },
     async (input) => executeArtifactTool(config, input, async () => {
       const workspace = await workspaces.getWorkspace(input.workspace_id);
+
       const downloaded = await downloadIncomingArtifact({
         registry: incomingRegistry,
         workspaceId: workspace.id,
@@ -123,6 +127,7 @@ export function registerArtifactTools(
         file: input.file,
         path: input.path,
       });
+
       return {
         publicResult: { path: downloaded.path },
         logResult: downloaded,
@@ -151,7 +156,7 @@ export async function downloadIncomingArtifact({
   workspaceId: string;
   workspaceRoot: string;
   maxFileBytes: number;
-  file: unknown;
+  file: WireInput;
   path: string;
   publishEntry?: typeof defaultPublishEntry;
 }): Promise<DownloadIncomingArtifactResult> {
@@ -161,12 +166,14 @@ export async function downloadIncomingArtifact({
       "Native file download requires secure platform filesystem primitives.",
     );
   }
+
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new ArtifactError(
       "artifact_limit_invalid",
       "Artifact file-size limit must be a positive integer.",
     );
   }
+
   if (!workspaceId) {
     throw new ArtifactError(
       "artifact_workspace_invalid",
@@ -202,14 +209,17 @@ export async function downloadIncomingArtifact({
 
     const hash = createHash("sha256");
     let size = 0;
+
     for await (const value of opened.stream) {
       const chunk = incomingStreamChunk(value);
+
       if (size + chunk.length > maxFileBytes) {
         throw new ArtifactError(
           "artifact_file_too_large",
           "Native file exceeds the configured per-file limit.",
         );
       }
+
       await artifactFile.writeAll(chunk, size);
       hash.update(chunk);
       size += chunk.length;
@@ -224,6 +234,7 @@ export async function downloadIncomingArtifact({
 
     await artifactFile.sync();
     const writtenEntry = await artifactFile.stat();
+
     if (!writtenEntry.isFile() || writtenEntry.size !== size) {
       throw new ArtifactError(
         "artifact_write_integrity_failed",
@@ -257,17 +268,18 @@ export async function downloadIncomingArtifact({
     throw error;
   } finally {
     await artifactFile?.close().catch(() => undefined);
+
     if (partialName) await destinationDirectory?.unlink(partialName).catch(() => undefined);
     await destinationDirectory?.close().catch(() => undefined);
   }
 }
 
 export function artifactToolLogFields(
-  input: Record<string, unknown>,
-): Record<string, unknown> {
+  input: JsonObject,
+): JsonObject {
   return {
     fileProvided: input.file !== undefined,
-    fileReferenceShape: describeIncomingArtifactValue(input.file),
+    "fileReferenceShape": describeIncomingArtifactValue(input.file),
     downloadUrlHostname: incomingFileDownloadHostname(input.file),
     workspaceId: input.workspace_id,
     path: input.path,
@@ -276,15 +288,17 @@ export function artifactToolLogFields(
 
 async function executeArtifactTool(
   config: ServerConfig,
-  input: Record<string, unknown>,
+  input: JsonObject,
   operation: () => Promise<{
     publicResult: { path: string };
     logResult: DownloadIncomingArtifactResult;
   }>,
 ) {
   const startedAt = performance.now();
+
   try {
     const { publicResult, logResult } = await operation();
+
     if (config.logging.toolCalls) {
       logEvent(config.logging, "info", "artifact_tool_call", {
         tool: "download_artifact",
@@ -296,6 +310,7 @@ async function executeArtifactTool(
         durationMs: Math.round(performance.now() - startedAt),
       });
     }
+
     return artifactToolResponse(publicResult);
   } catch (error) {
     if (config.logging.toolCalls) {
@@ -307,6 +322,7 @@ async function executeArtifactTool(
         durationMs: Math.round(performance.now() - startedAt),
       });
     }
+
     throw error;
   }
 }
@@ -324,12 +340,15 @@ async function openDirectoryNoFollow(
   message: string,
 ): Promise<FileHandle> {
   let handle: FileHandle | undefined;
+
   try {
     handle = await open(path, DIRECTORY_FLAGS);
     await assertDirectoryHandle(handle);
+
     return handle;
   } catch (error) {
     await handle?.close().catch(() => undefined);
+
     if (error instanceof ArtifactError) throw error;
     throw new ArtifactError(code, message);
   }
@@ -337,6 +356,7 @@ async function openDirectoryNoFollow(
 
 async function assertDirectoryHandle(handle: FileHandle): Promise<void> {
   const entry = await handle.stat();
+
   if (!entry.isDirectory()) {
     throw new ArtifactError(
       "artifact_directory_unsafe",
@@ -361,26 +381,32 @@ async function prepareArtifactDestinationDirectory(
     const { prepareWindowsArtifactDestinationDirectory } = await import(
       "./artifact-destination-windows.js"
     );
+
     return prepareWindowsArtifactDestinationDirectory(workspaceRoot, parentParts);
   }
+
   if (process.platform === "darwin") {
     const { prepareDarwinArtifactDestinationDirectory } = await import(
       "./artifact-destination-darwin.js"
     );
+
     return prepareDarwinArtifactDestinationDirectory(workspaceRoot, parentParts);
   }
+
   return prepareLinuxArtifactDestinationDirectory(workspaceRoot, parentParts);
 }
 
 function normalizeArtifactDestination(value: string): ArtifactDestination {
   if (process.platform === "win32") {
     const parsed = parseSafeWindowsArtifactRelativePath(value);
+
     if (!parsed) {
       throw new ArtifactError(
         "artifact_destination_invalid",
         "Artifact destination must be a safe relative Windows file path inside the workspace.",
       );
     }
+
     return {
       path: parsed.path,
       parentParts: parsed.parts.slice(0, -1),
@@ -389,6 +415,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   const rawParts = value.split(sep);
+
   if (
     !value
     || value.includes("\u0000")
@@ -403,6 +430,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
   }
 
   const normalized = normalize(value);
+
   if (
     normalized === "."
     || normalized === ".."
@@ -416,6 +444,7 @@ function normalizeArtifactDestination(value: string): ArtifactDestination {
 
   const parts = normalized.split(sep);
   const name = parts.at(-1);
+
   if (!name || name === "." || name === "..") {
     throw new ArtifactError(
       "artifact_destination_invalid",
@@ -439,6 +468,7 @@ async function prepareLinuxArtifactDestinationDirectory(
     "artifact_workspace_unsafe",
     "Selected workspace root is not a real directory.",
   );
+
   const openedHandles: FileHandle[] = [];
   let parentHandle = rootHandle;
   let parentAnchor = descriptorDirectoryPath(rootHandle);
@@ -450,6 +480,7 @@ async function prepareLinuxArtifactDestinationDirectory(
         parentAnchor,
         part,
       );
+
       openedHandles.push(child);
       parentHandle = child;
       parentAnchor = descriptorDirectoryPath(child);
@@ -461,6 +492,7 @@ async function prepareLinuxArtifactDestinationDirectory(
         for (const handle of openedHandles.reverse()) {
           await handle.close().catch(() => undefined);
         }
+
         await rootHandle.close().catch(() => undefined);
       },
     );
@@ -468,6 +500,7 @@ async function prepareLinuxArtifactDestinationDirectory(
     for (const handle of openedHandles.reverse()) {
       await handle.close().catch(() => undefined);
     }
+
     await rootHandle.close().catch(() => undefined);
     throw error;
   }
@@ -480,6 +513,7 @@ async function ensureWorkspaceChildDirectory(
 ): Promise<FileHandle> {
   await assertDirectoryHandle(parentHandle);
   const path = join(parentAnchor, name);
+
   try {
     await mkdir(path, { mode: 0o755 });
   } catch (error) {
@@ -514,6 +548,7 @@ async function publishDestination(
         "Artifact destination already exists.",
       );
     }
+
     // Once the destination path exists, never unlink it during failure cleanup.
     // Another process may have replaced that path after publication, and a
     // path-based verification followed by unlink would introduce another race.
@@ -535,8 +570,10 @@ async function cleanupStalePartials(
   const entries = await directory.listEntries();
   let inspected = 0;
   const cutoff = Date.now() - STALE_PARTIAL_AGE_MS;
+
   for (const name of entries) {
     if (inspected >= MAX_STALE_PARTIAL_CLEANUP) break;
+
     if (
       !name.startsWith(PARTIAL_PREFIX)
       || !name.endsWith(PARTIAL_SUFFIX)
@@ -544,6 +581,7 @@ async function cleanupStalePartials(
     inspected += 1;
 
     const metadata = await directory.statRegularFile(name);
+
     if (
       !metadata
       || metadata.mtimeMs >= cutoff
@@ -553,26 +591,34 @@ async function cleanupStalePartials(
   }
 }
 
-function incomingFileDownloadHostname(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function incomingFileDownloadHostname(value: WireInput): string | undefined {
+  if (!isObjectValue(value) || value === null || Array.isArray(value)) {
     return undefined;
   }
-  const rawUrl = (value as Record<string, unknown>).download_url;
-  if (typeof rawUrl !== "string") return undefined;
+
+  // SAFETY: The surrounding checks or construction already match this type.
+  const rawUrl = (value as JsonObject).download_url;
+
+  if (!isJsonString(rawUrl)) return undefined;
+
   try {
     const hostname = new URL(rawUrl).hostname.toLowerCase();
+
     return hostname.length > 0 && hostname.length <= 253 ? hostname : undefined;
   } catch {
     return undefined;
   }
 }
 
-function incomingStreamChunk(value: unknown): Buffer {
+function incomingStreamChunk(value: WireInput): Buffer {
   if (Buffer.isBuffer(value)) return value;
-  if (typeof value === "string") return Buffer.from(value);
+
+  if (isJsonString(value)) return Buffer.from(value);
+
   if (value instanceof Uint8Array) {
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
   }
+
   throw new ArtifactError(
     "invalid_incoming_artifact_chunk",
     "Incoming artifact stream yielded a value that is not bytes or text.",
