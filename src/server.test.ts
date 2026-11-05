@@ -732,6 +732,49 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.agents));
 });
 
+test("open_workspace warns about incomplete instruction discovery on initial and reused opens", async (t) => {
+  const context = await fixture(t);
+  const projects = Array.from({ length: 300 }, (_, index) => `project-${index}`);
+
+  for (const project of projects) {
+    await mkdir(join(context.project, project));
+    await writeFile(join(context.project, project, "AGENTS.md"), "nested instructions\n");
+  }
+
+  const opened = await callOpen(context.client, context.project, "large-workspace");
+  const first = structuredContent(opened);
+  assert.ok(isJsonString(first.instruction));
+  assert.match(first.instruction, /available_agents_files is incomplete/);
+  const cardInstruction = responseCard(opened).instruction;
+  assert.ok(isJsonString(cardInstruction));
+  assert.match(cardInstruction, /ancestor directories/);
+  assert.match(textContent(opened), /even when they are not listed/);
+  // SAFETY: open_workspace returns loaded instruction entries with string content.
+  assert.ok((first.agents_files as Array<{ content: string }>).some(
+    (file) => file.content === "project instructions\n",
+  ));
+  // SAFETY: open_workspace returns available instruction entries with string paths.
+  const available = first.available_agents_files as Array<{ path: string }>;
+  assert.ok(available.length > 0);
+
+  const omitted = projects.find((project) => !available.some(
+    (file) => file.path === `${project}/AGENTS.md`,
+  ));
+
+  assert.ok(omitted);
+
+  const read = await context.client.callTool({
+    name: "read", arguments: { workspace_id: first.workspace_id, path: `${omitted}/AGENTS.md` },
+  });
+
+  assert.match(textContent(read), /nested instructions/);
+
+  const repeated = structuredContent(await callOpen(context.client, context.project, "large-workspace"));
+  assert.equal(repeated.workspace_id, first.workspace_id);
+  assert.ok(isJsonString(repeated.instruction));
+  assert.match(repeated.instruction, /available_agents_files is incomplete/);
+});
+
 test("open_workspace refreshes provider availability for each catalog", async (t) => {
   let available = false;
 
@@ -1667,6 +1710,17 @@ function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): Jso
 
   // SAFETY: The surrounding checks or construction already match this type.
   return result.structuredContent as JsonObject;
+}
+
+function textContent(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  assert.ok(Array.isArray(result.content));
+  const texts: string[] = [];
+
+  for (const block of result.content) {
+    if (block.type === "text") texts.push(block.text);
+  }
+
+  return texts.join("\n");
 }
 
 function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): JsonObject {

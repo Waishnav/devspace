@@ -319,7 +319,7 @@ function WorkspaceHeader({ workspace, context }: { workspace: ActivityWorkspace;
           <>
             <Detail label="Instructions">
               {context.agentsFiles.length + context.availableAgentsFiles.length === 0 ? (
-                <span className="muted">None</span>
+                <span className="muted">{context.agentsDiscoveryTruncated ? "None discovered" : "None"}</span>
               ) : (
                 <span className="chips">
                   {context.agentsFiles.map((path) => <Badge key={path} tone="success" mono>{path}</Badge>)}
@@ -327,6 +327,11 @@ function WorkspaceHeader({ workspace, context }: { workspace: ActivityWorkspace;
                 </span>
               )}
             </Detail>
+            {context.agentsDiscoveryTruncated ? (
+              <Detail label="Discovery">
+                <span className="muted">Instruction list is incomplete because scanning reached its limit. Check ancestor directories for applicable instructions, or open the target project as its own workspace.</span>
+              </Detail>
+            ) : null}
             <Detail label="Skills">
               {context.skills.length === 0 ? (
                 <span className="muted">None</span>

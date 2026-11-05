@@ -9,10 +9,11 @@ import type {
   WorkspaceSession,
   WorkspaceStore,
 } from "./workspace-store.js";
-import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import type { ServerConfig } from "./config.js";
+import { walkWorkspaceInstructions } from "./workspace-instruction-discovery.js";
 import {
   createManagedWorktree,
   discardRestoredManagedWorktree,
@@ -73,6 +74,7 @@ export type WorkspaceDescription =
       available: true;
       agentsFiles: string[];
       availableAgentsFiles: string[];
+      agentsDiscoveryTruncated: boolean;
       skills: Array<{ name: string; description: string }>;
     }
   | { available: false; reason: string };
@@ -81,6 +83,7 @@ export interface WorkspaceContext {
   workspace: Workspace;
   agentsFiles: LoadedAgentsFile[];
   availableAgentsFiles: AvailableAgentsFile[];
+  agentsDiscoveryTruncated: boolean;
   workspaceReused: boolean;
   includeBootstrapContext: boolean;
 }
@@ -272,12 +275,15 @@ export class WorkspaceRegistry {
   private async reusedWorkspaceContext(workspace: Workspace): Promise<WorkspaceContext> {
     workspace.agentProfiles = await loadLocalAgentProfiles(this.config, workspace.root);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
-    const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
+
+    const { files: availableAgentsFiles, truncated: agentsDiscoveryTruncated } =
+      await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
 
     return {
       workspace,
       agentsFiles,
       availableAgentsFiles,
+      agentsDiscoveryTruncated,
       workspaceReused: true,
       includeBootstrapContext: true,
     };
@@ -569,12 +575,15 @@ export class WorkspaceRegistry {
     });
     this.rememberWorkspace(workspace);
     const agentsFiles = await this.loadInitialAgentsFiles(workspace.root);
-    const availableAgentsFiles = await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
+
+    const { files: availableAgentsFiles, truncated: agentsDiscoveryTruncated } =
+      await this.findAvailableAgentsFiles(workspace.root, agentsFiles);
 
     return {
       workspace,
       agentsFiles,
       availableAgentsFiles,
+      agentsDiscoveryTruncated,
       workspaceReused: false,
       includeBootstrapContext: true,
     };
@@ -590,12 +599,15 @@ export class WorkspaceRegistry {
     try {
       this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
       const agentsFiles = await this.loadInitialAgentsFiles(session.root);
-      const availableAgentsFiles = await this.findAvailableAgentsFiles(session.root, agentsFiles);
+
+      const { files: availableAgentsFiles, truncated: agentsDiscoveryTruncated } =
+        await this.findAvailableAgentsFiles(session.root, agentsFiles);
 
       return {
         available: true,
         agentsFiles: agentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
         availableAgentsFiles: availableAgentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
+        agentsDiscoveryTruncated,
         skills: this.loadSkillsForWorkspace(session.root).skills
           .filter((skill) => !skill.disableModelInvocation)
           .map((skill) => ({ name: skill.name, description: skill.description })),
@@ -707,7 +719,7 @@ export class WorkspaceRegistry {
   private async findAvailableAgentsFiles(
     root: string,
     loadedFiles: LoadedAgentsFile[],
-  ): Promise<AvailableAgentsFile[]> {
+  ): Promise<{ files: AvailableAgentsFile[]; truncated: boolean }> {
     const loadedPaths = new Set(loadedFiles.map((file) => resolve(file.path)));
     const loadedRealPaths = new Set<string>();
 
@@ -719,10 +731,8 @@ export class WorkspaceRegistry {
 
     const discovered: AvailableAgentsFile[] = [];
 
-    await walkWorkspace(root, async (path, entry) => {
-      if (!entry.isFile()) return;
-
-      if (!CONTEXT_FILE_NAMES.has(entry.name)) return;
+    const complete = await walkWorkspaceInstructions(root, async (path, name) => {
+      if (!CONTEXT_FILE_NAMES.has(name)) return;
 
       if (loadedPaths.has(path)) return;
       const realPath = await tryRealpath(path);
@@ -732,7 +742,10 @@ export class WorkspaceRegistry {
       discovered.push({ path });
     });
 
-    return discovered.sort((a, b) => a.path.localeCompare(b.path));
+    return {
+      files: discovered.sort((a, b) => a.path.localeCompare(b.path)),
+      truncated: !complete,
+    };
   }
 }
 
@@ -760,19 +773,6 @@ export async function ensureCheckoutWorkspaceRoot(
 }
 
 const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-
-const SKIPPED_CONTEXT_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".devspace",
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  ".turbo",
-  ".cache",
-]);
 
 export function formatAgentsPath(path: string, workspaceRoot: string | undefined): string {
   if (!workspaceRoot) return path.split(sep).join("/");
@@ -830,33 +830,6 @@ async function tryRealpath(path: string): Promise<string | undefined> {
     return await realpath(path);
   } catch {
     return undefined;
-  }
-}
-
-async function walkWorkspace(
-  directory: string,
-  visit: (path: string, entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => Promise<void> | void,
-): Promise<void> {
-  let entries;
-
-  try {
-    entries = await opendir(directory);
-  } catch {
-    return;
-  }
-
-  for await (const entry of entries) {
-    const path = join(directory, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!SKIPPED_CONTEXT_DIRS.has(entry.name)) {
-        await walkWorkspace(path, visit);
-      }
-
-      continue;
-    }
-
-    await visit(path, entry);
   }
 }
 

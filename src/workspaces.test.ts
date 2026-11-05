@@ -32,6 +32,7 @@ test("a checkout exposes initial and nested instruction context", async (t) => {
     opened.availableAgentsFiles.map((file) => file.path),
     [join(context.root, "nested", "AGENTS.md")],
   );
+  assert.equal(opened.agentsDiscoveryTruncated, false);
   assert.deepEqual(
     opened.workspace.agentProfiles.map((profile) => ({
       name: profile.name,
@@ -47,6 +48,19 @@ test("a checkout exposes initial and nested instruction context", async (t) => {
     }],
   );
 
+});
+
+test("describing a stored workspace returns its nested instruction paths", async (t) => {
+  const context = await fixture(t);
+  const description = await context.registry.describeWorkspace({ root: context.root, mode: "checkout" });
+
+  assert.equal(description.available, true);
+
+  if (!description.available) return;
+
+  assert.ok(description.agentsFiles.includes("AGENTS.md"));
+  assert.deepEqual(description.availableAgentsFiles, ["nested/AGENTS.md"]);
+  assert.equal(description.agentsDiscoveryTruncated, false);
 });
 
 test("global instruction symlinks may target user-managed files outside agentDir", {
