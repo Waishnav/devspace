@@ -39,16 +39,25 @@ export async function walkWorkspaceInstructions(
       return true;
     }
 
-    for await (const entry of entries) {
-      if (entriesVisited >= limits.maxEntries || performance.now() >= deadline) return false;
-      entriesVisited++;
-      const path = join(directory, entry.name);
+    try {
+      while (true) {
+        if (entriesVisited >= limits.maxEntries || performance.now() >= deadline) return false;
+        const entry = await entries.read();
 
-      if (entry.isDirectory()) {
-        if (!SKIPPED_CONTEXT_DIRS.has(entry.name) && !await walk(path)) return false;
-      } else if (entry.isFile()) {
-        await visit(path, entry.name);
+        if (entry === null) break;
+
+        if (performance.now() >= deadline) return false;
+        entriesVisited++;
+        const path = join(directory, entry.name);
+
+        if (entry.isDirectory()) {
+          if (!SKIPPED_CONTEXT_DIRS.has(entry.name) && !await walk(path)) return false;
+        } else if (entry.isFile()) {
+          await visit(path, entry.name);
+        }
       }
+    } finally {
+      await entries.close();
     }
 
     return true;

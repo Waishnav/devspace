@@ -74,6 +74,7 @@ export type WorkspaceDescription =
       available: true;
       agentsFiles: string[];
       availableAgentsFiles: string[];
+      agentsDiscoveryTruncated: boolean;
       skills: Array<{ name: string; description: string }>;
     }
   | { available: false; reason: string };
@@ -598,12 +599,15 @@ export class WorkspaceRegistry {
     try {
       this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
       const agentsFiles = await this.loadInitialAgentsFiles(session.root);
-      const { files: availableAgentsFiles } = await this.findAvailableAgentsFiles(session.root, agentsFiles);
+
+      const { files: availableAgentsFiles, truncated: agentsDiscoveryTruncated } =
+        await this.findAvailableAgentsFiles(session.root, agentsFiles);
 
       return {
         available: true,
         agentsFiles: agentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
         availableAgentsFiles: availableAgentsFiles.map((file) => formatAgentsPath(file.path, session.root)),
+        agentsDiscoveryTruncated,
         skills: this.loadSkillsForWorkspace(session.root).skills
           .filter((skill) => !skill.disableModelInvocation)
           .map((skill) => ({ name: skill.name, description: skill.description })),

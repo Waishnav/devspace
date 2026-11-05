@@ -755,6 +755,7 @@ test("open_workspace warns about incomplete instruction discovery on initial and
   ));
   // SAFETY: open_workspace returns available instruction entries with string paths.
   const available = first.available_agents_files as Array<{ path: string }>;
+  assert.ok(available.length > 0);
 
   const omitted = projects.find((project) => !available.some(
     (file) => file.path === `${project}/AGENTS.md`,

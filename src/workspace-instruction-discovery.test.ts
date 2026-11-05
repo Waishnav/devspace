@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import test, { type TestContext } from "node:test";
 import { walkWorkspaceInstructions } from "./workspace-instruction-discovery.js";
 
@@ -53,6 +54,25 @@ test("expired discovery time budget does not start another directory", async (t)
   }), false);
   assert.equal(visited, 0);
 });
+
+for (const fileCount of [1, 2]) {
+  test(`time budget expiring during a visit stops before reading again (${fileCount} files)`, async (t) => {
+    const root = await fixture(t);
+
+    for (let index = 0; index < fileCount; index++) await writeFile(join(root, `${index}.txt`), "");
+    let now = 0;
+    t.mock.method(performance, "now", () => now);
+    let visited = 0;
+
+    const complete = await walkWorkspaceInstructions(root, () => {
+      visited++;
+      now = 2_000;
+    }, { ...limits, maxDurationMs: 1_000 });
+
+    assert.equal(complete, false);
+    assert.equal(visited, 1);
+  });
+}
 
 async function fixture(t: TestContext): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "devspace-instruction-discovery-"));

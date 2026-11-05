@@ -60,6 +60,7 @@ test("describing a stored workspace returns its nested instruction paths", async
 
   assert.ok(description.agentsFiles.includes("AGENTS.md"));
   assert.deepEqual(description.availableAgentsFiles, ["nested/AGENTS.md"]);
+  assert.equal(description.agentsDiscoveryTruncated, false);
 });
 
 test("global instruction symlinks may target user-managed files outside agentDir", {

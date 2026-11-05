@@ -2,13 +2,14 @@ import { isJsonString } from "./json-value.js";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { request, type IncomingMessage } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
 import { writeTestDevspaceConfig } from "./test-support/config.js";
+import type { WorkspaceDescription } from "./workspaces.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 
 const OWNER_TOKEN = "test-owner-token-that-is-long-enough";
@@ -65,6 +66,30 @@ test("workspace pages require an owner session", async (t) => {
   assert.equal(logout.status, 303);
   const afterLogout = await fetch(`${baseUrl}/web/api/workspaces`, { headers: { Cookie: session } });
   assert.equal(afterLogout.status, 401);
+});
+
+test("workspace detail API preserves a partial instruction inventory and its warning flag", async (t) => {
+  const { baseUrl, root } = await startServer(t);
+
+  for (let index = 0; index < 300; index++) {
+    const project = join(root, `project-${index}`);
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "nested instructions\n");
+  }
+
+  const accepted = await login(baseUrl, OWNER_TOKEN, { Origin: baseUrl });
+  const cookie = (accepted.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const response = await fetch(`${baseUrl}/web/api/workspaces/ws_web`, { headers: { Cookie: cookie } });
+  assert.equal(response.status, 200);
+  // SAFETY: This is the workspace detail endpoint's JSON response contract.
+  const body = await response.json() as { context: WorkspaceDescription };
+  assert.equal(body.context.available, true);
+
+  if (!body.context.available) return;
+
+  assert.equal(body.context.agentsDiscoveryTruncated, true);
+  assert.ok(body.context.availableAgentsFiles.length > 0);
+  assert.ok(body.context.availableAgentsFiles.length < 300);
 });
 
 test("workspace pages reject hosts outside the allowed hosts", async (t) => {
