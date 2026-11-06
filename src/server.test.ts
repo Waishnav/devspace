@@ -1,4 +1,4 @@
-import { isObjectValue, isFunctionValue, isJsonString, isJsonObject, optionalFields } from "./json-value.js";
+import { isObjectValue, isFunctionValue, isJsonString, isJsonNumber, isJsonObject, optionalFields } from "./json-value.js";
 import { unsafeNarrow } from "./unsafe-narrow.js";
 import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
@@ -888,6 +888,105 @@ test("HTTP cached workspaceId arguments preserve canonical schemas and validatio
   const read = tools.find((tool) => tool.name === "read");
   assert.ok(read?.inputSchema.properties?.workspace_id);
   assert.equal(read?.inputSchema.properties?.workspaceId, undefined);
+});
+
+test("HTTP cached process arguments preserve working directory, yield and output limits", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-cached-process-test-");
+  await mkdir(join(root, "nested"));
+
+  const opened = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "open_workspace", arguments: { path: root },
+  });
+
+  const workspaceId = (await opened.json()).result.structuredContent.workspace_id;
+
+  const command = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "exec_command",
+    arguments: {
+      workspaceId,
+      cmd: "node -e \"console.log(require('node:path').basename(process.cwd()));console.log('x'.repeat(2000))\"",
+      workingDirectory: "nested", yieldTimeMs: 2_000, maxOutputTokens: 10,
+    },
+  });
+
+  const completed = (await command.json()).result.structuredContent;
+  assert.match(completed.result, /^nested\r?\n/);
+  assert.equal(completed.output_truncated, true);
+  assert.equal(completed.exit_code, 0);
+
+  const started = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "exec_command",
+    arguments: {
+      workspaceId,
+      cmd: "node -e \"setTimeout(()=>console.log('y'.repeat(2000)),250)\"",
+      yieldTimeMs: 0,
+    },
+  });
+
+  const session = (await started.json()).result.structuredContent;
+  assert.equal(session.running, true);
+  assert.equal(isJsonNumber(session.session_id), true);
+
+  const polled = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "write_stdin",
+    arguments: {
+      workspaceId, sessionId: session.session_id,
+      yieldTimeMs: 2_000, maxOutputTokens: 10,
+    },
+  });
+
+  const result = (await polled.json()).result.structuredContent;
+  assert.equal(result.running, false);
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.output_truncated, true);
+  assert.match(result.result, /yyyy/);
+});
+
+test("HTTP cached process aliases reject conflicts and invalid types before execution", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-process-alias-validation-");
+
+  const opened = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "open_workspace", arguments: { path: root },
+  });
+
+  const workspaceId = (await opened.json()).result.structuredContent.workspace_id;
+  const cmd = "node -e \"require('node:fs').writeFileSync('unexpected','')\"";
+
+  for (const [name, aliases] of [
+    ["exec_command", { workingDirectory: ".", working_directory: "other" }],
+    ["exec_command", { yieldTimeMs: 0, yield_time_ms: 1 }],
+    ["exec_command", { maxOutputTokens: 10, max_output_tokens: 20 }],
+    ["write_stdin", { sessionId: 1, session_id: 2 }],
+    ["write_stdin", { yieldTimeMs: 0, yield_time_ms: 1 }],
+    ["write_stdin", { maxOutputTokens: 10, max_output_tokens: 20 }],
+  ] as const) {
+    const response = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+      name, arguments: { workspaceId, cmd, ...aliases },
+    });
+
+    assert.equal(response.status, 400, JSON.stringify(aliases));
+    assert.equal((await response.json()).error.code, -32602);
+  }
+
+  const invalid = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "exec_command", arguments: { workspaceId, cmd, yieldTimeMs: "0" },
+  });
+
+  const body = await invalid.json();
+  assert.ok(body.error || body.result?.isError, JSON.stringify(body));
+  await assert.rejects(access(join(root, "unexpected")), { code: "ENOENT" });
+
+  const equal = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "exec_command",
+    arguments: {
+      workspaceId, workspace_id: workspaceId, cmd: "node -e \"console.log('equal')\"",
+      workingDirectory: ".", working_directory: ".",
+      yieldTimeMs: 2_000, yield_time_ms: 2_000,
+      maxOutputTokens: 10, max_output_tokens: 10,
+    },
+  });
+
+  assert.match((await equal.json()).result.structuredContent.result, /equal/);
 });
 
 test("HTTP conflicting workspace aliases preserve request IDs and notification semantics", async (t) => {
