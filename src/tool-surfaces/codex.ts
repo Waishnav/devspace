@@ -316,7 +316,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       rows,
       yield_time_ms,
       max_output_tokens,
-    }) => {
+    }, { signal }) => {
       const startedAt = performance.now();
       const workspaceId = workspace_id;
       const sessionId = session_id;
@@ -331,6 +331,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           await workspaces.getWorkspace(workspaceId);
 
           return processSessions.write({
+            signal,
             workspaceId,
             sessionId,
             chars,

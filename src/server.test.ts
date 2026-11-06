@@ -1,4 +1,4 @@
-import { isObjectValue, isFunctionValue, isJsonString, isJsonObject, optionalFields } from "./json-value.js";
+import { isObjectValue, isFunctionValue, isJsonString, isJsonNumber, isJsonObject, optionalFields } from "./json-value.js";
 import { unsafeNarrow } from "./unsafe-narrow.js";
 import type { JsonObject, WireInput } from "./json-value.js";
 import assert from "node:assert/strict";
@@ -1164,6 +1164,64 @@ test("aborting one MCP request does not poison the next stateless request", asyn
   assert.equal(listed.status, 200, await listed.clone().text());
   await listed.text();
   await waitForFile(join(root, "finished"));
+});
+
+test("an aborted HTTP write_stdin preserves its final output for reconnection", async (t) => {
+  const { root, localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-aborted-poll-test-");
+
+  const opened = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "open_workspace", arguments: { path: root },
+  });
+
+  const workspaceId = (await opened.json()).result.structuredContent.workspace_id;
+
+  const started = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "exec_command",
+    arguments: {
+      workspace_id: workspaceId, yield_time_ms: 0,
+      cmd: "node -e \"const fs=require('node:fs');process.stdin.once('data',()=>{fs.writeFileSync('polled','');const t=setInterval(()=>{if(fs.existsSync('release')){clearInterval(t);console.log('retained-http-result');process.exit(0)}},20)})\"",
+    },
+  });
+
+  const sessionId = (await started.json()).result.structuredContent.session_id;
+  assert.equal(isJsonNumber(sessionId), true);
+
+  // Observe completion of the real manager call before reconnecting, including its error path.
+  const write = ProcessSessionManager.prototype.write;
+  let finishPoll: () => void = () => {};
+  const pollFinished = new Promise<void>((resolve) => { finishPoll = resolve; });
+  t.mock.method(ProcessSessionManager.prototype, "write", async function (
+    this: ProcessSessionManager, input: Parameters<typeof write>[0],
+  ) {
+    try {
+      return await write.call(this, input);
+    } finally {
+      finishPoll();
+    }
+  });
+
+  const controller = new AbortController();
+
+  const poll = postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "write_stdin",
+    arguments: { workspace_id: workspaceId, session_id: sessionId, chars: "go\n", yield_time_ms: 10_000 },
+  }, { signal: controller.signal });
+
+  await waitForFile(join(root, "polled"));
+  controller.abort();
+  await assert.rejects(poll, /abort/i);
+  await writeFile(join(root, "release"), "");
+  await pollFinished;
+
+  const reconnected = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "write_stdin",
+    arguments: { workspace_id: workspaceId, session_id: sessionId, yield_time_ms: 2_000 },
+  });
+
+  const body = await reconnected.json();
+  assert.notEqual(body.result?.isError, true, JSON.stringify(body));
+  assert.equal(body.result.structuredContent.exit_code, 0);
+  assert.match(body.result.structuredContent.result, /retained-http-result/);
 });
 
 test("experimental Code Mode executes over stateless HTTP MCP requests", async (t) => {
